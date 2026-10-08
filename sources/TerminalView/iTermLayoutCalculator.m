@@ -33,6 +33,25 @@ const int kLayoutTabPositionRight = 3;
 #pragma mark - Main Entry Point
 
 + (iTermLayoutOutputs)calculateLayoutWithInputs:(iTermLayoutInputs)inputs {
+    if (inputs.leftPanelWidth <= 0) {
+        return [self calculateLayoutIgnoringLeftPanelWithInputs:inputs];
+    }
+    // Shellforge: lay out everything as in a window narrower by the sidebar, then move it right
+    // of the sidebar. One place, so no branch below needs to know the sidebar exists.
+    const CGFloat sidebar = MIN(inputs.leftPanelWidth, inputs.contentViewWidth);
+    iTermLayoutInputs rest = inputs;
+    rest.contentViewWidth -= sidebar;
+    rest.leftPanelWidth = 0;
+    iTermLayoutOutputs outputs = [self calculateLayoutIgnoringLeftPanelWithInputs:rest];
+    outputs.tabViewFrame = CGRectOffset(outputs.tabViewFrame, sidebar, 0);
+    outputs.statusBarFrame = CGRectOffset(outputs.statusBarFrame, sidebar, 0);
+    outputs.toolbeltFrame = CGRectOffset(outputs.toolbeltFrame, sidebar, 0);
+    outputs.tabBarFrame = CGRectOffset(outputs.tabBarFrame, sidebar, 0);
+    outputs.leftPanelFrame = CGRectMake(0, 0, sidebar, inputs.contentViewHeight);
+    return outputs;
+}
+
++ (iTermLayoutOutputs)calculateLayoutIgnoringLeftPanelWithInputs:(iTermLayoutInputs)inputs {
     if (!inputs.tabBarVisible) {
         return [self calculateLayoutWithHiddenTabBarInputs:inputs];
     }

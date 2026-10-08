@@ -5,7 +5,8 @@ package that builds and tests with swiftly's Swift 6.4, without Xcode:
 
     scripts/swift.sh test
 
-It targets macOS 13, iTerm2's deployment target, so the app can link it.
+It targets macOS 13, iTerm2's deployment target, so the app can link it. Every change Shellforge
+makes to iTerm2's own files is listed in [docs/upstream-hook-points.md](docs/upstream-hook-points.md).
 
 ## ShellforgeCore
 
@@ -25,3 +26,9 @@ command works in a terminal tab.
 
 `GitHookPathTests` reproduces the original bug: under launchd's `PATH` a `post-checkout` hook that
 calls `uv` fails; through `CommandLauncher` it runs.
+
+## ShellforgeUI
+
+The sidebar at the left edge of every terminal window. In M0 it is a placeholder; the projects →
+tasks → tabs tree arrives in M1. The window code reaches it through
+`sources/TerminalView/iTermShellforgeSidebar.swift`.

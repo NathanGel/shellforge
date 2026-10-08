@@ -60,6 +60,9 @@ typedef struct {
 
     /// Whether to draw window title in place of tab bar
     BOOL drawWindowTitleInPlaceOfTabBar;
+
+    /// Shellforge: width of the sidebar column at the window's left edge, or 0 for none.
+    CGFloat leftPanelWidth;
 } iTermLayoutInputs;
 
 /// Output frame rects from layout calculation.
@@ -79,6 +82,9 @@ typedef struct {
     /// Decoration heights (space consumed by decorations at top/bottom)
     CGFloat decorationHeightTop;
     CGFloat decorationHeightBottom;
+
+    /// Shellforge: frame for the sidebar column, or CGRectZero without one.
+    CGRect leftPanelFrame;
 } iTermLayoutOutputs;
 
 /// Pure layout calculator with no AppKit dependencies.
@@ -87,7 +93,8 @@ typedef struct {
 
 /// Calculate layout frames given input parameters.
 /// This is a pure function with no side effects.
-+ (iTermLayoutOutputs)calculateLayoutWithInputs:(iTermLayoutInputs)inputs;
++ (iTermLayoutOutputs)calculateLayoutWithInputs:(iTermLayoutInputs)inputs
+    NS_SWIFT_NAME(calculateLayout(with:));
 
 /// Calculate the tab view frame, optionally shrinking for fullscreen tab bar.
 /// This handles the case when the tab bar is a titlebar accessory that overlaps content.

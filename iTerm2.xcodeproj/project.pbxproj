@@ -5574,6 +5574,8 @@
 		FDEC84030653ADA8F94F464D /* OrchestratorDispatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = A289859EF5CE3EC1C14E85F4 /* OrchestratorDispatcher.swift */; };
 		FE12FC00AADEA00D04DE5D07 /* WorkgroupIntrospection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DD8FF2B2AC39B0DDA9E1724 /* WorkgroupIntrospection.swift */; };
 		FF762198E91EE94A792CFEC8 /* ai-models.json in Resources */ = {isa = PBXBuildFile; fileRef = DF18C01510605DB0C639038F /* ai-models.json */; };
+		364D24FC328DB1D5D49A1483 /* iTermShellforgeSidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 912AC095DBF148E3E0F01930 /* iTermShellforgeSidebar.swift */; };
+		D86C83673C968664A30FCE79 /* ShellforgeUI in Frameworks */ = {isa = PBXBuildFile; productRef = 45EDD04F5F06C95A90D633E0 /* ShellforgeUI */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -9984,6 +9986,7 @@
 		FC3C8D1807D495D39ED10205 /* iTermWorkgroupsEditingViewController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = iTermWorkgroupsEditingViewController.swift; sourceTree = "<group>"; };
 		FD3AD5633442A7E32AF367B3 /* iTermGitFileStatus+Diffable.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = "iTermGitFileStatus+Diffable.swift"; sourceTree = "<group>"; };
 		FDF6EB8657CCD10A7A568A61 /* iTermURLActionFactory+Testing.h */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.h; path = "iTermURLActionFactory+Testing.h"; sourceTree = "<group>"; };
+		912AC095DBF148E3E0F01930 /* iTermShellforgeSidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iTermShellforgeSidebar.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -10130,6 +10133,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A6C7C96D2E172F3E00AA7668 /* WebExtensionsFramework in Frameworks */,
+				D86C83673C968664A30FCE79 /* ShellforgeUI in Frameworks */,
 				51A4E0853124F0481929EF76 /* CompanionProtocol in Frameworks */,
 				611264B856DACEEA188EA842 /* CompanionNoise in Frameworks */,
 				D52DA7A75005457424B6ECB8 /* CompanionTransport in Frameworks */,
@@ -14285,6 +14289,7 @@
 			isa = PBXGroup;
 			children = (
 				A68ADA0429CCBE420008E092 /* CommandInfoViewController.swift */,
+				912AC095DBF148E3E0F01930 /* iTermShellforgeSidebar.swift */,
 				A62A78E22F988080007CAA0B /* CommandInfoViewController.xib */,
 				A6DBC9D9286399C6002911BE /* ContentNavigationShortcut.swift */,
 				A665388A2D10AB0B004B723B /* CursorSmearView.swift */,
@@ -18036,6 +18041,7 @@
 			name = iTermSwiftPackages;
 			packageProductDependencies = (
 				A6C7C96C2E172F3E00AA7668 /* WebExtensionsFramework */,
+				45EDD04F5F06C95A90D633E0 /* ShellforgeUI */,
 				223B2226AFD38553CBB6D072 /* CompanionProtocol */,
 				CE47D7EFD87C4A5BF1DF9B29 /* CompanionNoise */,
 				B64D2673BB7E3F17D208CC22 /* CompanionTransport */,
@@ -18213,6 +18219,7 @@
 			mainGroup = 0464AB0D006CD2EC7F000001 /* JTerminal */;
 			packageReferences = (
 				A62E3BC62E1CC674002DF8C3 /* XCLocalSwiftPackageReference "WebExtensionsFramework" */,
+				4906ACFDB1D128F76813E274 /* XCLocalSwiftPackageReference "Shellforge" */,
 				72DF701C2DF2DAABC006F100 /* XCLocalSwiftPackageReference "Companion/CompanionCore" */,
 				6AEB4F694FB62FA208F96240 /* XCRemoteSwiftPackageReference "swift-argument-parser" */,
 				8282BAE40915D8F2B8CC6B66 /* XCRemoteSwiftPackageReference "Yams" */,
@@ -21042,6 +21049,7 @@
 				A6A3EDC42E0CDA2300D711DA /* iTermBrowserPointerActionPerformer.swift in Sources */,
 				A605943F2583305E00CACEE6 /* iTermSharedImageStore.m in Sources */,
 				A68ADA0629CCBE420008E092 /* CommandInfoViewController.swift in Sources */,
+				364D24FC328DB1D5D49A1483 /* iTermShellforgeSidebar.swift in Sources */,
 				A616E6792EA9548D000C0C18 /* PasswordManagerProtocol.swift in Sources */,
 				A602AAEA2B16A8B600E6C965 /* DraggableNSBox.swift in Sources */,
 				A608A5812797811D003525F7 /* iTermCapturedOutputMark.m in Sources */,
@@ -27621,6 +27629,10 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = WebExtensionsFramework;
 		};
+		4906ACFDB1D128F76813E274 /* XCLocalSwiftPackageReference "Shellforge" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Shellforge;
+		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCRemoteSwiftPackageReference section */
@@ -27681,6 +27693,10 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 6AEB4F694FB62FA208F96240 /* XCRemoteSwiftPackageReference "swift-argument-parser" */;
 			productName = ArgumentParser;
+		};
+		45EDD04F5F06C95A90D633E0 /* ShellforgeUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = ShellforgeUI;
 		};
 /* End XCSwiftPackageProductDependency section */
 

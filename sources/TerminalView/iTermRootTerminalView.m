@@ -130,6 +130,8 @@ NS_CLASS_AVAILABLE_MAC(10_14)
 @end
 
 @implementation iTermRootTerminalView {
+    // Shellforge: the projects → tasks → tabs sidebar at the window's left edge.
+    NSView *_shellforgeSidebar;
     BOOL _tabViewFrameReduced;
     BOOL _haveShownToolbelt;
     iTermStoplightHotbox *_stoplightHotbox;
@@ -253,6 +255,9 @@ NS_CLASS_AVAILABLE_MAC(10_14)
         _toolbelt.autoresizingMask = (NSViewMinXMargin | NSViewHeightSizable);
         [self addSubview:_toolbelt];
         [self updateToolbeltForWindow:nil];
+
+        _shellforgeSidebar = [iTermShellforgeSidebar makeView];
+        [self addSubview:_shellforgeSidebar];
 
         _windowNumberLabel = [NSTextField newLabelStyledTextField];
         if (@available(macOS 10.16, *)) {
@@ -1333,6 +1338,9 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
     inputs.tabBarHeight = _tabBarControl.height;
     inputs.leftTabBarWidth = _leftTabBarWidth;
 
+    // Shellforge sidebar
+    inputs.leftPanelWidth = _shellforgeSidebar ? [iTermShellforgeSidebar width] : 0;
+
     // Toolbelt
     inputs.toolbeltWidth = floor(self.toolbeltWidth);
     inputs.shouldShowToolbelt = self.shouldShowToolbelt;
@@ -1648,6 +1656,8 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
     } else {
         [self layoutSubviewsWithVisibleTabBarForWindow:thisWindow inlineToolbelt:showToolbeltInline];
     }
+    _shellforgeSidebar.frame =
+        [iTermLayoutCalculator calculateLayoutWithInputs:[self layoutInputsForWindow:thisWindow]].leftPanelFrame;
     if (@available(macOS 12.0, *)) {
         const CGFloat notchHeight = [self notchInset];
         _notchMask.hidden = (notchHeight == 0);
