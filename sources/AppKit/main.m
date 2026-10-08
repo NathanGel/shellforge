@@ -44,16 +44,19 @@ int main(int argc, const char *argv[]) {
     // Parse -suite argument before any UserDefaults access.
     // Uses -suite (not --suite=) so Cocoa's argument parser treats it as a
     // standard -key value pair and doesn't misparse subsequent arguments.
+    // Shellforge: without -suite, use the "Shellforge" suite, so its preferences, Application
+    // Support folder and sockets never mix with a stock iTerm2 installed beside it.
+    NSString *suiteName = @"Shellforge";
     for (int i = 1; i + 1 < argc; i++) {
         if (strcmp(argv[i], "-suite") == 0) {
-            NSString *suiteName = [NSString stringWithUTF8String:argv[i + 1]];
-            [iTermUserDefaults setCustomSuiteName:suiteName];
-            // Also set the custom socket prefix for file descriptor sockets
-            NSString *prefix = [NSString stringWithFormat:@"%@.socket.", suiteName];
-            iTermFileDescriptorSetSocketNamePrefix(prefix.UTF8String);
+            suiteName = [NSString stringWithUTF8String:argv[i + 1]];
             break;
         }
     }
+    [iTermUserDefaults setCustomSuiteName:suiteName];
+    // Also set the custom socket prefix for file descriptor sockets
+    NSString *prefix = [NSString stringWithFormat:@"%@.socket.", suiteName];
+    iTermFileDescriptorSetSocketNamePrefix(prefix.UTF8String);
     if ([[iTermUserDefaults userDefaults] boolForKey:@"MetalCaptureEnabled"]) {
         setenv("MTL_CAPTURE_ENABLED", "1", 1);
     }

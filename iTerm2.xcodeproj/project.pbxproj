@@ -22966,7 +22966,7 @@
 					"-force_load",
 					"$(BUILT_PRODUCTS_DIR)/libit2core.a",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.googlecode.iterm2;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.nathangel.shellforge;
 				PRODUCT_NAME = iTerm2;
 				PROVISIONING_PROFILE_SPECIFIER = "iTerm2 Dev ID Keychain";
 				SDKROOT = macosx;
@@ -24300,7 +24300,7 @@
 					"-force_load",
 					"$(BUILT_PRODUCTS_DIR)/libit2core.a",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.googlecode.iterm2;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.nathangel.shellforge;
 				PRODUCT_NAME = iTerm2;
 				PROVISIONING_PROFILE_SPECIFIER = "iTerm2 Dev ID Keychain";
 				SDKROOT = macosx;
@@ -27083,7 +27083,7 @@
 					"-force_load",
 					"$(BUILT_PRODUCTS_DIR)/libit2core.a",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.googlecode.iterm2;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.nathangel.shellforge;
 				PRODUCT_NAME = iTerm2;
 				SDKROOT = macosx;
 				SECTORDER_FLAGS = "";
@@ -27177,7 +27177,7 @@
 					"-force_load",
 					"$(BUILT_PRODUCTS_DIR)/libit2core.a",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.googlecode.iterm2;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.nathangel.shellforge;
 				PRODUCT_NAME = iTerm2;
 				PROVISIONING_PROFILE_SPECIFIER = "iTerm2 Dev ID Keychain";
 				SDKROOT = macosx;
