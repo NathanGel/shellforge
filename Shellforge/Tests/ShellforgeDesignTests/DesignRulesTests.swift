@@ -56,6 +56,10 @@ struct DesignRulesTests {
     }
 
     private static let exceptions = [
+        Exception(file: "ShellforgeDesign/ControlChrome.swift", rule: .colour, line: ".shadow(color: .black.opacity(",
+                  reason: "a shadow's black is part of its geometry, which the README leaves untokenised"),
+        Exception(file: "ShellforgeUI/Sidebar/VendorMark.swift", rule: .font, line: ".font(.system(size: size * 0.36",
+                  reason: "the shell mark's chevron, sized as a fraction of the mark it is drawn in"),
         // The sidebar and the Agent hooks sheet as M1a and M1c-3a drew them, before the design system
         // came: one exception per line, as every other, until M1b-2 rebuilds both on ShellforgeDesign
         // and deletes these. The stale check below then proves none is left.
