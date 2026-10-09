@@ -46,6 +46,45 @@ enum ChildProcess {
     }
 }
 
+extension ChildProcess {
+    /// Starts `executable` and returns at once: a child that outlives the call, as the daemon does.
+    /// Its standard output and error go to `output` (nowhere when nil), stdin is closed, and
+    /// `onExit` is called with it and its exit status when it ends.
+    static func launch(_ executable: String, _ arguments: [String], environment: [String: String], directory: String?,
+                       output: FileHandle?, onExit: @escaping @Sendable (RunningChild, Int32) -> Void) throws -> RunningChild {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        process.environment = environment
+        if let directory { process.currentDirectoryURL = URL(fileURLWithPath: directory) }
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = output ?? FileHandle.nullDevice
+        process.standardError = output ?? FileHandle.nullDevice
+        let child = RunningChild(process)
+        process.terminationHandler = { onExit(child, $0.terminationStatus) }
+        try process.run()
+        return child
+    }
+}
+
+/// A child started by `ChildProcess.launch`, while it runs and after.
+public final class RunningChild: @unchecked Sendable {
+    private let process: Process
+
+    init(_ process: Process) { self.process = process }
+
+    /// Its process id; 0 before it has started.
+    public var pid: Int32 { process.processIdentifier }
+
+    public var isRunning: Bool { process.isRunning }
+
+    /// SIGTERM: asks it to stop.
+    public func terminate() { process.terminate() }
+
+    /// SIGKILL: for a child that would not stop when asked.
+    public func kill() { _ = Darwin.kill(pid, SIGKILL) }
+}
+
 /// Drains a pipe on a thread of its own, so a child that fills one pipe while we read the other
 /// never stalls. Its own thread, not a slot on a shared queue: a reader blocks until end of output,
 /// and a command that leaves a background job holding its pipe (an SSH tunnel) would otherwise tie

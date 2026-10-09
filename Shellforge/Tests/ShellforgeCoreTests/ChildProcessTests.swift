@@ -24,3 +24,46 @@ import Testing
         #expect(outputs.filter { !$0.hasPrefix("done ") }.isEmpty, "lost output: \(outputs.filter { !$0.hasPrefix("done ") }.count) of 20")
     }
 }
+
+/// A child that outlives the call that started it, as the daemon does.
+@Suite struct LaunchedChildTests {
+    private let env = ["PATH": "/usr/bin:/bin"]
+
+    @Test func aLaunchedChildReportsItsExitStatus() async throws {
+        let exited = Locked<Int32?>(nil)
+        let child = try ChildProcess.launch("/bin/sh", ["-c", "exit 7"], environment: env, directory: nil, output: nil) { _, status in
+            exited.withLock { $0 = status }
+        }
+        #expect(child.pid > 0)
+        let deadline = Date().addingTimeInterval(2)
+        while exited.withLock({ $0 }) == nil, Date() < deadline { try await Task.sleep(nanoseconds: 10_000_000) }
+        #expect(exited.withLock { $0 } == 7)
+        #expect(!child.isRunning)
+    }
+
+    @Test func aLaunchedChildWritesToTheGivenFile() async throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("sf-child-\(UUID().uuidString).log")
+        FileManager.default.createFile(atPath: file.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: file)
+        let done = Locked(false)
+        _ = try ChildProcess.launch("/bin/sh", ["-c", "echo hi; echo oops >&2"], environment: env, directory: nil, output: handle) { _, _ in
+            done.withLock { $0 = true }
+        }
+        let deadline = Date().addingTimeInterval(2)
+        while !done.withLock({ $0 }), Date() < deadline { try await Task.sleep(nanoseconds: 10_000_000) }
+        try handle.close()
+        #expect(try String(contentsOf: file, encoding: .utf8) == "hi\noops\n")
+    }
+
+    @Test func terminateEndsALongRunningChild() async throws {
+        let exited = Locked(false)
+        let child = try ChildProcess.launch("/bin/sleep", ["30"], environment: env, directory: nil, output: nil) { _, _ in
+            exited.withLock { $0 = true }
+        }
+        #expect(child.isRunning)
+        child.terminate()
+        let deadline = Date().addingTimeInterval(2)
+        while !exited.withLock({ $0 }), Date() < deadline { try await Task.sleep(nanoseconds: 10_000_000) }
+        #expect(exited.withLock { $0 })
+    }
+}
