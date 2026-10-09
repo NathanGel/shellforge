@@ -79,3 +79,7 @@ Development build, against the scratch `trial-repo`, with AiTerm's daemon (port 
 A Claude hook from a plain shell tab changes nothing: Claude's hooks are placed by the agent's pid
 file, and Codex's only on a tab whose foreground job is `codex`. That is shellforged's resolver
 working as designed, not a gap.
+6. After the review fixes, the same build was checked with a split pane. A task's tab, split, with
+   a `codex` job in the new pane and the original pane selected: `sessions.list` reported both
+   panes in the same tab. Only the selected pane was `active`, and the split carried no task id. A
+   Codex hook from the split pane turned the task's and the tab's dots blue.
