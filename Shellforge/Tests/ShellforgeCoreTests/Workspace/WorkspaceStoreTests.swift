@@ -46,6 +46,24 @@ import Testing
         #expect(FileManager.default.fileExists(atPath: folder.appendingPathComponent(kept).path))
     }
 
+    /// A recovery must last: the launch after it, or a second window, still finds the projects.
+    @Test func afterARecoveryTheNextLoadStillHasTheWorkspace() throws {
+        let saved = sample()
+        try store.save(saved)
+        try store.save(saved)
+        try "{ truncated".write(to: folder.appendingPathComponent("workspace.json"), atomically: true, encoding: .utf8)
+        _ = try store.load()
+        #expect(try store.load() == .init(workspace: saved, recoveredFrom: nil))
+    }
+
+    @Test func aMissingFileWithABackupLoadsTheBackup() throws {
+        let saved = sample()
+        try store.save(saved)
+        try store.save(saved)
+        try FileManager.default.removeItem(at: folder.appendingPathComponent("workspace.json"))
+        #expect(try store.load().workspace == saved)
+    }
+
     @Test func aTaskWhoseProjectIsMissingIsRefused() throws {
         var broken = sample()
         broken.projects = []

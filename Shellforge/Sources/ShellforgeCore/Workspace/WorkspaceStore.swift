@@ -30,15 +30,24 @@ public struct WorkspaceStore: Sendable {
     private var file: URL { folder.appendingPathComponent("workspace.json") }
     private var backup: URL { folder.appendingPathComponent("workspace.json.backup") }
 
+    /// The saved workspace. With no `workspace.json` the backup is used, if there is one. A file
+    /// that no longer decodes is kept aside and the backup written back as `workspace.json` at
+    /// once, so the recovery lasts: the next launch, or another window, finds the projects too.
+    /// Throws when the damaged file cannot be kept aside; nothing may be saved over it then.
     public func load() throws -> Loaded {
-        guard let data = try? Data(contentsOf: file) else { return Loaded(workspace: Workspace(), recoveredFrom: nil) }
+        guard let data = try? Data(contentsOf: file) else { return Loaded(workspace: fromBackup() ?? Workspace(), recoveredFrom: nil) }
         if let workspace = try? JSONDecoder.workspace.decode(Workspace.self, from: data) {
             return Loaded(workspace: workspace, recoveredFrom: nil)
         }
         let kept = "workspace.json.damaged-\(UUID().uuidString)"
         try FileManager.default.moveItem(at: file, to: folder.appendingPathComponent(kept))
-        let fromBackup = (try? Data(contentsOf: backup)).flatMap { try? JSONDecoder.workspace.decode(Workspace.self, from: $0) }
-        return Loaded(workspace: fromBackup ?? Workspace(), recoveredFrom: kept)
+        let recovered = fromBackup() ?? Workspace()
+        try JSONEncoder.workspace.encode(recovered).write(to: file, options: .atomic)
+        return Loaded(workspace: recovered, recoveredFrom: kept)
+    }
+
+    private func fromBackup() -> Workspace? {
+        (try? Data(contentsOf: backup)).flatMap { try? JSONDecoder.workspace.decode(Workspace.self, from: $0) }
     }
 
     public func save(_ workspace: Workspace) throws {
