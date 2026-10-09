@@ -1,6 +1,7 @@
 // Ported from AiTerm (app/Sources/AiTerm/Views/SidebarRows.swift: SidebarRowLayout, AddMenu,
 // SelectableRow, RowPill, the header's chevron and title, RowTitle, RowCaption, the debug hover keys
-// and ProviderIcon), GPLv3, Laurens D'Hondt.
+// and ProviderIcon),
+// GPLv3, Laurens D'Hondt.
 import SwiftUI
 import ShellforgeDesign
 import ShellforgeCore

@@ -23,6 +23,8 @@ public enum ShellforgeSidebar {
     }
 }
 
+/// AiTerm's sidebar, inside iTerm2's window: the PROJECTS header, each project with its tasks and
+/// the selected task's tabs, the tabs of no task, the banners, or the empty state.
 struct SidebarView: View {
     @ObservedObject var model: SidebarModel
     let chooseFolder: @MainActor () -> String?
@@ -30,157 +32,70 @@ struct SidebarView: View {
     @State private var showingHooks = false
     @State private var newTaskProject: UUID?
     @State private var newTaskTitle = ""
+    @Environment(\.interfaceScale) private var scale
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-            if model.tree.projects.isEmpty {
-                Text("No projects yet")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .padding(16)
-            }
+        VStack(spacing: 0) {
+            SidebarBanners(model: model)
             List {
-                ForEach(model.tree.projects) { node in
-                    Section {
-                        ForEach(node.tasks) { task in taskRow(task) }
-                        if newTaskProject == node.id { newTaskField(node.project) }
-                    } header: {
-                        projectHeader(node.project)
-                    }
-                }
-                if !model.tree.otherTabs.isEmpty {
-                    Section("Other tabs") {
-                        ForEach(model.tree.otherTabs) { tab in tabRow(tab) }
-                    }
-                }
+                SidebarHeader(addProject: addProject, showHooks: { showingHooks = true })
+                ForEach(model.rows) { row in rowView(row) }
             }
             .listStyle(.sidebar)
-            if let working = model.working {
-                Text(working)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(12)
-            }
-            if model.helper.isProblem {
-                Text(model.helper.text)
-                    .font(.caption)
-                    .foregroundStyle(model.helper == .helperUnreachable ? Color.secondary : Color.orange)
-                    .padding(12)
-            }
-            if let error = model.lastError {
-                Text(error)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                    .padding(12)
-            }
+            .scrollContentBackground(.hidden)
+            .background(NativeRowHighlight.off)
         }
-        .frame(width: ShellforgeSidebar.width, alignment: .topLeading)
-        .frame(maxHeight: .infinity, alignment: .top)
+        .frame(minWidth: scale(Size.sidebarMinWidth), maxHeight: .infinity, alignment: .top)
         .background(Palette.sidebar)
         .surface(.sidebar)
         .tint(Palette.accent)
-    }
-
-    private var header: some View {
-        HStack {
-            Text("Shellforge").font(.headline)
-            Spacer()
-            Button {
-                if let folder = chooseFolder() { Task { await model.addProject(folder: folder) } }
-            } label: {
-                Image(systemName: "plus")
-            }
-            .buttonStyle(.borderless)
-            .help("Add a project folder")
-            Button {
-                showingHooks = true
-            } label: {
-                Image(systemName: "bolt.horizontal.circle")
-            }
-            .buttonStyle(.borderless)
-            .help("Agent hooks")
-        }
-        .padding(16)
         .sheet(isPresented: $showingHooks) {
             AgentHooksView(model: hooks, dismiss: { showingHooks = false })
         }
     }
 
-    private func projectHeader(_ project: Project) -> some View {
-        HStack {
-            Text(project.name)
-            Spacer()
-            Button {
-                newTaskProject = project.id
-                newTaskTitle = ""
-            } label: {
-                Image(systemName: "plus.circle")
-            }
-            .buttonStyle(.borderless)
-            .help("New task in \(project.name)")
+    @ViewBuilder private func rowView(_ row: SidebarRow) -> some View {
+        switch row {
+        case .empty:
+            SidebarEmptyState(canAdd: true, add: addProject).listRowSeparator(.hidden)
+        case .project(let node, let collapsed):
+            ProjectHeaderRow(node: node, collapsed: collapsed, provider: model.providers[node.id] ?? .git,
+                             toggle: { model.toggleCollapsed(node.id) },
+                             newTask: { newTaskProject = node.id; newTaskTitle = "" })
+                .listRowSeparator(.hidden)
+            if newTaskProject == node.id { newTaskField(node.project).listRowSeparator(.hidden) }
+        case .task(let node, let selected):
+            TaskRowView(node: node, selected: selected, agents: model.avatars(forTask: node.id),
+                        status: model.status(ofTask: node.id), activate: { model.select(task: node.id) })
+                .listRowSeparator(.hidden)
+        case .tab(let tab, let selected):
+            TabRowView(tab: tab, selected: selected, agents: model.avatars(forTab: tab.id),
+                       status: model.status(ofTab: tab.id), activate: { model.select(tab: tab.id) })
+                .listRowSeparator(.hidden)
+        case .otherTabsHeading:
+            SidebarHeading("Other tabs")
+                .frame(height: scale(Size.menuRow)).padding(.leading, scale(Space.base))
+                .listRowSeparator(.hidden)
         }
     }
 
+    private func addProject() {
+        if let folder = chooseFolder() { Task { await model.addProject(folder: folder) } }
+    }
+
+    /// The new task's title, typed where the task will appear; Return creates it, Escape lets it go.
     private func newTaskField(_ project: Project) -> some View {
         TextField("Task title", text: $newTaskTitle)
+            .textFieldStyle(.plain)
+            .font(Typography.body)
+            .foregroundStyle(Palette.text)
+            .fieldChrome()
+            .padding(.leading, scale(Space.section))
             .onSubmit {
                 let title = newTaskTitle.trimmingCharacters(in: .whitespaces)
                 newTaskProject = nil
                 if !title.isEmpty { Task { await model.newTask(title: title, in: project.id) } }
             }
             .onExitCommand { newTaskProject = nil }
-    }
-
-    private func taskRow(_ node: TaskNode) -> some View {
-        DisclosureGroup(isExpanded: .constant(model.selectedTaskId == node.id)) {
-            ForEach(node.tabs) { tab in tabRow(tab) }
-        } label: {
-            HStack {
-                StatusDot(state: model.status(ofTask: node.id))
-                Text(node.task.title)
-                    .fontWeight(model.selectedTaskId == node.id ? .semibold : .regular)
-                Spacer()
-                Text(node.task.branch).font(.caption).foregroundStyle(.secondary)
-            }
-            .contentShape(Rectangle())
-            .onTapGesture { model.select(task: node.id) }
-        }
-    }
-
-    private func tabRow(_ tab: TabSnapshot) -> some View {
-        HStack(spacing: 6) {
-            StatusDot(state: model.status(ofTab: tab.id))
-            Text(tab.title)
-                .font(.callout)
-                .lineLimit(1)
-        }
-            .contentShape(Rectangle())
-            .onTapGesture { model.select(tab: tab.id) }
-    }
-}
-
-/// An agent's state as a dot: nothing while idle. The colours stand in until the design system
-/// (M1b) names them.
-struct StatusDot: View {
-    let state: SessionState
-
-    var body: some View {
-        if let (color, label) = look {
-            Circle()
-                .fill(color)
-                .frame(width: 8, height: 8)
-                .accessibilityLabel(label)
-                .help(label)
-        }
-    }
-
-    private var look: (Color, String)? {
-        switch state {
-        case .needsInput: (.orange, "Needs input")
-        case .working: (.blue, "Working")
-        case .done: (.green, "Done")
-        case .idle: nil
-        }
     }
 }

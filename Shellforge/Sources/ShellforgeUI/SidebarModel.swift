@@ -135,18 +135,35 @@ public final class SidebarModel: ObservableObject {
         }
     }
 
-    /// The agents of a task's tabs, as AiTerm's avatar group shows them: the most urgent first, then by
-    /// tab; plain shells are no agent. Two tabs of one agent are two marks.
+    /// The agents of a task's tabs, as AiTerm's avatar group takes them: in tab order, a shell's too
+    /// (its `>_` mark). `AvatarGroup.of` turns them into the marks a row draws.
     public func avatars(forTask id: UUID) -> [SessionAgent] { Self.agents(sessions.sessions(ofTask: id)) }
     public func avatars(forTab id: String) -> [SessionAgent] { Self.agents(sessions.sessions(ofTab: id)) }
 
     private static func agents(_ sessions: [SessionInfo]) -> [SessionAgent] {
-        func rank(_ state: SessionState) -> Int {
-            switch state { case .needsInput: 0; case .working: 1; case .done: 2; case .idle: 3 }
+        sessions.sorted { ($0.tabIndex, $0.sessionId) < ($1.tabIndex, $1.sessionId) }.map(\.agent)
+    }
+
+    /// What the sidebar draws, in order: each project, and unless it is folded its tasks, the selected
+    /// task's tabs under it; then the tabs of no task; or the empty state when there is no project.
+    public var rows: [SidebarRow] {
+        guard !tree.projects.isEmpty else { return [.empty] }
+        var rows: [SidebarRow] = []
+        for node in tree.projects {
+            rows.append(.project(node, collapsed: node.project.collapsed))
+            guard !node.project.collapsed else { continue }
+            for task in node.tasks {
+                rows.append(.task(task, selected: task.id == selectedTaskId))
+                if task.id == selectedTaskId {
+                    rows += task.tabs.map { .tab($0, selected: $0.id == host.selectedTabId) }
+                }
+            }
         }
-        return sessions.filter { $0.agent != .shell }
-            .sorted { (rank($0.state), $0.tabIndex, $0.sessionId) < (rank($1.state), $1.tabIndex, $1.sessionId) }
-            .map(\.agent)
+        if !tree.otherTabs.isEmpty {
+            rows.append(.otherTabsHeading)
+            rows += tree.otherTabs.map { .tab($0, selected: $0.id == host.selectedTabId) }
+        }
+        return rows
     }
 
     /// Folds or unfolds a project, as AiTerm's chevron does; kept with the workspace.

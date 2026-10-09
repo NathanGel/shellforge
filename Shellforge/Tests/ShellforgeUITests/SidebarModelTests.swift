@@ -260,7 +260,7 @@ import Testing
         #expect(sidebar.helper == .connected)
     }
 
-    @Test func avatarsShowTheAgentsOfATasksTabsAndDropShells() async throws {
+    @Test func avatarsShowEveryTabsAgentInTabOrder() async throws {
         let repo = try GitRepoForUI()
         let host = FakeTerminalHost(), feed = FakeFeed()
         let sidebar = SidebarModel(host: host, document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher, feed: feed)
@@ -268,7 +268,7 @@ import Testing
         await sidebar.newTask(title: "One", in: try #require(sidebar.tree.projects.first).id)
         let task = try #require(sidebar.selectedTaskId)
         feed.sayAll([(.idle, "a", task, .shell), (.working, "b", task, .claude), (.needsInput, "c", task, .codex)])
-        #expect(sidebar.avatars(forTask: task) == [.codex, .claude])   // most urgent first, the shell dropped
+        #expect(sidebar.avatars(forTask: task) == [.shell, .claude, .codex])   // AiTerm's: in tab order, a shell's ">_" too
         #expect(sidebar.avatars(forTab: "b") == [.claude])
     }
 
