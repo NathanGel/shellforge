@@ -1,14 +1,19 @@
 import AppKit
 import Testing
+@testable import ShellforgeCore
 @testable import ShellforgeUI
 
 @MainActor @Suite struct SidebarTests {
-    @Test func theHostViewIsAsWideAsTheSidebar() {
-        let view = ShellforgeSidebar.makeView()
-        #expect(view.frame.width == ShellforgeSidebar.width)
+    private func sidebarModel() throws -> SidebarModel {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("shellforge-view-\(UUID().uuidString)")
+        return SidebarModel(host: FakeTerminalHost(), store: WorkspaceStore(folder: folder), launcher: try GitRepoForUI().launcher)
     }
 
-    @Test func theSidebarStretchesWithTheWindowsHeightOnly() {
-        #expect(ShellforgeSidebar.makeView().autoresizingMask == [.height])
+    @Test func theHostViewIsAsWideAsTheSidebar() throws {
+        #expect(ShellforgeSidebar.makeView(model: try sidebarModel(), chooseFolder: { nil }).frame.width == ShellforgeSidebar.width)
+    }
+
+    @Test func theSidebarStretchesWithTheWindowsHeightOnly() throws {
+        #expect(ShellforgeSidebar.makeView(model: try sidebarModel(), chooseFolder: { nil }).autoresizingMask == [.height])
     }
 }
