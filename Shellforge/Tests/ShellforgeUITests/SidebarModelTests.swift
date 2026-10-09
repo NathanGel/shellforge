@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import Testing
 @testable import ShellforgeCore
@@ -36,6 +37,26 @@ import Testing
         tabs.removeAll { $0.id == id }
         selectedTabId = tabs.first?.id
         onChange?()
+    }
+}
+
+/// Stands in for the app's `DaemonLink`: the helper's status and what the daemon says, set by hand.
+@MainActor final class FakeFeed: SessionFeed {
+    @Published var status: HelperStatus = .connected
+    @Published var store = SessionStore()
+    var seen: [UUID] = []
+    var statusPublisher: AnyPublisher<HelperStatus, Never> { $status.eraseToAnyPublisher() }
+    var storePublisher: AnyPublisher<SessionStore, Never> { $store.eraseToAnyPublisher() }
+    func markSeen(task: UUID) { seen.append(task) }
+
+    /// The daemon saying `state` for one session of `task`.
+    func say(_ state: SessionState, session: String, task: UUID) {
+        var next = SessionStore()
+        next.apply(.snapshot(DaemonSnapshot(protocolVersion: 1, connected: true, sessions: [
+            SessionInfo(sessionId: session, windowId: "w", tabIndex: 0, taskId: task.uuidString.lowercased(), projectId: nil,
+                        agent: .claude, model: nil, state: state, title: "claude", cwd: "/wt")
+        ], usage: .empty)))
+        store = next
     }
 }
 
@@ -155,6 +176,60 @@ import Testing
         await sidebar.newTask(title: "Two", in: project.id)
         let ids = sidebar.tree.projects[0].tasks.map(\.id)
         return (sidebar, host, ids[0], ids[1])
+    }
+
+    @Test func aTaskShowsItsMostUrgentTabAndATabItsOwn() async throws {
+        let repo = try GitRepoForUI()
+        let host = FakeTerminalHost(), feed = FakeFeed()
+        let sidebar = SidebarModel(host: host, document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher, feed: feed)
+        await sidebar.addProject(folder: repo.path)
+        await sidebar.newTask(title: "Fix login", in: try #require(sidebar.tree.projects.first).id)
+        let task = try #require(sidebar.selectedTaskId), tab = try #require(host.tabs.first).id
+        feed.say(.needsInput, session: tab, task: task)
+        #expect(sidebar.status(ofTask: task) == .needsInput)
+        #expect(sidebar.status(ofTab: tab) == .needsInput)
+    }
+
+    @Test func openingADoneTaskMarksItSeenAndOpeningAnotherDoesNot() async throws {
+        let repo = try GitRepoForUI()
+        let host = FakeTerminalHost(), feed = FakeFeed()
+        let sidebar = SidebarModel(host: host, document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher, feed: feed)
+        await sidebar.addProject(folder: repo.path)
+        let project = try #require(sidebar.tree.projects.first).id
+        await sidebar.newTask(title: "One", in: project)
+        let one = try #require(sidebar.selectedTaskId), oneTab = try #require(host.tabs.last).id
+        await sidebar.newTask(title: "Two", in: project)
+        let two = try #require(sidebar.selectedTaskId)
+        feed.say(.done, session: oneTab, task: one)
+        #expect(feed.seen.isEmpty)            // done while Two is shown: not seen yet
+        sidebar.select(task: two)
+        #expect(feed.seen.isEmpty)            // Two is not done
+        sidebar.select(task: one)
+        #expect(feed.seen == [one])
+    }
+
+    @Test func switchingToADoneTasksTabInITerm2MarksItSeen() async throws {
+        let repo = try GitRepoForUI()
+        let host = FakeTerminalHost(), feed = FakeFeed()
+        let sidebar = SidebarModel(host: host, document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher, feed: feed)
+        await sidebar.addProject(folder: repo.path)
+        let project = try #require(sidebar.tree.projects.first).id
+        await sidebar.newTask(title: "One", in: project)
+        let one = try #require(sidebar.selectedTaskId), oneTab = try #require(host.tabs.last).id
+        await sidebar.newTask(title: "Two", in: project)
+        feed.say(.done, session: oneTab, task: one)
+        host.userSwitched(to: oneTab)
+        #expect(feed.seen == [one])
+    }
+
+    @Test func theHelpersProblemIsShownAndClearedWhenItConnects() async throws {
+        let repo = try GitRepoForUI()
+        let feed = FakeFeed()
+        let sidebar = SidebarModel(host: FakeTerminalHost(), document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher, feed: feed)
+        feed.status = .pythonMissing
+        #expect(sidebar.helper == .pythonMissing)
+        feed.status = .connected
+        #expect(sidebar.helper == .connected)
     }
 }
 

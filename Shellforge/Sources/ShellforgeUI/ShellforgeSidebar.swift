@@ -55,6 +55,12 @@ struct SidebarView: View {
                     .foregroundStyle(.secondary)
                     .padding(12)
             }
+            if model.helper.isProblem {
+                Text(model.helper.text)
+                    .font(.caption)
+                    .foregroundStyle(model.helper == .helperUnreachable ? Color.secondary : Color.orange)
+                    .padding(12)
+            }
             if let error = model.lastError {
                 Text(error)
                     .font(.caption)
@@ -112,6 +118,7 @@ struct SidebarView: View {
             ForEach(node.tabs) { tab in tabRow(tab) }
         } label: {
             HStack {
+                StatusDot(state: model.status(ofTask: node.id))
                 Text(node.task.title)
                     .fontWeight(model.selectedTaskId == node.id ? .semibold : .regular)
                 Spacer()
@@ -123,10 +130,38 @@ struct SidebarView: View {
     }
 
     private func tabRow(_ tab: TabSnapshot) -> some View {
-        Text(tab.title)
-            .font(.callout)
-            .lineLimit(1)
+        HStack(spacing: 6) {
+            StatusDot(state: model.status(ofTab: tab.id))
+            Text(tab.title)
+                .font(.callout)
+                .lineLimit(1)
+        }
             .contentShape(Rectangle())
             .onTapGesture { model.select(tab: tab.id) }
+    }
+}
+
+/// An agent's state as a dot: nothing while idle. The colours stand in until the design system
+/// (M1b) names them.
+struct StatusDot: View {
+    let state: SessionState
+
+    var body: some View {
+        if let (color, label) = look {
+            Circle()
+                .fill(color)
+                .frame(width: 8, height: 8)
+                .accessibilityLabel(label)
+                .help(label)
+        }
+    }
+
+    private var look: (Color, String)? {
+        switch state {
+        case .needsInput: (.orange, "Needs input")
+        case .working: (.blue, "Working")
+        case .done: (.green, "Done")
+        case .idle: nil
+        }
     }
 }

@@ -109,3 +109,8 @@ public final class DaemonLink: ObservableObject {
         if client == nil { store = SessionStore() } else { reportsMayHaveChanged() }
     }
 }
+
+extension DaemonLink: SessionFeed {
+    public var statusPublisher: AnyPublisher<HelperStatus, Never> { $status.eraseToAnyPublisher() }
+    public var storePublisher: AnyPublisher<SessionStore, Never> { $store.eraseToAnyPublisher() }
+}
