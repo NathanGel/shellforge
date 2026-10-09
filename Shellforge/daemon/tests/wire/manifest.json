@@ -1,0 +1,120 @@
+{
+  "errorCodes": [
+    "bad_params",
+    "internal",
+    "iterm_unavailable",
+    "not_found",
+    "protocol",
+    "unknown_method"
+  ],
+  "events": [
+    "iterm.auth_failed",
+    "iterm.connected",
+    "iterm.cookieRequested",
+    "iterm.disconnected",
+    "session.changed",
+    "session.closed",
+    "session.opened",
+    "usage.changed",
+    "window.activated",
+    "window.closed"
+  ],
+  "fixtures": {
+    "errors": {
+      "bad_params": "error.bad_params.json",
+      "internal": "error.internal.json",
+      "iterm_unavailable": "error.iterm_unavailable.json",
+      "not_found": "error.not_found.json",
+      "protocol": "error.protocol.json",
+      "unknown_method": "error.unknown_method.json"
+    },
+    "events": {
+      "iterm.auth_failed": "event.iterm.auth_failed.json",
+      "iterm.connected": "event.iterm.connected.json",
+      "iterm.cookieRequested": "event.iterm.cookieRequested.json",
+      "iterm.disconnected": "event.iterm.disconnected.json",
+      "session.changed": "event.session.changed.json",
+      "session.closed": "event.session.closed.json",
+      "session.opened": "event.session.opened.json",
+      "usage.changed": "event.usage.changed.json",
+      "window.activated": "event.window.activated.json",
+      "window.closed": "event.window.closed.json"
+    },
+    "replies": {
+      "interface.setMatchItermBackground": [
+        "reply.interface.setMatchItermBackground.json"
+      ],
+      "iterm.provideCookie": [
+        "reply.iterm.provideCookie.json"
+      ],
+      "iterm.status": [
+        "reply.iterm.status.json"
+      ],
+      "sessions.list": [
+        "reply.sessions.list.json"
+      ],
+      "sessions.markSeen": [
+        "reply.sessions.markSeen.json"
+      ],
+      "sessions.setTitles": [
+        "reply.sessions.setTitles.json"
+      ],
+      "tab.create": [
+        "reply.tab.create.json"
+      ],
+      "usage.get": [
+        "reply.usage.get.json"
+      ],
+      "window.activate": [
+        "reply.window.activate.json"
+      ],
+      "window.close": [
+        "reply.window.close.json"
+      ],
+      "window.createTask": [
+        "reply.window.createTask.json"
+      ],
+      "window.createTerminal": [
+        "reply.window.createTerminal.json"
+      ],
+      "window.setFrame": [
+        "reply.window.setFrame.json"
+      ],
+      "workspace.snapshot": [
+        "reply.workspace.snapshot.json",
+        "reply.workspace.snapshot.refused.json"
+      ]
+    }
+  },
+  "maxFrameBytes": 1048576,
+  "methods": [
+    "interface.setMatchItermBackground",
+    "iterm.provideCookie",
+    "iterm.status",
+    "sessions.list",
+    "sessions.markSeen",
+    "sessions.setTitles",
+    "tab.create",
+    "usage.get",
+    "window.activate",
+    "window.close",
+    "window.createTask",
+    "window.createTerminal",
+    "window.setFrame",
+    "workspace.snapshot"
+  ],
+  "protocolVersion": 1,
+  "sessionAgents": [
+    "claude",
+    "codex",
+    "grok",
+    "pi",
+    "shell"
+  ],
+  "sessionStates": [
+    "done",
+    "idle",
+    "needsInput",
+    "working"
+  ]
+}

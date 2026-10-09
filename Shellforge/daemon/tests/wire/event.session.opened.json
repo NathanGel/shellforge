@@ -1,0 +1,20 @@
+{
+  "event": "session.opened",
+  "payload": {
+    "active": true,
+    "agent": "shell",
+    "agentCwd": null,
+    "contextPercent": null,
+    "cwd": "/repo/.worktrees/feat-wire",
+    "model": null,
+    "projectId": null,
+    "reasoning": null,
+    "sessionId": "s2",
+    "state": "idle",
+    "tabIndex": 0,
+    "taskId": "2F9C4B7E-5A1D-4C3B-9E8F-0A1B2C3D4E5F",
+    "title": "feat-wire",
+    "tokens": null,
+    "windowId": "w1"
+  }
+}

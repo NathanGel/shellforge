@@ -1,0 +1,86 @@
+{
+  "id": 17,
+  "result": {
+    "connected": true,
+    "itermAuthError": null,
+    "itermCookieRequest": null,
+    "itermVersion": "3.7.2",
+    "protocolVersion": 1,
+    "sessions": [
+      {
+        "active": false,
+        "agent": "pi",
+        "agentCwd": "/repo/.worktrees/feat-wire/app",
+        "contextPercent": 42,
+        "cwd": "/repo/.worktrees/feat-wire",
+        "model": "claude-opus-5",
+        "projectId": null,
+        "reasoning": "high",
+        "sessionId": "s2",
+        "state": "working",
+        "tabIndex": 0,
+        "taskId": "2F9C4B7E-5A1D-4C3B-9E8F-0A1B2C3D4E5F",
+        "title": "pi",
+        "tokens": {
+          "cached": 935988,
+          "input": 936018,
+          "output": 5625
+        },
+        "windowId": "w1"
+      },
+      {
+        "active": true,
+        "agent": "shell",
+        "agentCwd": null,
+        "contextPercent": null,
+        "cwd": "/repo/.worktrees/feat-wire",
+        "model": null,
+        "projectId": null,
+        "reasoning": null,
+        "sessionId": "s3",
+        "state": "idle",
+        "tabIndex": 1,
+        "taskId": "2F9C4B7E-5A1D-4C3B-9E8F-0A1B2C3D4E5F",
+        "title": "zsh",
+        "tokens": null,
+        "windowId": "w1"
+      },
+      {
+        "active": true,
+        "agent": "shell",
+        "agentCwd": null,
+        "contextPercent": null,
+        "cwd": "/repo",
+        "model": null,
+        "projectId": "7D6E5F4A-3B2C-4D1E-8F9A-0B1C2D3E4F5A",
+        "reasoning": null,
+        "sessionId": "s5",
+        "state": "idle",
+        "tabIndex": 0,
+        "taskId": null,
+        "title": "Logs",
+        "tokens": null,
+        "windowId": "w4"
+      }
+    ],
+    "usage": {
+      "claude": {
+        "fiveHour": {
+          "resetsAt": 1790000000,
+          "usedPercent": 23
+        },
+        "plan": null,
+        "sevenDay": {
+          "resetsAt": 1790400000,
+          "usedPercent": 61
+        },
+        "spend": {
+          "resetsAt": null,
+          "usedPercent": 5
+        },
+        "updatedAt": 1000
+      },
+      "codex": null
+    }
+  }
+}

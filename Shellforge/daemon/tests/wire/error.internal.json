@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": "internal",
+    "message": "iTerm2 sent a reply the daemon could not read"
+  },
+  "id": 22
+}

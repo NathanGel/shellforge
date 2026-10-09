@@ -1,0 +1,15 @@
+{
+  "id": 3,
+  "result": {
+    "connected": false,
+    "itermAuthError": "execution error: Not authorized to send Apple events to iTerm2. (-1743)",
+    "itermCookieRequest": 2,
+    "itermVersion": null,
+    "protocolVersion": 1,
+    "sessions": [],
+    "usage": {
+      "claude": null,
+      "codex": null
+    }
+  }
+}

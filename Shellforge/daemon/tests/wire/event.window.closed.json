@@ -1,0 +1,6 @@
+{
+  "event": "window.closed",
+  "payload": {
+    "windowId": "w4"
+  }
+}

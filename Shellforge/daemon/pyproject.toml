@@ -1,0 +1,63 @@
+[project]
+name = "shellforged"
+version = "0.1.0"
+description = "AiTerm daemon: drives iTerm2 and tracks agent sessions"
+requires-python = ">=3.11"
+dependencies = ["iterm2==2.23", "websockets==17.1", "protobuf==7.36.1"]
+
+[project.optional-dependencies]
+dev = ["pytest==9.1.1", "pytest-asyncio==1.4.0", "ruff==0.16.8", "mypy==2.3.1"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+# iterm2 2.23 (pinned) imports websockets.legacy.client, which websockets deprecates on import. The
+# daemon's own code uses no legacy API; this silences only that one warning.
+filterwarnings = ["ignore:websockets.legacy is deprecated:DeprecationWarning:websockets.legacy"]
+
+[tool.ruff]
+line-length = 140
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["shellforged"]
+strict = true
+
+[[tool.mypy.overrides]]
+module = ["iterm2", "iterm2.*"]
+ignore_missing_imports = true
+# Its package __init__ re-exports its submodules' names by plain import, as untyped libraries do.
+implicit_reexport = true
+
+# The one module that imports iterm2, which ships no types: its objects are Any throughout.
+[[tool.mypy.overrides]]
+module = ["shellforged.iterm_bridge"]
+disallow_untyped_calls = false
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_any_generics = false
+warn_return_any = false
+
+# Tests are type-checked where they are annotated -- FakeIterm against ItermPort above all -- and
+# their unannotated bodies are left alone rather than noted, one line each, on every run. Strict
+# does not reach them: a fixture or a parametrized case annotated only for mypy says less, not more.
+[[tool.mypy.overrides]]
+module = ["tests", "tests.*"]
+disable_error_code = ["annotation-unchecked"]
+check_untyped_defs = false
+disallow_untyped_calls = false
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_any_generics = false
+warn_return_any = false
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["shellforged*"]

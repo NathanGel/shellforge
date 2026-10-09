@@ -1,0 +1,6 @@
+{
+  "event": "iterm.cookieRequested",
+  "payload": {
+    "requestId": 2
+  }
+}

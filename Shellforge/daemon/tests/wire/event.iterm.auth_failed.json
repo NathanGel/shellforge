@@ -1,0 +1,6 @@
+{
+  "event": "iterm.auth_failed",
+  "payload": {
+    "reason": "execution error: Not authorized to send Apple events to iTerm2. (-1743)"
+  }
+}

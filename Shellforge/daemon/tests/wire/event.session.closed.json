@@ -1,0 +1,6 @@
+{
+  "event": "session.closed",
+  "payload": {
+    "sessionId": "s5"
+  }
+}

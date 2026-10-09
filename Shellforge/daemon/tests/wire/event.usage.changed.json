@@ -1,0 +1,22 @@
+{
+  "event": "usage.changed",
+  "payload": {
+    "claude": {
+      "fiveHour": {
+        "resetsAt": 1790000000,
+        "usedPercent": 23
+      },
+      "plan": null,
+      "sevenDay": {
+        "resetsAt": 1790400000,
+        "usedPercent": 61
+      },
+      "spend": {
+        "resetsAt": null,
+        "usedPercent": 5
+      },
+      "updatedAt": 1000
+    },
+    "codex": null
+  }
+}
