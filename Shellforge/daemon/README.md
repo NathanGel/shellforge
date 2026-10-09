@@ -1,6 +1,22 @@
-shellforged drives iTerm2 for AiTerm. Run with `python -m shellforged run`; poke it with
-`python -m shellforged ctl iterm.status`. Tests: `.venv/bin/pytest -q`. Live tests
-against a running iTerm2: `AITERMD_LIVE=1 .venv/bin/pytest tests/integration -q`.
+# shellforged
+
+Shellforge's daemon: it receives the agents' hooks and status lines, keeps each tab's status, model,
+context and token counts, and tracks usage. It was copied from AiTerm's daemon (see `NOTICE.md`).
+
+    python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'   # once
+    .venv/bin/python -m shellforged run                          # sessions from the app
+    .venv/bin/python -m shellforged ctl sessions.list            # ask a running daemon
+    .venv/bin/pytest -q                                          # tests
+
+It keeps its socket (`shellforged.sock`), `daemon.json`, log and `hook-port` in
+`~/Library/Application Support/Shellforge/`, and listens for hooks on `127.0.0.1:47831`, so it runs
+beside AiTerm's daemon (47821) on one Mac.
+
+**Where sessions come from.** By default the app sends its tabs with `sessions.update` — each tab's
+session guid, window, tab index, command line, job pid, title, folder and task — and the daemon
+needs nothing beyond the standard library. `--session-source iterm` reads them from iTerm2's Python
+API instead, through `iterm_bridge.py`, which needs the `iterm2` package; live tests against a
+running iTerm2: `SHELLFORGED_LIVE=1 .venv/bin/pytest tests/integration -q`.
 
 ## App connection
 

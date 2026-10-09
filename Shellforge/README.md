@@ -32,3 +32,8 @@ calls `uv` fails; through `CommandLauncher` it runs.
 The sidebar at the left edge of every terminal window. In M0 it is a placeholder; the projects →
 tasks → tabs tree arrives in M1. The window code reaches it through
 `sources/TerminalView/iTermShellforgeSidebar.swift`.
+
+## shellforged
+
+The daemon that tracks agents' status and usage from their hooks, in `daemon/`, with the hook shims
+it installs in `hooks/`. See [daemon/README.md](daemon/README.md).
