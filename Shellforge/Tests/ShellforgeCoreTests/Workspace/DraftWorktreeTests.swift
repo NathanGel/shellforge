@@ -18,6 +18,22 @@ import Testing
         #expect(try repo.git(["rev-parse", "--abbrev-ref", "HEAD"], in: task.worktreePath) == "feat/login")
     }
 
+    /// As AiTerm: the base is fetched from origin first, and the task starts from origin's latest,
+    /// not from a local branch weeks behind it.
+    @Test func aTaskStartsFromOriginsLatestBase() throws {
+        let origin = try GitRepoFixture()
+        let clone = try GitRepoFixture()
+        try clone.git("remote", "add", "origin", origin.path)
+        try clone.git("fetch", "-q", "origin")
+        try clone.git("reset", "-q", "--hard", "origin/main")
+        try origin.git("commit", "-q", "--allow-empty", "-m", "newer on origin")
+        let newest = try origin.git("rev-parse", "HEAD")
+        var draft = TaskDraft(baseBranch: "main", agentId: "claude", model: "opus", reasoning: nil)
+        draft.setTitle("Login")
+        let task = try TaskWorktrees.create(draft: draft, in: clone.project, launcher: clone.launcher)
+        #expect(try clone.git(["rev-parse", "HEAD"], in: task.worktreePath) == newest)
+    }
+
     @Test func anInvalidBranchIsRefusedBeforeGitRuns() throws {
         let repo = try GitRepoFixture()
         var draft = TaskDraft(baseBranch: "main", agentId: "claude", model: "opus", reasoning: nil)

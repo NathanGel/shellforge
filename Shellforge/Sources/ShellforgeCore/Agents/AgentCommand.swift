@@ -70,9 +70,13 @@ public enum AgentCommand {
     /// acting as a keystroke: TAB completes, CR accepts the line, ESC, ^C, ^D, ^U, ^W, ^R and DEL
     /// edit it. Only a newline is safe — inside the quotes, zsh just continues the line. The length
     /// is the whole typed command's, `invocation` and quoting included, against `inlineLimit`.
+    ///
+    /// A backslash goes through the file too: the tab runs the account's login shell, and fish reads
+    /// `\'` and `\\` as escapes even inside single quotes, where zsh and bash read them as they are.
     private static func readsFromFile(_ prompt: String, after invocation: [String]) -> Bool {
         (invocation + [shellQuote(prompt)]).joined(separator: " ").utf8.count > inlineLimit
             || prompt.unicodeScalars.contains { $0 != "\n" && ($0.value < 0x20 || $0.value == 0x7F) }
+            || prompt.contains("\\")
     }
 
     /// Best-effort addition of `.shellforge/` to the repository's exclude file, which for a linked

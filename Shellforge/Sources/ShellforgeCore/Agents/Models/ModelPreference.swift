@@ -1,3 +1,4 @@
+// Ported from AiTerm (app/Sources/AiTermCore/Agents/ModelSettings.swift), GPLv3, Laurens D'Hondt.
 import Foundation
 
 /// The model and reasoning level a draft opens with.

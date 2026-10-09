@@ -47,4 +47,12 @@ import ShellforgeDesign
         #expect(AgentSegmented.isSelectable(AgentPresets.claude, available: ["claude"]))
         #expect(!AgentSegmented.isSelectable(AgentPresets.pi, available: ["claude"]))
     }
+
+    /// As AiTerm: the footer warns only when no agent can run at all; the Agent step names the
+    /// missing ones either way.
+    @Test func theFooterWarnsOnlyWhenNoAgentIsInstalled() {
+        #expect(NewTaskSheet.footerNote(agents: AgentPresets.all, available: ["claude"]) == nil)
+        #expect(NewTaskSheet.footerNote(agents: AgentPresets.all, available: [])
+                == "Claude Code, Codex, Grok Build and PI aren’t installed. Install them in Settings › Agents.")
+    }
 }

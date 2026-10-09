@@ -57,9 +57,11 @@ import Testing
         // By path: the launcher's PATH holds only `bin`, so a bare `sleep` would fail at once instead of hanging.
         try script("pi", in: bin, "exec /bin/sleep 30\n")
         let started = Date()
-        #expect(throws: PiModelCatalogError.self) {
+        let error = #expect(throws: PiModelCatalogError.self) {
             try ModelCatalogue(home: home, launcher: launcher(bin: bin)).models(for: AgentPresets.pi)
         }
+        #expect(error == .timedOut)
+        #expect(error?.localizedDescription == "PI didn’t answer within 5 seconds.")
         let waited = Date().timeIntervalSince(started)
         #expect(waited > 4 && waited < 10, "PI was given \(waited) s, not its five")
     }

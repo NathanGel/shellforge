@@ -332,7 +332,7 @@ struct GitRepoForUI {
 
     /// `installed` are agent CLIs the launcher finds: `exit 0` scripts in a bin of the repository's
     /// own, ahead of git's folder, so what this Mac has installed never decides a test.
-    init(installed: [String] = []) throws {
+    init(installed: [String] = ["claude"]) throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("shellforge-uirepo-\(UUID().uuidString)").path
         path = "\(root)/repo"
         try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
@@ -364,7 +364,7 @@ extension SidebarModel {
 @MainActor @Suite struct NewTaskWiringTests {
     private let folder = FileManager.default.temporaryDirectory.appendingPathComponent("shellforge-wiring-\(UUID().uuidString)")
 
-    private func modelWithProject(installed: [String] = []) async throws -> (SidebarModel, FakeTerminalHost, WorkspaceDocument, UUID) {
+    private func modelWithProject(installed: [String] = ["claude"]) async throws -> (SidebarModel, FakeTerminalHost, WorkspaceDocument, UUID) {
         let repo = try GitRepoForUI(installed: installed)
         let host = FakeTerminalHost()
         let document = WorkspaceDocument(store: WorkspaceStore(folder: folder))
@@ -402,6 +402,16 @@ extension SidebarModel {
         draft.setTitle("Login")
         await #expect(throws: GitFailure.self) { try await model.newTask(draft: draft, in: project) }
         #expect(document.workspace.tasks.isEmpty && host.opened.isEmpty)
+    }
+
+    /// An agent removed while the sheet was up is caught before anything is made.
+    @Test func anAgentGoneSinceTheSheetOpenedCreatesNothing() async throws {
+        let (model, host, document, project) = try await modelWithProject(installed: [])
+        var draft = TaskDraft(baseBranch: "main", agentId: "claude", model: "opus", reasoning: nil)
+        draft.setTitle("Login")
+        await #expect(throws: AgentNotInstalled(agent: "Claude Code")) { try await model.newTask(draft: draft, in: project) }
+        #expect(document.workspace.tasks.isEmpty && host.opened.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: try #require(document.workspace.projects.first).path + "/.worktrees"))
     }
 
     /// A task reopened from the sidebar, its tab long closed, is a shell: the agent ran once.

@@ -3,12 +3,15 @@ import Foundation
 
 public enum PiModelCatalogError: Error, Equatable, Sendable, LocalizedError {
     case unavailable
+    /// PI was killed after its five seconds without answering.
+    case timedOut
     case failed(Int32, String)
     case malformed(String)
 
     /// The failure in a sentence, as Settings' Models check says it.
     public var summary: String {
         if case .unavailable = self { return "PI couldn’t be launched." }
+        if case .timedOut = self { return "PI didn’t answer within 5 seconds." }
         return "The PI model catalogue is unavailable."
     }
 
@@ -57,7 +60,8 @@ public enum PiModelCatalog {
         let result: ChildOutput
         do { result = try launcher.run(executable, ["--offline", "--list-models"], extra: ["PI_OFFLINE": "1"], timeout: 5) }
         catch { throw PiModelCatalogError.unavailable }
-        guard !result.timedOut, result.status == 0 else {
+        guard !result.timedOut else { throw PiModelCatalogError.timedOut }
+        guard result.status == 0 else {
             throw PiModelCatalogError.failed(result.status, result.stderr.trimmingCharacters(in: .whitespacesAndNewlines))
         }
         return try parse(result.stdout)

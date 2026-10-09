@@ -135,7 +135,7 @@ import Foundation
 
     @Test func aPromptWithEveryHazardIsTypedVerbatim() throws {
         let worktree = try GitRepoFixture().path
-        let hazards = "it's \"quoted\" \\(not) $HOME `x`\nline two"
+        let hazards = "it's \"quoted\" (not) $HOME `x`\nline two"
         let command = try AgentCommand.build(agent: AgentPresets.claude, model: "opus", reasoning: "high", prompt: hazards,
                                              worktreePath: worktree, launcher: launcher)
         #expect(command == "claude --model opus --effort high " + AgentCommand.shellQuote(hazards))
@@ -170,5 +170,17 @@ import Foundation
 
     @Test func theInitialTextKeepsBackslashesAndLeadsWithASpace() {
         #expect(TabCommand.initialText(#"claude 'a \(b) c'"#) == #" claude 'a \\(b) c'"#)
+    }
+
+    /// fish reads `\'` and `\\` as escapes even inside single quotes, so a prompt holding a
+    /// backslash is never typed into the shell: it goes through the file, which every shell reads alike.
+    @Test func aBackslashGoesThroughTheFile() throws {
+        let worktree = try GitRepoFixture().path
+        let prompt = #"a\'; echo pwned #"#
+        let command = try AgentCommand.build(agent: AgentPresets.claude, model: "opus", reasoning: nil, prompt: prompt,
+                                             worktreePath: worktree, launcher: launcher)
+        #expect(command == "claude --model opus \"$(cat .shellforge/first-prompt.md)\"")
+        #expect(try String(contentsOfFile: worktree + "/.shellforge/first-prompt.md", encoding: .utf8) == prompt)
+        #expect(AgentCommand.previewCommand(agent: AgentPresets.claude, model: "opus", reasoning: nil, prompt: prompt) == command)
     }
 }

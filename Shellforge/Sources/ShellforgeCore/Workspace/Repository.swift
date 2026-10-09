@@ -1,3 +1,4 @@
+// Ported from AiTerm (app/Sources/AiTermCore/Git/Repository.swift), GPLv3, Laurens D'Hondt.
 import Foundation
 
 /// What the New Task sheet asks a project's repository, through the login shell's git.

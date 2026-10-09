@@ -16,6 +16,12 @@ public protocol TerminalHost: AnyObject {
     func openTab(in directory: String, taskId: UUID, projectId: UUID, title: String, command: String?)
 }
 
+/// The draft's agent's CLI was not on the login shell's `PATH` when Create ran.
+public struct AgentNotInstalled: Error, Equatable, LocalizedError {
+    public let agent: String
+    public var errorDescription: String? { "\(agent) isn’t installed. Install it in Settings › Agents." }
+}
+
 /// What the sidebar needs from the helper: its status, what the daemon says about the sessions,
 /// and where to say a task was seen. `DaemonLink` is the app's; the tests use a fake.
 @MainActor
@@ -126,6 +132,9 @@ public final class SidebarModel: ObservableObject {
               let agent = agents.first(where: { $0.id == draft.agentId }) else { return }
         let launcher = self.launcher
         let made = try await BackgroundWork.run { () throws -> (TaskItem, String) in
+            // Looked for again here: the sheet read what was installed when it opened, and a tab
+            // whose first line is "command not found" is worse than a refusal.
+            guard launcher.locate(agent.command) != nil else { throw AgentNotInstalled(agent: agent.name) }
             let task = try TaskWorktrees.create(draft: draft, in: project, launcher: launcher)
             let command = try AgentCommand.build(agent: agent, model: draft.model, reasoning: draft.reasoning,
                                                  prompt: AgentCommand.composePrompt(userText: draft.promptText),

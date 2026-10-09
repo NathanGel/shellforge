@@ -39,13 +39,19 @@ struct NewTaskSheet: View {
             }
         } footer: {
             CreationFooter(step: step, error: model.error,
-                           missingAgentNote: NewTaskModel.missingAgentNote(agents: model.agents, available: model.availableAgents),
+                           missingAgentNote: Self.footerNote(agents: model.agents, available: model.availableAgents),
                            createLabel: "Create Task", creating: model.creating,
                            canAdvance: model.canAdvance(step: step), closeList: { false },
                            back: back, advance: advance)
         }
         .task { await model.loadBranches() }
         .task(id: model.draft.agentId) { await model.loadCatalogue() }
+    }
+
+    /// As AiTerm's footer: why Create is dead, said only when no agent can run at all; the Agent
+    /// step names the missing ones either way.
+    static func footerNote(agents: [AgentDefinition], available: Set<String>) -> String? {
+        available.isEmpty ? NewTaskModel.missingAgentNote(agents: agents, available: available) : nil
     }
 
     // -- step 1: task ---------------------------------------------------------------

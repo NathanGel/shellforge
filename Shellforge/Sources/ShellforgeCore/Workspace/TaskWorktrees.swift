@@ -70,7 +70,19 @@ public enum TaskWorktrees {
         let slug = BranchNaming.unused(draft.worktreeSlug, in: project.path)
         let path = "\(project.path)/.worktrees/\(slug)"
         try exclude(".worktrees/", gitDir: git(["rev-parse", "--git-common-dir"]), project: project)
-        _ = try git(["worktree", "add", "-q", "-b", draft.branch, path, draft.baseBranch])
+        // As AiTerm: best-effort, so a new worktree starts from the remote's latest when it can;
+        // offline, from what was last fetched. An explicit, forced refspec, because `git fetch origin
+        // <base>` updates the tracking ref only when `remote.origin.fetch` covers it.
+        var start = draft.baseBranch
+        if (try? git(["remote", "get-url", "origin"])) != nil {
+            _ = try? launcher.run("git", ["-C", project.path, "fetch", "--quiet", "origin",
+                                          "+refs/heads/\(draft.baseBranch):refs/remotes/origin/\(draft.baseBranch)"],
+                                  extra: ["GIT_TERMINAL_PROMPT": "0"], timeout: 30)
+            if (try? git(["rev-parse", "--verify", "--quiet", "refs/remotes/origin/\(draft.baseBranch)^{commit}"])) != nil {
+                start = "origin/\(draft.baseBranch)"
+            }
+        }
+        _ = try git(["worktree", "add", "-q", "-b", draft.branch, path, start])
         return TaskItem(projectId: project.id, title: draft.title, branch: draft.branch, worktreePath: path,
                         baseBranch: draft.baseBranch, agent: draft.agentId, model: draft.model, reasoning: draft.reasoning)
     }
