@@ -33,7 +33,7 @@ def clock():
 @pytest.fixture
 def eng(clock):
     reg = SessionRegistry()
-    reg.apply_snapshot([RawSession("s1", "w1", 0, "claude", 1, "", "/x", {"aiterm_task": "t1"}),
+    reg.apply_snapshot([RawSession("s1", "w1", 0, "claude", 1, "", "/x", {"shellforge_task": "t1"}),
                         RawSession("s2", "w1", 1, "codex", 2, "", "/x", {})])
     return StatusEngine(reg, clock), reg
 
@@ -287,7 +287,7 @@ def test_context_signal_stays_with_its_provider_without_touching_state(eng):
 def test_context_signal_replaces_the_tasks_value_when_a_tab_rereports_the_same_number():
     reg = SessionRegistry()
     reg.apply_snapshot([
-        RawSession("a", "w1", 0, "claude", 1, "", "/x", {"aiterm_task": "t1"}),
+        RawSession("a", "w1", 0, "claude", 1, "", "/x", {"shellforge_task": "t1"}),
         RawSession("b", "w1", 1, "claude", 2, "", "/x", {}),
     ])
     reg.set_context("a", 42)
@@ -302,8 +302,8 @@ def test_context_signal_replaces_the_tasks_value_when_a_tab_rereports_the_same_n
 def test_tokens_stay_on_their_own_tab():
     reg = SessionRegistry()
     reg.apply_snapshot([
-        RawSession("a", "w1", 0, "claude", 1, "", "/x", {"aiterm_task": "t1"}),
-        RawSession("b", "w1", 1, "claude", 2, "", "/x", {"aiterm_task": "t1"}),
+        RawSession("a", "w1", 0, "claude", 1, "", "/x", {"shellforge_task": "t1"}),
+        RawSession("b", "w1", 1, "claude", 2, "", "/x", {"shellforge_task": "t1"}),
     ])
     engine = StatusEngine(reg, Clock())
 
@@ -495,7 +495,7 @@ def _grok_engine(clock, agent="grok", state_cwd="/gone"):
     """A task tab running `agent`, whose orphan window runs on `clock`. The wall clock stands still:
     the window must not depend on it."""
     reg = SessionRegistry()
-    reg.apply_snapshot([RawSession("g1", "w1", 0, agent, 7, "", "/shell", {"aiterm_task": "t1"})])
+    reg.apply_snapshot([RawSession("g1", "w1", 0, agent, 7, "", "/shell", {"shellforge_task": "t1"})])
     eng = StatusEngine(reg, lambda: 5000.0, monotonic=clock)
     eng.apply_metadata("g1", cwd=state_cwd)
     return eng, reg
@@ -531,7 +531,7 @@ def test_a_settled_orphan_still_tells_a_late_report_from_its_own_turn(clock):
 def test_the_window_ignores_the_wall_clock(clock):
     # An NTP step forward must not end a turn early.
     reg = SessionRegistry()
-    reg.apply_snapshot([RawSession("g1", "w1", 0, "grok", 7, "", "/gone", {"aiterm_task": "t1"})])
+    reg.apply_snapshot([RawSession("g1", "w1", 0, "grok", 7, "", "/gone", {"shellforge_task": "t1"})])
     wall = Clock()
     eng = StatusEngine(reg, wall, monotonic=clock)
     eng.apply_event("g1", hook("working"))
@@ -655,7 +655,7 @@ def _claude_engine(monotonic):
     """A Claude tab whose turn ended while child `c1` runs in the background: its Stop is deferred.
     The child started at wall-clock 100; its transcript quiet window runs on `monotonic`."""
     reg = SessionRegistry()
-    reg.apply_snapshot([RawSession("s1", "w1", 0, "claude", 1, "", "/x", {"aiterm_task": "t1"})])
+    reg.apply_snapshot([RawSession("s1", "w1", 0, "claude", 1, "", "/x", {"shellforge_task": "t1"})])
     wall = Clock()
     eng = StatusEngine(reg, wall, monotonic=monotonic)
     eng.apply_event("s1", hook("working"))

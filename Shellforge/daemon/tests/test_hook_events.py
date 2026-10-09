@@ -8,7 +8,7 @@ from shellforged.hook_events import (
 BASE = {"session_id": "abc", "cwd": "/repo/.worktrees/x", "transcript_path": "/t.jsonl", "permission_mode": "default"}
 PI_BASE = {"session_id": "pi-session", "cwd": "/repo/.worktrees/x",
            "model": "openai-codex/gpt-5.6-sol", "reasoning": "high", "context_percent": 42.6,
-           "_aiterm_iterm_session_id": "w0t0p0:pi-tab"}
+           "_shellforge_iterm_session_id": "w0t0p0:pi-tab"}
 
 
 @pytest.mark.parametrize("payload,kind,model", [
@@ -215,7 +215,7 @@ def test_statusline_tolerates_malformed_fields():
 
 
 def test_statusline_carries_the_session_it_describes():
-    tick = parse_claude_statusline({"session_id": "abc", "cwd": "/wt", "_aiterm_iterm_session_id": "w0t0p0:t"}, now=1)
+    tick = parse_claude_statusline({"session_id": "abc", "cwd": "/wt", "_shellforge_iterm_session_id": "w0t0p0:t"}, now=1)
     assert (tick.session_id, tick.cwd, tick.iterm_session_id, tick.reasoning) == ("abc", "/wt", "w0t0p0:t", None)
 
 
@@ -279,7 +279,7 @@ def test_statusline_windows_reject_non_finite_numbers(bad):
 @pytest.mark.parametrize("parser", [parse_claude_hook, parse_codex_hook])
 def test_claude_and_codex_hooks_sanitize_string_fields(parser):
     event = parser({"hook_event_name": "SessionStart", "session_id": 7, "cwd": False, "model": ["bad"],
-                    "_aiterm_iterm_session_id": {"x": 1}})
+                    "_shellforge_iterm_session_id": {"x": 1}})
     assert event.session_id is None and event.cwd is None and event.model is None
     assert event.iterm_session_id is None
     assert parse_claude_hook({"hook_event_name": "PostModelSwitch", "to_model": 5}).model is None
@@ -288,7 +288,7 @@ def test_claude_and_codex_hooks_sanitize_string_fields(parser):
 
 GROK_BASE = {"hookEventName": "stop", "sessionId": "g-1", "cwd": "/repo/.worktrees/x",
              "workspaceRoot": "/repo/.worktrees/x", "timestamp": "2026-09-28T12:00:00Z",
-             "permissionMode": "default", "_aiterm_iterm_session_id": "w0t0p0:grok-tab"}
+             "permissionMode": "default", "_shellforge_iterm_session_id": "w0t0p0:grok-tab"}
 
 
 @pytest.mark.parametrize("payload,kind", [
@@ -415,7 +415,7 @@ def test_grok_statusline_fields():
     tick = parse_grok_statusline({
         "session_id": "g-1", "cwd": "/wt", "model": {"id": "grok-4.7", "display_name": "Grok 4.7"},
         "effort": {"level": "high"}, "context_window": {"used_percentage": 37, "context_window_size": 500000},
-        "_aiterm_iterm_session_id": "w0t0p0:tab-1"}, now=1)
+        "_shellforge_iterm_session_id": "w0t0p0:tab-1"}, now=1)
     # Grok sends no rate-limit summary, so a tick is never account usage.
     assert tick == StatusLine(usage=None, session_id="g-1", cwd="/wt", iterm_session_id="w0t0p0:tab-1",
                               model="grok-4.7", reasoning="high", context_percent=37)

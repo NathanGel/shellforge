@@ -52,13 +52,23 @@ class IdleWatchdog:
                 return
 
 
+def support_dir() -> Path:
+    """Where Shellforge keeps its socket, info file, log and hook port: its own folder, so the daemon
+    it was copied from can run beside it. Read at call time, so HOME is the current one."""
+    return Path.home() / "Library" / "Application Support" / "Shellforge"
+
+
+#: Not 47821, the port of the daemon this one was copied from, so both can run on one Mac.
+DEFAULT_HOOK_PORT = 47831
+
+
 def build_parser() -> argparse.ArgumentParser:
-    support_dir = Path.home() / "Library" / "Application Support" / "AiTerm"
+    folder = support_dir()
     p = argparse.ArgumentParser(prog="shellforged")
     sub = p.add_subparsers(dest="command", required=True)
     run = sub.add_parser("run", help="run the daemon")
-    run.add_argument("--socket", default=str(support_dir / "shellforged.sock"))
-    run.add_argument("--hook-port", type=int, default=47821)
+    run.add_argument("--socket", default=str(folder / "shellforged.sock"))
+    run.add_argument("--hook-port", type=int, default=DEFAULT_HOOK_PORT)
     run.add_argument("--log-level", default="INFO")
     run.add_argument("--idle-exit-seconds", type=float, default=IDLE_EXIT_SECONDS,
                      help="quit after this long with no client attached (0 disables)")
@@ -67,7 +77,7 @@ def build_parser() -> argparse.ArgumentParser:
     ctl = sub.add_parser("ctl", help="send one request to a running daemon")
     ctl.add_argument("method")
     ctl.add_argument("params", nargs="?", default="null")
-    ctl.add_argument("--socket", default=str(support_dir / "shellforged.sock"))
+    ctl.add_argument("--socket", default=str(folder / "shellforged.sock"))
     return p
 
 
@@ -105,9 +115,9 @@ async def run_daemon(ns: argparse.Namespace) -> None:
     await svc.start()
     watchdog = asyncio.get_running_loop().create_task(
         IdleWatchdog(lambda: rpc.client_count, ns.idle_exit_seconds, stop.set, check_seconds=IDLE_CHECK_SECONDS).run())
-    support_dir = Path.home() / "Library" / "Application Support" / "AiTerm"
-    support_dir.mkdir(parents=True, exist_ok=True)
-    info = support_dir / "daemon.json"
+    folder = support_dir()
+    folder.mkdir(parents=True, exist_ok=True)
+    info = folder / "daemon.json"
     info.write_text(json.dumps({"pid": os.getpid(), "socket": ns.socket, "hookPort": svc.hooks.port, "version": __version__}))
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):

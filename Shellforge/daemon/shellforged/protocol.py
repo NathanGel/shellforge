@@ -3,7 +3,7 @@ import json
 from typing import Any
 
 
-# The app's half of this contract is app/Sources/AiTermCore/Daemon/DaemonProtocol.swift. Both are
+# The app's half of this contract is app/Sources/ShellforgeCore/Daemon/DaemonProtocol.swift. Both are
 # checked against tests/wire/manifest.json, which tests/test_wire_contract.py writes from this
 # module and the registered methods, beside a golden frame of every event and reply.
 

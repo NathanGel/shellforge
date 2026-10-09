@@ -1,4 +1,4 @@
-"""The windows and tabs AiTerm opens in iTerm2, and the user's tabs that join them."""
+"""The windows and tabs Shellforge opens in iTerm2, and the user's tabs that join them."""
 from __future__ import annotations
 import asyncio
 import logging
@@ -106,7 +106,7 @@ class WindowManager:
         self._self_created.add(sid)
         async with self._background_lock:
             if self.match_iterm_background:
-                await self._after_create("matching the background", self.iterm.set_aiterm_background([sid], True))
+                await self._after_create("matching the background", self.iterm.set_shellforge_background([sid], True))
         if cmd:
             # Typed while the shell may still be starting, where a one-key prompt can take the first
             # key: Oh My Zsh's "update? [Y/n]" once ran `laude`. A leading space is the key to lose
@@ -133,7 +133,7 @@ class WindowManager:
             # window even if the regular two-second poll has not observed it yet.
             await guard(self.tick())
             session_ids = [s.session_id for s in self.registry.all() if s.task_id or s.project_id]
-            await guard(self.iterm.set_aiterm_background(session_ids, enabled))
+            await guard(self.iterm.set_shellforge_background(session_ids, enabled))
             self.match_iterm_background = enabled
         return {}
 
@@ -153,8 +153,8 @@ class WindowManager:
         return anchor.agent_cwd or anchor.cwd or None
 
     def _window_tags(self, window_id: str) -> dict[str, str]:
-        """The AiTerm tags a window is known by: `aiterm_task` for a task
-        window, `aiterm_project` for one opened by window.createTerminal. Empty
+        """The Shellforge tags a window is known by: `shellforge_task` for a task
+        window, `shellforge_project` for one opened by window.createTerminal. Empty
         means the window is not ours."""
         tags: dict[str, str] = {}
         if task := self.registry.task_for_window(window_id):
@@ -164,7 +164,7 @@ class WindowManager:
         return tags
 
     async def set_titles(self, p: Any) -> dict[str, Any]:
-        """Apply branch titles only to sessions belonging to an AiTerm-managed window.
+        """Apply branch titles only to sessions belonging to an Shellforge-managed window.
 
         The app resolves git branches because it already owns the same cache used by the sidebar.
         A session can disappear between that resolution and this request, so stale ids are skipped
@@ -227,16 +227,16 @@ class WindowManager:
                 # racing it.
                 await self.tick()
                 return
-            # Spec 2.4 applies to every window AiTerm owns, whether it is a
-            # task window (`aiterm_task`) or a terminal window
-            # (`aiterm_project`): Cmd+T inherits neither the tag nor the cwd.
+            # Spec 2.4 applies to every window Shellforge owns, whether it is a
+            # task window (`shellforge_task`) or a terminal window
+            # (`shellforge_project`): Cmd+T inherits neither the tag nor the cwd.
             tags = {k: v for k, v in self._window_tags(new.window_id).items() if not new.user_vars.get(k)}
             if tags:
                 cwd = self._anchor_cwd(new.window_id, exclude=session_id)
                 await self.iterm.set_session_tags(session_id, tags)
                 async with self._background_lock:
                     if self.match_iterm_background:
-                        await self.iterm.set_aiterm_background([session_id], True)
+                        await self.iterm.set_shellforge_background([session_id], True)
                 if cwd:
                     await self.iterm.send_text(session_id, f" cd {shlex.quote(cwd)} && clear\n")
             await self.tick()

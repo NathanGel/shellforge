@@ -81,7 +81,7 @@ def test_a_stop_binds_the_thread_to_the_process_it_came_from(world):
 
 def test_grok_resolves_directly_by_iterm_session(tmp_path):
     reg = SessionRegistry()
-    reg.apply_snapshot([RawSession("tab-1", "w1", 0, "grok", 41, "", "/wt", {"aiterm_task": "t1"})])
+    reg.apply_snapshot([RawSession("tab-1", "w1", 0, "grok", 41, "", "/wt", {"shellforge_task": "t1"})])
     resolver = SessionResolver(reg, ClaudeSessionFiles(tmp_path))
     # $ITERM_SESSION_ID carries a pane prefix; iTerm2's API reports only the suffix.
     assert resolver.resolve_directly("grok", "g-1", "w0t0p0:tab-1") == "tab-1"

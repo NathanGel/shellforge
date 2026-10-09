@@ -324,7 +324,7 @@ async def test_a_batch_of_titles_fetches_the_app_once(monkeypatch):
 
     assert applied == ["s0", "s1", "s2"]
     assert app.fetches == 1
-    assert app.sessions["s1"].tab.variables == [("user.aiterm_title", "b")]
+    assert app.sessions["s1"].tab.variables == [("user.shellforge_title", "b")]
 
 
 class _Handle:
@@ -385,14 +385,14 @@ async def test_commands_on_a_known_window_or_session_do_not_fetch_the_hierarchy_
     await bridge.set_frame("w1", Frame(1, 2, 3, 4))
     await bridge.set_frame("w2", Frame(1, 2, 3, 4))
     await bridge.send_text("s1", "ls\n")
-    await bridge.set_session_tags("s1", {"aiterm_task": "t"})
-    await bridge.set_aiterm_background(["s1"], False)
+    await bridge.set_session_tags("s1", {"shellforge_task": "t"})
+    await bridge.set_shellforge_background(["s1"], False)
     await bridge.close_window("w2")
 
     assert tree.fetches == 1
     assert [call for call, _ in tree.windows["w1"].calls] == ["activate", "frame"]
     assert tree.windows["w2"].calls[-1] == ("close", True)
-    assert tree.sessions["s1"].calls == [("text", "ls\n"), ("variable", ("user.aiterm_task", "t"))]
+    assert tree.sessions["s1"].calls == [("text", "ls\n"), ("variable", ("user.shellforge_task", "t"))]
 
 
 async def test_a_window_or_session_the_cached_hierarchy_lacks_is_looked_for_again_once(monkeypatch):
@@ -460,7 +460,7 @@ async def test_a_background_for_several_missing_sessions_refreshes_once(monkeypa
     tree = _Tree(sessions=["s1"])
     bridge = await _tree_bridge(monkeypatch, tree)
 
-    await bridge.set_aiterm_background(["gone1", "s1", "gone2", "gone3"], False)
+    await bridge.set_shellforge_background(["gone1", "s1", "gone2", "gone3"], False)
 
     assert tree.fetches == 2
 
@@ -487,7 +487,7 @@ async def test_a_new_connection_does_not_reuse_the_old_hierarchy(monkeypatch):
     assert tree.fetches == 2
 
 
-async def test_aiterm_background_is_session_scoped_and_restorable(monkeypatch):
+async def test_shellforge_background_is_session_scoped_and_restorable(monkeypatch):
     bridge = ItermBridge()
     bridge._conn = object()
 
@@ -509,14 +509,14 @@ async def test_aiterm_background_is_session_scoped_and_restorable(monkeypatch):
     session = FakeSession()
     app = _CountingApp({"s1": session, "s2": FakeSession()})
     monkeypatch.setattr(iterm2, "async_get_app", app.get)
-    await bridge.set_aiterm_background(["s1", "s2", "gone"], True)
+    await bridge.set_shellforge_background(["s1", "s2", "gone"], True)
     assert app.fetches == 1
     color = json.loads(session.changes[0]["Background Color"])
     assert color["Red Component"] == color["Green Component"] == color["Blue Component"] == 30 / 255
     assert "Background Color (Light)" in session.changes[0]
     assert "Background Color (Dark)" in session.changes[0]
 
-    await bridge.set_aiterm_background(["s1"], False)
+    await bridge.set_shellforge_background(["s1"], False)
     assert session.restored is session.original_profile
 
 
@@ -540,8 +540,8 @@ async def test_session_title_is_a_literal_tab_override_not_a_session_name(monkey
     await bridge.set_session_titles({"s1": "feat/title-(safe)"})
 
     tab = app.sessions["s1"].tab
-    assert tab.variables == [("user.aiterm_title", "feat/title-(safe)")]
-    assert tab.formats == [r"\(user.aiterm_title)"]
+    assert tab.variables == [("user.shellforge_title", "feat/title-(safe)")]
+    assert tab.formats == [r"\(user.shellforge_title)"]
 
 
 async def test_focus_notification_reports_a_window_that_becomes_current():
@@ -968,7 +968,7 @@ def _variables_bridge(monkeypatch, windows: dict[str, list[list[str]]], closed: 
         reply.variable_response.status = iterm2.api_pb2.VariableResponse.Status.Value(status)
         if status == "OK":
             values = {"commandLine": "-zsh", "jobPid": 123, "autoName": session_id, "path": "/x",
-                      "user.aiterm_task": "t1", "user.aiterm_project": None}
+                      "user.shellforge_task": "t1", "user.shellforge_project": None}
             answered = [name for name in gets if not (unset_omitted and len(gets) > 1 and values[name] is None)]
             reply.variable_response.values.extend(json.dumps(values[name]) for name in answered)
         return reply
@@ -1014,7 +1014,7 @@ async def test_a_session_closed_mid_snapshot_is_left_out_not_fatal(monkeypatch):
     bridge, _ = _variables_bridge(monkeypatch, {"w1": [["s1"], ["s2"], ["s3"]]}, closed={"s2"})
     out = await bridge.snapshot()
     assert [s.session_id for s in out] == ["s1", "s3"]
-    assert out[0].user_vars == {"aiterm_task": "t1"} and out[0].job_pid == 123 and out[0].title == "s1"
+    assert out[0].user_vars == {"shellforge_task": "t1"} and out[0].job_pid == 123 and out[0].title == "s1"
 
 
 async def test_a_snapshot_that_can_read_no_session_fails_rather_than_reporting_none(monkeypatch):
@@ -1036,7 +1036,7 @@ async def test_session_info_reads_one_session_where_it_is(monkeypatch):
     info = await bridge.session_info("s3")
 
     assert (info.session_id, info.window_id, info.tab_index, info.active) == ("s3", "w2", 0, False)
-    assert info.user_vars == {"aiterm_task": "t1"} and info.title == "s3"
+    assert info.user_vars == {"shellforge_task": "t1"} and info.title == "s3"
     assert requests == [("s3", list(VARIABLES))], "only that session is read"
     assert await bridge.session_info("gone") is None
     assert await bridge.session_info("s4") is None, "closed between the hierarchy and its read"
@@ -1048,7 +1048,7 @@ async def test_an_iterm_that_refuses_a_batched_read_is_read_a_name_at_a_time(mon
 
     out = await bridge.snapshot()
     assert [s.session_id for s in out] == ["s1", "s2"]
-    assert out[0].user_vars == {"aiterm_task": "t1"} and out[0].job_pid == 123 and out[0].title == "s1"
+    assert out[0].user_vars == {"shellforge_task": "t1"} and out[0].job_pid == 123 and out[0].title == "s1"
 
     requests.clear()
     assert (await bridge.session_info("s2")).title == "s2"
@@ -1062,7 +1062,7 @@ async def test_a_batched_answer_short_of_a_value_is_read_a_name_at_a_time(monkey
 
     out = await bridge.snapshot()
     assert [s.session_id for s in out] == ["s1", "s2"]
-    assert out[0].user_vars == {"aiterm_task": "t1"} and out[0].job_pid == 123 and out[0].title == "s1"
+    assert out[0].user_vars == {"shellforge_task": "t1"} and out[0].job_pid == 123 and out[0].title == "s1"
     assert not bridge._batched_reads
 
     requests.clear()
@@ -1230,10 +1230,10 @@ async def test_a_window_made_while_a_refresh_is_in_flight_is_still_found(creatin
     ticks = _a_tick_refreshes_meanwhile(bridge, app)
     frame = iterm_bridge.Frame(0, 0, 10, 10)
 
-    assert await _once_the_tick_ends(app, ticks, bridge.create_window("/wt", "x", {"aiterm_task": "t1"}, frame)) == ("w1", "s2")
+    assert await _once_the_tick_ends(app, ticks, bridge.create_window("/wt", "x", {"shellforge_task": "t1"}, frame)) == ("w1", "s2")
     assert len(app.created) == 1
     window = app.live["w1"]
-    assert window.current_tab.current_session.variables == {"user.aiterm_task": "t1"}
+    assert window.current_tab.current_session.variables == {"user.shellforge_task": "t1"}
     assert window.frames and window.activated
 
 
@@ -1242,10 +1242,10 @@ async def test_a_tab_made_while_a_refresh_is_in_flight_is_still_found(creating_a
     app.add_window("w0").tabs.append(_CreatingApp.Tab(_CreatingApp.Session("s0")))
     ticks = _a_tick_refreshes_meanwhile(bridge, app)
 
-    assert await _once_the_tick_ends(app, ticks, bridge.create_tab("w0", {"aiterm_task": "t1"})) == "s1"
+    assert await _once_the_tick_ends(app, ticks, bridge.create_tab("w0", {"shellforge_task": "t1"})) == "s1"
     assert [window for window, _profile in app.created] == ["w0"]
     assert app.created[0][1]["Working Directory"] == json.dumps("/first"), "no anchor given: the window's first tab's directory"
-    assert app.live["w0"].current_tab.current_session.variables == {"user.aiterm_task": "t1"}
+    assert app.live["w0"].current_tab.current_session.variables == {"user.shellforge_task": "t1"}
 
 
 async def test_a_window_is_returned_even_if_setting_it_up_times_out(creating_app, monkeypatch):
@@ -1253,10 +1253,10 @@ async def test_a_window_is_returned_even_if_setting_it_up_times_out(creating_app
     monkeypatch.setattr(iterm_bridge, "ITERM_CALL_SECONDS", 0.05)
     bridge, _app = creating_app(hangs=True)
     frame = iterm_bridge.Frame(0, 0, 10, 10)
-    assert await asyncio.wait_for(bridge.create_window("/wt", "x", {"aiterm_task": "t1"}, frame), 2) == ("w1", "s2")
+    assert await asyncio.wait_for(bridge.create_window("/wt", "x", {"shellforge_task": "t1"}, frame), 2) == ("w1", "s2")
 
 
 async def test_a_tab_is_returned_even_if_tagging_it_fails(creating_app):
     bridge, app = creating_app(fails=True)
     app.add_window("w0")
-    assert await bridge.create_tab("w0", {"aiterm_task": "t1"}, cwd="/wt") == "s1"
+    assert await bridge.create_tab("w0", {"shellforge_task": "t1"}, cwd="/wt") == "s1"

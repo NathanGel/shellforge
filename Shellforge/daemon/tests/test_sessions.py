@@ -8,7 +8,7 @@ def raw(sid="s1", win="w1", tab=0, cmd="-zsh", pid=100, title="zsh", cwd="/home"
 
 def test_first_snapshot_opens_sessions_with_agent_and_tag():
     reg = SessionRegistry()
-    assert reg.apply_snapshot([raw(cmd="claude", aiterm_task="t1")]).opened == ["s1"]
+    assert reg.apply_snapshot([raw(cmd="claude", shellforge_task="t1")]).opened == ["s1"]
     assert reg.get("s1").to_json() == ({
         "sessionId": "s1", "windowId": "w1", "tabIndex": 0, "taskId": "t1", "projectId": None,
         "agent": "claude", "model": None, "reasoning": None, "state": "idle", "title": "zsh", "cwd": "/home",
@@ -17,8 +17,8 @@ def test_first_snapshot_opens_sessions_with_agent_and_tag():
 
 def test_untagged_session_in_tagged_window_inherits_task():
     reg = SessionRegistry()
-    reg.apply_snapshot([raw(sid="s1", aiterm_task="t1")])
-    assert reg.apply_snapshot([raw(sid="s1", aiterm_task="t1"), raw(sid="s2", tab=1)]).opened == ["s2"]
+    reg.apply_snapshot([raw(sid="s1", shellforge_task="t1")])
+    assert reg.apply_snapshot([raw(sid="s1", shellforge_task="t1"), raw(sid="s2", tab=1)]).opened == ["s2"]
     assert reg.get("s2").task_id == "t1"
 
 
@@ -36,7 +36,7 @@ def test_changed_and_closed_events_and_state_preserved():
 
 def test_lookups():
     reg = SessionRegistry()
-    reg.apply_snapshot([raw(sid="a", cmd="claude", pid=1, cwd="/x", aiterm_task="t1"),
+    reg.apply_snapshot([raw(sid="a", cmd="claude", pid=1, cwd="/x", shellforge_task="t1"),
                         raw(sid="b", win="w2", cmd="claude", pid=2, cwd="/x")])
     assert reg.by_job_pid(2).session_id == "b"
     assert [s.session_id for s in reg.by_cwd_and_agent("/x", "claude")] == ["a", "b"]
@@ -62,7 +62,7 @@ def test_most_recent_uses_first_seen_order():
 def test_window_tags_are_evicted_when_window_closes():
     reg = SessionRegistry()
     # Create sessions with task and project tags in different windows
-    reg.apply_snapshot([raw(sid="s1", win="w1", aiterm_task="t1"), raw(sid="s2", win="w3", aiterm_project="p1")])
+    reg.apply_snapshot([raw(sid="s1", win="w1", shellforge_task="t1"), raw(sid="s2", win="w3", shellforge_project="p1")])
     assert reg.task_for_window("w1") == "t1"
     assert reg._window_project.get("w3") == "p1"
     # Close all windows - both tag dicts should be cleaned up
@@ -73,7 +73,7 @@ def test_window_tags_are_evicted_when_window_closes():
 
 def test_project_for_window_answers_alongside_task_for_window():
     reg = SessionRegistry()
-    reg.apply_snapshot([raw(sid="s1", win="w1", aiterm_task="t1"), raw(sid="s2", win="w3", aiterm_project="p1")])
+    reg.apply_snapshot([raw(sid="s1", win="w1", shellforge_task="t1"), raw(sid="s2", win="w3", shellforge_project="p1")])
     assert reg.project_for_window("w3") == "p1"
     assert reg.project_for_window("w1") is None
     reg.apply_snapshot([])

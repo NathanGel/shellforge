@@ -1,13 +1,13 @@
-// AiTerm PI extension schema: 5
+// Shellforge PI extension schema: 5
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-// The port is AiTermPaths.hookPort, which PiDriver writes in place of the placeholder.
-const endpoint = "http://127.0.0.1:__AITERM_HOOK_PORT__/hook/pi";
+// The port is ShellforgePaths.hookPort, which PiDriver writes in place of the placeholder.
+const endpoint = "http://127.0.0.1:__SHELLFORGE_HOOK_PORT__/hook/pi";
 
 // PI may wait on what a handler returns, and reporting must never hold PI up: a daemon that accepts
 // the connection and stalls would cost every turn the request's whole timeout. Handlers hand back
 // nothing, except under the driver test, which has to see the acknowledgement before PI exits.
-const settle = (posted: Promise<void>) => process.env.AITERM_INTEGRATION_TEST ? posted : undefined;
+const settle = (posted: Promise<void>) => process.env.SHELLFORGE_INTEGRATION_TEST ? posted : undefined;
 
 type Usage = { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
 type Tally = { input: number; cached: number; output: number };
@@ -18,7 +18,7 @@ type Entry = { type?: string; usage?: Usage; message?: { role?: string; usage?: 
 // session the user drives -- the only one that reports -- adds them all to its own. On globalThis
 // rather than in this module, which each activation may load afresh.
 type Ledger = { children: Map<string, Tally>; changed?: () => void };
-const LEDGER = Symbol.for("aiterm.pi.subagent-tallies");
+const LEDGER = Symbol.for("shellforge.pi.subagent-tallies");
 const ledger = ((globalThis as Record<symbol, unknown>)[LEDGER] ??= { children: new Map() }) as Ledger;
 
 // PI's `usage.input` leaves the cache out; the tally counts it in.
@@ -68,7 +68,7 @@ async function report(event: string, ctx: ExtensionContext, overrides: Record<st
 		// this tab's ITERM_SESSION_ID. A child has no UI; only the session the user drives reports.
 		if (!ctx.hasUI) return;
 		const usage = ctx.getContextUsage();
-		const testId = process.env.AITERM_INTEGRATION_TEST;
+		const testId = process.env.SHELLFORGE_INTEGRATION_TEST;
 		const body = {
 			hook_event_name: event,
 			session_id: ctx.sessionManager.getSessionId(),
@@ -77,15 +77,15 @@ async function report(event: string, ctx: ExtensionContext, overrides: Record<st
 			reasoning: ctx.thinkingLevel ?? null,
 			context_percent: usage?.percent ?? null,
 			tokens: sessionTally(ctx),
-			...(testId ? { _aiterm_test_id: testId } : {}),
+			...(testId ? { _shellforge_test_id: testId } : {}),
 			...overrides,
 		};
 		const response = await fetch(endpoint, {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
-				"X-AiTerm-Hook": "1",
-				...(process.env.ITERM_SESSION_ID ? { "X-AiTerm-iTerm-Session": process.env.ITERM_SESSION_ID } : {}),
+				"X-Shellforge-Hook": "1",
+				...(process.env.ITERM_SESSION_ID ? { "X-Shellforge-iTerm-Session": process.env.ITERM_SESSION_ID } : {}),
 			},
 			body: JSON.stringify(body),
 			signal: AbortSignal.timeout(1500),
@@ -93,7 +93,7 @@ async function report(event: string, ctx: ExtensionContext, overrides: Record<st
 		if (testId) {
 			const acknowledgement = await response.json() as { ok?: boolean; testId?: string };
 			if (acknowledgement.ok && acknowledgement.testId === testId) {
-				process.stderr.write(`AITERM_INTEGRATION_TEST_OK=${testId}\n`);
+				process.stderr.write(`SHELLFORGE_INTEGRATION_TEST_OK=${testId}\n`);
 			}
 		}
 	} catch {

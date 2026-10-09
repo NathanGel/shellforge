@@ -106,7 +106,7 @@ class FakeIterm:
         self.titles.update({sid: titles[sid] for sid in applied})
         return applied
 
-    async def set_aiterm_background(self, session_ids: list[str], enabled: bool) -> None:
+    async def set_shellforge_background(self, session_ids: list[str], enabled: bool) -> None:
         self.background_requests.append((list(session_ids), enabled))
 
     async def snapshot(self) -> list[RawSession]:

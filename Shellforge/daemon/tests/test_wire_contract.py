@@ -7,7 +7,7 @@ event or a method that the other side was not changed for fails one suite or the
 The fixtures are checked in, and this test fails while they differ from what the daemon emits. To
 regenerate them after a deliberate change to the wire, run (from daemon/)
 
-    AITERM_UPDATE_WIRE_FIXTURES=1 .venv/bin/pytest tests/test_wire_contract.py
+    SHELLFORGE_UPDATE_WIRE_FIXTURES=1 .venv/bin/pytest tests/test_wire_contract.py
 
 then run the app's WireContractTests against them before committing both.
 
@@ -27,7 +27,7 @@ from shellforged.models import AgentKind, State
 from tests.fake_iterm import FakeIterm
 
 WIRE = Path(__file__).parent / "wire"
-UPDATE = "AITERM_UPDATE_WIRE_FIXTURES"
+UPDATE = "SHELLFORGE_UPDATE_WIRE_FIXTURES"
 FRAME = {"x": 324, "y": 36, "w": 1104, "h": 852}
 TASK_ID = "2F9C4B7E-5A1D-4C3B-9E8F-0A1B2C3D4E5F"
 PROJECT_ID = "7D6E5F4A-3B2C-4D1E-8F9A-0B1C2D3E4F5A"
@@ -143,7 +143,7 @@ async def emitted(make_service, monkeypatch) -> dict[str, str]:
         await svc.hook_router.handle_hook("/hook/pi", {
             "hook_event_name": "agent_start", "session_id": "pi-wire", "cwd": WORKTREE + "/app", "model": "claude-opus-5",
             "reasoning": "high", "context_percent": 42,
-            "tokens": {"input": 936018, "cached": 935988, "output": 5625}, "_aiterm_iterm_session_id": pi})
+            "tokens": {"input": 936018, "cached": 935988, "output": 5625}, "_shellforge_iterm_session_id": pi})
         events[protocol.SESSION_CHANGED] = await app.event(protocol.SESSION_CHANGED, mark)
 
         mark = app.mark()

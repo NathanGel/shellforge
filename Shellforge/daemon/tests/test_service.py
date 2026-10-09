@@ -67,7 +67,7 @@ async def post_hook(port, path, body):
     (unlike svc.hook_router.handle_hook(...), which every other test calls in-process)."""
     r, w = await asyncio.open_connection("127.0.0.1", port)
     data = json.dumps(body).encode()
-    w.write(f"POST {path} HTTP/1.1\r\nHost: x\r\nX-AiTerm-Hook: 1\r\n"
+    w.write(f"POST {path} HTTP/1.1\r\nHost: x\r\nX-Shellforge-Hook: 1\r\n"
             f"Content-Type: application/json\r\nContent-Length: {len(data)}\r\n\r\n".encode() + data)
     await w.drain()
     status_line = await asyncio.wait_for(r.readline(), 2)
@@ -93,7 +93,7 @@ async def test_user_tab_is_tagged_and_redirected(stack):
     wid = (await call(r, w, "window.createTask", {"taskId": "t1", "cwd": "/wt", "title": "x", "frame": FRAME}))["result"]["windowId"]
     sid = await it.user_opens_tab(wid, cwd="/Users/me")
     assert (sid, " cd /wt && clear\n") in it.sent
-    assert it.sessions[sid].user_vars == {"aiterm_task": "t1"}
+    assert it.sessions[sid].user_vars == {"shellforge_task": "t1"}
     await svc.tick()
     assert [s["taskId"] for s in (await call(r, w, "sessions.list", id_=3))["result"]] == ["t1", "t1"]
 
@@ -120,7 +120,7 @@ async def test_ticks_queued_behind_one_are_served_by_a_single_next_tick(stack):
     first = asyncio.create_task(svc.tick())
     await wait_until(lambda: snapshots[0] == 1)
     # A change the running tick has already missed, so the queued ones still need a tick of their own.
-    wid, sid = await it.create_window("/wt", "x", {"aiterm_task": "t1"}, Frame(0, 0, 10, 10))
+    wid, sid = await it.create_window("/wt", "x", {"shellforge_task": "t1"}, Frame(0, 0, 10, 10))
     queued = [asyncio.create_task(svc.tick()) for _ in range(3)]
     await asyncio.sleep(0)
     gate.set()
@@ -155,7 +155,7 @@ async def test_a_new_tab_reads_iterm2_once_for_itself_and_once_for_its_tick(stac
 
     it.snapshot = counted
     sid = await it.user_opens_tab(wid)
-    assert it.sessions[sid].user_vars == {"aiterm_task": "t1"}
+    assert it.sessions[sid].user_vars == {"shellforge_task": "t1"}
     assert snapshots == 1, "the new session is looked up on its own, not through a second snapshot"
 
 
@@ -233,7 +233,7 @@ async def test_an_agent_command_iterm_would_not_take_still_returns_the_window(st
     assert "sending the agent command after creating a window or tab failed" in caplog.text
 
 
-async def test_interface_background_only_changes_aiterm_sessions_and_future_tabs(stack):
+async def test_interface_background_only_changes_shellforge_sessions_and_future_tabs(stack):
     svc, it, files, r, w = stack
     wid = (await call(r, w, "window.createTask", {"taskId": "t1", "cwd": "/wt", "title": "x", "frame": FRAME}))["result"]["windowId"]
     sid = it.windows[wid]["sessions"][0]
@@ -301,7 +301,7 @@ async def test_stop_and_cleanup_commands_never_schedule_task_deletion(stack, tmp
         events.append(name)
     svc.publisher.broadcast = record
     base = {"session_id": "agent-session", "cwd": str(worktree),
-            "_aiterm_iterm_session_id": sid}
+            "_shellforge_iterm_session_id": sid}
     for command in ['git ' + 'worktree remove "$WORKTREE_PATH"',
                     'echo git ' + 'worktree remove; git status',
                     'git ' + 'branch -d feat/done']:
@@ -325,7 +325,7 @@ async def test_tick_reads_codex_context_after_a_hook_identifies_the_thread(stack
     await svc.tick()
     await svc.hook_router.handle_hook("/hook/codex", {
         "hook_event_name": "SessionStart", "session_id": "thread-context", "cwd": "/wt",
-        "model": "gpt-5.6", "_aiterm_iterm_session_id": sid,
+        "model": "gpt-5.6", "_shellforge_iterm_session_id": sid,
     })
 
     rollout = svc.codex_files.root / "2026" / "09" / "22" / "rollout-2026-09-22T09-26-25-thread-context.jsonl"
@@ -366,7 +366,7 @@ async def test_tick_tallies_a_claude_conversation_and_its_subagents(stack, tmp_p
     child.write_text(json.dumps({"type": "assistant", "message": {"id": "a1", "model": "claude-haiku-5", "usage": {
         "input_tokens": 50, "output_tokens": 3}}}) + "\n")
     await svc.hook_router.handle_hook("/statusline", {"session_id": "c1", "cwd": "/wt", "transcript_path": str(transcript),
-                                                      "_aiterm_iterm_session_id": sid})
+                                                      "_shellforge_iterm_session_id": sid})
 
     await svc.tick()
 
@@ -381,7 +381,7 @@ async def test_a_codex_tab_that_moves_to_a_thread_without_totals_drops_the_old_t
     await it.user_runs(sid, "codex", job_pid=112, title="Codex")
     await svc.tick()
     await svc.hook_router.handle_hook("/hook/codex", {
-        "hook_event_name": "SessionStart", "session_id": "old-thread", "cwd": "/wt", "_aiterm_iterm_session_id": sid})
+        "hook_event_name": "SessionStart", "session_id": "old-thread", "cwd": "/wt", "_shellforge_iterm_session_id": sid})
     rollout = svc.codex_files.root / "2026" / "09" / "22" / "rollout-2026-09-22T09-26-25-old-thread.jsonl"
     rollout.parent.mkdir(parents=True)
     rollout.write_text("\n".join(json.dumps(record) for record in [
@@ -394,7 +394,7 @@ async def test_a_codex_tab_that_moves_to_a_thread_without_totals_drops_the_old_t
 
     # /new in the same process: the new thread has made no call yet, so it has no totals at all.
     await svc.hook_router.handle_hook("/hook/codex", {
-        "hook_event_name": "SessionStart", "session_id": "new-thread", "cwd": "/wt", "_aiterm_iterm_session_id": sid})
+        "hook_event_name": "SessionStart", "session_id": "new-thread", "cwd": "/wt", "_shellforge_iterm_session_id": sid})
     await svc.tick()
 
     assert svc.resolver.codex_thread(sid) == "new-thread"
@@ -409,7 +409,7 @@ async def test_a_codex_tally_that_raises_still_lets_the_context_through(stack, m
     await it.user_runs(sid, "codex", job_pid=113, title="Codex")
     await svc.tick()
     await svc.hook_router.handle_hook("/hook/codex", {
-        "hook_event_name": "SessionStart", "session_id": "thread-x", "cwd": "/wt", "_aiterm_iterm_session_id": sid})
+        "hook_event_name": "SessionStart", "session_id": "thread-x", "cwd": "/wt", "_shellforge_iterm_session_id": sid})
     rollout = svc.codex_files.root / "2026" / "09" / "22" / "rollout-2026-09-22T09-26-25-thread-x.jsonl"
     rollout.parent.mkdir(parents=True)
     rollout.write_text(json.dumps({"type": "event_msg", "payload": {"type": "token_count", "info": {
@@ -434,7 +434,7 @@ async def test_a_claude_tally_read_before_a_clear_is_not_written_onto_the_new_co
     old.write_text(json.dumps({"type": "assistant", "message": {"id": "m1", "model": "claude-opus-5", "usage": {
         "input_tokens": 40, "output_tokens": 4}}}) + "\n")
     await svc.hook_router.handle_hook("/statusline", {"session_id": "old", "cwd": "/wt", "transcript_path": str(old),
-                                                      "_aiterm_iterm_session_id": sid})
+                                                      "_shellforge_iterm_session_id": sid})
     real_off_loop = svc._off_loop
 
     async def clear_during_the_read(name, work, nothing):
@@ -462,7 +462,7 @@ async def test_new_codex_process_cannot_reuse_the_previous_threads_context(stack
     await svc.tick()
     await svc.hook_router.handle_hook("/hook/codex", {
         "hook_event_name": "SessionStart", "session_id": "old-thread", "cwd": "/wt",
-        "model": "gpt-5.6", "_aiterm_iterm_session_id": sid,
+        "model": "gpt-5.6", "_shellforge_iterm_session_id": sid,
     })
     rollout = svc.codex_files.root / "2026" / "09" / "22" / "rollout-old-thread.jsonl"
     rollout.parent.mkdir(parents=True)
@@ -475,7 +475,7 @@ async def test_new_codex_process_cannot_reuse_the_previous_threads_context(stack
     assert svc.registry.get(sid).context_percent == 50
     await svc.hook_router.handle_hook("/hook/codex", {
         "hook_event_name": "Stop", "session_id": "old-thread", "cwd": "/wt",
-        "_aiterm_iterm_session_id": sid,
+        "_shellforge_iterm_session_id": sid,
     })
 
     # The shell transition can happen entirely between daemon polls. The new process id is
@@ -498,7 +498,7 @@ async def test_new_codex_hook_before_snapshot_binds_to_the_replacement_process(s
     await svc.tick()
     await svc.hook_router.handle_hook("/hook/codex", {
         "hook_event_name": "UserPromptSubmit", "session_id": "old-thread", "cwd": "/wt",
-        "_aiterm_iterm_session_id": sid,
+        "_shellforge_iterm_session_id": sid,
     })
     await svc.tick()
 
@@ -507,7 +507,7 @@ async def test_new_codex_hook_before_snapshot_binds_to_the_replacement_process(s
     await it.user_runs(sid, "codex", job_pid=111, title="Codex")
     await svc.hook_router.handle_hook("/hook/codex", {
         "hook_event_name": "UserPromptSubmit", "session_id": "new-thread", "cwd": "/wt",
-        "_aiterm_iterm_session_id": sid,
+        "_shellforge_iterm_session_id": sid,
     })
     await svc.tick()
 
@@ -662,7 +662,7 @@ async def test_user_tab_in_a_terminal_window_is_tagged_and_redirected(stack):
     wid = (await call(r, w, "window.createTerminal", {"projectId": "p1", "cwd": "/repo", "frame": FRAME}))["result"]["windowId"]
     sid = await it.user_opens_tab(wid, cwd="/Users/me")
     assert (sid, " cd /repo && clear\n") in it.sent
-    assert it.sessions[sid].user_vars == {"aiterm_project": "p1"}
+    assert it.sessions[sid].user_vars == {"shellforge_project": "p1"}
     await svc.tick()
     assert [s["projectId"] for s in (await call(r, w, "sessions.list", id_=3))["result"]] == ["p1", "p1"]
 
@@ -671,7 +671,7 @@ async def test_daemon_created_tab_in_a_terminal_window_carries_the_project_tag(s
     svc, it, files, r, w = stack
     wid = (await call(r, w, "window.createTerminal", {"projectId": "p1", "cwd": "/repo", "frame": FRAME}))["result"]["windowId"]
     sid = (await call(r, w, "tab.create", {"windowId": wid}, id_=2))["result"]["sessionId"]
-    assert it.sessions[sid].user_vars == {"aiterm_project": "p1"}
+    assert it.sessions[sid].user_vars == {"shellforge_project": "p1"}
 
 
 async def test_create_terminal_titles_the_window_with_the_given_name(stack):
@@ -681,7 +681,7 @@ async def test_create_terminal_titles_the_window_with_the_given_name(stack):
     assert it.sessions[it.windows[wid]["sessions"][0]].title == "Logs"
 
 
-async def test_branch_titles_only_change_aiterm_managed_tabs(stack):
+async def test_branch_titles_only_change_shellforge_managed_tabs(stack):
     svc, it, files, r, w = stack
     wid = (await call(r, w, "window.createTask", {"taskId": "t1", "cwd": "/wt", "title": "old", "frame": FRAME}))["result"]["windowId"]
     managed = it.windows[wid]["sessions"][0]
@@ -740,7 +740,7 @@ async def test_daemon_created_tab_is_not_redirected(stack):
 
 async def test_tab_create_opens_in_the_directory_it_is_given(stack):
     # A review opened in its task's window must start in the task's worktree: its command may read
-    # its prompt from `.aiterm/first-prompt.md` there. The active tab can be anywhere by then.
+    # its prompt from `.shellforge/first-prompt.md` there. The active tab can be anywhere by then.
     svc, it, files, r, w = stack
     wid = (await call(r, w, "window.createTask", {"taskId": "t1", "cwd": "/wt", "title": "x", "frame": FRAME}))["result"]["windowId"]
     first = it.windows[wid]["sessions"][0]
@@ -748,7 +748,7 @@ async def test_tab_create_opens_in_the_directory_it_is_given(stack):
     await svc.tick()
     sid = (await call(r, w, "tab.create", {"windowId": wid, "cwd": "/wt", "agentCommand": "claude"}, id_=2))["result"]["sessionId"]
     assert it.sessions[sid].cwd == "/wt"
-    assert it.sessions[sid].user_vars == {"aiterm_task": "t1"}
+    assert it.sessions[sid].user_vars == {"shellforge_task": "t1"}
     assert (sid, " claude\n") in it.sent
 
 
@@ -790,7 +790,7 @@ async def test_daemon_created_tab_is_not_redirected_when_iterm_announces_it_by_d
     sid = (await call(r, w, "tab.create", {"windowId": wid, "agentCommand": "claude"}, id_=2))["result"]["sessionId"]
     await it.settle()
     assert [text for (s, text) in it.sent if s == sid] == [" claude\n"]
-    assert it.sessions[sid].user_vars == {"aiterm_task": "t1"}
+    assert it.sessions[sid].user_vars == {"shellforge_task": "t1"}
 
 
 async def test_a_window_the_daemon_created_is_in_the_registry_once_its_announcement_is_handled(stack):
@@ -865,7 +865,7 @@ async def test_user_tab_in_other_window_is_redirected_during_unrelated_create(st
 
     other_sid = captured["sid"]
     assert (other_sid, " cd /wt1 && clear\n") in it.sent
-    assert it.sessions[other_sid].user_vars == {"aiterm_task": "t1"}
+    assert it.sessions[other_sid].user_vars == {"shellforge_task": "t1"}
 
 
 async def test_codex_usage_is_read_from_the_rollout_file_on_tick(tmp_path, make_service):
@@ -1066,7 +1066,7 @@ async def test_closed_sessions_leave_nothing_behind(stack):
     await svc.tick()
     for event in ("SessionStart", "SubagentStart"):
         await svc.hook_router.handle_hook("/hook/codex", {"hook_event_name": event, "session_id": "thread-z", "cwd": "/wt",
-                                              "agent_id": "child", "_aiterm_iterm_session_id": sid})
+                                              "agent_id": "child", "_shellforge_iterm_session_id": sid})
     await call(r, w, "sessions.setTitles", {"titles": [{"sessionId": sid, "title": "main"}]}, id_=2)
     await svc.tick()
 
@@ -1331,7 +1331,7 @@ async def test_background_changes_take_effect_in_the_order_they_were_sent(stack)
     svc, it, files, r, w = stack
     wid = (await call(r, w, "window.createTask", {"taskId": "t1", "cwd": "/wt", "title": "x", "frame": FRAME}))["result"]["windowId"]
     sid = it.windows[wid]["sessions"][0]
-    gate, calls = gate_first_call(it, "set_aiterm_background")
+    gate, calls = gate_first_call(it, "set_shellforge_background")
     await send(w, 2, "interface.setMatchItermBackground", {"matchItermBackground": True})
     await wait_until(lambda: calls[0] == 1)
     await send(w, 3, "interface.setMatchItermBackground", {"matchItermBackground": False})
@@ -1360,7 +1360,7 @@ async def test_a_window_created_while_the_background_is_being_turned_on_gets_it(
     """The toggle has already listed the sessions to paint when the window appears; the window
     must then read the setting the toggle is about to store, not the one it is replacing."""
     svc, it, files, r, w = stack
-    gate, calls = gate_first_call(it, "set_aiterm_background")
+    gate, calls = gate_first_call(it, "set_shellforge_background")
     await send(w, 2, "interface.setMatchItermBackground", {"matchItermBackground": True})
     await wait_until(lambda: calls[0] == 1)
     await send(w, 3, "window.createTerminal", {"projectId": "p1", "cwd": "/repo", "frame": FRAME})
@@ -1375,7 +1375,7 @@ async def test_a_window_created_while_the_background_is_being_turned_on_gets_it(
 async def test_a_tab_the_user_opens_while_the_background_is_being_turned_on_gets_it(stack):
     svc, it, files, r, w = stack
     wid = (await call(r, w, "window.createTask", {"taskId": "t1", "cwd": "/wt", "title": "x", "frame": FRAME}))["result"]["windowId"]
-    gate, calls = gate_first_call(it, "set_aiterm_background")
+    gate, calls = gate_first_call(it, "set_shellforge_background")
     await send(w, 2, "interface.setMatchItermBackground", {"matchItermBackground": True})
     await wait_until(lambda: calls[0] == 1)
     opened = asyncio.create_task(it.user_opens_tab(wid))  # its notification waits on the toggle
@@ -1456,7 +1456,7 @@ async def _grok_tab_working_in(svc, r, w, cwd):
     await svc.iterm.user_runs(sid, "grok", job_pid=41)
     await svc.tick()
     await svc.hook_router.handle_hook("/hook/grok", {"hook_event_name": "UserPromptSubmit", "sessionId": "g-1",
-                                                     "cwd": cwd, "_aiterm_iterm_session_id": sid})
+                                                     "cwd": cwd, "_shellforge_iterm_session_id": sid})
     assert svc.registry.get(sid).state == "working"
     return sid
 
@@ -1492,7 +1492,7 @@ async def test_an_agent_that_exits_leaves_the_row_idle_even_with_an_unseen_done(
     try:
         sid = await _grok_tab_working_in(svc, r, w, "/wt")
         await svc.hook_router.handle_hook("/hook/grok", {"hook_event_name": "Stop", "sessionId": "g-1", "cwd": "/wt",
-                                                         "_aiterm_iterm_session_id": sid})
+                                                         "_shellforge_iterm_session_id": sid})
         assert svc.registry.get(sid).state == "done"
         await svc.iterm.user_runs(sid, "-zsh", job_pid=42)
         await svc.tick()
@@ -1538,7 +1538,7 @@ async def test_the_first_hooks_of_an_agent_launched_after_the_last_poll_are_not_
     assert svc.registry.get(sid).agent == "shell", "the registry has not yet seen the agent start"
     assert await post_hook(svc.hooks.port, "/hook/codex", {"hook_event_name": "UserPromptSubmit", "session_id": "c1",
                                                            "cwd": "/wt", "model": "gpt-5.6",
-                                                           "_aiterm_iterm_session_id": f"w0t0p0:{sid}"}) == 200
+                                                           "_shellforge_iterm_session_id": f"w0t0p0:{sid}"}) == 200
     await wait_until(lambda: svc.registry.get(sid).state == "working")
     assert svc.registry.get(sid).agent == "codex" and svc.registry.get(sid).model == "gpt-5.6"
 
@@ -1589,7 +1589,7 @@ async def test_one_announcement_failing_does_not_cost_the_rest(stack, monkeypatc
     svc, it, files, r, w = stack
     wid = (await call(r, w, "window.createTask", {"taskId": "t1", "cwd": "/wt", "title": "x", "frame": FRAME}))["result"]["windowId"]
     other = (await call(r, w, "window.createTask", {"taskId": "t2", "cwd": "/wt2", "title": "y", "frame": FRAME}))["result"]["windowId"]
-    await it.create_tab(other, {"aiterm_task": "t2"})
+    await it.create_tab(other, {"shellforge_task": "t2"})
     await it.settle()
     await svc.tick()
     # Two sessions open in one window while two close and a whole window goes, all seen by one tick.
@@ -1628,7 +1628,7 @@ async def test_a_step_before_the_announcements_failing_does_not_cost_them(stack,
     svc, it, files, r, w = stack
     wid = (await call(r, w, "window.createTask", {"taskId": "t1", "cwd": "/wt", "title": "x", "frame": FRAME}))["result"]["windowId"]
     first = it.windows[wid]["sessions"][0]
-    moved = await it.create_tab(wid, {"aiterm_task": "t1"})
+    moved = await it.create_tab(wid, {"shellforge_task": "t1"})
     await it.settle()
     await svc.tick()
     it.notify_on_create = False
@@ -1678,7 +1678,7 @@ async def test_a_part_that_cannot_forget_a_closed_session_does_not_keep_the_othe
     await svc.tick()
     for event in ("SessionStart", "SubagentStart"):
         await svc.hook_router.handle_hook("/hook/codex", {"hook_event_name": event, "session_id": "thread-z", "cwd": "/wt",
-                                                          "agent_id": "child", "_aiterm_iterm_session_id": sid})
+                                                          "agent_id": "child", "_shellforge_iterm_session_id": sid})
     await call(r, w, "sessions.setTitles", {"titles": [{"sessionId": sid, "title": "main"}]}, id_=2)
     assert svc.status.turn(sid) and svc.resolver._pins and sid in svc.windows._applied_titles
 
@@ -1863,7 +1863,7 @@ async def test_codex_rollouts_are_read_off_the_event_loop(stack):
     await it.user_runs(sid, "codex", job_pid=402, title="Codex")
     await svc.tick()
     await svc.hook_router.handle_hook("/hook/codex", {"hook_event_name": "SessionStart", "session_id": "thread-off",
-                                                      "cwd": "/wt", "_aiterm_iterm_session_id": sid})
+                                                      "cwd": "/wt", "_shellforge_iterm_session_id": sid})
     rollout = svc.codex_files.root / "2026" / "09" / "22" / "rollout-2026-09-22T09-26-25-thread-off.jsonl"
     rollout.parent.mkdir(parents=True)
     rollout.write_text(json.dumps({"type": "event_msg", "payload": {"type": "token_count", "info": {
@@ -1898,7 +1898,7 @@ async def test_a_codex_context_read_that_timed_out_holds_back_both_reads_until_i
     await it.user_runs(sid, "codex", job_pid=403, title="Codex")
     await svc.tick()
     await svc.hook_router.handle_hook("/hook/codex", {"hook_event_name": "SessionStart", "session_id": "thread-slow",
-                                                      "cwd": "/wt", "_aiterm_iterm_session_id": sid})
+                                                      "cwd": "/wt", "_shellforge_iterm_session_id": sid})
     svc.codex_files = FirstReadHangs(files.root.parent / "codex-sessions")
     rollout = svc.codex_files.root / "2026" / "09" / "22" / "rollout-2026-09-22T09-26-25-thread-slow.jsonl"
     rollout.parent.mkdir(parents=True)

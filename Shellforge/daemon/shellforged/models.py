@@ -27,7 +27,7 @@ class Harness:
     # Another process title the CLI runs under, matched in full against the case-folded basename.
     title_pattern: re.Pattern[str] | None = None
     # How a hook post is placed on the tab it came from (SessionResolver.resolve_directly): by the tab
-    # id it carries in X-AiTerm-iTerm-Session, or -- Claude's, which travel over HTTP from the agent
+    # id it carries in X-Shellforge-iTerm-Session, or -- Claude's, which travel over HTTP from the agent
     # itself -- by the pid the agent's own session file names.
     placement: Literal["header", "pid_file"] = "header"
     # What the daemon's tick reads beside the hooks, so a missed post cannot strand a row
@@ -66,16 +66,16 @@ AGENT_TITLE_PATTERNS: tuple[tuple[re.Pattern[str], AgentKind], ...] = tuple(
     (h.title_pattern, h.agent) for h in HARNESSES if h.title_pattern)
 END_OF_TURN_SURVIVES_CWD_LOSS: frozenset[AgentKind] = frozenset(h.agent for h in HARNESSES if h.end_of_turn_survives_cwd_loss)
 USAGE_VENDORS: tuple[AgentKind, ...] = tuple(h.agent for h in HARNESSES if h.reports_usage)
-# The payload field the hook server puts X-AiTerm-iTerm-Session in, and discards from a body: a
+# The payload field the hook server puts X-Shellforge-iTerm-Session in, and discards from a body: a
 # trusted private field, which only the header may set.
-ITERM_SESSION_FIELD = "_aiterm_iterm_session_id"
+ITERM_SESSION_FIELD = "_shellforge_iterm_session_id"
 
-# The iTerm2 user variables (`user.<name>`) that make a session AiTerm's: a task window's, or a
+# The iTerm2 user variables (`user.<name>`) that make a session Shellforge's: a task window's, or a
 # terminal window's opened by window.createTerminal. A tab opened beside one inherits it.
-TASK_TAG = "aiterm_task"
-PROJECT_TAG = "aiterm_project"
-# The tab's user variable an AiTerm branch title is kept in; the tab's title interpolates it.
-TITLE_TAG = "aiterm_title"
+TASK_TAG = "shellforge_task"
+PROJECT_TAG = "shellforge_project"
+# The tab's user variable an Shellforge branch title is kept in; the tab's title interpolates it.
+TITLE_TAG = "shellforge_title"
 
 
 def classify_agent(command_line: str | None) -> AgentKind:

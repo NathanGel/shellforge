@@ -115,7 +115,7 @@ _located_bundle: str | None = None
 
 def _locate_iterm() -> str | None:
     """iTerm2's bundle, where it is usually installed, else wherever Spotlight has it. Nothing here
-    may start an AppleEvent client: macOS counts every process AiTerm starts as AiTerm, and an
+    may start an AppleEvent client: macOS counts every process Shellforge starts as Shellforge, and an
     osascript -- even a Standard Additions lookup -- checked in with a Dock icon of its own on every
     connect. `mdfind` only queries the Spotlight index."""
     global _located_bundle
@@ -274,7 +274,7 @@ class ItermPort(Protocol):
     async def send_text(self, session_id: str, text: str) -> None: ...
     async def set_session_tags(self, session_id: str, tags: dict[str, str]) -> None: ...
     async def set_session_titles(self, titles: dict[str, str]) -> list[str]: ...
-    async def set_aiterm_background(self, session_ids: list[str], enabled: bool) -> None: ...
+    async def set_shellforge_background(self, session_ids: list[str], enabled: bool) -> None: ...
     async def snapshot(self) -> list[RawSession]: ...
     async def session_info(self, session_id: str) -> RawSession | None: ...
     def on_new_session(self, cb: Callable[[str], Awaitable[None]]) -> None: ...
@@ -483,7 +483,7 @@ class ItermBridge:
         prof = iterm2.LocalWriteOnlyProfile()
         prof.set_initial_directory_mode(iterm2.InitialWorkingDirectory.INITIAL_WORKING_DIRECTORY_CUSTOM)
         prof.set_custom_directory(cwd)
-        prof.set_name(f"AiTerm · {title}")
+        prof.set_name(f"Shellforge · {title}")
         return await self._make(None, prof)
 
     async def _set_up_window(self, win: iterm2.Window, session: iterm2.Session, tags: dict[str, str], frame: Frame) -> None:
@@ -552,7 +552,7 @@ class ItermBridge:
         """Give tabs a literal title without disturbing the session's process title, and say which
         sessions got one; a session closed in the meantime is skipped.
 
-        AiTerm reads ``autoName`` to infer Codex activity, so changing the session name would
+        Shellforge reads ``autoName`` to infer Codex activity, so changing the session name would
         erase a useful signal. A tab override is independent, and iTerm2 also uses the active
         tab's title as the window title when the window has no separate override. Put the value in
         a variable first because ``async_set_title`` accepts an interpolated string.
@@ -572,11 +572,11 @@ class ItermBridge:
         return applied
 
     @_bounded
-    async def set_aiterm_background(self, session_ids: list[str], enabled: bool) -> None:
-        """Match or restore the background for the supplied AiTerm sessions.
+    async def set_shellforge_background(self, session_ids: list[str], enabled: bool) -> None:
+        """Match or restore the background for the supplied Shellforge sessions.
 
         Session-local profile changes are deliberately used here. Updating an iTerm2 profile
-        would also recolour terminals AiTerm does not own, and would persist after the preference
+        would also recolour terminals Shellforge does not own, and would persist after the preference
         was switched back off.
         """
         # Looked up in the cached hierarchy; the first session it lacks fetches a fresh one, which

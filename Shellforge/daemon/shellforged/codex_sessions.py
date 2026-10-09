@@ -167,8 +167,8 @@ class CodexSessionFiles:
     def rate_limits(self) -> tuple[dict[str, Any], int | None] | None:
         """The newest `rate_limits` block any Codex session has written, with the record's own
         timestamp (epoch seconds, None if unreadable) as the number's age. Rate limits are
-        account-wide, so the most recently written rollout is the truth whichever session AiTerm
-        happens to track -- and a Codex run outside AiTerm counts just the same. Only the few
+        account-wide, so the most recently written rollout is the truth whichever session Shellforge
+        happens to track -- and a Codex run outside Shellforge counts just the same. Only the few
         newest rollouts are consulted: a file without a single such record is read in full, and
         a hundred of them on every tick would not be."""
         newest = self._newest_rollouts(3)

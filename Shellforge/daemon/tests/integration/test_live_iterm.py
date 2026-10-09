@@ -1,12 +1,12 @@
 # daemon/tests/integration/test_live_iterm.py
-"""Runs only with AITERMD_LIVE=1 and a running iTerm2. Opens and closes one window."""
+"""Runs only with SHELLFORGED_LIVE=1 and a running iTerm2. Opens and closes one window."""
 import asyncio
 import os
 import pytest
 from shellforged.iterm_bridge import ItermBridge
 from shellforged.models import Frame
 
-pytestmark = pytest.mark.skipif(os.environ.get("AITERMD_LIVE") != "1", reason="needs live iTerm2")
+pytestmark = pytest.mark.skipif(os.environ.get("SHELLFORGED_LIVE") != "1", reason="needs live iTerm2")
 
 
 async def _wait_until(predicate, timeout=5.0, interval=0.2):
@@ -29,23 +29,23 @@ async def test_window_roundtrip(tmp_path):
     assert version
     opened = []
     bridge.on_new_session(lambda sid: _append(opened, sid))
-    wid, first_sid = await bridge.create_window(str(tmp_path), "live-test", {"aiterm_task": "live"}, Frame(324, 36, 1104, 852))
+    wid, first_sid = await bridge.create_window(str(tmp_path), "live-test", {"shellforge_task": "live"}, Frame(324, 36, 1104, 852))
     try:
         assert first_sid
 
         async def _first_session_ready():
             snap = [s for s in await bridge.snapshot() if s.window_id == wid]
-            if snap and snap[0].cwd == str(tmp_path) and snap[0].user_vars == {"aiterm_task": "live"}:
+            if snap and snap[0].cwd == str(tmp_path) and snap[0].user_vars == {"shellforge_task": "live"}:
                 return snap
             return None
 
         snap = await _wait_until(_first_session_ready)
-        assert snap and snap[0].cwd == str(tmp_path) and snap[0].user_vars == {"aiterm_task": "live"}
-        # The session has no `aiterm_project`: the batched read must answer an unset name too, or
+        assert snap and snap[0].cwd == str(tmp_path) and snap[0].user_vars == {"shellforge_task": "live"}
+        # The session has no `shellforge_project`: the batched read must answer an unset name too, or
         # every tick falls back to six requests per tab.
         assert bridge._batched_reads, "iTerm2 would not read a session's variables in one request"
 
-        sid = await bridge.create_tab(wid, {"aiterm_task": "live"})
+        sid = await bridge.create_tab(wid, {"shellforge_task": "live"})
 
         async def _second_session_ready():
             snap = [s for s in await bridge.snapshot() if s.window_id == wid]

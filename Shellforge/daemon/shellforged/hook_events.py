@@ -209,7 +209,7 @@ def _grok_tokens(p: dict[str, Any]) -> TokenTally | None:
 
 
 def _pi_tokens(value: Any) -> TokenTally | None:
-    """The tally PI's extension sends: the session's own and its subagents' (hooks/pi-aiterm-status.ts)."""
+    """The tally PI's extension sends: the session's own and its subagents' (hooks/pi-shellforge-status.ts)."""
     if not isinstance(value, dict):
         return None
     return _tally(value.get("input"), whole_count(value.get("cached")), value.get("output"))
@@ -251,7 +251,7 @@ GROK_EVENTS: dict[str, Transition] = {
     "StopFailure": "done",
     "StopCancelled": "done",
 }
-# The `Notification` types AiTerm reads. `idle_prompt` is Grok's backstop for a turn that reported no
+# The `Notification` types Shellforge reads. `idle_prompt` is Grok's backstop for a turn that reported no
 # end -- a rewind, a cancel-and-send, a superseded turn, a stop gate at its continuation limit: it
 # fires about a minute after the session settles, on any turn end, so it settles rather than marks.
 GROK_NOTIFICATIONS: dict[str, Transition] = {"permission_prompt": "needsInput", "idle_prompt": "settle"}
@@ -281,7 +281,7 @@ def _notification_type(p: dict[str, Any]) -> str | None:
 
 def parse_grok_hook(p: dict[str, Any]) -> HookEvent | None:
     """Grok Build's command-hook payload: Claude's PascalCase `hook_event_name` beside Grok's own
-    camelCase fields. The iTerm session arrives as the X-AiTerm-iTerm-Session header.
+    camelCase fields. The iTerm session arrives as the X-Shellforge-iTerm-Session header.
 
     A payload carrying `subagentType` is a nested agent's own event, which is not the session's --
     except a permission prompt: a background child raises its own, and Grok waits on the user for it

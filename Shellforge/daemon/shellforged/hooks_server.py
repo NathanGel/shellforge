@@ -14,7 +14,7 @@ ROUTES = {*HOOK_PARSERS, *STATUSLINE_PARSERS, "/mcp"}
 MAX_BODY = 1 << 20
 # The most header lines, and bytes in the request line and headers together, a request may send.
 # The stream caps each line at 64 KiB; without these, any local process could send distinct headers
-# for the whole read timeout, before the X-AiTerm-Hook check turns it away. A hook sends about six.
+# for the whole read timeout, before the X-Shellforge-Hook check turns it away. A hook sends about six.
 MAX_HEADER_LINES = 100
 MAX_HEAD_BYTES = 32 << 10
 # How long a client may take to send its whole request before the connection is dropped.
@@ -28,7 +28,7 @@ class _HeadTooLarge(Exception):
 
 class HookServer:
     def __init__(self, on_post: Callable[[str, dict[str, Any]], Awaitable[dict[str, Any] | None]] | None = None,
-                 host: str = "127.0.0.1", port: int = 47821, read_timeout: float = READ_TIMEOUT_SECONDS):
+                 host: str = "127.0.0.1", port: int = 47831, read_timeout: float = READ_TIMEOUT_SECONDS):
         self.host, self.port, self.on_post = host, port, on_post
         self.read_timeout = read_timeout
         self._server: asyncio.AbstractServer | None = None
@@ -90,7 +90,7 @@ class HookServer:
             # Never reveal that a route exists to a caller that doesn't send
             # our marker header - any local process or a browser page (CORS
             # simple POST) can otherwise reach these routes.
-            if headers.get("x-aiterm-hook") != "1":
+            if headers.get("x-shellforge-hook") != "1":
                 await self._reply(writer, 404, "not found")
                 return
 
@@ -122,11 +122,11 @@ class HookServer:
     @staticmethod
     def _probe_reply(payload: dict[str, Any]) -> str | None:
         """The answer to a Harness Test probe, which is never delivered: it echoes its id, and so it
-        cannot change state on any route, a status line's included. `_aiterm_daemon_test_id` asks
+        cannot change state on any route, a status line's included. `_shellforge_daemon_test_id` asks
         whether the daemon answers at all, so the app can tell a dead daemon from a route that does
-        not reach it; `_aiterm_test_id` asks whether a post on this route reaches it, and the PI
+        not reach it; `_shellforge_test_id` asks whether a post on this route reaches it, and the PI
         extension sends it on a real event's body, which it leaves inert."""
-        for field, key in (("_aiterm_daemon_test_id", "daemonTestId"), ("_aiterm_test_id", "testId")):
+        for field, key in (("_shellforge_daemon_test_id", "daemonTestId"), ("_shellforge_test_id", "testId")):
             if isinstance(test_id := payload.get(field), str) and test_id:
                 return json.dumps({"ok": True, key: test_id}, separators=(",", ":"))
         return None
@@ -145,7 +145,7 @@ class HookServer:
         # Codex, Grok and PI payloads identify their own session but not the terminal tab. Their
         # hook process inherits iTerm's session ID, so carry it through as a trusted private field
         # -- which only the header may set.
-        if iterm_session := headers.get("x-aiterm-iterm-session"):
+        if iterm_session := headers.get("x-shellforge-iterm-session"):
             payload[ITERM_SESSION_FIELD] = iterm_session
         else:
             payload.pop(ITERM_SESSION_FIELD, None)
@@ -168,14 +168,14 @@ class HookServer:
             result: dict[str, Any] = {
                 "protocolVersion": MCP_PROTOCOL_VERSION,
                 "capabilities": {"tools": {"listChanged": False}},
-                "serverInfo": {"name": "aiterm-hooks", "version": "1"},
+                "serverInfo": {"name": "shellforge-hooks", "version": "1"},
             }
         elif method == "ping":
             result = {}
         elif method == "tools/list":
             result = {"tools": [{
                 "name": "post_codex_hook",
-                "description": "Deliver a Codex lifecycle event to the local AiTerm daemon.",
+                "description": "Deliver a Codex lifecycle event to the local Shellforge daemon.",
                 "inputSchema": {"type": "object", "additionalProperties": True},
             }]}
         elif method == "tools/call":

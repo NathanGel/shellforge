@@ -21,7 +21,7 @@ PAYLOAD = {
 
 @pytest.fixture
 def home(tmp_path, daemon):
-    support = tmp_path / "Library" / "Application Support" / "AiTerm"
+    support = tmp_path / "Library" / "Application Support" / "Shellforge"
     support.mkdir(parents=True)
     (support / "hook-port").write_text(f"{daemon.server_port}\n")
     return tmp_path
@@ -41,7 +41,7 @@ def forwarded(daemon, timeout=3.0):
 
 
 def support_of(home):
-    return home / "Library" / "Application Support" / "AiTerm"
+    return home / "Library" / "Application Support" / "Shellforge"
 
 
 def test_forwards_the_payload_to_the_daemon(home, daemon):
@@ -50,7 +50,7 @@ def test_forwards_the_payload_to_the_daemon(home, daemon):
     assert len(received) == 1
     path, headers, body = received[0]
     assert path == "/statusline"
-    assert headers.get("X-AiTerm-Hook") == "1"
+    assert headers.get("X-Shellforge-Hook") == "1"
     assert body["rate_limits"]["five_hour"]["used_percentage"] == 23.4
 
 
@@ -74,7 +74,7 @@ def test_preserves_custom_statusline_and_forwards_the_same_payload(home, daemon)
     assert forwarded(daemon)[0][2] == PAYLOAD
 
 
-@pytest.mark.parametrize("mode", ["quiet", "aiterm", "original", "nonsense"])
+@pytest.mark.parametrize("mode", ["quiet", "shellforge", "original", "nonsense"])
 def test_legacy_display_modes_do_not_add_a_statusline(home, daemon, mode):
     (support_of(home) / "statusline-mode").write_text(mode + "\n")
     result = run_shim(home)
@@ -83,12 +83,12 @@ def test_legacy_display_modes_do_not_add_a_statusline(home, daemon, mode):
     assert forwarded(daemon)
 
 
-def test_legacy_aiterm_mode_no_longer_replaces_custom_statusline(home, daemon):
+def test_legacy_shellforge_mode_no_longer_replaces_custom_statusline(home, daemon):
     original = home / "mine.sh"
     original.write_text("#!/bin/sh\nread -r _line\necho 'my own status line'\n")
     original.chmod(0o755)
     (support_of(home) / "statusline-original.cmd").write_text(str(original))
-    (support_of(home) / "statusline-mode").write_text("aiterm\n")
+    (support_of(home) / "statusline-mode").write_text("shellforge\n")
     assert run_shim(home).stdout.strip() == "my own status line"
     assert forwarded(daemon)
 

@@ -15,7 +15,7 @@ PAYLOAD = {"session_id": "g-1", "context_window": {"used_percentage": 37}}
 
 @pytest.fixture
 def home(tmp_path, daemon):
-    support = tmp_path / "Library" / "Application Support" / "AiTerm"
+    support = tmp_path / "Library" / "Application Support" / "Shellforge"
     support.mkdir(parents=True)
     (support / "hook-port").write_text(f"{daemon.server_port}\n")
     return tmp_path
@@ -48,11 +48,11 @@ def test_shim_forwards_to_the_grok_route_and_prints_nothing(home, daemon):
     assert result.returncode == 0 and result.stdout == ""
     path, headers, body = wait_for(daemon)[0]
     assert path == "/statusline/grok" and body == PAYLOAD
-    assert headers["X-AiTerm-Hook"] == "1" and headers["X-AiTerm-iTerm-Session"] == "w0t0p0:tab-1"
+    assert headers["X-Shellforge-Hook"] == "1" and headers["X-Shellforge-iTerm-Session"] == "w0t0p0:tab-1"
 
 
 def test_shim_runs_the_saved_original(home, daemon):
-    original = home / "Library" / "Application Support" / "AiTerm" / "grok-statusline-original.cmd"
+    original = home / "Library" / "Application Support" / "Shellforge" / "grok-statusline-original.cmd"
     original.write_text("cat >/dev/null; printf 'mine'")
     result = run_shim(home)
     assert result.stdout == "mine"
@@ -61,7 +61,7 @@ def test_shim_runs_the_saved_original(home, daemon):
 
 def test_shim_keeps_the_originals_exit_status(home, daemon):
     # Waiting for the post must not swallow the status Grok reads from the user's own command.
-    original = home / "Library" / "Application Support" / "AiTerm" / "grok-statusline-original.cmd"
+    original = home / "Library" / "Application Support" / "Shellforge" / "grok-statusline-original.cmd"
     original.write_text("cat >/dev/null; printf 'mine'; exit 3")
     result = run_shim(home)
     assert (result.returncode, result.stdout) == (3, "mine")
@@ -69,8 +69,8 @@ def test_shim_keeps_the_originals_exit_status(home, daemon):
 
 
 def test_shim_without_a_recorded_port_posts_nothing_and_still_runs_the_original(home, daemon):
-    (home / "Library" / "Application Support" / "AiTerm" / "hook-port").unlink()
-    original = home / "Library" / "Application Support" / "AiTerm" / "grok-statusline-original.cmd"
+    (home / "Library" / "Application Support" / "Shellforge" / "hook-port").unlink()
+    original = home / "Library" / "Application Support" / "Shellforge" / "grok-statusline-original.cmd"
     original.write_text("cat >/dev/null; printf 'mine'")
     result = run_shim(home)
     assert (result.returncode, result.stdout, result.stderr) == (0, "mine", "")
@@ -80,7 +80,7 @@ def test_shim_without_a_recorded_port_posts_nothing_and_still_runs_the_original(
 
 @pytest.mark.parametrize("written", ["1@127.0.0.1:{port}", "{port}/elsewhere?", "{port}0", "0", "abc", " {port}"])
 def test_shim_with_a_port_file_that_is_not_a_port_posts_nothing_and_still_runs_the_original(home, daemon, written):
-    support = home / "Library" / "Application Support" / "AiTerm"
+    support = home / "Library" / "Application Support" / "Shellforge"
     (support / "hook-port").write_text(written.format(port=daemon.server_port) + "\n")
     (support / "grok-statusline-original.cmd").write_text("cat >/dev/null; printf 'mine'")
     result = run_shim(home)

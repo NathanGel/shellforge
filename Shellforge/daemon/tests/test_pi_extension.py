@@ -12,8 +12,8 @@ from pathlib import Path
 import pytest
 
 HERE = Path(__file__).resolve().parent
-EXTENSION = HERE.parents[1] / "hooks" / "pi-aiterm-status.ts"
-PLACEHOLDER = "__AITERM_HOOK_PORT__"  # PiDriver.portPlaceholder
+EXTENSION = HERE.parents[1] / "hooks" / "pi-shellforge-status.ts"
+PLACEHOLDER = "__SHELLFORGE_HOOK_PORT__"  # PiDriver.portPlaceholder
 PORT = 50123  # not the app's own, so a literal left in the file shows
 NODE = shutil.which("node")
 
@@ -31,7 +31,7 @@ pytestmark = pytest.mark.skipif(not NODE or not _strips_types(NODE), reason="nee
 @pytest.fixture(scope="module")
 def phases(tmp_path_factory):
     # What PiDriver installs: the bundled file with the daemon's port in place of the placeholder.
-    installed = tmp_path_factory.mktemp("pi") / "aiterm-status.ts"
+    installed = tmp_path_factory.mktemp("pi") / "shellforge-status.ts"
     installed.write_text(EXTENSION.read_text().replace(PLACEHOLDER, str(PORT)))
     out = subprocess.run([NODE, str(HERE / "pi_extension_driver.mjs"), str(installed)],
                          capture_output=True, text=True, timeout=20, check=True)
@@ -100,7 +100,7 @@ def test_every_report_goes_to_the_port_the_driver_wrote(phases):
 
 def test_the_bundled_extension_names_the_port_only_as_the_placeholder():
     assert EXTENSION.read_text().count(PLACEHOLDER) == 1
-    assert "47821" not in EXTENSION.read_text()
+    assert "47831" not in EXTENSION.read_text()
 
 
 def test_handlers_do_not_hand_pi_the_network_promise(phases):

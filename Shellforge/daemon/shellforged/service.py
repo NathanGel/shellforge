@@ -197,7 +197,7 @@ class Service:
 
     # -- iTerm2 notifications ------------------------------------------------
     async def _on_window_activated(self, window_id: str) -> None:
-        # A macOS notification can bring an iTerm2 window forward without an AiTerm row being
+        # A macOS notification can bring an iTerm2 window forward without an Shellforge row being
         # clicked. Tell the app which window received focus so it can keep its sidebar selection
         # in sync. The window id is enough: the app owns the task/terminal mapping.
         try:

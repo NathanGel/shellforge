@@ -1,6 +1,6 @@
 #!/bin/zsh -f
-# hooks/grok-statusline-shim.sh — installed as Grok Build's [ui.status_line] command by AiTerm.
-# 1. forwards the status-line JSON to the AiTerm daemon (300 ms cap): Grok's status line is the
+# hooks/grok-statusline-shim.sh — installed as Grok Build's [ui.status_line] command by Shellforge.
+# 1. forwards the status-line JSON to the Shellforge daemon (300 ms cap): Grok's status line is the
 #    only place it reports how full a session's context window is;
 # 2. runs the status line the user had before, otherwise prints nothing (Grok then hides the row).
 # Same recipe as claude-statusline-shim.sh, including why the redirection wraps the whole
@@ -12,12 +12,12 @@
 # (The no-`${` rule is for Grok hook commands, which Grok parses; this script is only run by it.)
 set -u
 IFS= read -r -d '' INPUT || true
-SUPPORT="$HOME/Library/Application Support/AiTerm"
+SUPPORT="$HOME/Library/Application Support/Shellforge"
 PORT=""
 [ -f "$SUPPORT/hook-port" ] && { PORT="$(<"$SUPPORT/hook-port")" 2>/dev/null; }
 # Only a port, 1-65535 in digits, goes into the URL: a zsh pattern, so the check forks nothing.
 if [[ $PORT == <1-65535> ]]; then
-  { printf '%s' "$INPUT" | curl -s -m 0.3 -X POST -H 'Content-Type: application/json' -H 'X-AiTerm-Hook: 1' -H "X-AiTerm-iTerm-Session: ${ITERM_SESSION_ID-}" -H 'Expect:' --data-binary @- "http://127.0.0.1:$PORT/statusline/grok"; } >/dev/null 2>&1 &
+  { printf '%s' "$INPUT" | curl -s -m 0.3 -X POST -H 'Content-Type: application/json' -H 'X-Shellforge-Hook: 1' -H "X-Shellforge-iTerm-Session: ${ITERM_SESSION_ID-}" -H 'Expect:' --data-binary @- "http://127.0.0.1:$PORT/statusline/grok"; } >/dev/null 2>&1 &
 fi
 ORIG_FILE="$SUPPORT/grok-statusline-original.cmd"
 if [ -f "$ORIG_FILE" ]; then

@@ -17,7 +17,7 @@ RECONNECT_SECONDS = 3.0
 # retry interval doubles from RECONNECT_SECONDS up to this, rather than asking every few seconds.
 AUTH_BACKOFF_CAP_SECONDS = 60.0
 # How long an attached app may leave a cookie request unanswered before it is asked again. Long
-# enough for someone to answer macOS's "AiTerm wants to control iTerm2" prompt the first time.
+# enough for someone to answer macOS's "Shellforge wants to control iTerm2" prompt the first time.
 COOKIE_WAIT_SECONDS = 120.0
 # How often that wait looks for an attached app: time with none attached does not count.
 COOKIE_CHECK_SECONDS = 1.0
@@ -55,8 +55,8 @@ class ItermSupervisor:
         # in a row, which sets the backoff.
         self.auth_error: str | None = None
         self._auth_failures = 0
-        # The app asks iTerm2 for each connection's cookie, so no osascript runs under AiTerm: macOS
-        # counts every process AiTerm starts as AiTerm, and gave each osascript a Dock icon of its
+        # The app asks iTerm2 for each connection's cookie, so no osascript runs under Shellforge: macOS
+        # counts every process Shellforge starts as Shellforge, and gave each osascript a Dock icon of its
         # own. The request outstanding, if any, is (id, the future the app's answer resolves).
         self.cookies_from_app = cookies_from_app
         if cookie_wait_seconds <= 0:

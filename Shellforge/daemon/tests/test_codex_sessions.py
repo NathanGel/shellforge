@@ -78,7 +78,7 @@ def rate_limited(primary, secondary=None, plan="team", timestamp="2026-09-22T14:
 
 
 def test_rate_limits_come_from_the_newest_record_of_the_newest_rollout(tmp_path):
-    # Account-wide, so whichever session wrote last is the truth -- not the one AiTerm happens to
+    # Account-wide, so whichever session wrote last is the truth -- not the one Shellforge happens to
     # track. The record's own timestamp is the age of the number, not when we read it.
     root = tmp_path / "sessions"
     older = write_rollout(root, "older", [rate_limited({"used_percent": 10.0, "window_minutes": 10080, "resets_at": 1},

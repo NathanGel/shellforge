@@ -121,9 +121,9 @@ phases.returned.push(...await returned([
 	() => root("model_select", handlerCtx, { model: { provider: "p", id: "m" } }),
 	() => root("thinking_level_select", handlerCtx, { level: "low" }),
 ]));
-process.env.AITERM_INTEGRATION_TEST = "t-1";
+process.env.SHELLFORGE_INTEGRATION_TEST = "t-1";
 phases.returned_under_test = await returned([() => root("agent_start", handlerCtx)]);
-delete process.env.AITERM_INTEGRATION_TEST;
+delete process.env.SHELLFORGE_INTEGRATION_TEST;
 stalled = false;
 
 process.stdout.write(JSON.stringify(phases));
