@@ -373,6 +373,14 @@ static NSModalResponse iTermCompareRenderingRunModal(id self, SEL _cmd) {
     NSMenu *viewMenu = [self topLevelViewNamed:@"View"];
     [viewMenu addItem:[NSMenuItem separatorItem]];
 
+    // Shellforge: Backpack Mode, ⌘B as in AiTerm (free in iTerm2, whose ⇧⌘B, ⌥⌘B and ⌥⇧⌘B stay).
+    NSMenuItem *backpackItem = [[[NSMenuItem alloc] initWithTitle:@"Backpack Mode"
+                                                           action:@selector(shellforgeToggleBackpack:)
+                                                    keyEquivalent:@"b"] autorelease];
+    backpackItem.keyEquivalentModifierMask = NSEventModifierFlagCommand;
+    backpackItem.target = self;
+    [viewMenu addItem:backpackItem];
+
     NSSize tabColorViewSize = [ColorsMenuItemView preferredSize];
     ColorsMenuItemView *labelTrackView = [[[ColorsMenuItemView alloc]
                                            initWithFrame:NSMakeRect(0, 0, tabColorViewSize.width, tabColorViewSize.height)] autorelease];
@@ -421,7 +429,15 @@ static NSModalResponse iTermCompareRenderingRunModal(id self, SEL _cmd) {
     }
 }
 
+- (IBAction)shellforgeToggleBackpack:(id)sender {
+    [iTermShellforgeSidebar toggleBackpack:sender];
+}
+
 - (BOOL)validateMenuItem:(NSMenuItem *)menuItem {
+    if (menuItem.action == @selector(shellforgeToggleBackpack:)) {
+        menuItem.state = [iTermShellforgeSidebar backpackIsOn] ? NSControlStateValueOn : NSControlStateValueOff;
+        return YES;
+    }
     const SEL action = [menuItem action];
     if (action == @selector(newSessionInTabAtIndex:) ||
         action == @selector(newSession:) ||

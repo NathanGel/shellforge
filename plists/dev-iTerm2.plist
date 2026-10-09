@@ -169,9 +169,9 @@
         <key>NSLocationAlwaysUsageDescription</key>
         <string>An application in iTerm2 wants to use your location information, even in the background.</string>
         <key>NSLocationUsageDescription</key>
-        <string>An application in iTerm2 wants to use your location information.</string>
+        <string>Shellforge reads the names of nearby Wi-Fi networks so Backpack Mode can join the one you chose. It never reads your location; a script you run in Shellforge may also ask for it.</string>
         <key>NSLocationWhenInUseUsageDescription</key>
-        <string>An application in iTerm2 wants to use your location information while active.</string>
+        <string>Shellforge reads the names of nearby Wi-Fi networks so Backpack Mode can join the one you chose. It never reads your location; a script you run in Shellforge may also ask for it.</string>
         <key>NSMicrophoneUsageDescription</key>
         <string>An application in iTerm2 wants to use your microphone.</string>
         <key>NSSpeechRecognitionUsageDescription</key>

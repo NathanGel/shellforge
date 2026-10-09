@@ -13,9 +13,13 @@ public enum ShellforgeSidebar {
     /// follows the window's. `chooseFolder` asks the user for a project folder (an open panel);
     /// `hooks` is the app's Agent hooks sheet.
     /// `machine` is the app's one sampler of the Mac's readings, for the footer.
+    /// `backpack` is the app's one Backpack Mode; `showBackpack` hands back how this sidebar opens
+    /// its sheet, for the View menu's ⌘B.
     public static func makeView(model: SidebarModel, chooseFolder: @escaping @MainActor () -> String?, hooks: AgentHooksModel,
-                                machine: MachineMonitor) -> NSView {
-        let host = SidebarHostingView(rootView: SidebarView(model: model, chooseFolder: chooseFolder, hooks: hooks, machine: machine))
+                                machine: MachineMonitor, backpack: BackpackController,
+                                showBackpack: @escaping @MainActor (@escaping @MainActor () -> Void) -> Void = { _ in }) -> NSView {
+        let host = SidebarHostingView(rootView: SidebarView(model: model, chooseFolder: chooseFolder, hooks: hooks, machine: machine,
+                                                            backpack: backpack, showBackpack: showBackpack))
         host.frame = NSRect(x: 0, y: 0, width: width, height: 400)
         // AiTerm is dark-only and forced the whole app dark; here only the sidebar is, so iTerm2's
         // own windows keep the appearance the user chose. Every colour below resolves against this.
@@ -51,6 +55,9 @@ struct SidebarFooterHost: View {
     @ObservedObject var model: SidebarModel
     @ObservedObject var hooks: AgentHooksModel
     @ObservedObject var machine: MachineMonitor
+    @ObservedObject var backpack: BackpackController
+    let toggleMac: () -> Void
+    let openMacSettings: () -> Void
     @Environment(\.footerClock) private var footerClock
 
     var body: some View {
@@ -58,7 +65,10 @@ struct SidebarFooterHost: View {
             SidebarFooter(task: model.footerRow,
                           rows: model.vendorRows(now: footerClock?.now ?? context.date, calendar: footerClock?.calendar ?? .current,
                                                  claudeStatusLineInstalled: hooks.claudeStatusLineInstalled),
-                          machine: machine.lines)
+                          machine: machine.lines,
+                          mac: MacModePresentation.line(mode: MacMode(state: backpack.state, transition: backpack.transition),
+                                                        hotspot: backpack.network, wifi: backpack.currentNetwork),
+                          toggleMac: toggleMac, openMacSettings: openMacSettings)
         }
     }
 }
@@ -73,6 +83,8 @@ struct SidebarView: View {
     let chooseFolder: @MainActor () -> String?
     @ObservedObject var hooks: AgentHooksModel
     let machine: MachineMonitor
+    let backpack: BackpackController
+    let showBackpack: @MainActor (@escaping @MainActor () -> Void) -> Void
     /// The window the sidebar is drawn in, which the Agent hooks panel hangs from.
     @State private var anchor = WindowAnchor()
     @State private var sheet = PanelSlot()
@@ -82,19 +94,23 @@ struct SidebarView: View {
         VStack(spacing: 0) {
             SidebarBanners(model: model)
             List {
-                SidebarHeader(addProject: addProject, showHooks: showHooks)
+                SidebarHeader(addProject: addProject, showHooks: showHooks, showMacSettings: showMacSettings)
                 ForEach(model.rows) { row in rowView(row) }
             }
             .listStyle(.sidebar)
             .scrollContentBackground(.hidden)
             .background(NativeRowHighlight.off)
-            SidebarFooterHost(model: model, hooks: hooks, machine: machine)
+            SidebarFooterHost(model: model, hooks: hooks, machine: machine, backpack: backpack,
+                              toggleMac: { BackpackToggle(backpack: backpack, presentSheet: presentBackpack).run() },
+                              openMacSettings: showMacSettings)
         }
         .frame(minWidth: scale(Size.sidebarMinWidth), maxHeight: .infinity, alignment: .top)
         .background(Palette.sidebar)
         .surface(.sidebar)
         .tint(Palette.accent)
         .background(WindowReader(anchor: anchor))
+        // The View menu's ⌘B opens the sheet on the key window's sidebar: this one says how.
+        .onAppear { showBackpack(presentBackpack) }
     }
 
     @ViewBuilder private func rowView(_ row: SidebarRow) -> some View {
@@ -120,6 +136,17 @@ struct SidebarView: View {
                 .frame(height: scale(Size.menuRow)).padding(.leading, scale(Space.base))
                 .listRowSeparator(.hidden)
         }
+    }
+
+    /// AiTerm's Backpack sheet, in the sidebar's one panel.
+    private func presentBackpack() {
+        sheet.present(over: anchor.window) { dismiss in BackpackSheet(model: BackpackSheetModel(backpack: backpack), dismiss: dismiss) }
+    }
+
+    /// The Mac card — what Backpack Mode needs from this Mac — in a panel of its own with Done, until
+    /// Shellforge has a Settings window to hold it (AiTerm's Settings › Integrations › Mac).
+    private func showMacSettings() {
+        sheet.present(over: anchor.window) { dismiss in MacSettingsPanel(backpack: backpack, done: dismiss) }
     }
 
     /// The Agent hooks sheet, in its own dark panel on the sidebar's window.

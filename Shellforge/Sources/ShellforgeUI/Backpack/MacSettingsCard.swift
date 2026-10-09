@@ -34,7 +34,8 @@ enum MacCardPresentation {
 /// anatomy — check chips, one action named by its state, the steps while something is missing.
 /// Allow… and Remove act at once, as a harness card's Install does; the card has no fields.
 struct MacSettingsCard: View {
-    let backpack: BackpackController
+    /// Observed: AiTerm's `@Observable` controller redrew the card on its own.
+    @ObservedObject var backpack: BackpackController
 
     var body: some View {
         let setup = backpack.setup
@@ -59,5 +60,24 @@ struct MacSettingsCard: View {
     /// A harness card's check chip.
     private func check(_ label: String, passed: Bool) -> some View {
         Badge(label, icon: .symbol(passed ? "checkmark" : "exclamationmark"), iconTint: passed ? Palette.green : Palette.amber)
+    }
+}
+
+/// The Mac card on its own, with Done: Shellforge's "Mac Settings…" until it has AiTerm's Settings
+/// window to hold the card (Settings › Integrations › Mac there). Setup is read again as it opens,
+/// as AiTerm's Settings reads it.
+struct MacSettingsPanel: View {
+    @ObservedObject var backpack: BackpackController
+    let done: @MainActor () -> Void
+
+    var body: some View {
+        SheetLayout(title: "Mac Settings", height: Sheet.height) {
+            SheetSubtitle("What Backpack Mode needs from this Mac.")
+        } content: {
+            MacSettingsCard(backpack: backpack)
+        } footer: {
+            SheetFooter(secondary: nil, primary: "Done", cancel: {}, submit: { Task { @MainActor in done() } })
+        }
+        .task { await backpack.refreshSetup() }
     }
 }

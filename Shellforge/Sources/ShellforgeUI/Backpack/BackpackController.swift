@@ -84,7 +84,7 @@ public final class BackpackController: ObservableObject {
         BackpackController(ports: .inert, settings: BackpackSettings(defaults: nil), toast: { _ in })
     }
 
-    var isOn: Bool { state.isOn }
+    public var isOn: Bool { state.isOn }
 
     /// The hotspot and its password, written on Save. A change takes effect at the next turn-on.
     var network: String? {

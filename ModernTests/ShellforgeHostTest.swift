@@ -33,4 +33,13 @@ final class ShellforgeHostTest: XCTestCase {
         let profile = iTermShellforgeSidebar.taskTabProfile(base: [:], directory: "/tmp/x", initialText: nil)
         XCTAssertNil(profile[KEY_INITIAL_TEXT])
     }
+
+    /// ⌘B is Backpack Mode's alone in the main menu: iTerm2's own B shortcuts all carry another
+    /// modifier.
+    func testCommandBIsFreeInTheMainMenu() {
+        guard let main = NSApp.mainMenu else { return XCTFail("no main menu") }
+        func items(_ menu: NSMenu) -> [NSMenuItem] { menu.items.flatMap { [$0] + ($0.submenu.map(items) ?? []) } }
+        let commandB = items(main).filter { $0.keyEquivalent == "b" && $0.keyEquivalentModifierMask.intersection(.deviceIndependentFlagsMask) == [.command] }
+        XCTAssertEqual(commandB.map(\.title), ["Backpack Mode"])
+    }
 }

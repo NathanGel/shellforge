@@ -28,6 +28,34 @@ final class iTermShellforgeSidebar: NSObject {
     /// the helper runs.
     static let machine = MachineMonitor(sensor: LiveMachineSensor(), power: IOKitPowerSource())
 
+    /// AiTerm's Backpack Mode, one for the app: lid sleep through the sudoers rule the Mac card's
+    /// Allow… installs, the iPhone's hotspot through CoreWLAN. Its toasts go to every sidebar's banner.
+    static let backpack = BackpackController(
+        ports: BackpackPorts.live(),
+        settings: BackpackSettings(defaults: .standard, secrets: Keychain(service: "io.github.nathangel.shellforge")),
+        agentsWorking: { link.store.sessions.values.contains { $0.state == .working } },
+        openLocationSettings: {
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_LocationServices") {
+                NSWorkspace.shared.open(url)
+            }
+        },
+        toast: { message in for model in sidebars.allObjects { model.lastError = message } })
+
+    /// Every window's sidebar model, for Backpack's toasts.
+    private static let sidebars = NSHashTable<SidebarModel>.weakObjects()
+    /// How each window's sidebar opens the Backpack sheet, for ⌘B.
+    private static var backpackSheets: [ObjectIdentifier: @MainActor () -> Void] = [:]
+
+    /// The View menu's Backpack Mode (⌘B): AiTerm's toggle, the sheet on the key window's sidebar.
+    @objc static func toggleBackpack(_ sender: Any?) {
+        let key = (NSApp.keyWindow?.windowController as? PseudoTerminal).map(ObjectIdentifier.init)
+        let present = key.flatMap { backpackSheets[$0] } ?? backpackSheets.values.first ?? {}
+        BackpackToggle(backpack: backpack, presentSheet: present).run()
+    }
+
+    /// The menu item's checkmark.
+    @objc static func backpackIsOn() -> Bool { backpack.isOn }
+
     /// Every agent's model list, read from the user's own home.
     nonisolated static let catalogue = ModelCatalogue(home: FileManager.default.homeDirectoryForCurrentUser, launcher: launcher)
 
@@ -39,7 +67,10 @@ final class iTermShellforgeSidebar: NSObject {
         let host = iTermShellforgeHost(windowController: windowController)
         let model = SidebarModel(host: host, document: document, launcher: launcher, feed: link,
                                  agents: AgentPresets.all, catalogue: { try catalogue.models(for: $0) })
-        return ShellforgeSidebar.makeView(model: model, chooseFolder: FolderChooser.choose, hooks: hooks, machine: machine)
+        sidebars.add(model)
+        let window = ObjectIdentifier(windowController)
+        return ShellforgeSidebar.makeView(model: model, chooseFolder: FolderChooser.choose, hooks: hooks, machine: machine,
+                                          backpack: backpack, showBackpack: { present in backpackSheets[window] = present })
     }
 
     /// The default profile changed to run the login shell in `directory`.
@@ -143,6 +174,8 @@ extension iTermShellforgeSidebar {
         guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
         link.start()
         machine.start()
+        // A launch after a crash with lid sleep left off turns it back on first, then reads setup.
+        Task { await backpack.launch() }
         // The footer says "Usage disconnected" from this check, so it runs at launch, not only when
         // the Agent hooks sheet is opened.
         Task { await hooks.refresh() }
@@ -154,6 +187,8 @@ extension iTermShellforgeSidebar {
         NotificationCenter.default.addObserver(forName: NSNotification.Name(iTermApplicationWillTerminate), object: nil, queue: .main) { _ in
             MainActor.assumeIsolated {
                 tick?.invalidate()
+                // Before anything else goes: the Mac must never be left unable to sleep.
+                backpack.shutdown()
                 machine.stop()
                 link.shutdown()
             }
