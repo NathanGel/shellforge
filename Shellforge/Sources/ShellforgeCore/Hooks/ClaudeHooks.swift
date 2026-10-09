@@ -50,7 +50,8 @@ struct ClaudeHooks: HookDriver {
         // Claude at the shim: a crash or a failed write between the two can never leave it running
         // a shim that posts nowhere, or without the status line it replaced.
         try ShimPort.record(port, home: home)
-        try StatusLineOriginal.record(before(original: original, data: data),
+        try StatusLineOriginal.record(StatusLineOriginal.handedOver(before(original: original, data: data), home: home,
+                                                                 aitermShim: "claude-statusline-shim.sh", aitermRecord: "statusline-original.cmd"),
                                       command: ShellforgePaths.statusLineOriginalURL(home: home))
         guard !ClaudeSettings.same(data, merged) else { return }
         try file.backUp()

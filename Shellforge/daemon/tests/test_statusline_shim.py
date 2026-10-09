@@ -6,6 +6,8 @@ posts to the port ClaudeDriver records in `hook-port`, which here is the test se
 reaches a daemon that happens to be running on the app's own.
 """
 import json
+import os
+import signal
 import subprocess
 import time
 from pathlib import Path
@@ -135,3 +137,28 @@ def test_a_port_file_that_is_not_a_port_posts_nothing_and_still_runs_the_origina
     assert (result.returncode, result.stdout, result.stderr) == (0, "mine", "")
     time.sleep(0.5)
     assert daemon.received == []
+
+
+def test_a_chain_that_leads_back_to_the_shim_runs_it_once(home, daemon):
+    """AiTerm's Repair once made AiTerm's shim run this one as the user's command while this one ran
+    AiTerm's: each started the other for ever. Run inside its own chain, the shim does nothing."""
+    (support_of(home) / "statusline-original.cmd").write_text(f"'{SHIM}'; printf 'end'")
+    stdout = run_bounded(home)
+    assert stdout == "end"
+    time.sleep(0.3)
+    assert len(forwarded(daemon)) == 1
+
+
+def run_bounded(home, seconds=5):
+    """The shim in its own process group, every process of it killed if it is still running after
+    `seconds`: a chain that loops spawns a new level for each one that waits."""
+    process = subprocess.Popen([str(SHIM)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               text=True, start_new_session=True,
+                               env={"HOME": str(home), "PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin"})
+    try:
+        stdout, _ = process.communicate(json.dumps(PAYLOAD), timeout=seconds)
+        return stdout
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGKILL)
+        process.communicate()
+        pytest.fail("the chain did not end")

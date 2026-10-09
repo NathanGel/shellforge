@@ -29,8 +29,12 @@ public enum ClaudeSettings {
 
     /// Our shim, recognised by filename as well as by exact path: a moved app bundle
     /// leaves the old path in `settings.json`, and that command is still ours, not a foreign tool's.
+    /// The shim as Claude Code's shell must be given it: quoted when the path needs it, as Grok's is.
+    static func shellCommand(_ shimPath: String) -> String { ShellWords.word(shimPath) }
+
     static func isOurShim(_ command: String, shimPath: String) -> Bool {
-        command == shimPath || URL(fileURLWithPath: command).lastPathComponent == URL(fileURLWithPath: shimPath).lastPathComponent
+        StatusLineOriginal.unquoted(command) == shimPath
+            || StatusLineOriginal.shimName(command) == URL(fileURLWithPath: shimPath).lastPathComponent
     }
 
     /// `settings.json` is the user's file, so what we write changes only what we merge: no `\/` for
@@ -121,12 +125,12 @@ public enum ClaudeSettings {
         if !(currentCommand.map { isOurShim($0, shimPath: shimPath) } ?? false) {
             original = current
         }
-        if currentCommand != shimPath {
+        if currentCommand != shellCommand(shimPath) {
             // Only `type` and `command` are ours: the user's `padding`, and whatever a newer Claude
             // Code adds, ride along to the shim.
             var line = current ?? [:]
             line["type"] = "command"
-            line["command"] = shimPath
+            line["command"] = shellCommand(shimPath)
             if line["padding"] == nil { line["padding"] = 0 }
             obj["statusLine"] = line
         }
@@ -151,7 +155,7 @@ public enum ClaudeSettings {
                                       isRunnable: (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) }) -> Bool {
         guard let json, let obj = try? JSONSerialization.jsonObject(with: json) as? [String: Any],
               let command = statusLineCommand(obj) else { return false }
-        return isOurShim(command, shimPath: shimPath) && isRunnable(command)
+        return isOurShim(command, shimPath: shimPath) && isRunnable(StatusLineOriginal.unquoted(command))
     }
 
     public static func statusLineIsInstalled(home: URL = FileManager.default.homeDirectoryForCurrentUser, shimPath: String) -> Bool {
@@ -174,7 +178,8 @@ public enum ClaudeSettings {
                             isRunnable: (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) }) -> Bool {
         guard let hooks = settings["hooks"] as? [String: Any],
               let command = statusLineCommand(settings),
-              command == shimPath || (isOurShim(command, shimPath: shimPath) && isRunnable(command)) else { return false }
+              command == shellCommand(shimPath)
+                || (isOurShim(command, shimPath: shimPath) && isRunnable(StatusLineOriginal.unquoted(command))) else { return false }
         let hookURL = "http://127.0.0.1:\(daemonPort)" + ClaudeHooks.endpoint
         // A retired hook still in place is an outdated install: repairing it is what removes it.
         let retiredRemain = retiredEvents.contains { (hooks[$0] as? [[String: Any]])?.contains(where: holdsOurHook) == true }

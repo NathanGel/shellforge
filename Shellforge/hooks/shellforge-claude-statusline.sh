@@ -15,6 +15,11 @@
 # only the last command leaves printf's stderr pointed at this script's own — a grandchild holding
 # that pipe open past the parent's exit, exactly the pattern ProcessRunner.swift warns about.
 set -u
+# Run inside its own chain — an original command that leads back here, as another app's shim can once its
+# Repair saved this one as the user's command — it does nothing: two shims naming each other would
+# otherwise start each other for ever. The variable reaches the chain through the environment.
+[ -n "${SHELLFORGE_STATUSLINE_ACTIVE-}" ] && exit 0
+export SHELLFORGE_STATUSLINE_ACTIVE=1
 IFS= read -r -d '' INPUT || true
 SUPPORT="$HOME/Library/Application Support/Shellforge"
 PORT=""

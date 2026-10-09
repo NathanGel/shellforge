@@ -371,12 +371,15 @@ import Testing
         try settings.write(to: file, atomically: true, encoding: .utf8)
         let driver = ClaudeHooks(home: home, port: 47831, shimPath: "/Applications/Shellforge.app/shim.sh")
 
+        // A record left from a status line the user has since cleared: kept, the shim would bring it back.
+        let record = ShellforgePaths.statusLineOriginalURL(home: home)
+        try FileManager.default.createDirectory(at: record.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "an-old-statusline".write(to: record, atomically: true, encoding: .utf8)
+
         #expect(driver.probe() == HookProbe(.missing))
         try driver.install()
         #expect(driver.probe() == HookProbe(.current))
-        let support = home.appendingPathComponent("Library/Application Support/AiTerm")
-        #expect(!FileManager.default.fileExists(atPath: support.appendingPathComponent("statusline-original.cmd").path),
-                "a null status line is no original to keep")
+        #expect(!FileManager.default.fileExists(atPath: record.path), "a null status line is no original to keep")
     }
 
     @Test func anEventShellforgeDoesNotManageIsNeverARefusal() throws {
@@ -425,6 +428,10 @@ import Testing
             "statusLine": ["type": "command", "command": aitermShim],
         ]
         try write(aiterm, to: home.appendingPathComponent(ClaudeHooks.settingsPath))
+        // AiTerm's own record of the user's status line, which its shim runs.
+        let aitermRecord = home.appendingPathComponent("Library/Application Support/AiTerm/statusline-original.cmd")
+        try FileManager.default.createDirectory(at: aitermRecord.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "my-statusline --compact".write(to: aitermRecord, atomically: true, encoding: .utf8)
         let shim = "/Applications/Shellforge.app/Contents/Resources/hooks/shellforge-claude-statusline.sh"
         let hooks = ClaudeHooks(home: home, port: 47831, shimPath: shim)
         #expect(hooks.probe().state == .missing)
@@ -435,7 +442,36 @@ import Testing
         let urls = stop.flatMap { ($0["hooks"] as? [[String: Any]]) ?? [] }.compactMap { $0["url"] as? String }
         #expect(Set(urls) == ["http://127.0.0.1:47821/hook/claude", "http://127.0.0.1:47831/hook/claude"])
         #expect((settings["statusLine"] as? [String: Any])?["command"] as? String == shim)
+        // The user's command is carried over from AiTerm's record rather than AiTerm's shim kept as
+        // the original: the status line keeps working once AiTerm is gone, and no Repair of AiTerm's
+        // can make the two shims run each other. AiTerm's record is read, never written.
         let original = try String(contentsOf: ShellforgePaths.statusLineOriginalURL(home: home), encoding: .utf8)
-        #expect(original == aitermShim)
+        #expect(original == "my-statusline --compact")
+        #expect(try String(contentsOf: aitermRecord, encoding: .utf8) == "my-statusline --compact")
+    }
+
+    /// AiTerm's shim with no command of the user's behind it: Shellforge's shim runs nothing after
+    /// posting, rather than AiTerm's shim.
+    @Test func aitermsShimWithNoUserCommandLeavesNoOriginal() throws {
+        let home = try temporaryHome(); defer { try? FileManager.default.removeItem(at: home) }
+        let aitermShim = "/Applications/AiTerm.app/Contents/Resources/hooks/claude-statusline-shim.sh"
+        try write(["statusLine": ["type": "command", "command": aitermShim]], to: home.appendingPathComponent(ClaudeHooks.settingsPath))
+        try ClaudeHooks(home: home, port: 47831, shimPath: "/A/shellforge-claude-statusline.sh").install()
+        #expect(!FileManager.default.fileExists(atPath: ShellforgePaths.statusLineOriginalURL(home: home).path))
+    }
+
+    /// Claude Code runs `statusLine.command` through a shell, so a bundle in a folder with a space
+    /// needs its path quoted, and the quoted command is still Shellforge's own and current.
+    @Test func aShimPathWithASpaceIsQuotedForTheShellAndStillOurs() throws {
+        let home = try temporaryHome(); defer { try? FileManager.default.removeItem(at: home) }
+        let shim = "/Applications/Terminal Tools/Shellforge.app/Contents/Resources/hooks/shellforge-claude-statusline.sh"
+        let hooks = ClaudeHooks(home: home, port: 47831, shimPath: shim)
+        try hooks.install()
+        let settings = try read(home.appendingPathComponent(ClaudeHooks.settingsPath))
+        #expect((settings["statusLine"] as? [String: Any])?["command"] as? String == "'\(shim)'")
+        #expect(hooks.state == .current)
+        let written = try Data(contentsOf: home.appendingPathComponent(ClaudeHooks.settingsPath))
+        try hooks.install()
+        #expect(try Data(contentsOf: home.appendingPathComponent(ClaudeHooks.settingsPath)) == written, "a current install is not rewritten")
     }
 }

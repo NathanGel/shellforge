@@ -1,4 +1,4 @@
-// Ported from Shellforge (app/Sources/ShellforgeCore/Harnesses/UserConfigFile.swift), GPLv3, Laurens D'Hondt.
+// Ported from AiTerm (app/Sources/AiTermCore/Harnesses/UserConfigFile.swift), GPLv3, Laurens D'Hondt.
 import Foundation
 import os
 

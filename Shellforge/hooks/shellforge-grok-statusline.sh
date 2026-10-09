@@ -11,6 +11,11 @@
 # timeout. ${ITERM_SESSION_ID-} keeps `set -u` from aborting outside iTerm2.
 # (The no-`${` rule is for Grok hook commands, which Grok parses; this script is only run by it.)
 set -u
+# Run inside its own chain — an original command that leads back here, as another app's shim can once its
+# Repair saved this one as the user's command — it does nothing: two shims naming each other would
+# otherwise start each other for ever. The variable reaches the chain through the environment.
+[ -n "${SHELLFORGE_STATUSLINE_ACTIVE-}" ] && exit 0
+export SHELLFORGE_STATUSLINE_ACTIVE=1
 IFS= read -r -d '' INPUT || true
 SUPPORT="$HOME/Library/Application Support/Shellforge"
 PORT=""

@@ -102,7 +102,7 @@ enum GrokStatusLineConfig {
 
     /// Points `file`, whose text the caller has read (`nil` when there is none), at the shim, with
     /// the user's own command kept first (`StatusLineOriginal.record`). `original` is where.
-    static func install(_ text: String?, into file: UserConfigFile, original: URL, shimPath: String) throws {
+    static func install(_ text: String?, into file: UserConfigFile, original: URL, shimPath: String, home: URL) throws {
         guard let merged = merge(text, shimPath: shimPath) else { return }
         let before: StatusLineOriginal.Before
         switch state(text, shimPath: shimPath) {
@@ -110,7 +110,9 @@ enum GrokStatusLineConfig {
         case .missing: before = .missing
         case .current, .outdated, .builtin, .unsupportedLayout: before = .ours
         }
-        try StatusLineOriginal.record(before, command: original)
+        try StatusLineOriginal.record(StatusLineOriginal.handedOver(before, home: home, aitermShim: "grok-statusline-shim.sh",
+                                                                    aitermRecord: "grok-statusline-original.cmd"),
+                                      command: original)
         try file.backUp()
         try file.write(Data(merged.text.utf8))
     }

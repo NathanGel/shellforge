@@ -62,7 +62,7 @@ struct GrokHooks: HookDriver {
         if reading.hooksState != .current { try hooks.write(GrokHooksFile.contents(port: port)) }
         try ShimPort.record(port, home: home)
         try GrokStatusLineConfig.install(reading.config.value, into: config,
-                                         original: ShellforgePaths.grokStatusLineOriginalURL(home: home), shimPath: shimPath)
+                                         original: ShellforgePaths.grokStatusLineOriginalURL(home: home), shimPath: shimPath, home: home)
     }
 
 }

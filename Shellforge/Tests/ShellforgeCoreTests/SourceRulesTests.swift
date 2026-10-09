@@ -21,4 +21,22 @@ import Testing
         }
         #expect(offenders.isEmpty, "Start children through CommandLauncher: \(offenders.map(\.lastPathComponent))")
     }
+
+    /// Code taken from AiTerm is GPLv3 and keeps its author: every file that says it was ported
+    /// names AiTerm and the file it came from, the licence and Laurens D'Hondt.
+    @Test func everyPortedFileCreditsAiTerm() throws {
+        let root = sources.deletingLastPathComponent()
+        let files = ["Sources", "Tests"].flatMap { folder in
+            (FileManager.default.enumerator(at: root.appendingPathComponent(folder), includingPropertiesForKeys: nil)?
+                .compactMap { $0 as? URL } ?? []).filter { $0.pathExtension == "swift" }
+        }
+        // The header comment, however many lines it runs to.
+        let wrong = try files.filter { file in
+            let header = try String(contentsOf: file, encoding: .utf8).split(separator: "\n")
+                .prefix { $0.hasPrefix("//") }.joined(separator: " ")
+            guard header.contains("Ported from") else { return false }
+            return !(header.contains("Ported from AiTerm (") && header.contains("GPLv3, Laurens D'Hondt."))
+        }
+        #expect(wrong.isEmpty, "Credit AiTerm as the other ported files do: \(wrong.map(\.lastPathComponent))")
+    }
 }

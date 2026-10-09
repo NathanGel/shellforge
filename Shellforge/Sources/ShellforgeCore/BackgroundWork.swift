@@ -1,4 +1,4 @@
-// Ported from AiTerm: app/Sources/AiTermCore/BackgroundWork.swift
+// Ported from AiTerm (app/Sources/AiTermCore/BackgroundWork.swift), GPLv3, Laurens D'Hondt.
 import Foundation
 
 /// Blocking filesystem/process work belongs on a Dispatch queue, not Swift's

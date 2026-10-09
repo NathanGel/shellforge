@@ -173,11 +173,15 @@ import Testing
         let aitermShim = "/Applications/AiTerm.app/Contents/Resources/hooks/grok-statusline-shim.sh"
         let config = home.appendingPathComponent(".grok/config.toml")
         try "[ui.status_line]\ntype = \"command\"\ncommand = \"\(aitermShim)\"\n".write(to: config, atomically: true, encoding: .utf8)
+        let aitermRecord = home.appendingPathComponent("Library/Application Support/AiTerm/grok-statusline-original.cmd")
+        try FileManager.default.createDirectory(at: aitermRecord.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "my-grok-line".write(to: aitermRecord, atomically: true, encoding: .utf8)
         let hooks = driver(home)
         try hooks.install()
         #expect(hooks.probe() == HookProbe(state: .current, explanation: nil))
         #expect(try String(contentsOf: aitermHooks, encoding: .utf8) == aitermText)
         #expect(FileManager.default.fileExists(atPath: home.appendingPathComponent(".grok/hooks/shellforge.json").path))
-        #expect(try String(contentsOf: ShellforgePaths.grokStatusLineOriginalURL(home: home), encoding: .utf8) == aitermShim)
+        // The user's command, carried over from AiTerm's record; AiTerm's shim is not kept.
+        #expect(try String(contentsOf: ShellforgePaths.grokStatusLineOriginalURL(home: home), encoding: .utf8) == "my-grok-line")
     }
 }
