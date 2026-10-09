@@ -75,7 +75,8 @@ class Service:
         # on a worker thread: a stat on a hung network mount must not stall the daemon.
         self.claude_files, self.codex_files, self.clock = claude_files, codex_files, clock
         self.supervisor = supervisor or ItermSupervisor(iterm, rpc.broadcast, lambda: rpc.client_count)
-        self.registry = SessionRegistry()
+        from .app_sessions import AppSessions
+        self.registry = SessionRegistry(inherit_window_tags=not isinstance(iterm, AppSessions))
         self.status = StatusEngine(self.registry, clock, monotonic)
         self.usage = UsageStore()
         self.resolver = SessionResolver(self.registry, claude_files)

@@ -98,3 +98,15 @@ async def test_a_list_that_arrives_while_a_second_hook_waits_its_turn_is_not_mis
     assert loop.time() - started < 1.8
     states = {s["sessionId"]: s["state"] for s in (await call(r, w, "sessions.list", id_=2))["result"]}
     assert states == {"A": "working", "B": "working"}
+
+
+async def test_an_untagged_tab_does_not_take_another_tabs_task_from_the_shared_window(app_stack):
+    """Shellforge keeps every task's tabs in one window and tags each tab itself. AiTerm's tabs
+    inherited their window's task because a window was a task; here that would file a plain tab
+    under whichever task was listed last."""
+    svc, r, w = app_stack
+    tagged = {**SESSION, "sessionId": "A", "taskId": "T1"}
+    plain = {**SESSION, "sessionId": "B", "commandLine": "-zsh", "jobPid": None, "taskId": None, "projectId": None}
+    await call(r, w, "sessions.update", {"sessions": [tagged, plain]})
+    tasks = {s["sessionId"]: s["taskId"] for s in (await call(r, w, "sessions.list", id_=2))["result"]}
+    assert tasks == {"A": "T1", "B": None}

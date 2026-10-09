@@ -16,7 +16,11 @@ class SnapshotDiff:
 
 
 class SessionRegistry:
-    def __init__(self) -> None:
+    def __init__(self, inherit_window_tags: bool = True) -> None:
+        # With iTerm2 as the source a window was a task, and a tab opened in it with Cmd+T carried no
+        # tag of its own. The Shellforge app keeps many tasks in one window and tags each tab itself,
+        # so there an untagged tab is untagged.
+        self._inherit_window_tags = inherit_window_tags
         self._sessions: dict[str, SessionInfo] = {}
         self._window_task: dict[str, str] = {}
         self._window_project: dict[str, str] = {}
@@ -26,10 +30,11 @@ class SessionRegistry:
     def apply_snapshot(self, raw: list[RawSession]) -> SnapshotDiff:
         diff = SnapshotDiff()
         for r in raw:  # learn tags first so untagged siblings can inherit
-            if t := r.user_vars.get(TASK_TAG):
-                self._window_task[r.window_id] = t
-            if p := r.user_vars.get(PROJECT_TAG):
-                self._window_project[r.window_id] = p
+            if self._inherit_window_tags:
+                if t := r.user_vars.get(TASK_TAG):
+                    self._window_task[r.window_id] = t
+                if p := r.user_vars.get(PROJECT_TAG):
+                    self._window_project[r.window_id] = p
             if r.active:
                 self._window_active[r.window_id] = r.session_id
         seen: set[str] = set()
