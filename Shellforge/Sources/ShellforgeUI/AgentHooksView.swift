@@ -1,8 +1,10 @@
 import ShellforgeCore
+import ShellforgeDesign
 import SwiftUI
 
 /// The Agent hooks sheet: each preset agent's hooks, and the one button that installs or repairs
-/// them. Nothing changes a file until the user clicks.
+/// them. Nothing changes a file until the user clicks. Drawn from AiTerm's design system: a sheet's
+/// title, help text, each agent's mark and its state as a quiet badge.
 public struct AgentHooksView: View {
     @ObservedObject var model: AgentHooksModel
     let dismiss: () -> Void
@@ -13,39 +15,34 @@ public struct AgentHooksView: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Agent hooks").font(.headline)
-            Text("Shellforge changes an agent’s settings only when you click its button. Each file is backed up once before the first change.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            ForEach(model.rows) { row in rowView(row) }
-            if let error = model.lastError {
-                Text(error)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                    .fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: Space.block) {
+            Text("Agent hooks").font(Typography.title).foregroundStyle(Palette.text)
+            HelpText("Shellforge changes an agent’s settings only when you click its button. Each file is backed up once before the first change.")
+            VStack(alignment: .leading, spacing: Space.gap) {
+                ForEach(model.rows) { row in rowView(row) }
             }
+            if let error = model.lastError { HelpText(error, tone: .warning) }
             HStack {
                 Spacer()
                 Button("Done", action: dismiss).keyboardShortcut(.defaultAction)
             }
         }
-        .padding(20)
-        .frame(width: 420)
+        .padding(Space.margin)
+        .frame(width: Sheet.width, alignment: .leading)
+        .background(Palette.surface)
         .task { await model.refresh() }
     }
 
     private func rowView(_ row: AgentHooksModel.Row) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(row.name)
-                Text(Self.words(row.probe.state)).font(.caption)
+        HStack(alignment: .firstTextBaseline, spacing: Space.gap) {
+            VendorMark(agent: Self.agent(row.id), size: Size.vendorMark)
+            VStack(alignment: .leading, spacing: Space.tight) {
+                HStack(spacing: Space.base) {
+                    Text(row.name).font(Typography.bodyEmphasis).foregroundStyle(Palette.text)
+                    Badge(Self.words(row.probe.state), style: .quiet)
+                }
                 if let explanation = row.probe.explanation, row.probe.state != .missing {
-                    Text(explanation)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    HelpText(explanation)
                 }
             }
             Spacer()
@@ -55,6 +52,9 @@ public struct AgentHooksView: View {
             }
         }
     }
+
+    /// The preset's agent, for its mark.
+    static func agent(_ id: String) -> SessionAgent { SessionAgent(rawValue: id) ?? .shell }
 
     /// The state as the sheet says it.
     static func words(_ state: HookState) -> String {

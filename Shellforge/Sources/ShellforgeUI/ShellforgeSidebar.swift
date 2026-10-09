@@ -29,7 +29,8 @@ struct SidebarView: View {
     @ObservedObject var model: SidebarModel
     let chooseFolder: @MainActor () -> String?
     @ObservedObject var hooks: AgentHooksModel
-    @State private var showingHooks = false
+    /// The window the sidebar is drawn in, which the Agent hooks panel hangs from.
+    @State private var anchor = WindowAnchor()
     @State private var newTaskProject: UUID?
     @State private var newTaskTitle = ""
     @Environment(\.interfaceScale) private var scale
@@ -38,7 +39,7 @@ struct SidebarView: View {
         VStack(spacing: 0) {
             SidebarBanners(model: model)
             List {
-                SidebarHeader(addProject: addProject, showHooks: { showingHooks = true })
+                SidebarHeader(addProject: addProject, showHooks: showHooks)
                 ForEach(model.rows) { row in rowView(row) }
             }
             .listStyle(.sidebar)
@@ -49,9 +50,7 @@ struct SidebarView: View {
         .background(Palette.sidebar)
         .surface(.sidebar)
         .tint(Palette.accent)
-        .sheet(isPresented: $showingHooks) {
-            AgentHooksView(model: hooks, dismiss: { showingHooks = false })
-        }
+        .background(WindowReader(anchor: anchor))
     }
 
     @ViewBuilder private func rowView(_ row: SidebarRow) -> some View {
@@ -77,6 +76,15 @@ struct SidebarView: View {
                 .frame(height: scale(Size.menuRow)).padding(.leading, scale(Space.base))
                 .listRowSeparator(.hidden)
         }
+    }
+
+    /// The Agent hooks sheet, in its own dark panel on the sidebar's window.
+    private func showHooks() {
+        final class Holder { var panel: NSPanel? }
+        let holder = Holder()
+        holder.panel = DarkPanel.present(AgentHooksView(model: hooks, dismiss: {
+            if let panel = holder.panel { DarkPanel.dismiss(panel) }
+        }), over: anchor.window)
     }
 
     private func addProject() {
