@@ -1,6 +1,7 @@
 import AppKit
 import Testing
 @testable import ShellforgeCore
+import ShellforgeDesign
 @testable import ShellforgeUI
 
 @MainActor @Suite struct SidebarTests {
@@ -21,5 +22,25 @@ import Testing
 
     @Test func theSidebarStretchesWithTheWindowsHeightOnly() throws {
         #expect(ShellforgeSidebar.makeView(model: try sidebarModel(), chooseFolder: { nil }, hooks: hooks()).autoresizingMask == [.height])
+    }
+
+    @Test func theSidebarIsAiTermsWidth() throws {
+        #expect(ShellforgeSidebar.width == Size.sidebarWidth)
+    }
+
+    /// Inside a light iTerm2 window the sidebar still draws AiTerm's dark ground: its host is dark,
+    /// whatever the window around it.
+    @Test func theSidebarDrawsDarkInALightWindow() throws {
+        let host = ShellforgeSidebar.makeView(model: try sidebarModel(), chooseFolder: { nil }, hooks: hooks())
+        host.frame.size.height = 400
+        let window = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        window.appearance = NSAppearance(named: .aqua)
+        window.contentView = host
+        host.layoutSubtreeIfNeeded()
+        #expect(host.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua)
+        let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let ground = try #require(bitmap.colorAt(x: Int(host.bounds.width) - 4, y: Int(host.bounds.height) - 4)?.usingColorSpace(.sRGB))
+        #expect(ground.brightnessComponent < 0.3, "the sidebar's ground is light: \(ground)")
     }
 }

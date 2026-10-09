@@ -1,12 +1,13 @@
 import AppKit
 import ShellforgeCore
+import ShellforgeDesign
 import SwiftUI
 
 /// The sidebar on the left of a Shellforge window: projects → tasks → tabs.
 @MainActor
 public enum ShellforgeSidebar {
     /// Its width in points. The window's layout gives the session area what is left.
-    public static let width: CGFloat = 240
+    public static let width: CGFloat = Size.sidebarWidth
 
     /// The view the window places at its left edge: as wide as the sidebar, and only its height
     /// follows the window's. `chooseFolder` asks the user for a project folder (an open panel);
@@ -14,6 +15,9 @@ public enum ShellforgeSidebar {
     public static func makeView(model: SidebarModel, chooseFolder: @escaping @MainActor () -> String?, hooks: AgentHooksModel) -> NSView {
         let host = NSHostingView(rootView: SidebarView(model: model, chooseFolder: chooseFolder, hooks: hooks))
         host.frame = NSRect(x: 0, y: 0, width: width, height: 400)
+        // AiTerm is dark-only and forced the whole app dark; here only the sidebar is, so iTerm2's
+        // own windows keep the appearance the user chose. Every colour below resolves against this.
+        host.appearance = NSAppearance(named: .darkAqua)
         host.autoresizingMask = [.height]
         return host
     }
@@ -73,7 +77,9 @@ struct SidebarView: View {
         }
         .frame(width: ShellforgeSidebar.width, alignment: .topLeading)
         .frame(maxHeight: .infinity, alignment: .top)
-        .background(.regularMaterial)
+        .background(Palette.sidebar)
+        .surface(.sidebar)
+        .tint(Palette.accent)
     }
 
     private var header: some View {
