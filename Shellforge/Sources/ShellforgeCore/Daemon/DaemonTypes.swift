@@ -192,3 +192,29 @@ struct DaemonErrorBody: Decodable { var code: DaemonError.Code, message: String 
 struct Reply<Value: Decodable>: Decodable { var result: Value }
 /// An event's `payload`, as the type its name says.
 struct EventPayload<Value: Decodable>: Decodable { var payload: Value }
+
+extension SessionReport {
+    /// The session variables a report is read from: iTerm2's names, as shellforged's own iTerm2
+    /// bridge reads them (`iterm_bridge.VARIABLES`).
+    public enum Variable {
+        public static let commandLine = "commandLine"
+        public static let jobPid = "jobPid"
+        public static let title = "autoName"
+        public static let path = "path"
+    }
+
+    /// One session's report from its placement and a lookup of its variables (`Variable`, and the
+    /// task and project tags). A job pid of 0 or less is no job; a tag that is not a UUID is no tag.
+    public static func reading(sessionId: String, windowId: String, tabIndex: Int, active: Bool,
+                               value: (String) -> Any?) -> SessionReport {
+        let pid = (value(Variable.jobPid) as? NSNumber)?.intValue
+        return SessionReport(sessionId: sessionId, windowId: windowId, tabIndex: tabIndex,
+                             commandLine: value(Variable.commandLine) as? String,
+                             jobPid: pid.flatMap { $0 > 0 ? $0 : nil },
+                             title: value(Variable.title) as? String ?? "",
+                             cwd: value(Variable.path) as? String ?? "",
+                             active: active,
+                             task: (value(ShellforgeTags.task) as? String).flatMap(UUID.init(uuidString:)),
+                             project: (value(ShellforgeTags.project) as? String).flatMap(UUID.init(uuidString:)))
+    }
+}
