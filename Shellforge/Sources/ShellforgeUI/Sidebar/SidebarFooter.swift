@@ -34,6 +34,12 @@ struct SidebarFooter: View {
     let rows: [UsageVendorRow]
     /// The Mac's readings, in their order (`MachineMonitor`). Empty, the row draws its mark alone.
     var machine: [UsageLine] = []
+    /// The Mac's mode, as one drawn line (spec 2026-10-05). The defaults draw a Mac at its desk.
+    var mac: MacModeLine = MacModePresentation.line(mode: .desk, hotspot: nil, wifi: nil)
+    /// A click on the Mac's rows.
+    var toggleMac: () -> Void = {}
+    /// A right-click on them opens Mac Settings.
+    var openMacSettings: () -> Void = {}
     @Environment(\.interfaceScale) private var scale
 
     /// The first group's heading. It holds more than the context, so the context row names its
@@ -61,6 +67,7 @@ struct SidebarFooter: View {
                     }
                 }
                 macReadings
+                backpackLine
             }
             Hairline()
             group("Usage") {
@@ -79,20 +86,48 @@ struct SidebarFooter: View {
         .overlay(alignment: .top) { Hairline() }
     }
 
-    /// The Mac's readings under its mark, read out as one element: its readings in words. Before
-    /// the first sample it says "Mac". AiTerm's click (⌘B), right-click and mode hint on this row,
-    /// and the backpack line under it, return with Backpack Mode (M1c-4).
+    /// The Mac's readings under its mark, read out as one element: its readings in words, then the
+    /// mode. Before the first sample it is still the Mac's button, so it says "Mac".
     private var macReadings: some View {
-        telemetryRow(mark: SymbolMark(symbol: Self.macSymbol, size: scale(Size.vendorMark), style: .paper)) {
-            usageWindows(machine)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Self.readingsLabel(machine))
+        macControl(
+            telemetryRow(mark: SymbolMark(symbol: Self.macSymbol, size: scale(Size.vendorMark), style: .paper)) {
+                usageWindows(machine)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(Self.readingsLabel(machine))
+            .accessibilityHint(mac.help)
+        )
     }
 
     /// The readings row's VoiceOver label: each reading's words, or "Mac" while there are none.
     static func readingsLabel(_ machine: [UsageLine]) -> String {
         machine.isEmpty ? "Mac" : machine.map(\.help).joined(separator: ", ")
+    }
+
+    /// While Backpack Mode is on or switching: its `ToneDot` centred in the marks' column, then its
+    /// words in the same tone. Nothing at the desk.
+    @ViewBuilder private var backpackLine: some View {
+        if let tone = mac.mode.tone, let words = mac.mode.words {
+            macControl(
+                telemetryRow(mark: ToneDot(tone: tone, size: scale(Size.statusMarkSmall)).frame(width: scale(Size.vendorMark))) {
+                    Text(words).foregroundStyle(tone.color)
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(mac.help)
+            )
+        }
+    }
+
+    /// What makes a row the Mac's: a click is ⌘B, a right-click offers Mac Settings…, and the mode's
+    /// sentence is its tooltip wherever a reading's own does not cover it.
+    private func macControl(_ row: some View) -> some View {
+        row
+            .contentShape(Rectangle())
+            .onTapGesture(perform: toggleMac)
+            .contextMenu { Button("Mac Settings…", action: openMacSettings) }
+            .help(mac.help)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction(.default, toggleMac)
     }
 
     /// Amber, like the iTerm2 banner's warning, for a feed that is broken; a quiet one's note recedes.

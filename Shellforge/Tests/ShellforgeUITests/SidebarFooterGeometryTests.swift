@@ -38,11 +38,10 @@ struct SidebarFooterGeometryTests {
         #expect(SidebarFooter.noteInk(UsageVendorRow(vendor: .codex, lines: [], note: "Reconnecting", warning: true)) == Palette.amber)
     }
 
-    /// AiTerm's helper without its `mode`: the footer is drawn as AiTerm draws it at the desk, until
-    /// Backpack Mode arrives (M1c-4).
-    private func host(_ rows: [UsageVendorRow], task: UsageTaskRow? = nil, machine: [UsageLine] = [],
+    private func host(_ rows: [UsageVendorRow], task: UsageTaskRow? = nil, machine: [UsageLine] = [], mode: MacMode = .desk,
                       width: CGFloat = Size.sidebarMinWidth, scale: InterfaceScale = .standard) -> NSHostingView<AnyView> {
-        let view = AnyView(SidebarFooter(task: task, rows: rows, machine: machine)
+        let mac = MacModePresentation.line(mode: mode, hotspot: "Laurens’s iPhone", wifi: "Office-WiFi")
+        let view = AnyView(SidebarFooter(task: task, rows: rows, machine: machine, mac: mac)
             .interfaceScale(scale)
             .frame(width: width, alignment: .leading)
             .background(Color.black))
@@ -257,6 +256,14 @@ extension SidebarFooterGeometryTests {
         let usage = Space.tight + Size.menuRow * 2 + Space.base
         let system = Space.tight + Size.menuRow * 2 + Space.base
         #expect(abs(host(rows).fittingSize.height - (system + 1 + usage)) < 0.5)
+    }
+
+    /// In the backpack, and while it switches, the mode's line adds one row under the readings.
+    @Test(arguments: [MacMode.turningOn, .on, .needsYou(.lostHotspot), .turningOff])
+    func theBackpackLineAddsOneRow(mode: MacMode) {
+        let usage = Space.tight + Size.menuRow + Space.base
+        let system = Space.tight + Size.menuRow * 3 + Space.base
+        #expect(abs(host([], mode: mode).fittingSize.height - (system + 1 + usage)) < 0.5)
     }
 
     /// The readings row at its widest — three readings, each at 100 % — paints inside the sidebar's
