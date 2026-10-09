@@ -23,6 +23,7 @@
 #import "PTYTabView.h"
 #import "PTYWindow.h"
 #import "iTermAdvancedSettingsModel.h"
+#import "PseudoTerminal.h"
 #import "iTerm2SharedARC-Swift.h"
 #import "iTermApplication.h"
 #import "iTermDragHandleView.h"
@@ -256,7 +257,7 @@ NS_CLASS_AVAILABLE_MAC(10_14)
         [self addSubview:_toolbelt];
         [self updateToolbeltForWindow:nil];
 
-        _shellforgeSidebar = [iTermShellforgeSidebar makeView];
+        _shellforgeSidebar = [iTermShellforgeSidebar makeViewFor:(PseudoTerminal *)delegate];
         [self addSubview:_shellforgeSidebar];
 
         _windowNumberLabel = [NSTextField newLabelStyledTextField];
@@ -1213,6 +1214,10 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
 }
 
 - (BOOL)tabBarShouldBeVisibleWithAdditionalTabs:(int)numberOfAdditionalTabs {
+    // Shellforge: the sidebar lists the tabs; iTerm2's tab bar would show other tasks' tabs.
+    if (_shellforgeSidebar) {
+        return NO;
+    }
     if (([_delegate anyFullScreen] || [_delegate enteringLionFullscreen]) &&
         ![iTermPreferences boolForKey:kPreferenceKeyShowFullscreenTabBar]) {
         DLog(@"Tabbar should not be visible because in full screen");

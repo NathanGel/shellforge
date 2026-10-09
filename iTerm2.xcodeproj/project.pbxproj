@@ -5576,6 +5576,7 @@
 		FF762198E91EE94A792CFEC8 /* ai-models.json in Resources */ = {isa = PBXBuildFile; fileRef = DF18C01510605DB0C639038F /* ai-models.json */; };
 		364D24FC328DB1D5D49A1483 /* iTermShellforgeSidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 912AC095DBF148E3E0F01930 /* iTermShellforgeSidebar.swift */; };
 		D86C83673C968664A30FCE79 /* ShellforgeUI in Frameworks */ = {isa = PBXBuildFile; productRef = 45EDD04F5F06C95A90D633E0 /* ShellforgeUI */; };
+		E2F3C106E443EEE6158740C8 /* ShellforgeCore in Frameworks */ = {isa = PBXBuildFile; productRef = 0206A3F9B522FACD0DC44B11 /* ShellforgeCore */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -10133,6 +10134,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A6C7C96D2E172F3E00AA7668 /* WebExtensionsFramework in Frameworks */,
+				E2F3C106E443EEE6158740C8 /* ShellforgeCore in Frameworks */,
 				D86C83673C968664A30FCE79 /* ShellforgeUI in Frameworks */,
 				51A4E0853124F0481929EF76 /* CompanionProtocol in Frameworks */,
 				611264B856DACEEA188EA842 /* CompanionNoise in Frameworks */,
@@ -18041,6 +18043,7 @@
 			name = iTermSwiftPackages;
 			packageProductDependencies = (
 				A6C7C96C2E172F3E00AA7668 /* WebExtensionsFramework */,
+				0206A3F9B522FACD0DC44B11 /* ShellforgeCore */,
 				45EDD04F5F06C95A90D633E0 /* ShellforgeUI */,
 				223B2226AFD38553CBB6D072 /* CompanionProtocol */,
 				CE47D7EFD87C4A5BF1DF9B29 /* CompanionNoise */,
@@ -27697,6 +27700,10 @@
 		45EDD04F5F06C95A90D633E0 /* ShellforgeUI */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = ShellforgeUI;
+		};
+		0206A3F9B522FACD0DC44B11 /* ShellforgeCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = ShellforgeCore;
 		};
 /* End XCSwiftPackageProductDependency section */
 

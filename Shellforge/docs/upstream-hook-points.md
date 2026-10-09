@@ -11,6 +11,8 @@ this list short; new behaviour belongs in the Shellforge package.
 | `sources/TerminalView/iTermLayoutCalculator.{h,m}` | `leftPanelWidth` in, `leftPanelFrame` out; `calculateLayoutWithInputs:` lays out the rest as in a narrower window, then shifts it right | One place makes room for the sidebar in every tab-bar position |
 | `sources/TerminalView/iTermRootTerminalView.m` | Creates the sidebar, feeds its width to the calculator, sets its frame in `layoutSubviews` | The sidebar in every terminal window |
 | `sources/TerminalView/iTermShellforgeSidebar.swift` (new) | `@objc` bridge to `ShellforgeUI` | Objective-C cannot import the Swift package |
+| `sources/TerminalView/iTermRootTerminalView.m` (`tabBarShouldBeVisibleWithAdditionalTabs:`) | No tab bar in a window with the sidebar | The sidebar lists the tabs; the tab bar would show other tasks' |
+| `iTerm2.xcodeproj/project.pbxproj` | `ShellforgeCore` linked into `iTermSwiftPackages` | The host builds `TabSnapshot`s and the model |
 | `ModernTests/ShellforgeSidebarLayoutTest.swift` (new) | Calculator tests for the sidebar column | Synchronized test folder: no project entry needed |
 
 ## M0: verified on 9 October 2026
