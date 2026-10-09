@@ -13,10 +13,13 @@ let package = Package(
     ],
     targets: [
         .target(name: "ShellforgeCore", path: "Sources/ShellforgeCore"),
-        .target(name: "ShellforgeUI", dependencies: ["ShellforgeCore"], path: "Sources/ShellforgeUI"),
+        // AiTerm's design system: depends on nothing but SwiftUI and AppKit (DesignRulesTests).
+        .target(name: "ShellforgeDesign", path: "Sources/ShellforgeDesign", exclude: ["README.md"]),
+        .target(name: "ShellforgeUI", dependencies: ["ShellforgeCore", "ShellforgeDesign"], path: "Sources/ShellforgeUI"),
         // Fakes and helpers the test targets share; test targets cannot share a source file.
         .target(name: "ShellforgeTestSupport", dependencies: ["ShellforgeCore"], path: "Tests/ShellforgeTestSupport"),
         .testTarget(name: "ShellforgeCoreTests", dependencies: ["ShellforgeCore", "ShellforgeTestSupport"], path: "Tests/ShellforgeCoreTests"),
+        .testTarget(name: "ShellforgeDesignTests", dependencies: ["ShellforgeDesign"], path: "Tests/ShellforgeDesignTests"),
         .testTarget(name: "ShellforgeUITests", dependencies: ["ShellforgeUI", "ShellforgeCore", "ShellforgeTestSupport"], path: "Tests/ShellforgeUITests"),
     ],
     swiftLanguageModes: [.v6]
