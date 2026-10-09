@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from . import protocol
-from .iterm_bridge import ItermPort, ItermUnavailable
+from .iterm_port import ItermPort, ItermUnavailable
 from .models import PROJECT_TAG, TASK_TAG
 from .rpc_params import frame_param, guard, optional_param, param, require_iterm
 from .rpc_server import RpcError

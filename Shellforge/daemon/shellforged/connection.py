@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from . import protocol
-from .iterm_bridge import ItermAuthFailed, ItermPort, ItermUnavailable, use_cookie
+from .iterm_port import ItermAuthFailed, ItermPort, ItermUnavailable
 from .rpc_params import optional_param, param
 
 log = logging.getLogger(__name__)
@@ -32,6 +32,12 @@ async def _launch_iterm() -> None:
         log.exception("failed to launch iTerm2 via 'open -a iTerm'")
 
 
+def _use_cookie(cookie: str, key: str) -> None:
+    """The bridge's use_cookie, imported only when iTerm2 is the session source."""
+    from .iterm_bridge import use_cookie
+    use_cookie(cookie, key)
+
+
 class ItermSupervisor:
     """Owns the iTerm2 connection's lifecycle and announces it: `iterm.connected`,
     `iterm.disconnected`, `iterm.auth_failed` and `iterm.cookieRequested` all come from here.
@@ -42,7 +48,7 @@ class ItermSupervisor:
                  auth_backoff_cap_seconds: float = AUTH_BACKOFF_CAP_SECONDS,
                  reconnect_sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
                  cookies_from_app: bool = False, cookie_wait_seconds: float = COOKIE_WAIT_SECONDS,
-                 apply_cookie: Callable[[str, str], None] = use_cookie):
+                 apply_cookie: Callable[[str, str], None] = _use_cookie):
         self.iterm, self.broadcast, self.client_count = iterm, broadcast, client_count
         self.launch_iterm = launch_iterm or _launch_iterm
         self.reconnect_seconds = reconnect_seconds

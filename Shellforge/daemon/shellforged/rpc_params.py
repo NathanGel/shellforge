@@ -4,7 +4,7 @@ from collections.abc import Awaitable
 from typing import Any, TypeVar
 
 from . import protocol
-from .iterm_bridge import ItermPort, ItermUnavailable
+from .iterm_port import ItermPort, ItermUnavailable
 from .models import Frame
 from .rpc_server import RpcError
 

@@ -28,3 +28,8 @@ def test_no_shellforge_name_is_left_in_the_daemon_or_its_shims():
     offenders = [p.name for p in sources if p.is_file() and any(word in p.read_text(errors="ignore")
                  for word in ("AiTerm", "aiterm", "AITERM"))]
     assert offenders == []
+
+
+def test_run_takes_its_sessions_from_the_app_unless_told_otherwise():
+    assert main.build_parser().parse_args(["run"]).session_source == "app"
+    assert main.build_parser().parse_args(["run", "--session-source", "iterm"]).session_source == "iterm"

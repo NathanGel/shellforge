@@ -11,12 +11,13 @@ import plistlib
 import subprocess
 import threading
 from collections.abc import Awaitable, Callable, Coroutine
-from typing import Any, ParamSpec, Protocol, TypeVar
+from typing import Any, ParamSpec, TypeVar
 
 import iterm2
 
 from .models import PROJECT_TAG, TASK_TAG, TITLE_TAG, Frame, RawSession
 from .offload import run_detached
+from .iterm_port import ItermAuthFailed, ItermPort, ItermUnavailable  # noqa: F401 - re-exported
 
 log = logging.getLogger(__name__)
 VARIABLES = ("commandLine", "jobPid", "autoName", "path", f"user.{TASK_TAG}", f"user.{PROJECT_TAG}")
@@ -26,10 +27,6 @@ VARIABLES = ("commandLine", "jobPid", "autoName", "path", f"user.{TASK_TAG}", f"
 ITERM_CALL_SECONDS = 10.0
 P = ParamSpec("P")
 T = TypeVar("T")
-
-
-class ItermUnavailable(Exception):
-    pass
 
 
 class _SessionGone(iterm2.rpc.RPCException):
@@ -49,12 +46,6 @@ def _variable_values(response) -> list[Any]:
         name = iterm2.api_pb2.VariableResponse.Status.Name(status)
         raise (_SessionGone if name == "SESSION_NOT_FOUND" else iterm2.rpc.RPCException)(name)
     return [json.loads(value) for value in response.variable_response.values]
-
-
-class ItermAuthFailed(ItermUnavailable):
-    """iTerm2 is running but would not let the daemon in: the cookie request was refused, or the
-    cookie presented was rejected. Retrying at the normal rate cannot fix it -- a person has to --
-    so the service backs off and tells the app, instead of treating it as iTerm2 still starting."""
 
 
 def request_cookie(runner_class: type | None = None) -> None:
@@ -260,27 +251,6 @@ def _is_auth_rejection(exc: BaseException) -> bool:
     the legacy `InvalidStatusCode` carried the code directly."""
     response = getattr(exc, "response", None)
     return getattr(response, "status_code", getattr(exc, "status_code", None)) == 401
-
-
-class ItermPort(Protocol):
-    async def connect(self) -> str | None: ...
-    def is_connected(self) -> bool: ...
-    async def close(self) -> None: ...
-    async def create_window(self, cwd: str, title: str, tags: dict[str, str], frame: Frame) -> tuple[str, str]: ...
-    async def create_tab(self, window_id: str, tags: dict[str, str], cwd: str | None = None) -> str: ...
-    async def activate_window(self, window_id: str) -> None: ...
-    async def set_frame(self, window_id: str, frame: Frame) -> None: ...
-    async def close_window(self, window_id: str) -> None: ...
-    async def send_text(self, session_id: str, text: str) -> None: ...
-    async def set_session_tags(self, session_id: str, tags: dict[str, str]) -> None: ...
-    async def set_session_titles(self, titles: dict[str, str]) -> list[str]: ...
-    async def set_shellforge_background(self, session_ids: list[str], enabled: bool) -> None: ...
-    async def snapshot(self) -> list[RawSession]: ...
-    async def session_info(self, session_id: str) -> RawSession | None: ...
-    def on_new_session(self, cb: Callable[[str], Awaitable[None]]) -> None: ...
-    def on_session_closed(self, cb: Callable[[str], Awaitable[None]]) -> None: ...
-    def on_window_activated(self, cb: Callable[[str], Awaitable[None]]) -> None: ...
-    def on_disconnect(self, cb: Callable[[], Awaitable[None]]) -> None: ...
 
 
 # A session where the hierarchy has it: its window, its tab's index, and whether it is that window's

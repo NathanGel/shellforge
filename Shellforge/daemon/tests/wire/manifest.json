@@ -59,6 +59,9 @@
       "sessions.setTitles": [
         "reply.sessions.setTitles.json"
       ],
+      "sessions.update": [
+        "reply.sessions.update.json"
+      ],
       "tab.create": [
         "reply.tab.create.json"
       ],
@@ -94,6 +97,7 @@
     "sessions.list",
     "sessions.markSeen",
     "sessions.setTitles",
+    "sessions.update",
     "tab.create",
     "usage.get",
     "window.activate",

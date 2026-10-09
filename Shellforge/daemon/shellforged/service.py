@@ -15,12 +15,12 @@ from .codex_sessions import CodexSessionFiles
 from .connection import ItermSupervisor
 from .hook_router import HookRouter
 from .hooks_server import HookServer
-from .iterm_bridge import ItermPort
+from .iterm_port import ItermPort
 from .offload import run_detached
 from .publisher import Publisher
 from .resolver import SessionResolver
 from .rpc_params import frame_param, guard, param, require_iterm
-from .rpc_server import RpcServer
+from .rpc_server import RpcError, RpcServer
 from .models import HARNESS_BY_AGENT, SessionInfo, TokenTally
 from .sessions import SessionRegistry, SnapshotDiff
 from .status import StatusEngine, path_is_missing
@@ -55,6 +55,10 @@ CLAUDE_READ = "the Claude transcript read"
 T = TypeVar("T")
 
 
+#: How long a hook that placed nowhere waits for the app's next session list before re-reading.
+APP_UPDATE_WAIT_SECONDS = 2.0
+
+
 class Service:
     """The daemon's composition root: builds the registry, status engine and usage store, wires
     the supervisor, the hook router and the window manager to them, answers the RPC methods none
@@ -76,7 +80,7 @@ class Service:
         self.usage = UsageStore()
         self.resolver = SessionResolver(self.registry, claude_files)
         self.publisher = Publisher(rpc.broadcast, self.registry, self.usage)
-        self.hook_router = HookRouter(self.resolver, self.status, self.usage, clock, self.publisher, tick=self.tick)
+        self.hook_router = HookRouter(self.resolver, self.status, self.usage, clock, self.publisher, tick=self._tick_for_hooks)
         self.hooks.on_post = self.hook_router.handle_hook
         self.windows = WindowManager(iterm, self.registry, self.tick)
         self.supervisor.on_connected = self.windows.forget_titles
@@ -144,6 +148,7 @@ class Service:
         r("window.close", self._h_close)
         r("tab.create", self.windows.create_tab)
         r("sessions.list", self._h_sessions_list)
+        r("sessions.update", self._h_sessions_update)
         r("sessions.setTitles", self.windows.set_titles)
         r("sessions.markSeen", self._h_mark_seen)
         r("usage.get", self._h_usage_get)
@@ -186,6 +191,24 @@ class Service:
 
     async def _h_sessions_list(self, _p: Any) -> list[dict[str, Any]]:
         return [s.to_json() for s in self.registry.all()]
+
+    async def _tick_for_hooks(self) -> None:
+        """The re-read a hook that placed nowhere waits for. From the app, a fresh list has to come
+        first: the one in hand is the one the hook already failed to place on."""
+        from .app_sessions import AppSessions
+        if isinstance(self.iterm, AppSessions):
+            await self.iterm.next_update(timeout=APP_UPDATE_WAIT_SECONDS)
+        await self.tick()
+
+    async def _h_sessions_update(self, p: Any) -> dict[str, Any]:
+        """The app's tabs, replacing the last list; answered after the tick that reads them."""
+        from .app_sessions import AppSessions, parse_sessions
+        sessions = parse_sessions(p)
+        if not isinstance(self.iterm, AppSessions):
+            raise RpcError(protocol.BAD_PARAMS, "sessions.update needs the app session source")
+        self.iterm.replace(sessions)
+        await self.tick()
+        return {"ok": True}
 
     async def _h_mark_seen(self, p: Any) -> dict[str, Any]:
         changed = self.status.mark_seen(param(p, "taskId", str))

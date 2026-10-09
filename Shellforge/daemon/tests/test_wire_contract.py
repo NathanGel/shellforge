@@ -25,6 +25,7 @@ from typing import Any, get_args
 from shellforged import protocol, service
 from shellforged.models import AgentKind, State
 from tests.fake_iterm import FakeIterm
+from shellforged.app_sessions import AppSessions
 
 WIRE = Path(__file__).parent / "wire"
 UPDATE = "SHELLFORGE_UPDATE_WIRE_FIXTURES"
@@ -187,6 +188,17 @@ async def emitted(make_service, monkeypatch) -> dict[str, str]:
         mark = app.mark()
         await iterm.disconnect()
         events[protocol.ITERM_DISCONNECTED] = await app.event(protocol.ITERM_DISCONNECTED, mark)
+
+        # Shellforge's own source: the app sends its tabs instead of the daemon reading iTerm2.
+        app_svc = make_service(iterm=AppSessions())
+        await app_svc.start()
+        shellforge = App(*await asyncio.open_unix_connection(app_svc.rpc.path))
+        try:
+            replies["sessions.update"] = await shellforge.call("sessions.update", {"sessions": [{
+                "sessionId": "SESSION-GUID", "windowId": "w1", "tabIndex": 0, "commandLine": "pi", "jobPid": 4242,
+                "title": "pi", "cwd": WORKTREE, "active": True, "taskId": TASK_ID, "projectId": PROJECT_ID}]})
+        finally:
+            await shellforge.close()
         methods = svc.rpc.methods
     finally:
         await app.close()

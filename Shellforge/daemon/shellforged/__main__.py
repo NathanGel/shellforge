@@ -72,6 +72,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--log-level", default="INFO")
     run.add_argument("--idle-exit-seconds", type=float, default=IDLE_EXIT_SECONDS,
                      help="quit after this long with no client attached (0 disables)")
+    run.add_argument("--session-source", choices=["app", "iterm"], default="app",
+                     help="app: Shellforge sends its tabs (sessions.update); iterm: read them from iTerm2's Python API")
     run.add_argument("--cookies-from-app", action="store_true",
                      help="ask the attached app for each iTerm2 API cookie instead of running osascript")
     ctl = sub.add_parser("ctl", help="send one request to a running daemon")
@@ -100,14 +102,21 @@ async def run_daemon(ns: argparse.Namespace) -> None:
     from .codex_sessions import CodexSessionFiles
     from .connection import ItermSupervisor
     from .hooks_server import HookServer
-    from .iterm_bridge import ItermBridge
+    from .iterm_port import ItermPort
     from .rpc_server import RpcServer
     from .service import Service
 
     # The idle watchdog signals this: an app that died without a graceful quit never sends
     # SIGTERM, and the watchdog is the only way the daemon learns it is no longer needed.
     stop = asyncio.Event()
-    iterm, rpc = ItermBridge(), RpcServer(ns.socket)
+    iterm: ItermPort
+    if ns.session_source == "iterm":
+        from .iterm_bridge import ItermBridge
+        iterm = ItermBridge()
+    else:
+        from .app_sessions import AppSessions
+        iterm = AppSessions()
+    rpc = RpcServer(ns.socket)
     supervisor = ItermSupervisor(iterm, rpc.broadcast, lambda: rpc.client_count, cookies_from_app=ns.cookies_from_app)
     svc = Service(iterm=iterm, rpc=rpc, hooks=HookServer(port=ns.hook_port),
                   claude_files=ClaudeSessionFiles(), codex_files=CodexSessionFiles(),
