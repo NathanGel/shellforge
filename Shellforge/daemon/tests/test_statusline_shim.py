@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-SHIM = Path(__file__).resolve().parents[2] / "hooks" / "claude-statusline-shim.sh"
+SHIM = Path(__file__).resolve().parents[2] / "hooks" / "shellforge-claude-statusline.sh"
 PAYLOAD = {
     "model": {"id": "claude-opus-5", "display_name": "Opus 5"},
     "rate_limits": {"five_hour": {"used_percentage": 23.4, "resets_at": 1790000000}},

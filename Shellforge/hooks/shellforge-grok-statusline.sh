@@ -1,9 +1,9 @@
 #!/bin/zsh -f
-# hooks/grok-statusline-shim.sh — installed as Grok Build's [ui.status_line] command by Shellforge.
+# hooks/shellforge-grok-statusline.sh — installed as Grok Build's [ui.status_line] command by Shellforge.
 # 1. forwards the status-line JSON to the Shellforge daemon (300 ms cap): Grok's status line is the
 #    only place it reports how full a session's context window is;
 # 2. runs the status line the user had before, otherwise prints nothing (Grok then hides the row).
-# Same recipe as claude-statusline-shim.sh, including why the redirection wraps the whole
+# Same recipe as shellforge-claude-statusline.sh, including why the redirection wraps the whole
 # backgrounded pipeline and what it reads from the support folder (GrokDriver writes both files),
 # with one difference: Grok kills whatever a status-line script leaves running once it exits
 # (25-status-line.md, "Background work does not survive"), so the post runs beside the original

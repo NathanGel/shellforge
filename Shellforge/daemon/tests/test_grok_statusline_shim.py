@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-SHIM = Path(__file__).resolve().parents[2] / "hooks" / "grok-statusline-shim.sh"
+SHIM = Path(__file__).resolve().parents[2] / "hooks" / "shellforge-grok-statusline.sh"
 PAYLOAD = {"session_id": "g-1", "context_window": {"used_percentage": 37}}
 
 

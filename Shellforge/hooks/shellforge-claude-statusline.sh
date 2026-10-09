@@ -1,5 +1,5 @@
 #!/bin/zsh -f
-# hooks/claude-statusline-shim.sh — installed as Claude Code's statusLine command by Shellforge.
+# hooks/shellforge-claude-statusline.sh — installed as Claude Code's statusLine command by Shellforge.
 # 1. forwards the statusline JSON to the Shellforge daemon (fire and forget, 300 ms cap)
 # 2. preserves a previously configured status line, otherwise prints nothing.
 # The statusLine callback supplies the usage payload. Shellforge uses it as a telemetry bridge,
