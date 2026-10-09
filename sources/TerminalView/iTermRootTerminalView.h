@@ -98,6 +98,8 @@ extern const NSInteger iTermRootTerminalViewWindowNumberLabelWidth;
 @property(nonatomic, readonly) iTermToolbeltView *toolbelt;
 // Shellforge: the window has the projects → tasks → tabs sidebar, which replaces the tab bar.
 @property(nonatomic, readonly) BOOL hasShellforgeSidebar;
+// Shellforge: the sidebar's width, or 0 without one; part of the window's decorations.
+@property(nonatomic, readonly) CGFloat shellforgeSidebarWidth;
 
 // Should the toolbelt be visible?
 @property(nonatomic) BOOL shouldShowToolbelt;

@@ -12912,6 +12912,9 @@ static BOOL iTermApproximatelyEqualRects(NSRect lhs, NSRect rhs, double epsilon)
 // Returns the size of the stuff outside the tabview.
 - (NSSize)windowDecorationSize {
     NSSize decorationSize = NSZeroSize;
+    // Shellforge: the sidebar takes width from the window like a left tab bar does, so fitting the
+    // window to its tabs must add it back, or every new or closed tab shrinks the window by it.
+    decorationSize.width += _contentView.shellforgeSidebarWidth;
 
     if (!_contentView.tabBarControl.flashing &&
         [self tabBarShouldBeVisibleWithAdditionalTabs:tabViewItemsBeingAdded]) {

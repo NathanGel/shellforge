@@ -1208,6 +1208,10 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
     return _shellforgeSidebar != nil;
 }
 
+- (CGFloat)shellforgeSidebarWidth {
+    return _shellforgeSidebar ? [iTermShellforgeSidebar width] : 0;
+}
+
 - (BOOL)tabBarShouldBeVisibleEvenWhenOnLoan {
     if (_shellforgeSidebar) {
         // Shellforge: not even while flashing on a tab switch in full screen.

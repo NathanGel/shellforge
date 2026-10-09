@@ -14,7 +14,7 @@ this list short; new behaviour belongs in the Shellforge package.
 | `sources/TerminalView/iTermRootTerminalView.m` (`tabBarShouldBeVisibleWithAdditionalTabs:`) | No tab bar in a window with the sidebar | The sidebar lists the tabs; the tab bar would show other tasks' |
 | `iTerm2.xcodeproj/project.pbxproj` | `ShellforgeCore` linked into `iTermSwiftPackages` | The host builds `TabSnapshot`s and the model |
 | `sources/TerminalView/iTermRootTerminalView.{h,m}` | `hasShellforgeSidebar`; no tab bar even while flashing; `#import "PseudoTerminal.h"` before the Swift header | Full screen and the sidebar's window controller |
-| `sources/TerminalView/PseudoTerminal.m` (`tabBarShouldBeVisible`, `tabBarShouldBeVisibleEvenWhenOnLoan`, `tabBarShouldBeAccessory`) | NO for a window with the sidebar | Native full screen and macOS 26 put the tab bar in the titlebar without asking the root view |
+| `sources/TerminalView/PseudoTerminal.m` (`tabBarShouldBeVisible`, `tabBarShouldBeVisibleEvenWhenOnLoan`, `tabBarShouldBeAccessory`; `windowDecorationSize`) | NO for a window with the sidebar; the sidebar's width counted as a decoration | Native full screen and macOS 26 put the tab bar in the titlebar without asking the root view; fitting the window to its tabs dropped the sidebar's width and shrank the window on every new or closed tab |
 | `ModernTests/ShellforgeSidebarLayoutTest.swift` (new) | Calculator tests for the sidebar column | Synchronized test folder: no project entry needed |
 
 ## M0: verified on 9 October 2026
@@ -33,3 +33,22 @@ committed and which needs the SF Symbols app; then `make Development`).
 Known gap: `constrainToolbeltWidth` limits the toolbelt against the whole window width, not the
 width left after the sidebar, so a very narrow window with the toolbelt open can squeeze the
 session area.
+
+## M1a: verified on 9 October 2026
+
+In the running Development build, driven through the Accessibility API, against a scratch repository:
+
+| Check | Result |
+| --- | --- |
+| Add a repository with `+` | Passed: listed and saved in `workspace.json` |
+| Add a folder outside git | Passed: the sidebar shows git's "fatal: not a git repository" |
+| New task | Passed: `.worktrees/try-shellforge` on branch `try-shellforge`, `.worktrees/` in `info/exclude`; its tab opens there, tagged with the task's id; no tab bar with two tabs |
+| Click another task | Passed: the window shows that task's tab |
+| Cmd-Shift-] | Passed: the sidebar's selection follows the tab shown |
+| Close a task's only tab, click the task | Passed: the task stays listed; a click opens a new tab in its worktree |
+| Native full screen | Passed: no tab bar, two tabs open |
+| Two windows | Passed: both show the same projects and tasks |
+| Window width when tabs open and close | Failed first (each refit dropped the sidebar's 240 pt until the window was 197 pt wide); fixed in `windowDecorationSize`, then 810 pt through two open/close rounds |
+| Quit and relaunch | Not shown: macOS's "close windows when quitting" setting meant no windows were restored. Session variables are saved with each session in iTerm2's arrangement code (`PTYSession.m`), so tagged tabs should come back under their tasks when restoration is on. |
+
+Seen in passing: a SwiftUI task row's accessibility press does not select it (a mouse click does), and the project header's ⊕ is only reachable as a named accessibility action.
