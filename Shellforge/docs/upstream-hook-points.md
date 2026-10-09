@@ -101,3 +101,17 @@ Development build, on the user's real configuration, with AiTerm's hooks already
 4. A real Claude Code turn in a Shellforge task tab turned the task's dot on, once the daemon matched
    folders by their resolved path. The scratch repo lies under `/tmp`, which iTerm2 reports as `/tmp/…`
    and Claude as `/private/tmp/…`.
+
+## M1b-2: verified on 9 October 2026
+
+The Development build next to AiTerm's own sidebar, both dark, at the same scale:
+
+- **Header.** Muted "PROJECTS", with the Agent hooks button and +.
+- **Project row.** Chevron, the provider's mark (plain git for the scratch repo), the name in body
+  emphasis, and +.
+- **Task rows.** The agent's mark (a shell's `>_`), title, mono branch, and AiTerm's idle ring.
+- **Other tabs.** "OTHER TABS" as a heading, with the selected tab in AiTerm's accent pill.
+- **The restart.** A `claude` running in a task tab outlived it, kept by iTerm2's session server.
+
+The sidebar staying dark inside a light iTerm2 is held by `theSidebarDrawsDarkInALightWindow` and
+`theHooksPanelIsDark`. It was not switched live.
