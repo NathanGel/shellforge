@@ -393,4 +393,28 @@ import Testing
         #expect(text.components(separatedBy: "# >>> shellforge hooks >>>").count == 2)
         #expect(text.contains("[mcp_servers.shellforge_hooks]") && text.contains("http://127.0.0.1:47831/mcp"))
     }
+
+    @Test(arguments: ["[a]\nx = 1]\n", "[a]\nx = [1, 2\n", "x = { a = 1 \n[b]\n", "x = 1 }\n"])
+    func unbalancedTOMLIsRefusedByBothTOMLDrivers(text: String) throws {
+        let home = try temporaryHome(); defer { try? FileManager.default.removeItem(at: home) }
+        let codex = home.appendingPathComponent(".codex/config.toml")
+        try text.write(to: codex, atomically: true, encoding: .utf8)
+        #expect(CodexHooks(home: home, port: 47831).probe()
+                == HookProbe(state: .unreadable, explanation: "~/.codex/config.toml cannot be parsed."))
+        #expect(throws: HookInstallError.refused(path: "~/.codex/config.toml", reason: "cannot be parsed")) {
+            try CodexHooks(home: home, port: 47831).install()
+        }
+        #expect(try String(contentsOf: codex, encoding: .utf8) == text)
+
+        let grokHome = try temporaryHome(); defer { try? FileManager.default.removeItem(at: grokHome) }
+        let grok = grokHome.appendingPathComponent(".grok/config.toml")
+        try FileManager.default.createDirectory(at: grok.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try text.write(to: grok, atomically: true, encoding: .utf8)
+        let driver = GrokHooks(home: grokHome, port: 47831, shimPath: "/A/shellforge-grok-statusline.sh")
+        #expect(driver.probe() == HookProbe(state: .unreadable, explanation: "~/.grok/config.toml cannot be parsed."))
+        #expect(throws: HookInstallError.refused(path: "~/.grok/config.toml", reason: "cannot be parsed")) { try driver.install() }
+        #expect(try String(contentsOf: grok, encoding: .utf8) == text)
+        #expect(!FileManager.default.fileExists(atPath: GrokHooksFile.url(home: grokHome).path), "nothing written first")
+    }
+
 }
