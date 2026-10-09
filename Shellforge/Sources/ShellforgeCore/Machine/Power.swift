@@ -15,14 +15,11 @@ public struct PowerReading: Equatable, Sendable {
     /// On AC with no battery reading: what a desktop Mac, and the inert port, report.
     public static let mains = PowerReading(level: nil, onBattery: false)
 
-    /// Where the footer's `bat` turns amber: AiTerm's Backpack Mode cutoff (10 %) plus its five
-    /// points of warning. Backpack Mode itself arrives with M1c-4.
-    public static let lowBattery = 15
-
-    /// On battery, at or under `lowBattery`: the footer's `bat` turns amber.
+    /// On battery, within 5 points of Backpack Mode's cutoff: the mode is about to end itself, and
+    /// the footer's `bat` turns amber.
     public var nearCutoff: Bool {
         guard onBattery, let level else { return false }
-        return level <= Self.lowBattery
+        return level <= BackpackSettings.cutoff + 5
     }
 }
 
