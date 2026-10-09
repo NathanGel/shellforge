@@ -75,7 +75,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--session-source", choices=["app", "iterm"], default="app",
                      help="app: Shellforge sends its tabs (sessions.update); iterm: read them from iTerm2's Python API")
     run.add_argument("--cookies-from-app", action="store_true",
-                     help="ask the attached app for each iTerm2 API cookie instead of running osascript")
+                     help="with --session-source iterm: ask the attached app for each iTerm2 API cookie instead of running osascript")
     ctl = sub.add_parser("ctl", help="send one request to a running daemon")
     ctl.add_argument("method")
     ctl.add_argument("params", nargs="?", default="null")
@@ -117,7 +117,9 @@ async def run_daemon(ns: argparse.Namespace) -> None:
         from .app_sessions import AppSessions
         iterm = AppSessions()
     rpc = RpcServer(ns.socket)
-    supervisor = ItermSupervisor(iterm, rpc.broadcast, lambda: rpc.client_count, cookies_from_app=ns.cookies_from_app)
+    # A cookie is for iTerm2's Python API: with the app as the source there is none to ask for.
+    supervisor = ItermSupervisor(iterm, rpc.broadcast, lambda: rpc.client_count,
+                                 cookies_from_app=ns.cookies_from_app and ns.session_source == "iterm")
     svc = Service(iterm=iterm, rpc=rpc, hooks=HookServer(port=ns.hook_port),
                   claude_files=ClaudeSessionFiles(), codex_files=CodexSessionFiles(),
                   clock=time.time, supervisor=supervisor)

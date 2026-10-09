@@ -180,3 +180,36 @@ async def test_run_daemon_quits_once_its_last_app_has_left(monkeypatch, tmp_path
         await asyncio.gather(daemon, return_exceptions=True)
         for sig in (signal.SIGINT, signal.SIGTERM):
             asyncio.get_running_loop().remove_signal_handler(sig)
+
+
+async def test_with_sessions_from_the_app_no_iterm2_cookie_is_asked_for(monkeypatch, tmp_path, sock_dir):
+    """--cookies-from-app is for reading sessions from iTerm2. With the app as the source there is
+    no cookie to ask for: asking would send the app to iTerm2 for one (an automation prompt), and
+    applying it would import the iterm2 package the app source must not need."""
+    import shellforged.__main__ as entry
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    sock = os.path.join(sock_dir, "c.sock")
+    ns = build_parser().parse_args(["run", "--socket", sock, "--hook-port", "0", "--cookies-from-app"])
+    daemon = asyncio.create_task(entry.run_daemon(ns))
+    try:
+        await wait_until(lambda: os.path.exists(tmp_path / "Library/Application Support/Shellforge/daemon.json"))
+        r, w = await asyncio.open_unix_connection(sock)
+        w.write(b'{"id": 1, "method": "workspace.snapshot", "params": null}\n')
+        await w.drain()
+        lines = []
+        deadline = asyncio.get_running_loop().time() + 0.5
+        while (left := deadline - asyncio.get_running_loop().time()) > 0:
+            try:
+                lines.append(json.loads(await asyncio.wait_for(r.readline(), left)))
+            except TimeoutError:
+                break
+        snapshot = next(m["result"] for m in lines if m.get("id") == 1)
+        assert snapshot["connected"] and snapshot["itermCookieRequest"] is None
+        assert not [m for m in lines if m.get("event") == "iterm.cookieRequested"]
+        w.close()
+    finally:
+        daemon.cancel()
+        await asyncio.gather(daemon, return_exceptions=True)
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            asyncio.get_running_loop().remove_signal_handler(sig)
