@@ -15,12 +15,6 @@ private final class ScriptedSensor: MachineSensor, @unchecked Sendable {
     }
 }
 
-/// A battery read as set: AiTerm's `FakePower` from its Backpack fakes.
-private final class FakePower: PowerSource, @unchecked Sendable {
-    var value = PowerReading.mains
-    func reading() -> PowerReading { value }
-}
-
 @MainActor
 struct MachineMonitorTests {
     private func sample(user: UInt32, idle: UInt32, used: UInt64 = 8) -> MachineSample {
