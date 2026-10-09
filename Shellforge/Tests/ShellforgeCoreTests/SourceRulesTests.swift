@@ -39,4 +39,17 @@ import Testing
         }
         #expect(wrong.isEmpty, "Credit AiTerm as the other ported files do: \(wrong.map(\.lastPathComponent))")
     }
+
+    /// Shellforge's own code is GPLv3 (it carries AiTerm's), so the licence's text ships with it; and
+    /// artwork taken under another licence — a logo "MIT-licensed" in its comment — has its notice.
+    @Test func theLicencesTheCodeNamesShipWithIt() throws {
+        let root = sources.deletingLastPathComponent()
+        let licence = try String(contentsOf: root.appendingPathComponent("LICENSE"), encoding: .utf8)
+        #expect(licence.contains("GNU GENERAL PUBLIC LICENSE") && licence.contains("Version 3, 29 June 2007"))
+        let notices = try String(contentsOf: root.appendingPathComponent("THIRD_PARTY_NOTICES.md"), encoding: .utf8)
+        let logos = try String(contentsOf: sources.appendingPathComponent("ShellforgeDesign/Logos.swift"), encoding: .utf8)
+        for source in ["LobeHub"] where logos.contains(source) {
+            #expect(notices.contains(source) && notices.contains("MIT License"), "\(source)'s MIT notice is missing")
+        }
+    }
 }
