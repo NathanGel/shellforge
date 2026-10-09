@@ -77,7 +77,11 @@ public enum TaskWorktrees {
 
     /// Adds `pattern` to the repository's `info/exclude` once, so the worktrees never show as untracked.
     private static func exclude(_ pattern: String, gitDir: String, project: Project) throws {
-        let dir = gitDir.hasPrefix("/") ? gitDir : "\(project.path)/\(gitDir)"
+        try exclude(pattern, inGitDir: gitDir.hasPrefix("/") ? gitDir : "\(project.path)/\(gitDir)")
+    }
+
+    /// Adds `pattern` to `dir`'s `info/exclude` once; `dir` is a git directory, absolute.
+    static func exclude(_ pattern: String, inGitDir dir: String) throws {
         let file = "\(dir)/info/exclude"
         try FileManager.default.createDirectory(atPath: "\(dir)/info", withIntermediateDirectories: true)
         let current = (try? String(contentsOfFile: file, encoding: .utf8)) ?? ""
