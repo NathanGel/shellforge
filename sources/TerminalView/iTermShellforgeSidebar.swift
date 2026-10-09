@@ -17,7 +17,7 @@ final class iTermShellforgeSidebar: NSObject {
     @objc static var width: CGFloat { ShellforgeSidebar.width }
 
     /// One shared launcher, so the login shell's environment is read once per app run.
-    static let launcher = CommandLauncher()
+    nonisolated static let launcher = CommandLauncher()
 
     /// The one workspace every window's sidebar shows and changes.
     static let document = WorkspaceDocument(store: WorkspaceStore())
@@ -25,7 +25,7 @@ final class iTermShellforgeSidebar: NSObject {
     /// A new sidebar for `windowController`'s window.
     @objc static func makeView(for windowController: PseudoTerminal) -> NSView {
         let host = iTermShellforgeHost(windowController: windowController)
-        let model = SidebarModel(host: host, document: document, launcher: launcher)
+        let model = SidebarModel(host: host, document: document, launcher: launcher, feed: link)
         return ShellforgeSidebar.makeView(model: model, chooseFolder: {
             let panel = NSOpenPanel()
             panel.canChooseDirectories = true
@@ -64,7 +64,13 @@ final class iTermShellforgeHost: TerminalHost {
         for name in names {
             observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 // Session-created fires before the session joins a tab; read the window next turn.
-                DispatchQueue.main.async { MainActor.assumeIsolated { self?.onChange?() } }
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        self?.onChange?()
+                        // A tab opened, closed or moved: the daemon hears it now, not on the next tick.
+                        iTermShellforgeSidebar.link.reportsMayHaveChanged()
+                    }
+                }
             })
         }
     }
@@ -104,5 +110,49 @@ final class iTermShellforgeHost: TerminalHost {
         }, completion: { [weak self] _, _ in
             MainActor.assumeIsolated { self?.onChange?() }
         })
+    }
+}
+
+/// The app's one helper: started at launch, told about every session, stopped at quit.
+extension iTermShellforgeSidebar {
+    /// The daemon's package is copied to `Contents/Resources/daemon/shellforged`, alone in its folder:
+    /// that folder is the daemon's PYTHONPATH, and iTerm2's own scripts sit at the top of Resources.
+    static let link = DaemonLink(daemonDir: Bundle.main.resourceURL?.appendingPathComponent("daemon"),
+                                 findPython: { PythonFinder.find(launcher: launcher).map(URL.init(fileURLWithPath:)) },
+                                 reports: { allReports() })
+    private static var tick: Timer?
+
+    /// Starts the helper and the report tick; both stop at iTermApplicationWillTerminate.
+    @objc static func startHelper() {
+        // ModernTests run inside the app; a test run must not start, adopt or stop a real helper.
+        guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
+        link.start()
+        // jobPid and commandLine change with no notification; the tick reads them, and only a
+        // changed list is sent.
+        tick = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
+            MainActor.assumeIsolated { link.reportsMayHaveChanged() }
+        }
+        NotificationCenter.default.addObserver(forName: NSNotification.Name(iTermApplicationWillTerminate), object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated {
+                tick?.invalidate()
+                link.shutdown()
+            }
+        }
+    }
+
+    /// Every session in every window, split panes included; the selected one of the selected tab
+    /// is active.
+    static func allReports() -> [SessionReport] {
+        iTermController.sharedInstance().terminals().flatMap { window -> [SessionReport] in
+            let current = window.currentSession()?.guid
+            let windowId = window.terminalGuid ?? ""
+            return window.tabs().enumerated().flatMap { index, tab in
+                tab.sessions().map { session in
+                    let scope = session.genericScope
+                    return SessionReport.reading(sessionId: session.guid, windowId: windowId, tabIndex: index,
+                                                active: session.guid == current) { scope.value(forVariableName: $0) }
+                }
+            }
+        }
     }
 }

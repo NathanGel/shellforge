@@ -16,6 +16,10 @@ this list short; new behaviour belongs in the Shellforge package.
 | `sources/TerminalView/iTermRootTerminalView.{h,m}` | `hasShellforgeSidebar`; no tab bar even while flashing; `#import "PseudoTerminal.h"` before the Swift header | Full screen and the sidebar's window controller |
 | `sources/TerminalView/PseudoTerminal.m` (`tabBarShouldBeVisible`, `tabBarShouldBeVisibleEvenWhenOnLoan`, `tabBarShouldBeAccessory`; `windowDecorationSize`) | NO for a window with the sidebar; the sidebar's width counted as a decoration | Native full screen and macOS 26 put the tab bar in the titlebar without asking the root view; fitting the window to its tabs dropped the sidebar's width and shrank the window on every new or closed tab |
 | `ModernTests/ShellforgeSidebarLayoutTest.swift` (new) | Calculator tests for the sidebar column | Synchronized test folder: no project entry needed |
+| `iTerm2.xcodeproj/project.pbxproj` | Folder reference `Shellforge/daemon/shellforged`, copied by a "Copy shellforged" phase to `Contents/Resources/daemon/` | The app ships its helper; alone in its folder, which is the daemon's PYTHONPATH, away from iTerm2's own scripts at the top of Resources |
+| `sources/AppKit/iTermApplicationDelegate.m` (`applicationDidFinishLaunching:`) | `[iTermShellforgeSidebar startHelper]` | Starts shellforged and the one-second report tick; both stop at `iTermApplicationWillTerminate` |
+| `sources/TerminalView/iTermShellforgeSidebar.swift` | The app's `DaemonLink`; every session reported; the sidebar fed its statuses; a tab change sends at once | Status dots from the agents' hooks |
+| `ModernTests/ShellforgeReportsTest.swift` (new) | iTerm2's names for the session variables Shellforge reads | ModernTests cannot link ShellforgeCore, so the reading itself is tested in the package |
 
 ## M0: verified on 9 October 2026
 

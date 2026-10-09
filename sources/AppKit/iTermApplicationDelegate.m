@@ -1528,6 +1528,8 @@ void TurnOnDebugLoggingAutomatically(void) {
 #endif
 
     [iTermLaunchExperienceController applicationDidFinishLaunching];
+    // Shellforge: the helper that tracks each tab's agent; it stops at iTermApplicationWillTerminate.
+    [iTermShellforgeSidebar startHelper];
     [[iTermLaunchServices sharedInstance] registerForiTerm2Scheme];
     // Once a day at most, check for a newer uv (silently replace it) and refresh the
     // iterm2 module in provisioned basic-script venvs. A no-op until uv is installed.
