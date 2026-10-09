@@ -41,6 +41,10 @@ public final class SidebarModel: ObservableObject {
     @Published public private(set) var helper: HelperStatus = .starting
     /// Where each project's code lives, for its row's mark; read from git off the main thread.
     @Published public private(set) var providers: [UUID: Provider] = [:]
+    /// How many projects' providers have been looked up, for the test that holds it to one each.
+    private(set) var providerLookups = 0
+    /// Projects whose provider is being looked up now.
+    private var detecting: Set<UUID> = []
 
     private let host: TerminalHost
     private let document: WorkspaceDocument
@@ -96,7 +100,11 @@ public final class SidebarModel: ObservableObject {
         let made = await Task.detached { try TaskWorktrees.create(title: title, in: project, base: nil, launcher: launcher) }.result
         attempt {
             let task = try made.get()
-            try document.update { $0.tasks.append(task) }
+            try document.update { workspace in
+                workspace.tasks.append(task)
+                // A task made in a folded project is shown: the project unfolds for it.
+                if let i = workspace.projects.firstIndex(where: { $0.id == projectId }) { workspace.projects[i].collapsed = false }
+            }
             selectedTaskId = task.id
             host.openTab(in: task.worktreePath, taskId: task.id, projectId: project.id, title: task.title)
         }
@@ -130,8 +138,13 @@ public final class SidebarModel: ObservableObject {
         // Follow iTerm2: whatever tab is selected decides the task shown.
         let opened = host.selectedTabId != lastSelectedTab
         lastSelectedTab = host.selectedTabId
-        if let selected = host.tabs.first(where: { $0.id == host.selectedTabId }), let task = tree.task(owning: selected) {
-            shown(task.id, explicit: opened)
+        if let selected = host.tabs.first(where: { $0.id == host.selectedTabId }) {
+            if let task = tree.task(owning: selected) {
+                shown(task.id, explicit: opened)
+            } else {
+                // A tab of no task is shown: no task is.
+                selectedTaskId = nil
+            }
         }
     }
 
@@ -144,24 +157,26 @@ public final class SidebarModel: ObservableObject {
         sessions.sorted { ($0.tabIndex, $0.sessionId) < ($1.tabIndex, $1.sessionId) }.map(\.agent)
     }
 
-    /// What the sidebar draws, in order: each project, and unless it is folded its tasks, the selected
-    /// task's tabs under it; then the tabs of no task; or the empty state when there is no project.
+    /// What the sidebar draws, in order: each project, and unless it is folded its tasks — the selected
+    /// task's tabs under it when it has more than one; then the tabs of no task. With no project, the
+    /// empty state comes first. Exactly one row is selected: the current tab when it is listed, else
+    /// the task it belongs to (AiTerm's one painter, one row).
     public var rows: [SidebarRow] {
-        guard !tree.projects.isEmpty else { return [.empty] }
-        var rows: [SidebarRow] = []
+        var rows: [SidebarRow] = tree.projects.isEmpty ? [.empty] : []
+        let current = host.selectedTabId
         for node in tree.projects {
             rows.append(.project(node, collapsed: node.project.collapsed))
             guard !node.project.collapsed else { continue }
             for task in node.tasks {
-                rows.append(.task(task, selected: task.id == selectedTaskId))
-                if task.id == selectedTaskId {
-                    rows += task.tabs.map { .tab($0, selected: $0.id == host.selectedTabId) }
-                }
+                let listsTabs = task.id == selectedTaskId && task.tabs.count > 1
+                let ownsCurrent = task.tabs.contains { $0.id == current }
+                rows.append(.task(task, selected: task.id == selectedTaskId && !(listsTabs && ownsCurrent)))
+                if listsTabs { rows += task.tabs.map { .tab($0, selected: $0.id == current) } }
             }
         }
         if !tree.otherTabs.isEmpty {
             rows.append(.otherTabsHeading)
-            rows += tree.otherTabs.map { .tab($0, selected: $0.id == host.selectedTabId) }
+            rows += tree.otherTabs.map { .tab($0, selected: selectedTaskId == nil && $0.id == current) }
         }
         return rows
     }
@@ -179,14 +194,22 @@ public final class SidebarModel: ObservableObject {
     /// `projects` is the tree's: `@Published` announces before it stores, so the document's own copy is
     /// the one before the change when a refresh asks.
     private func detectProviders(_ projects: [Project]) {
-        let unknown = projects.filter { providers[$0.id] == nil }
+        // Not one already known or being looked up: iTerm2 refreshes the sidebar many times while
+        // it restores its windows, long before git answers.
+        let unknown = projects.filter { providers[$0.id] == nil && !detecting.contains($0.id) }
         guard !unknown.isEmpty else { return }
+        providerLookups += unknown.count
+        detecting.formUnion(unknown.map(\.id))
         let launcher = self.launcher
         Task {
             let found = await BackgroundWork.run {
                 unknown.map { ($0.id, ProviderDetector.provider(ofRepositoryAt: $0.path, launcher: launcher)) }
             }
-            for (id, provider) in found { providers[id] = provider }
+            // One publication for the batch, not one redraw per project.
+            var next = providers
+            for (id, provider) in found { next[id] = provider }
+            providers = next
+            detecting.subtract(found.map(\.0))
         }
     }
 

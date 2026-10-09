@@ -13,7 +13,7 @@ public enum ShellforgeSidebar {
     /// follows the window's. `chooseFolder` asks the user for a project folder (an open panel);
     /// `hooks` is the app's Agent hooks sheet.
     public static func makeView(model: SidebarModel, chooseFolder: @escaping @MainActor () -> String?, hooks: AgentHooksModel) -> NSView {
-        let host = NSHostingView(rootView: SidebarView(model: model, chooseFolder: chooseFolder, hooks: hooks))
+        let host = SidebarHostingView(rootView: SidebarView(model: model, chooseFolder: chooseFolder, hooks: hooks))
         host.frame = NSRect(x: 0, y: 0, width: width, height: 400)
         // AiTerm is dark-only and forced the whole app dark; here only the sidebar is, so iTerm2's
         // own windows keep the appearance the user chose. Every colour below resolves against this.
@@ -23,6 +23,9 @@ public enum ShellforgeSidebar {
     }
 }
 
+/// The sidebar's host: where `NativeRowHighlight` stops looking for its list.
+final class SidebarHostingView<Content: View>: NSHostingView<Content>, RowHighlightBoundary {}
+
 /// AiTerm's sidebar, inside iTerm2's window: the PROJECTS header, each project with its tasks and
 /// the selected task's tabs, the tabs of no task, the banners, or the empty state.
 struct SidebarView: View {
@@ -31,8 +34,12 @@ struct SidebarView: View {
     @ObservedObject var hooks: AgentHooksModel
     /// The window the sidebar is drawn in, which the Agent hooks panel hangs from.
     @State private var anchor = WindowAnchor()
+    @State private var sheet = PanelSlot()
     @State private var newTaskProject: UUID?
     @State private var newTaskTitle = ""
+    /// The new task's field takes the keyboard when it appears; without it, iTerm2's terminal keeps
+    /// it, and the title and Return would go to the shell.
+    @FocusState private var titleFocused: Bool
     @Environment(\.interfaceScale) private var scale
 
     var body: some View {
@@ -59,8 +66,9 @@ struct SidebarView: View {
             SidebarEmptyState(canAdd: true, add: addProject).listRowSeparator(.hidden)
         case .project(let node, let collapsed):
             ProjectHeaderRow(node: node, collapsed: collapsed, provider: model.providers[node.id] ?? .git,
+                             statuses: node.tasks.map { model.status(ofTask: $0.id) },
                              toggle: { model.toggleCollapsed(node.id) },
-                             newTask: { newTaskProject = node.id; newTaskTitle = "" })
+                             newTask: { beginNewTask(in: node.id) })
                 .listRowSeparator(.hidden)
             if newTaskProject == node.id { newTaskField(node.project).listRowSeparator(.hidden) }
         case .task(let node, let selected):
@@ -80,20 +88,26 @@ struct SidebarView: View {
 
     /// The Agent hooks sheet, in its own dark panel on the sidebar's window.
     private func showHooks() {
-        final class Holder { var panel: NSPanel? }
-        let holder = Holder()
-        holder.panel = DarkPanel.present(AgentHooksView(model: hooks, dismiss: {
-            if let panel = holder.panel { DarkPanel.dismiss(panel) }
-        }), over: anchor.window)
+        sheet.present(over: anchor.window) { dismiss in AgentHooksView(model: hooks, dismiss: dismiss) }
     }
 
     private func addProject() {
         if let folder = chooseFolder() { Task { await model.addProject(folder: folder) } }
     }
 
-    /// The new task's title, typed where the task will appear; Return creates it, Escape lets it go.
+    private func beginNewTask(in project: UUID) {
+        newTaskTitle = ""
+        newTaskProject = project
+        // Next turn: the field exists once the list has drawn it.
+        DispatchQueue.main.async { titleFocused = true }
+    }
+
+    /// The new task's title, typed where the task will appear; Return creates it, Escape or clicking
+    /// away lets it go.
     private func newTaskField(_ project: Project) -> some View {
         TextField("Task title", text: $newTaskTitle)
+            .focused($titleFocused)
+            .onChange(of: titleFocused) { focused in if !focused { newTaskProject = nil } }
             .textFieldStyle(.plain)
             .font(Typography.body)
             .foregroundStyle(Palette.text)

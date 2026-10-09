@@ -25,3 +25,13 @@ public struct TabSnapshot: Equatable, Sendable, Identifiable {
         self.projectId = projectId
     }
 }
+
+extension TabSnapshot {
+    /// A tab's task and project, from its panes' tags with the focused pane first: the first pane
+    /// that names a task gives it (and the first that names a project gives that). Only the pane that
+    /// opened a task's tab is tagged, so a split focused beside it keeps the tab in its task.
+    public static func tags(ofPanes panes: [(task: String?, project: String?)]) -> (task: UUID?, project: UUID?) {
+        (panes.lazy.compactMap { $0.task.flatMap(UUID.init(uuidString:)) }.first,
+         panes.lazy.compactMap { $0.project.flatMap(UUID.init(uuidString:)) }.first)
+    }
+}

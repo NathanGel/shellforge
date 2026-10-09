@@ -3,11 +3,13 @@ import Testing
 @testable import ShellforgeCore
 
 @Suite struct ProviderDetectorTests {
+    /// Shellforge's cases, beside AiTerm's own: a self-hosted GitLab, a host that only contains
+    /// "gitlab", and a remote of no known host.
     @Test(arguments: [("git@github.com:NathanGel/shellforge.git", Provider.github), ("https://github.com/a/b.git", .github),
-                      ("git@gitlab.com:g/p.git", .gitlab), ("https://gitlab.example.com/g/p.git", .gitlab),
-                      ("ssh://git@bitbucket.org/a/b.git", .git), ("", .git)])
+                      ("git@gitlab.com:g/p.git", .gitlab), ("https://git.company.com/group/sub/repo.git", .gitlab),
+                      ("git@notgitlab.example.com:a/b.git", .git), ("ssh://git@bitbucket.org/a/b.git", .git)])
     func aRemoteNamesItsHost(url: String, provider: Provider) {
-        #expect(ProviderDetector.provider(ofRemote: url) == provider)
+        #expect(ProviderDetector.detect(remoteUrl: url).provider == provider)
     }
 
     /// A workspace saved before projects could collapse loads them expanded.

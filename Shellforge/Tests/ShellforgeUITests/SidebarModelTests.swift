@@ -302,6 +302,19 @@ import Testing
         let id = try #require(sidebar.tree.projects.first).id
         #expect(await eventually { sidebar.providers[id] == .github })
     }
+
+    /// iTerm2 restoring its windows refreshes the sidebar many times before git answers: one lookup per
+    /// project, not one per refresh.
+    @Test func aProjectsProviderIsLookedUpOnceHoweverOftenTheSidebarRefreshes() async throws {
+        let repo = try GitRepoForUI()
+        let host = FakeTerminalHost()
+        let sidebar = SidebarModel(host: host, document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher)
+        await sidebar.addProject(folder: repo.path)
+        for _ in 0..<5 { host.onChange?() }
+        let id = try #require(sidebar.tree.projects.first).id
+        #expect(await eventually { sidebar.providers[id] != nil })
+        #expect(sidebar.providerLookups == 1)
+    }
 }
 
 /// Which threads a closure ran on, from any thread.

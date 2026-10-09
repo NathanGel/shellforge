@@ -31,13 +31,7 @@ final class iTermShellforgeSidebar: NSObject {
     @objc static func makeView(for windowController: PseudoTerminal) -> NSView {
         let host = iTermShellforgeHost(windowController: windowController)
         let model = SidebarModel(host: host, document: document, launcher: launcher, feed: link)
-        return ShellforgeSidebar.makeView(model: model, chooseFolder: {
-            let panel = NSOpenPanel()
-            panel.canChooseDirectories = true
-            panel.canChooseFiles = false
-            panel.prompt = "Add Project"
-            return panel.runModal() == .OK ? panel.url?.path : nil
-        }, hooks: hooks)
+        return ShellforgeSidebar.makeView(model: model, chooseFolder: FolderChooser.choose, hooks: hooks)
     }
 
     /// The default profile changed to run the login shell in `directory`.
@@ -87,10 +81,14 @@ final class iTermShellforgeHost: TerminalHost {
     var tabs: [TabSnapshot] {
         (windowController?.tabs() ?? []).compactMap { tab in
             guard let session = tab.activeSession else { return nil }
-            let scope = session.genericScope
-            return TabSnapshot(id: session.guid, tabId: Int(tab.uniqueId), title: session.name,
-                               taskId: (scope.value(forVariableName: ShellforgeTags.task) as? String).flatMap(UUID.init(uuidString:)),
-                               projectId: (scope.value(forVariableName: ShellforgeTags.project) as? String).flatMap(UUID.init(uuidString:)))
+            // Every pane's tags, the focused one first: a split focused beside the pane that opened
+            // the task's tab has none, and must not move the tab out of its task.
+            let panes = [session] + tab.sessions().filter { $0 !== session }
+            let tags = TabSnapshot.tags(ofPanes: panes.map {
+                ($0.genericScope.value(forVariableName: ShellforgeTags.task) as? String,
+                 $0.genericScope.value(forVariableName: ShellforgeTags.project) as? String)
+            })
+            return TabSnapshot(id: session.guid, tabId: Int(tab.uniqueId), title: session.name, taskId: tags.task, projectId: tags.project)
         }
     }
 

@@ -61,3 +61,35 @@ extension SessionState {
         }
     }
 }
+
+// Ported from AiTerm (app/Sources/AiTermCore/Sidebar/SidebarModel.swift: StatusCount, statusOrder,
+// statusCounts, statusCountsLabel).
+/// How many of a folded project's rows are in one status, for its count chips.
+public struct StatusCount: Equatable, Sendable {
+    public var status: SessionState, count: Int
+    public init(status: SessionState, count: Int) { self.status = status; self.count = count }
+
+    /// AiTerm's chip order.
+    public static let order: [SessionState] = [.idle, .working, .needsInput, .done]
+
+    /// Per-status counts, empty statuses left out: a project with nothing waiting on it draws no chip
+    /// rather than a row of zeroes.
+    public static func of(_ statuses: [SessionState]) -> [StatusCount] {
+        order.compactMap { status in
+            let n = statuses.filter { $0 == status }.count
+            return n > 0 ? StatusCount(status: status, count: n) : nil
+        }
+    }
+
+    /// The counts as a sentence, for the chips' tooltip and VoiceOver.
+    public static func label(_ counts: [StatusCount]) -> String {
+        counts.map { c in
+            switch c.status {
+            case .idle: "\(c.count) idle"
+            case .working: "\(c.count) working"
+            case .needsInput: c.count == 1 ? "1 needs input" : "\(c.count) need input"
+            case .done: "\(c.count) done"
+            }
+        }.joined(separator: ", ")
+    }
+}

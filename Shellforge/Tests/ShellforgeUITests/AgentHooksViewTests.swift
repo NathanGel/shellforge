@@ -10,10 +10,16 @@ import Testing
     @Test func theHooksPanelIsDark() throws {
         let parent = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
         parent.appearance = NSAppearance(named: .aqua)
-        let panel = DarkPanel.present(Text("x"), over: parent)
-        #expect(panel.appearance?.name == .darkAqua)
+        let slot = PanelSlot()
+        let panel = slot.present(over: parent) { _ in Color(nsColor: .windowBackgroundColor).frame(width: 40, height: 40) }
+        let content = try #require(panel.contentView)
+        content.layoutSubtreeIfNeeded()
+        let bitmap = try #require(content.bitmapImageRepForCachingDisplay(in: content.bounds))
+        content.cacheDisplay(in: content.bounds, to: bitmap)
+        let ground = try #require(bitmap.colorAt(x: 20, y: 20)?.usingColorSpace(.sRGB))
+        #expect(ground.brightnessComponent < 0.3, "the sheet draws light: \(ground)")
         #expect(parent.appearance?.name == .aqua, "the window it hangs from keeps its own")
-        DarkPanel.dismiss(panel)
+        slot.dismiss()
     }
 
     /// Every state says itself in words, and offers at most one action: none where an install would

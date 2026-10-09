@@ -38,6 +38,8 @@ struct ProjectHeaderRow: View {
     let node: ProjectNode
     let collapsed: Bool
     let provider: Provider
+    /// Its tasks' statuses: a folded project shows them as AiTerm's count chips.
+    let statuses: [SessionState]
     let toggle: () -> Void
     let newTask: () -> Void
     @Environment(\.interfaceScale) private var scale
@@ -54,6 +56,8 @@ struct ProjectHeaderRow: View {
                 ProviderIcon(provider: provider)
                 HeaderTitle(text: node.project.name)
                 Spacer(minLength: scale(Space.tight))
+                // Only when folded: unfolded, the task rows say all of this and more.
+                if collapsed { StatusCountChips(counts: StatusCount.of(statuses)) }
             }
             .contentShape(Rectangle())
             .gesture(TapGesture().onEnded(toggle), including: collapses ? .all : .subviews)
@@ -80,8 +84,7 @@ struct TaskRowView: View {
     var body: some View {
         SelectableRow(selected: selected, activate: activate) {
             HStack(spacing: scale(Space.inset)) {
-                // A task with no agent reported yet still shows a mark: its shell's.
-                AvatarGroupView(group: AvatarGroup.of(agents.isEmpty ? [.shell] : agents))
+                AvatarGroupView(group: Self.marks(agents))
                 VStack(alignment: .leading, spacing: scale(Space.tight)) {
                     RowTitle(node.task.title)
                     HStack(spacing: scale(Space.gap)) {
@@ -97,6 +100,9 @@ struct TaskRowView: View {
         .accessibilityLabel(node.task.title)
         .accessibilityValue(status.label)
     }
+
+    /// AiTerm's task row: the agents it was told of, and none when there are none.
+    static func marks(_ agents: [SessionAgent]) -> AvatarGroup { AvatarGroup.of(agents) }
 }
 
 /// One tab, drawn as AiTerm draws a terminal row — its agents, its title, its status — one step
@@ -112,7 +118,7 @@ struct TabRowView: View {
     var body: some View {
         SelectableRow(selected: selected, activate: activate) {
             HStack(spacing: scale(Space.inset)) {
-                AvatarGroupView(group: AvatarGroup.of(agents.isEmpty ? [.shell] : agents))
+                AvatarGroupView(group: Self.marks(agents))
                 RowTitle(tab.title)
                 Spacer(minLength: scale(Space.tight))
                 StatusMark(status: status, size: SidebarRowLayout.trailingGlyph(scale))
@@ -123,6 +129,9 @@ struct TabRowView: View {
         .accessibilityLabel(tab.title)
         .accessibilityValue(status.label)
     }
+
+    /// AiTerm's terminal row: its agents, or its shell's `>_` when none is known.
+    static func marks(_ agents: [SessionAgent]) -> AvatarGroup { AvatarGroup.of(agents.isEmpty ? [.shell] : agents) }
 }
 
 /// What the sidebar has to say before its rows: the helper's problem, the last action's failure,
@@ -190,6 +199,7 @@ struct NativeRowHighlight: NSViewRepresentable {
                 if let table = view as? NSTableView { return table }
                 return view.subviews.lazy.compactMap { table(in: $0) }.first
             }
+            // Up to the sidebar's own host and no further: past it are iTerm2's views and tables.
             var ancestor = superview
             while let current = ancestor {
                 if let table = table(in: current) {
@@ -197,6 +207,7 @@ struct NativeRowHighlight: NSViewRepresentable {
                     found = table
                     return
                 }
+                if current is RowHighlightBoundary { return }
                 ancestor = current.superview
             }
         }
@@ -205,3 +216,6 @@ struct NativeRowHighlight: NSViewRepresentable {
     func makeNSView(context: Context) -> Probe { Probe(frame: .zero) }
     func updateNSView(_ view: Probe, context: Context) { view.apply() }
 }
+
+/// The view `NativeRowHighlight` looks no further than: the sidebar's hosting view.
+protocol RowHighlightBoundary: NSView {}
