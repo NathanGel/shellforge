@@ -1,7 +1,7 @@
 [project]
 name = "shellforged"
 version = "0.1.0"
-description = "AiTerm daemon: drives iTerm2 and tracks agent sessions"
+description = "Shellforge daemon: tracks agent sessions from their hooks"
 requires-python = ">=3.11"
 dependencies = ["iterm2==2.23", "websockets==17.1", "protobuf==7.36.1"]
 

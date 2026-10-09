@@ -10,7 +10,7 @@ context and token counts, and tracks usage. It was copied from AiTerm's daemon (
 
 It keeps its socket (`shellforged.sock`), `daemon.json`, log and `hook-port` in
 `~/Library/Application Support/Shellforge/`, and listens for hooks on `127.0.0.1:47831`, so it runs
-beside AiTerm's daemon (47821) on one Mac.
+beside AiTerm's daemon on one Mac.
 
 **Where sessions come from.** By default the app sends its tabs with `sessions.update` — each tab's
 session guid, window, tab index, command line, job pid, title, folder and task — and the daemon
@@ -37,7 +37,7 @@ checkout deletion, or close windows after Stop. Cleanup is an explicit app actio
 
 ## Hook receiver
 
-The daemon listens on `127.0.0.1:<hookPort>` (default 47821) for seven POST
+The daemon listens on `127.0.0.1:<hookPort>` (default 47831) for seven POST
 routes, used by the installed Claude Code / Codex / Grok Build command hooks,
 the PI extension and the two statusline shims:
 
@@ -74,15 +74,15 @@ first always wins and cancels the pending settle.
 
 Every hook post is telemetry: it is acknowledged with `{}` before the daemon
 handles it, and no response ever carries a hook decision. The exceptions are
-Harness Test's probes (`_aiterm_daemon_test_id`, `_aiterm_test_id`), which the
+Harness Test's probes (`_shellforge_daemon_test_id`, `_shellforge_test_id`), which the
 receiver answers itself by echoing their id and never hands on, so neither can
 change state on any route.
 
-Every request must carry `X-AiTerm-Hook: 1`; requests without it get a plain
+Every request must carry `X-Shellforge-Hook: 1`; requests without it get a plain
 404, the same as an unknown route, so the receiver never reveals that these
 routes exist to a caller that doesn't know the header (any other local
 process, or a browser page via a CORS-simple POST). The tab a Codex, Grok or PI
-post came from travels in `X-AiTerm-iTerm-Session`; a body field of the same
+post came from travels in `X-Shellforge-iTerm-Session`; a body field of the same
 name is discarded. A `Content-Length` that is not a plain decimal is a 400,
 and one over 1 MiB a 413. A head of more than 100 header lines or 32 KiB is a
 431, answered before the header check. A request with `Expect: 100-continue` gets an interim

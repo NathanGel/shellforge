@@ -1,4 +1,5 @@
-"""Shellforge's daemon must be able to run beside Shellforge's: its own folder, socket, port and names."""
+"""Shellforge's daemon must be able to run beside AiTerm's, which it was copied from: its own folder,
+socket, port and names."""
 from pathlib import Path
 
 from shellforged import __main__ as main
@@ -22,7 +23,7 @@ def test_session_tags_match_the_swift_package():
     assert models.ITERM_SESSION_FIELD == "_shellforge_iterm_session_id"
 
 
-def test_no_shellforge_name_is_left_in_the_daemon_or_its_shims():
+def test_no_aiterm_name_is_left_in_the_daemon_or_its_shims():
     root = Path(__file__).resolve().parents[1]
     sources = [*(root / "shellforged").glob("*.py"), *(root.parent / "hooks").glob("*")]
     offenders = [p.name for p in sources if p.is_file() and any(word in p.read_text(errors="ignore")
@@ -33,3 +34,13 @@ def test_no_shellforge_name_is_left_in_the_daemon_or_its_shims():
 def test_run_takes_its_sessions_from_the_app_unless_told_otherwise():
     assert main.build_parser().parse_args(["run"]).session_source == "app"
     assert main.build_parser().parse_args(["run", "--session-source", "iterm"]).session_source == "iterm"
+
+
+def test_the_docs_describe_shellforges_contract_not_aitermds():
+    """The README is what a hook installer is written from: a header or port from the daemon this
+    was copied from would be silently refused. Only a line naming AiTerm as the origin may stay."""
+    root = Path(__file__).resolve().parents[1]
+    stale = ("X-AiTerm", "_aiterm", "47821", "aitermd", "Application Support/AiTerm")
+    for name in ("README.md", "pyproject.toml"):
+        for line in (root / name).read_text().splitlines():
+            assert not any(word in line for word in stale), f"{name}: {line}"
