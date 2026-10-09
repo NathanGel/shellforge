@@ -12,14 +12,52 @@ public enum ShellforgeSidebar {
     /// The view the window places at its left edge: as wide as the sidebar, and only its height
     /// follows the window's. `chooseFolder` asks the user for a project folder (an open panel);
     /// `hooks` is the app's Agent hooks sheet.
-    public static func makeView(model: SidebarModel, chooseFolder: @escaping @MainActor () -> String?, hooks: AgentHooksModel) -> NSView {
-        let host = SidebarHostingView(rootView: SidebarView(model: model, chooseFolder: chooseFolder, hooks: hooks))
+    /// `machine` is the app's one sampler of the Mac's readings, for the footer.
+    public static func makeView(model: SidebarModel, chooseFolder: @escaping @MainActor () -> String?, hooks: AgentHooksModel,
+                                machine: MachineMonitor) -> NSView {
+        let host = SidebarHostingView(rootView: SidebarView(model: model, chooseFolder: chooseFolder, hooks: hooks, machine: machine))
         host.frame = NSRect(x: 0, y: 0, width: width, height: 400)
         // AiTerm is dark-only and forced the whole app dark; here only the sidebar is, so iTerm2's
         // own windows keep the appearance the user chose. Every colour below resolves against this.
         host.appearance = NSAppearance(named: .darkAqua)
         host.autoresizingMask = [.height]
         return host
+    }
+}
+
+/// The instant and calendar the usage footer reads its reset times against. Unset, the footer uses
+/// the wall clock and the user's calendar; a test pins both so the labels it draws do not move with
+/// the time of day, the weekday or the machine's time zone. (AiTerm's `FooterClock`.)
+struct FooterClock {
+    var now: Date
+    var calendar: Calendar
+}
+
+private struct FooterClockKey: EnvironmentKey { static let defaultValue: FooterClock? = nil }
+
+extension EnvironmentValues {
+    var footerClock: FooterClock? {
+        get { self[FooterClockKey.self] }
+        set { self[FooterClockKey.self] = newValue }
+    }
+}
+
+/// AiTerm's `SidebarFooterHost`: the vendor rows recomputed on the minute — a window that has reset
+/// is dropped, and a reset time gains its weekday across midnight — and the selected row's context
+/// and the Mac's readings over them.
+struct SidebarFooterHost: View {
+    @ObservedObject var model: SidebarModel
+    @ObservedObject var hooks: AgentHooksModel
+    @ObservedObject var machine: MachineMonitor
+    @Environment(\.footerClock) private var footerClock
+
+    var body: some View {
+        TimelineView(.everyMinute) { context in
+            SidebarFooter(task: model.footerRow,
+                          rows: model.vendorRows(now: footerClock?.now ?? context.date, calendar: footerClock?.calendar ?? .current,
+                                                 claudeStatusLineInstalled: hooks.claudeStatusLineInstalled),
+                          machine: machine.lines)
+        }
     }
 }
 
@@ -32,6 +70,7 @@ struct SidebarView: View {
     @ObservedObject var model: SidebarModel
     let chooseFolder: @MainActor () -> String?
     @ObservedObject var hooks: AgentHooksModel
+    let machine: MachineMonitor
     /// The window the sidebar is drawn in, which the Agent hooks panel hangs from.
     @State private var anchor = WindowAnchor()
     @State private var sheet = PanelSlot()
@@ -47,6 +86,7 @@ struct SidebarView: View {
             .listStyle(.sidebar)
             .scrollContentBackground(.hidden)
             .background(NativeRowHighlight.off)
+            SidebarFooterHost(model: model, hooks: hooks, machine: machine)
         }
         .frame(minWidth: scale(Size.sidebarMinWidth), maxHeight: .infinity, alignment: .top)
         .background(Palette.sidebar)

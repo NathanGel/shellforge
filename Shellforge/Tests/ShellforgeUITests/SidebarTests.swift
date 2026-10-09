@@ -17,11 +17,11 @@ import ShellforgeDesign
     }
 
     @Test func theHostViewIsAsWideAsTheSidebar() throws {
-        #expect(ShellforgeSidebar.makeView(model: try sidebarModel(), chooseFolder: { nil }, hooks: hooks()).frame.width == ShellforgeSidebar.width)
+        #expect(ShellforgeSidebar.makeView(model: try sidebarModel(), chooseFolder: { nil }, hooks: hooks(), machine: MachineMonitor(sensor: InertMachineSensor(), power: InertPower())).frame.width == ShellforgeSidebar.width)
     }
 
     @Test func theSidebarStretchesWithTheWindowsHeightOnly() throws {
-        #expect(ShellforgeSidebar.makeView(model: try sidebarModel(), chooseFolder: { nil }, hooks: hooks()).autoresizingMask == [.height])
+        #expect(ShellforgeSidebar.makeView(model: try sidebarModel(), chooseFolder: { nil }, hooks: hooks(), machine: MachineMonitor(sensor: InertMachineSensor(), power: InertPower())).autoresizingMask == [.height])
     }
 
     @Test func theSidebarIsAiTermsWidth() throws {
@@ -31,7 +31,7 @@ import ShellforgeDesign
     /// Inside a light iTerm2 window the sidebar still draws AiTerm's dark ground: its host is dark,
     /// whatever the window around it.
     @Test func theSidebarDrawsDarkInALightWindow() throws {
-        let host = ShellforgeSidebar.makeView(model: try sidebarModel(), chooseFolder: { nil }, hooks: hooks())
+        let host = ShellforgeSidebar.makeView(model: try sidebarModel(), chooseFolder: { nil }, hooks: hooks(), machine: MachineMonitor(sensor: InertMachineSensor(), power: InertPower()))
         host.frame.size.height = 400
         let window = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
         window.appearance = NSAppearance(named: .aqua)
@@ -44,3 +44,6 @@ import ShellforgeDesign
         #expect(ground.brightnessComponent < 0.3, "the sidebar's ground is light: \(ground)")
     }
 }
+
+/// A battery that reads as mains: the footer's Mac row with no `bat`.
+struct InertPower: PowerSource { func reading() -> PowerReading { .mains } }

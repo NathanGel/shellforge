@@ -13,6 +13,14 @@ public final class AgentHooksModel: ObservableObject {
     }
 
     @Published public private(set) var rows: [Row]
+
+    /// Whether Claude Code's status line is Shellforge's, so its rate limits reach the footer: false
+    /// only when the check says Shellforge's hooks are not, or no longer, Claude's. Not yet checked
+    /// counts as installed, so the footer never flashes "Usage disconnected" at launch.
+    public var claudeStatusLineInstalled: Bool {
+        guard let claude = rows.first(where: { $0.id == AgentPresets.claude.id }) else { return true }
+        return ![.missing, .foreign, .invalidOwned].contains(claude.probe.state)
+    }
     /// The last install's failure, in the installer's words; cleared by the next success.
     @Published public private(set) var lastError: String?
 

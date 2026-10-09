@@ -83,7 +83,7 @@ public final class SidebarModel: ObservableObject {
         }
         if let feed {
             feedSubscriptions = [
-                feed.storePublisher.sink { [weak self] store in MainActor.assumeIsolated { self?.sessions = store } },
+                feed.storePublisher.sink { [weak self] store in MainActor.assumeIsolated { self?.take(store) } },
                 feed.statusPublisher.sink { [weak self] status in MainActor.assumeIsolated { self?.helper = status } },
             ]
         }
@@ -176,6 +176,7 @@ public final class SidebarModel: ObservableObject {
 
     private func refresh(_ workspace: Workspace? = nil) {
         tree = SidebarTree.build(workspace ?? document.workspace, tabs: host.tabs)
+        contexts.prune(keeping: Set(tree.projects.flatMap(\.tasks).map { FooterRow.task($0.id) } + tree.otherTabs.map { FooterRow.tab($0.id) }))
         detectProviders(tree.projects.map(\.project))
         // Follow iTerm2: whatever tab is selected decides the task shown.
         let opened = host.selectedTabId != lastSelectedTab
@@ -188,6 +189,55 @@ public final class SidebarModel: ObservableObject {
                 selectedTaskId = nil
             }
         }
+    }
+
+    // -- the footer -----------------------------------------------------------------
+
+    /// Each task's and other tab's last context fill per agent, as AiTerm's `LiveSessions` keeps it:
+    /// a tab change or a closed tab leaves the row's fill as it was.
+    public private(set) var contexts = SessionContexts()
+
+    /// What the daemon says now: every session's fill remembered against its row first, then
+    /// published.
+    private func take(_ store: SessionStore) {
+        let old = sessions.sessions
+        let row = footerRowResolver
+        for session in store.sessions.values { contexts.remember(session, replacing: old[session.sessionId], row: row) }
+        // A snapshot only fills what is not known yet, so seeding on every update is safe.
+        contexts.seed(from: Array(store.sessions.values), row: row)
+        sessions = store
+    }
+
+    /// A session's footer row: its task while the workspace has it, else the tab outside any task it
+    /// is a pane of.
+    private var footerRowResolver: (SessionInfo) -> FooterRow? {
+        let tasks = Set(document.workspace.tasks.map(\.id)), others = tree.otherTabs.map(\.id), store = sessions
+        return { session in
+            if let task = session.taskUUID { return tasks.contains(task) ? .task(task) : nil }
+            guard session.taskId == nil else { return nil }
+            return others.first { tab in
+                tab == session.sessionId || store.sessions(ofTab: tab).contains { $0.sessionId == session.sessionId }
+            }.map(FooterRow.tab)
+        }
+    }
+
+    /// The footer's first row: the selected task's, else the selected tab's when it belongs to no
+    /// task (AiTerm's terminal row); nothing when neither — SYSTEM then holds the Mac alone.
+    public var footerRow: UsageTaskRow? {
+        if let id = selectedTaskId {
+            let task = document.workspace.tasks.first { $0.id == id }
+            let fallback = task?.agent.flatMap(SessionAgent.init(rawValue:)) ?? .shell
+            return UsageRows.taskRow(sessions: sessions.sessions(ofTask: id), fallback: fallback,
+                                     contexts: contexts.percents(forRow: .task(id)))
+        }
+        guard let tab = host.selectedTabId, tree.otherTabs.contains(where: { $0.id == tab }) else { return nil }
+        return UsageRows.taskRow(sessions: sessions.sessions(ofTab: tab), fallback: .shell,
+                                 contexts: contexts.percents(forRow: .tab(tab)))
+    }
+
+    /// USAGE's rows for this minute: Claude's and Codex's windows, as AiTerm's footer works them out.
+    public func vendorRows(now: Date, calendar: Calendar, claudeStatusLineInstalled: Bool) -> [UsageVendorRow] {
+        UsageRows.vendorRows(sessions.usage, now: now, calendar: calendar, claudeStatusLineInstalled: claudeStatusLineInstalled)
     }
 
     /// The agents of a task's tabs, as AiTerm's avatar group takes them: in tab order, a shell's too

@@ -24,6 +24,10 @@ final class iTermShellforgeSidebar: NSObject {
     static let hooks = AgentHooksModel(integrations: HookIntegrations(resources: .bundled(resourceURL: Bundle.main.resourceURL)),
                                        names: Dictionary(uniqueKeysWithValues: AgentPresets.all.map { ($0.id, $0.name) }))
 
+    /// The Mac's cpu, ram and battery for every window's footer, sampled every five seconds while
+    /// the helper runs.
+    static let machine = MachineMonitor(sensor: LiveMachineSensor(), power: IOKitPowerSource())
+
     /// Every agent's model list, read from the user's own home.
     nonisolated static let catalogue = ModelCatalogue(home: FileManager.default.homeDirectoryForCurrentUser, launcher: launcher)
 
@@ -35,7 +39,7 @@ final class iTermShellforgeSidebar: NSObject {
         let host = iTermShellforgeHost(windowController: windowController)
         let model = SidebarModel(host: host, document: document, launcher: launcher, feed: link,
                                  agents: AgentPresets.all, catalogue: { try catalogue.models(for: $0) })
-        return ShellforgeSidebar.makeView(model: model, chooseFolder: FolderChooser.choose, hooks: hooks)
+        return ShellforgeSidebar.makeView(model: model, chooseFolder: FolderChooser.choose, hooks: hooks, machine: machine)
     }
 
     /// The default profile changed to run the login shell in `directory`.
@@ -138,6 +142,7 @@ extension iTermShellforgeSidebar {
         // ModernTests run inside the app; a test run must not start, adopt or stop a real helper.
         guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
         link.start()
+        machine.start()
         // jobPid and commandLine change with no notification; the tick reads them, and only a
         // changed list is sent.
         tick = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
@@ -146,6 +151,7 @@ extension iTermShellforgeSidebar {
         NotificationCenter.default.addObserver(forName: NSNotification.Name(iTermApplicationWillTerminate), object: nil, queue: .main) { _ in
             MainActor.assumeIsolated {
                 tick?.invalidate()
+                machine.stop()
                 link.shutdown()
             }
         }
