@@ -80,12 +80,13 @@ public struct Workspace: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey { case version, projects, tasks, lastAgentByProject, lastModelByAgent }
 
-    /// A file written before a key existed reads it as empty.
+    /// A file written before the remembered choices existed reads them as empty; one without its
+    /// projects or tasks is not a workspace and fails, rather than reading as an empty one to be saved over.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         version = try c.decodeIfPresent(Int.self, forKey: .version) ?? 1
-        projects = try c.decodeIfPresent([Project].self, forKey: .projects) ?? []
-        tasks = try c.decodeIfPresent([TaskItem].self, forKey: .tasks) ?? []
+        projects = try c.decode([Project].self, forKey: .projects)
+        tasks = try c.decode([TaskItem].self, forKey: .tasks)
         lastAgentByProject = try c.decodeIfPresent([UUID: String].self, forKey: .lastAgentByProject) ?? [:]
         lastModelByAgent = try c.decodeIfPresent([String: String].self, forKey: .lastModelByAgent) ?? [:]
     }
