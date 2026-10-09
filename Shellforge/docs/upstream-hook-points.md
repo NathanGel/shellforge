@@ -84,3 +84,20 @@ working as designed, not a gap.
    a `codex` job in the new pane and the original pane selected: `sessions.list` reported both
    panes in the same tab. Only the selected pane was `active`, and the split carried no task id. A
    Codex hook from the split pane turned the task's and the tab's dots blue.
+
+## M1c-3a: verified on 9 October 2026
+
+Development build, on the user's real configuration, with AiTerm's hooks already installed.
+
+1. Opening and probing Agent hooks changed no file: the modification times of `~/.claude/settings.json`
+   and `~/.codex/config.toml` were the same before and after, and `~/.grok`, `~/.pi` and `hook-port`
+   stayed absent. All four agents showed "Not installed".
+2. The user clicked Install for Claude Code and Codex. `settings.json` then held both apps' hooks on
+   all eight events (47821 and 47831). The status line ran Shellforge's shim, whose original was the
+   user's own `~/.claude/statusline.sh`, carried over from AiTerm's record; AiTerm's shim was not kept.
+   `config.toml` held Shellforge's block below AiTerm's, which was unchanged. Both files had a
+   `.shellforge-backup`.
+3. Run with a sample payload, the chained status line printed the user's status line byte for byte.
+4. A real Claude Code turn in a Shellforge task tab turned the task's dot on, once the daemon matched
+   folders by their resolved path. The scratch repo lies under `/tmp`, which iTerm2 reports as `/tmp/…`
+   and Claude as `/private/tmp/…`.
