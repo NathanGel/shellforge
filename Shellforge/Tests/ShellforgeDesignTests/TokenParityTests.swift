@@ -17,7 +17,7 @@ import Testing
     }
 
     @Test(.enabled(if: FileManager.default.fileExists(atPath: TokenParityTests.aiterm.path)),
-          arguments: ["Palette.swift", "Metrics.swift", "Surface.swift", "InterfaceScale.swift"])
+          arguments: ["Palette.swift", "Metrics.swift", "Surface.swift", "InterfaceScale.swift", "Logos.swift", "IconSource.swift", "Badge.swift"])
     func everyTokenMatchesAiTerms(file: String) throws {
         #expect(try declarations(Self.ours.appendingPathComponent(file)) == declarations(Self.aiterm.appendingPathComponent(file)))
     }
