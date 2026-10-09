@@ -65,6 +65,24 @@ extension ChildProcess {
         try process.run()
         return child
     }
+
+    /// Starts `executable` reading a pipe this process holds, and hands back the pipe's write end:
+    /// when it closes — handed back, or this process gone however it went — the child reads end of
+    /// file. Not waited for: it outlives us on purpose. Backpack Mode's sleep watchdog.
+    static func holding(_ executable: String, _ arguments: [String], environment: [String: String]) throws -> FileHandle {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        process.environment = environment
+        let pipe = Pipe()
+        process.standardInput = pipe
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        try? pipe.fileHandleForReading.close()
+        return pipe.fileHandleForWriting
+    }
+
 }
 
 /// A child started by `ChildProcess.launch`, while it runs and after.
@@ -110,4 +128,5 @@ private final class PipeReader: @unchecked Sendable {
         _ = done.wait(timeout: .now() + seconds)
         return lock.withLock { String(decoding: data, as: UTF8.self) }
     }
+
 }

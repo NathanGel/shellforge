@@ -44,13 +44,14 @@ final class iTermShellforgeSidebar: NSObject {
     /// Every window's sidebar model, for Backpack's toasts.
     private static let sidebars = NSHashTable<SidebarModel>.weakObjects()
     /// How each window's sidebar opens the Backpack sheet, for ⌘B.
-    private static var backpackSheets: [ObjectIdentifier: @MainActor () -> Void] = [:]
+    private static let backpackSheets = BackpackSheets()
 
     /// The View menu's Backpack Mode (⌘B): AiTerm's toggle, the sheet on the key window's sidebar.
     @objc static func toggleBackpack(_ sender: Any?) {
-        let key = (NSApp.keyWindow?.windowController as? PseudoTerminal).map(ObjectIdentifier.init)
-        let present = key.flatMap { backpackSheets[$0] } ?? backpackSheets.values.first ?? {}
-        BackpackToggle(backpack: backpack, presentSheet: present).run()
+        // A panel of ours (the sheet, Mac Settings) may be key: its parent window is the one meant.
+        let window = NSApp.keyWindow.map { $0.sheetParent ?? $0 } ?? NSApp.mainWindow
+        let terminal = window?.windowController as? PseudoTerminal ?? iTermController.sharedInstance()?.currentTerminal
+        BackpackToggle(backpack: backpack, presentSheet: { backpackSheets.present(for: terminal) }).run()
     }
 
     /// The menu item's checkmark.
@@ -68,9 +69,10 @@ final class iTermShellforgeSidebar: NSObject {
         let model = SidebarModel(host: host, document: document, launcher: launcher, feed: link,
                                  agents: AgentPresets.all, catalogue: { try catalogue.models(for: $0) })
         sidebars.add(model)
-        let window = ObjectIdentifier(windowController)
         return ShellforgeSidebar.makeView(model: model, chooseFolder: FolderChooser.choose, hooks: hooks, machine: machine,
-                                          backpack: backpack, showBackpack: { present in backpackSheets[window] = present })
+                                          backpack: backpack, showBackpack: { [weak windowController] present in
+            if let windowController { backpackSheets.register(windowController, present) }
+        })
     }
 
     /// The default profile changed to run the login shell in `directory`.

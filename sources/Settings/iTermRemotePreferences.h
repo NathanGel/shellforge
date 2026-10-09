@@ -34,6 +34,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)localPrefsDifferFromSavedRemotePrefsRespectingDefaults;
 - (BOOL)shouldSaveAutomatically;
 
+// Shellforge: whether `key` travels with the settings a custom folder or URL syncs; tests read it.
+- (BOOL)preferenceKeyIsSyncable:(NSString *)key;
+
 @end
 
 NS_ASSUME_NONNULL_END

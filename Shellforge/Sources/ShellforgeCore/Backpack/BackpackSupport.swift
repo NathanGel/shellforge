@@ -6,7 +6,9 @@ import os
 /// long as it takes" (the admin prompt waits for a person), here a day.
 enum BackpackProcess {
     static func run(_ executable: URL, _ arguments: [String], timeout: TimeInterval? = nil) throws -> ChildOutput {
-        try ChildProcess.run(executable.path, arguments, environment: ProcessInfo.processInfo.environment,
+        // Without the app's launch identity, as AiTerm's ProcessRunner: `osascript` that inherited
+        // `__CFBundleIdentifier` checked in as the app and showed a second Dock icon.
+        try ChildProcess.run(executable.path, arguments, environment: LoginEnvironment.forChildren(ProcessInfo.processInfo.environment),
                              timeout: timeout ?? 86_400)
     }
 }

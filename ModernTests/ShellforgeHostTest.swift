@@ -42,4 +42,14 @@ final class ShellforgeHostTest: XCTestCase {
         let commandB = items(main).filter { $0.keyEquivalent == "b" && $0.keyEquivalentModifierMask.intersection(.deviceIndependentFlagsMask) == [.command] }
         XCTAssertEqual(commandB.map(\.title), ["Backpack Mode"])
     }
+
+    /// Backpack Mode's keys are this Mac's state, never a shared setting: iTerm2's "load settings
+    /// from a custom folder" clears syncable keys at launch, before Backpack's crash recovery reads
+    /// `backpack.engaged`, and would carry a Mac's engaged flag and hotspot to every other Mac.
+    func testBackpackStateNeverSyncsWithSettings() {
+        let prefs = iTermRemotePreferences.sharedInstance()
+        XCTAssertFalse(prefs.preferenceKeyIsSyncable("backpack.engaged"))
+        XCTAssertFalse(prefs.preferenceKeyIsSyncable("backpack.network"))
+        XCTAssertTrue(prefs.preferenceKeyIsSyncable("Columns"), "an ordinary setting still syncs")
+    }
 }

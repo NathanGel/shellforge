@@ -167,6 +167,9 @@ static BOOL iTermRemotePreferencesKeyIsSyncable(NSString *key,
             ![key hasPrefix:@"NS"] &&
             ![key hasPrefix:@"SU"] &&
             ![key hasPrefix:@"NoSync"] &&
+            // Shellforge: Backpack Mode's crash marker and hotspot are this Mac's state. Cleared by a
+            // sync at launch, the marker would be gone before crash recovery reads it.
+            ![key hasPrefix:@"backpack."] &&
             ![key hasPrefix:@"UK"];
 }
 

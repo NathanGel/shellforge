@@ -107,7 +107,9 @@ public final class BackpackController: ObservableObject {
     }
 
     /// What a failed `disablesleep 0` says; the checks keep trying until it works.
-    static let restoreFailed = "Couldn’t turn lid sleep back on: Shellforge keeps trying"
+    /// Allow… did not install the lid-sleep rule.
+    public static let ruleNotInstalled = "Lid sleep wasn’t allowed: macOS didn’t install the rule. Allow… again to retry."
+    public static let restoreFailed = "Couldn’t turn lid sleep back on: Shellforge keeps trying"
 
     /// The sheet's Connect: saves the hotspot (and a typed password), then turns on, retrying a
     /// hotspot that isn't showing on `retryDelays` until it shows, a final refusal, Cancel, quit or
@@ -250,7 +252,9 @@ public final class BackpackController: ObservableObject {
         // Not on the mode's thread: the admin prompt waits on the person.
         if setup.missingSteps.contains(.sleepRule) {
             let installer = ports.installer
-            _ = await ThreadWork.run { installer.install() }
+            // A cancelled prompt, a failed visudo check or an account name the rule cannot hold:
+            // nothing was written, and the person is told rather than left at the same button.
+            if !(await ThreadWork.run { installer.install() }) { toast(Self.ruleNotInstalled) }
         }
         if setup.missingSteps.contains(.location), !(await ports.location.request()) { openLocationSettings() }
         await refreshSetupWhileBusy()
@@ -336,6 +340,11 @@ public final class BackpackController: ObservableObject {
     /// Launch: put sleep back if a crash left it off, then read setup, so the header's menu knows.
     public func launch() async {
         recoverAtLaunch()
+        // Lid sleep could not be put back: say so, and keep trying as a running mode would.
+        if mode.settings.engaged {
+            toast(Self.restoreFailed)
+            startTicking()
+        }
         await refreshSetup()
     }
 
