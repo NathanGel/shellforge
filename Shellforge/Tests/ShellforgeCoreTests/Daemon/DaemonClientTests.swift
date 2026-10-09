@@ -35,6 +35,9 @@ private func nextEvent(_ box: EventBox, timeoutSeconds: Double = 2) async -> Nex
 final class DaemonClientTests {
     var server: FakeSocketServer!
     var client: DaemonClient!
+    /// `uuidString` spells these in capitals; the wire must not.
+    static let task = UUID(uuidString: "6F0E2C1A-9B3D-4E5F-8A7B-0C1D2E3F4A5B")!
+    static let project = UUID(uuidString: "A1B2C3D4-E5F6-4A7B-8C9D-0E1F2A3B4C5D")!
 
     init() {
         let path = "/tmp/sf-test-\(UUID().uuidString.prefix(8)).sock"
@@ -51,22 +54,25 @@ final class DaemonClientTests {
         try client.connect()
         #expect(server.waitForClient(timeout: 2))
         let report = SessionReport(sessionId: "G", windowId: "pty-1", tabIndex: 0, commandLine: "claude", jobPid: 42, title: "claude",
-                                   cwd: "/wt", active: true, taskId: "T", projectId: "P")
+                                   cwd: "/wt", active: true, task: Self.task, project: Self.project)
         try await client.updateSessions([report])
         let sessions = try #require((server.received.first?["params"] as? [String: Any])?["sessions"] as? [[String: Any]])
         #expect(sessions.count == 1)
-        #expect(sessions[0]["sessionId"] as? String == "G" && sessions[0]["jobPid"] as? Int == 42 && sessions[0]["taskId"] as? String == "T")
+        #expect(sessions[0]["sessionId"] as? String == "G" && sessions[0]["jobPid"] as? Int == 42)
+        // The daemon matches ids as strings; the sidebar's session tags are lowercase.
+        #expect(sessions[0]["taskId"] as? String == "6f0e2c1a-9b3d-4e5f-8a7b-0c1d2e3f4a5b")
+        #expect(sessions[0]["projectId"] as? String == "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d")
     }
 
     @Test func markSeenReturnsHowManySessionsChanged() async throws {
         server.handler = { req in
             #expect(req["method"] as? String == "sessions.markSeen")
-            #expect((req["params"] as? [String: Any])?["taskId"] as? String == "T")
+            #expect((req["params"] as? [String: Any])?["taskId"] as? String == "6f0e2c1a-9b3d-4e5f-8a7b-0c1d2e3f4a5b")
             return ["id": req["id"]!, "result": ["changed": 2]]
         }
         try client.connect()
         #expect(server.waitForClient(timeout: 2))
-        #expect(try await client.markSeen(taskId: "T") == 2)
+        #expect(try await client.markSeen(task: Self.task) == 2)
     }
 
     @Test func aDaemonOfAnotherProtocolVersionIsAMismatch() async throws {
@@ -83,7 +89,7 @@ final class DaemonClientTests {
         server.handler = { req in ["id": req["id"]!, "error": ["code": "not_found", "message": "no such task"]] }
         try client.connect()
         #expect(server.waitForClient(timeout: 2))
-        do { _ = try await client.markSeen(taskId: "nope"); Issue.record("expected throw") }
+        do { _ = try await client.markSeen(task: Self.task); Issue.record("expected throw") }
         catch let e as DaemonError { #expect(e == DaemonError(code: .notFound, message: "no such task")) }
     }
 

@@ -151,11 +151,13 @@ public struct SessionReport: Codable, Equatable, Sendable {
     public var title: String, cwd: String, active: Bool
     public var taskId: String?, projectId: String?
 
+    /// Takes the ids as UUIDs so they are spelled one way: the daemon matches them as strings, and
+    /// the sidebar's session tags are lowercase (`DaemonClient.wireId`).
     public init(sessionId: String, windowId: String, tabIndex: Int, commandLine: String?, jobPid: Int?, title: String,
-                cwd: String, active: Bool, taskId: String?, projectId: String?) {
+                cwd: String, active: Bool, task: UUID?, project: UUID?) {
         self.sessionId = sessionId; self.windowId = windowId; self.tabIndex = tabIndex; self.commandLine = commandLine
-        self.jobPid = jobPid; self.title = title; self.cwd = cwd; self.active = active; self.taskId = taskId
-        self.projectId = projectId
+        self.jobPid = jobPid; self.title = title; self.cwd = cwd; self.active = active
+        self.taskId = task.map(DaemonClient.wireId); self.projectId = project.map(DaemonClient.wireId)
     }
 
     public func encode(to encoder: Encoder) throws {

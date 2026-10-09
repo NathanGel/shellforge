@@ -483,7 +483,10 @@ public final class DaemonClient: Sendable {
         }
         return snapshot
     }
-    public func markSeen(taskId: String) async throws -> Int { try await request(.sessionsMarkSeen, params: TaskParams(taskId: taskId), as: ChangedResult.self).changed }
+    public func markSeen(task: UUID) async throws -> Int { try await request(.sessionsMarkSeen, params: TaskParams(taskId: Self.wireId(task)), as: ChangedResult.self).changed }
+
+    /// A task or project id as the daemon matches it: lowercase, as the sidebar's session tags are.
+    static func wireId(_ id: UUID) -> String { id.uuidString.lowercased() }
     /// The app's tabs, replacing the daemon's last list; returns once the daemon has read them.
     public func updateSessions(_ reports: [SessionReport]) async throws {
         _ = try await request(.sessionsUpdate, params: SessionsParams(sessions: reports), as: Empty.self)

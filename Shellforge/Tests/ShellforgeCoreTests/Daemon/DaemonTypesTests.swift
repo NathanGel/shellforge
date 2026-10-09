@@ -64,7 +64,7 @@ import Testing
 
     @Test func aSessionReportWritesEveryKeyTheDaemonReads() throws {
         let report = SessionReport(sessionId: "G", windowId: "pty-1", tabIndex: 0, commandLine: nil, jobPid: nil, title: "t",
-                                   cwd: "/r", active: true, taskId: nil, projectId: nil)
+                                   cwd: "/r", active: true, task: nil, project: nil)
         let object = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(report)) as? [String: Any])
         #expect(Set(object.keys) == ["active", "commandLine", "cwd", "jobPid", "projectId", "sessionId", "tabIndex", "taskId", "title", "windowId"])
         #expect(object["commandLine"] is NSNull && object["taskId"] is NSNull)
