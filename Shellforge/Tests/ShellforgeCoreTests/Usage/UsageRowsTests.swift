@@ -247,4 +247,17 @@ import Testing
     private func tab(_ task: UUID, _ agent: SessionAgent, _ index: Int, active: Bool = false) -> SessionInfo {
         session("s\(index)", task: task.uuidString, agent: agent, state: .idle, tab: index, active: active)
     }
+
+    /// iTerm2's focused pane in the selected tab is the truth, ahead of the daemon's `active` flag:
+    /// that flag arrives a round trip late, and every window has one, so a task's tabs in two
+    /// windows have two active panes.
+    @Test func theHostsFocusedPaneLeadsOverADaemonActiveFlag() {
+        let id = UUID()
+        let elsewhere = session("a", task: id.uuidString, agent: .codex, state: .idle, tab: 0, window: "w9", active: true)
+        let here = session("b", task: id.uuidString, agent: .claude, state: .idle, tab: 0, window: "w1", active: true)
+        let row = UsageRows.taskRow(sessions: [elsewhere, here], fallback: .claude, contexts: [.claude: 50, .codex: 10], preferring: "b")
+        #expect(row.agent == .claude && row.context?.percent == 50)
+        #expect(UsageRows.taskRow(sessions: [elsewhere, here], fallback: .claude, contexts: [:], preferring: "gone").agent == .codex,
+                "a focused pane the daemon has not seen leaves the active flag to decide")
+    }
 }

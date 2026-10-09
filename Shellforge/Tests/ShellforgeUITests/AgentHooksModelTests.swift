@@ -33,4 +33,22 @@ import Testing
         #expect(model.lastError != nil)
         #expect(try String(contentsOf: settings, encoding: .utf8) == "[1, 2]")
     }
+
+    /// AiTerm's rule for the footer: Claude's usage feed works only while Claude Code's status line
+    /// is Shellforge's runnable shim — read from the status line itself, not from the hooks' state,
+    /// so another tool taking the status line back while our hooks stay is a dead feed too.
+    @Test func theClaudeFeedIsReadFromItsStatusLine() async throws {
+        let (model, home) = try model()
+        #expect(model.claudeStatusLineInstalled, "not checked yet counts as installed")
+        await model.refresh()
+        #expect(!model.claudeStatusLineInstalled, "nothing installed")
+        await model.install("claude")
+        #expect(model.claudeStatusLineInstalled)
+        let settings = home.appendingPathComponent(".claude/settings.json")
+        var json = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: settings)) as? [String: Any])
+        json["statusLine"] = ["type": "command", "command": "/usr/bin/true"]
+        try JSONSerialization.data(withJSONObject: json).write(to: settings)
+        await model.refresh()
+        #expect(!model.claudeStatusLineInstalled, "our hooks stay, but the status line is another tool's")
+    }
 }

@@ -5,9 +5,10 @@ import Foundation
 /// or a terminal — not per tab: each provider's last value is kept while tabs switch, or while a
 /// snapshot has nothing new to say. Nothing here is saved.
 /// A sidebar row the footer can show: a task, or a tab outside any task (AiTerm's terminal), by
-/// its `TabSnapshot.id`.
+/// its `TabSnapshot.tabId` — iTerm2's own number for the tab, which stays while another of its
+/// panes is focused (the tab's `id` is its focused pane's).
 public enum FooterRow: Hashable, Sendable {
-    case task(UUID), tab(String)
+    case task(UUID), tab(Int)
 }
 
 public struct SessionContexts: Equatable, Sendable {

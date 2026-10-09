@@ -15,7 +15,7 @@ import Testing
     }
 
     /// The workspace's tasks, and which window each sidebar tab outside a task stands for.
-    func resolver(tasks: Set<UUID>, tabs: [String: String] = [:]) -> (SessionInfo) -> FooterRow? {
+    func resolver(tasks: Set<UUID>, tabs: [String: Int] = [:]) -> (SessionInfo) -> FooterRow? {
         { session in
             if let task = session.taskUUID { return tasks.contains(task) ? .task(task) : nil }
             guard session.taskId == nil else { return nil }
@@ -73,7 +73,7 @@ import Testing
     /// A tab outside any task is its own row (AiTerm's terminal, matched on its window); a tab tagged
     /// with a task the workspace does not have counts for no row.
     @Test func aTabsContextIsMatchedThroughItsResolver() {
-        let row = resolver(tasks: [], tabs: ["w2": "s2", "w3": "s3"])
+        let row = resolver(tasks: [], tabs: ["w2": 2, "w3": 3])
         var contexts = SessionContexts()
         let shell = tab("t", window: "w2", agent: .shell, active: true, context: nil)
         contexts.seed(from: [shell], row: row)
@@ -84,8 +84,8 @@ import Testing
         #expect(contexts == SessionContexts(), "the agent has not reported yet")
         var reporting = claude; reporting.contextPercent = 12
         contexts.remember(reporting, replacing: claude, row: row)
-        #expect(contexts.percents(forRow: .tab("s2")) == [.claude: 12])
-        #expect(contexts.percents(forRow: .tab("s3")).isEmpty, "another tab is not this one")
+        #expect(contexts.percents(forRow: .tab(2)) == [.claude: 12])
+        #expect(contexts.percents(forRow: .tab(3)).isEmpty, "another tab is not this one")
 
         let before = contexts
         contexts.remember(tab("x", window: "w2", task: UUID(), agent: .claude, active: true, context: 90), replacing: nil, row: row)

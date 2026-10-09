@@ -90,4 +90,49 @@ import Testing
         #expect(model.vendorRows(now: now.addingTimeInterval(60), calendar: .current, claudeStatusLineInstalled: true)[0].note
                 == "No usage data reported", "a window past its reset is dropped at the next minute")
     }
+
+    /// A pane split off a task's tab carries no task tag of its own (only the pane that opened the
+    /// tab does); its agent's fill is still the task's, as every pane of AiTerm's task window was.
+    @Test func aSplitPanesAgentShowsItsContext() async throws {
+        let (model, host, feed, alpha, _) = try await sidebar()
+        let tab = try #require(host.tabs.first { $0.taskId == alpha })
+        var opener = session(tab.id, task: alpha, agent: .shell, context: nil)
+        opener.active = false
+        let split = session("p2", task: nil, agent: .codex, context: 30)
+        say(feed, [opener, split])
+        // The user focuses the split: iTerm2's tab now names it, and still carries the task's tag.
+        let index = try #require(host.tabs.firstIndex { $0.id == tab.id })
+        host.tabs[index] = TabSnapshot(id: "p2", tabId: tab.tabId, title: "codex", taskId: alpha, projectId: tab.projectId)
+        host.userSwitched(to: "p2")
+        #expect(model.selectedTaskId == alpha)
+        #expect(model.footerRow?.agent == .codex)
+        #expect(model.footerRow?.context?.percent == 30)
+    }
+
+    /// A pane that appears and reports in one update is placed by that update, not one later.
+    @Test func aNewPaneReportsOnItsFirstUpdate() async throws {
+        let (model, host, feed, _, _) = try await sidebar()
+        host.tabs.append(TabSnapshot(id: "s9", tabId: 9, title: "zsh", taskId: nil, projectId: nil))
+        host.onChange?()
+        var shell = session("s9", task: nil, agent: .shell, context: nil, window: "w2")
+        shell.active = false
+        say(feed, [shell, session("p9", task: nil, agent: .claude, context: 20, window: "w2")])
+        host.tabs[host.tabs.count - 1] = TabSnapshot(id: "p9", tabId: 9, title: "claude", taskId: nil, projectId: nil)
+        host.userSwitched(to: "p9")
+        #expect(model.footerRow?.agent == .claude && model.footerRow?.context?.percent == 20)
+    }
+
+    /// Focusing another pane of a tab outside any task changes the tab's id (its focused pane) but
+    /// not the tab: its last fill stays.
+    @Test func aTabKeepsItsFillWhenAnotherPaneIsFocused() async throws {
+        let (model, host, feed, _, _) = try await sidebar()
+        host.tabs.append(TabSnapshot(id: "s9", tabId: 9, title: "zsh", taskId: nil, projectId: nil))
+        host.onChange?()
+        var shell = session("s9", task: nil, agent: .shell, context: nil, window: "w2")
+        shell.active = false
+        say(feed, [shell, session("p9", task: nil, agent: .claude, context: 20, window: "w2")])
+        host.tabs[host.tabs.count - 1] = TabSnapshot(id: "p9", tabId: 9, title: "claude", taskId: nil, projectId: nil)
+        host.userSwitched(to: "p9")
+        #expect(model.footerRow?.agent == .claude && model.footerRow?.context?.percent == 20)
+    }
 }

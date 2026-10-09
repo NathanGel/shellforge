@@ -176,7 +176,7 @@ public final class SidebarModel: ObservableObject {
 
     private func refresh(_ workspace: Workspace? = nil) {
         tree = SidebarTree.build(workspace ?? document.workspace, tabs: host.tabs)
-        contexts.prune(keeping: Set(tree.projects.flatMap(\.tasks).map { FooterRow.task($0.id) } + tree.otherTabs.map { FooterRow.tab($0.id) }))
+        contexts.prune(keeping: Set(tree.projects.flatMap(\.tasks).map { FooterRow.task($0.id) } + tree.otherTabs.map { FooterRow.tab($0.tabId) }))
         detectProviders(tree.projects.map(\.project))
         // Follow iTerm2: whatever tab is selected decides the task shown.
         let opened = host.selectedTabId != lastSelectedTab
@@ -201,23 +201,32 @@ public final class SidebarModel: ObservableObject {
     /// published.
     private func take(_ store: SessionStore) {
         let old = sessions.sessions
-        let row = footerRowResolver
+        let row = footerRowResolver(store)
         for session in store.sessions.values { contexts.remember(session, replacing: old[session.sessionId], row: row) }
         // A snapshot only fills what is not known yet, so seeding on every update is safe.
         contexts.seed(from: Array(store.sessions.values), row: row)
         sessions = store
     }
 
-    /// A session's footer row: its task while the workspace has it, else the tab outside any task it
-    /// is a pane of.
-    private var footerRowResolver: (SessionInfo) -> FooterRow? {
-        let tasks = Set(document.workspace.tasks.map(\.id)), others = tree.otherTabs.map(\.id), store = sessions
+    /// A session's footer row, read against `store` — the update being taken, so a pane that appears
+    /// and reports at once is placed at once: its task while the workspace has it; else the sidebar
+    /// tab it is a pane of — the tab's task when the tab opened one (a split carries no tag of its
+    /// own), or the tab itself when it is outside any task. One map per update, so each lookup is
+    /// a dictionary read.
+    private func footerRowResolver(_ store: SessionStore) -> (SessionInfo) -> FooterRow? {
+        let tasks = Set(document.workspace.tasks.map(\.id))
+        let others = Set(tree.otherTabs.map(\.tabId))
+        var byPane: [String: FooterRow] = [:]
+        for tab in host.tabs {
+            let row: FooterRow? = tab.taskId.flatMap { tasks.contains($0) ? FooterRow.task($0) : nil }
+                ?? (others.contains(tab.tabId) ? .tab(tab.tabId) : nil)
+            guard let row else { continue }
+            byPane[tab.id] = row
+            for pane in store.sessions(ofTab: tab.id) { byPane[pane.sessionId] = row }
+        }
         return { session in
-            if let task = session.taskUUID { return tasks.contains(task) ? .task(task) : nil }
-            guard session.taskId == nil else { return nil }
-            return others.first { tab in
-                tab == session.sessionId || store.sessions(ofTab: tab).contains { $0.sessionId == session.sessionId }
-            }.map(FooterRow.tab)
+            if let task = session.taskUUID, tasks.contains(task) { return .task(task) }
+            return byPane[session.sessionId]
         }
     }
 
@@ -228,11 +237,11 @@ public final class SidebarModel: ObservableObject {
             let task = document.workspace.tasks.first { $0.id == id }
             let fallback = task?.agent.flatMap(SessionAgent.init(rawValue:)) ?? .shell
             return UsageRows.taskRow(sessions: sessions.sessions(ofTask: id), fallback: fallback,
-                                     contexts: contexts.percents(forRow: .task(id)))
+                                     contexts: contexts.percents(forRow: .task(id)), preferring: host.selectedTabId)
         }
-        guard let tab = host.selectedTabId, tree.otherTabs.contains(where: { $0.id == tab }) else { return nil }
-        return UsageRows.taskRow(sessions: sessions.sessions(ofTab: tab), fallback: .shell,
-                                 contexts: contexts.percents(forRow: .tab(tab)))
+        guard let id = host.selectedTabId, let tab = tree.otherTabs.first(where: { $0.id == id }) else { return nil }
+        return UsageRows.taskRow(sessions: sessions.sessions(ofTab: id), fallback: .shell,
+                                 contexts: contexts.percents(forRow: .tab(tab.tabId)), preferring: id)
     }
 
     /// USAGE's rows for this minute: Claude's and Codex's windows, as AiTerm's footer works them out.

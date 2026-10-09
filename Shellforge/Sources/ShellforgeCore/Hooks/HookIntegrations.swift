@@ -45,10 +45,15 @@ public struct HookIntegrations: Sendable {
     public let agents = ["claude", "codex", "grok", "pi"]
     private let drivers: [String: any HookDriver]
     private let unavailable: HookProbe
+    private let home: URL
+    /// The Claude status-line shim this copy installs, or its name when the bundle lacks it.
+    private let claudeShim: String
 
     public init(home: URL = FileManager.default.homeDirectoryForCurrentUser, port: Int = ShellforgePaths.hookPort,
                 resources: HookResources) {
         unavailable = HookProbe(state: .resourceUnavailable, explanation: resources.unavailableReason ?? "The bundled hooks are unavailable.")
+        self.home = home
+        claudeShim = resources.folder?.appendingPathComponent("shellforge-claude-statusline.sh").path ?? "shellforge-claude-statusline.sh"
         var drivers: [String: any HookDriver] = [:]
         if resources.installationAllowed, let folder = resources.folder {
             func file(_ name: String) -> String? {
@@ -63,6 +68,13 @@ public struct HookIntegrations: Sendable {
             }
         }
         self.drivers = drivers
+    }
+
+    /// Whether Claude Code's status line is a Shellforge shim that runs: the one feed of Claude's
+    /// rate limits, so the footer says "Usage disconnected" when it is not (AiTerm's
+    /// `statusLineIsInstalled`). Reads a file; call it off the main actor.
+    public func claudeStatusLineIsInstalled() -> Bool {
+        ClaudeSettings.statusLineIsInstalled(home: home, shimPath: claudeShim)
     }
 
     public func probe(_ agent: String) -> HookProbe {

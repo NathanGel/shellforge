@@ -25,6 +25,8 @@ public enum ShellforgeSidebar {
     }
 }
 
+// FooterClock and SidebarFooterHost: ported from AiTerm (app/Sources/AiTerm/Views/SidebarView.swift), GPLv3, Laurens D'Hondt.
+
 /// The instant and calendar the usage footer reads its reset times against. Unset, the footer uses
 /// the wall clock and the user's calendar; a test pins both so the labels it draws do not move with
 /// the time of day, the weekday or the machine's time zone. (AiTerm's `FooterClock`.)

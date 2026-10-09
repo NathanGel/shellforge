@@ -143,6 +143,9 @@ extension iTermShellforgeSidebar {
         guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
         link.start()
         machine.start()
+        // The footer says "Usage disconnected" from this check, so it runs at launch, not only when
+        // the Agent hooks sheet is opened.
+        Task { await hooks.refresh() }
         // jobPid and commandLine change with no notification; the tick reads them, and only a
         // changed list is sent.
         tick = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in

@@ -135,8 +135,12 @@ public enum UsageRows {
     /// the daemon has said which tab is current, the first tab stands in for it; with no session at
     /// all, `fallback` (a task's own agent, or a shell). AiTerm's `usageTaskRow` and
     /// `usageTerminalRow` chose the sessions themselves; here the caller hands in the row's own.
-    public static func taskRow(sessions own: [SessionInfo], fallback: SessionAgent, contexts: [SessionAgent: Int]) -> UsageTaskRow {
-        let tab = own.first(where: \.active) ?? own.min { $0.tabIndex < $1.tabIndex }
+    ///
+    /// `preferring` is iTerm2's focused pane in the selected tab, which leads when the row has it:
+    /// the daemon's `active` flag arrives a round trip late, and every window has one.
+    public static func taskRow(sessions own: [SessionInfo], fallback: SessionAgent, contexts: [SessionAgent: Int],
+                               preferring focused: String? = nil) -> UsageTaskRow {
+        let tab = own.first { $0.sessionId == focused } ?? own.first(where: \.active) ?? own.min { $0.tabIndex < $1.tabIndex }
         let agent = tab?.agent ?? fallback
         let fill = agent == .shell ? nil : contexts[agent]
         return UsageTaskRow(agent: agent, context: fill.map {
