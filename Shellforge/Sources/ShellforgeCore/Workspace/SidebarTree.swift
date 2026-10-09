@@ -19,6 +19,11 @@ public struct SidebarTree: Equatable, Sendable {
     public var projects: [ProjectNode]
     public var otherTabs: [TabSnapshot]
 
+    public init(projects: [ProjectNode], otherTabs: [TabSnapshot]) {
+        self.projects = projects
+        self.otherTabs = otherTabs
+    }
+
     public static func build(_ workspace: Workspace, tabs: [TabSnapshot]) -> SidebarTree {
         let ordered = tabs.sorted { $0.tabId < $1.tabId }
         let known = Set(workspace.tasks.map(\.id))

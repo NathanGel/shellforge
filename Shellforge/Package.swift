@@ -13,9 +13,9 @@ let package = Package(
     ],
     targets: [
         .target(name: "ShellforgeCore", path: "Sources/ShellforgeCore"),
-        .target(name: "ShellforgeUI", path: "Sources/ShellforgeUI"),
+        .target(name: "ShellforgeUI", dependencies: ["ShellforgeCore"], path: "Sources/ShellforgeUI"),
         .testTarget(name: "ShellforgeCoreTests", dependencies: ["ShellforgeCore"], path: "Tests/ShellforgeCoreTests"),
-        .testTarget(name: "ShellforgeUITests", dependencies: ["ShellforgeUI"], path: "Tests/ShellforgeUITests"),
+        .testTarget(name: "ShellforgeUITests", dependencies: ["ShellforgeUI", "ShellforgeCore"], path: "Tests/ShellforgeUITests"),
     ],
     swiftLanguageModes: [.v6]
 )
