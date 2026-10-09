@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 
 from .models import PROJECT_TAG, TASK_TAG, AgentKind, RawSession, SessionInfo, State, TokenTally, classify_agent
@@ -153,7 +154,10 @@ class SessionRegistry:
         # Either directory counts: an agent that chdirs (Claude entering a worktree, Codex
         # told to work elsewhere) no longer shares the shell's cwd, which is all iTerm2
         # reports, and its own directory is what its hook posts carry.
-        return [s for s in self.all() if s.agent == agent and cwd in (s.cwd, s.agent_cwd)]
+        # And either spelling of one folder: iTerm2 reports the shell's (/tmp/…), an agent's hook the
+        # path it resolved (/private/tmp/…, or a repo reached through a symlink).
+        wanted = _real(cwd)
+        return [s for s in self.all() if s.agent == agent and wanted in (_real(s.cwd), _real(s.agent_cwd))]
 
     def task_for_window(self, window_id: str) -> str | None:
         return self._window_task.get(window_id)
@@ -177,3 +181,13 @@ class SessionRegistry:
             return None
         order = list(self._sessions)
         return max(sessions, key=lambda s: order.index(s.session_id))
+
+
+def _real(path: str | None) -> str | None:
+    """`path` with its symlinks resolved; as given when it cannot be."""
+    if not path:
+        return path
+    try:
+        return os.path.realpath(path)
+    except (OSError, ValueError):
+        return path

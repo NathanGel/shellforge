@@ -230,3 +230,16 @@ def test_a_title_change_alongside_another_change_is_still_announced_with_the_new
 
     assert diff.changed == ["s1"]
     assert reg.get("s1").title == "⠙ repo" and reg.get("s1").to_json()["title"] == "⠙ repo"
+
+
+def test_a_folder_matches_whichever_way_a_symlink_spells_it(tmp_path):
+    """iTerm2 reports a tab's folder as the shell spells it (/tmp/…), an agent's hook as the process
+    resolved it (/private/tmp/…): one folder, so one match, however a symlink spells it."""
+    real = tmp_path / "real" / "repo"
+    real.mkdir(parents=True)
+    link = tmp_path / "link"
+    link.symlink_to(tmp_path / "real")
+    r = SessionRegistry()
+    r.apply_snapshot([raw("s1", cmd="claude", cwd=str(link / "repo"))])
+    assert [s.session_id for s in r.by_cwd_and_agent(str(real), "claude")] == ["s1"]
+    assert r.by_cwd_and_agent(str(tmp_path / "elsewhere"), "claude") == []

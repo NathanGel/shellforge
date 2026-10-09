@@ -1,9 +1,9 @@
 #!/bin/zsh -f
-# hooks/grok-statusline-shim.sh — installed as Grok Build's [ui.status_line] command by Shellforge.
+# hooks/shellforge-grok-statusline.sh — installed as Grok Build's [ui.status_line] command by Shellforge.
 # 1. forwards the status-line JSON to the Shellforge daemon (300 ms cap): Grok's status line is the
 #    only place it reports how full a session's context window is;
 # 2. runs the status line the user had before, otherwise prints nothing (Grok then hides the row).
-# Same recipe as claude-statusline-shim.sh, including why the redirection wraps the whole
+# Same recipe as shellforge-claude-statusline.sh, including why the redirection wraps the whole
 # backgrounded pipeline and what it reads from the support folder (GrokDriver writes both files),
 # with one difference: Grok kills whatever a status-line script leaves running once it exits
 # (25-status-line.md, "Background work does not survive"), so the post runs beside the original
@@ -11,6 +11,11 @@
 # timeout. ${ITERM_SESSION_ID-} keeps `set -u` from aborting outside iTerm2.
 # (The no-`${` rule is for Grok hook commands, which Grok parses; this script is only run by it.)
 set -u
+# Run inside its own chain — an original command that leads back here, as another app's shim can once its
+# Repair saved this one as the user's command — it does nothing: two shims naming each other would
+# otherwise start each other for ever. The variable reaches the chain through the environment.
+[ -n "${SHELLFORGE_STATUSLINE_ACTIVE-}" ] && exit 0
+export SHELLFORGE_STATUSLINE_ACTIVE=1
 IFS= read -r -d '' INPUT || true
 SUPPORT="$HOME/Library/Application Support/Shellforge"
 PORT=""

@@ -19,6 +19,11 @@ final class iTermShellforgeSidebar: NSObject {
     /// One shared launcher, so the login shell's environment is read once per app run.
     nonisolated static let launcher = CommandLauncher()
 
+    /// The Agent hooks sheet every window's sidebar opens: the hooks bundled in
+    /// `Contents/Resources/hooks`, installed into the user's home only on a click.
+    static let hooks = AgentHooksModel(integrations: HookIntegrations(resources: .bundled(resourceURL: Bundle.main.resourceURL)),
+                                       names: Dictionary(uniqueKeysWithValues: AgentPresets.all.map { ($0.id, $0.name) }))
+
     /// The one workspace every window's sidebar shows and changes.
     static let document = WorkspaceDocument(store: WorkspaceStore())
 
@@ -32,7 +37,7 @@ final class iTermShellforgeSidebar: NSObject {
             panel.canChooseFiles = false
             panel.prompt = "Add Project"
             return panel.runModal() == .OK ? panel.url?.path : nil
-        })
+        }, hooks: hooks)
     }
 
     /// The default profile changed to run the login shell in `directory`.
