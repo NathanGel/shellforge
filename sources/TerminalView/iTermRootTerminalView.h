@@ -96,6 +96,8 @@ extern const NSInteger iTermRootTerminalViewWindowNumberLabelWidth;
 
 // Toolbelt view. Goes on the right side of the terminal window, if visible.
 @property(nonatomic, readonly) iTermToolbeltView *toolbelt;
+// Shellforge: the window has the projects → tasks → tabs sidebar, which replaces the tab bar.
+@property(nonatomic, readonly) BOOL hasShellforgeSidebar;
 
 // Should the toolbelt be visible?
 @property(nonatomic) BOOL shouldShowToolbelt;

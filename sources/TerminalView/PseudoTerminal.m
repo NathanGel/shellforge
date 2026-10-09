@@ -6360,6 +6360,10 @@ hidingToolbeltShouldResizeWindow:(BOOL)hidingToolbeltShouldResizeWindow
 }
 
 - (BOOL)tabBarShouldBeVisibleEvenWhenOnLoan {
+    if (_contentView.hasShellforgeSidebar) {
+        // Shellforge: the sidebar lists the tabs, in full screen too.
+        return NO;
+    }
     if (togglingLionFullScreen_ || [self lionFullScreen]) {
         return YES;
     }
@@ -6367,6 +6371,9 @@ hidingToolbeltShouldResizeWindow:(BOOL)hidingToolbeltShouldResizeWindow
 }
 
 - (BOOL)tabBarShouldBeVisible {
+    if (_contentView.hasShellforgeSidebar) {
+        return NO;
+    }
     if (togglingLionFullScreen_ || [self lionFullScreen]) {
         return YES;
     }
@@ -6610,6 +6617,11 @@ hidingToolbeltShouldResizeWindow:(BOOL)hidingToolbeltShouldResizeWindow
 
 - (BOOL)tabBarShouldBeAccessory {
     RLog(@"%@", self);
+    if (_contentView.hasShellforgeSidebar) {
+        // Shellforge: no tab bar, so none in the titlebar either.
+        RLog(@"NO - Shellforge sidebar");
+        return NO;
+    }
     if (!(self.window.styleMask & NSWindowStyleMaskTitled)) {
         // You get an assertion if you try to add an accessory to an untitled window.
         RLog(@"NO - window not titled");

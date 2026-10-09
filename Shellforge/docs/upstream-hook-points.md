@@ -13,6 +13,8 @@ this list short; new behaviour belongs in the Shellforge package.
 | `sources/TerminalView/iTermShellforgeSidebar.swift` (new) | `@objc` bridge to `ShellforgeUI` | Objective-C cannot import the Swift package |
 | `sources/TerminalView/iTermRootTerminalView.m` (`tabBarShouldBeVisibleWithAdditionalTabs:`) | No tab bar in a window with the sidebar | The sidebar lists the tabs; the tab bar would show other tasks' |
 | `iTerm2.xcodeproj/project.pbxproj` | `ShellforgeCore` linked into `iTermSwiftPackages` | The host builds `TabSnapshot`s and the model |
+| `sources/TerminalView/iTermRootTerminalView.{h,m}` | `hasShellforgeSidebar`; no tab bar even while flashing; `#import "PseudoTerminal.h"` before the Swift header | Full screen and the sidebar's window controller |
+| `sources/TerminalView/PseudoTerminal.m` (`tabBarShouldBeVisible`, `tabBarShouldBeVisibleEvenWhenOnLoan`, `tabBarShouldBeAccessory`) | NO for a window with the sidebar | Native full screen and macOS 26 put the tab bar in the titlebar without asking the root view |
 | `ModernTests/ShellforgeSidebarLayoutTest.swift` (new) | Calculator tests for the sidebar column | Synchronized test folder: no project entry needed |
 
 ## M0: verified on 9 October 2026

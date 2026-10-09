@@ -1204,7 +1204,15 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
     return [self tabBarShouldBeVisibleEvenWhenOnLoan];
 }
 
+- (BOOL)hasShellforgeSidebar {
+    return _shellforgeSidebar != nil;
+}
+
 - (BOOL)tabBarShouldBeVisibleEvenWhenOnLoan {
+    if (_shellforgeSidebar) {
+        // Shellforge: not even while flashing on a tab switch in full screen.
+        return NO;
+    }
     if (self.tabBarControl.flashing) {
         DLog(@"Tabbar should be visible because it is flashing");
         return YES;
