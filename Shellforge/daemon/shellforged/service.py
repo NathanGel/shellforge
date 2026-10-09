@@ -103,6 +103,8 @@ class Service:
         # Each off-loop check's latest run, by name, while its worker thread may still be running: a
         # thread stuck on a hung mount cannot be cancelled, so no second one is started beside it.
         self._checks: dict[str, asyncio.Future[Any]] = {}
+        # When the last re-read for unplaced hooks began, on the event loop's clock.
+        self._hook_tick_started = float("-inf")
         self._register_handlers()
 
     # -- lifecycle ---------------------------------------------------------
@@ -193,10 +195,14 @@ class Service:
         return [s.to_json() for s in self.registry.all()]
 
     async def _tick_for_hooks(self) -> None:
-        """The re-read a hook that placed nowhere waits for. From the app, a fresh list has to come
-        first: the one in hand is the one the hook already failed to place on."""
+        """The re-read that hooks which placed nowhere wait for. Each of them arrived after the
+        previous such re-read began, so a list from the app that came after that point is newer
+        than the one they failed on: re-read at once. Otherwise wait for the next list first; the
+        one in hand is the one they already failed on, and no new snapshot comes from iTerm2 here."""
         from .app_sessions import AppSessions
-        if isinstance(self.iterm, AppSessions):
+        loop = asyncio.get_running_loop()
+        previous, self._hook_tick_started = self._hook_tick_started, loop.time()
+        if isinstance(self.iterm, AppSessions) and self.iterm.updated_at <= previous:
             await self.iterm.next_update(timeout=APP_UPDATE_WAIT_SECONDS)
         await self.tick()
 

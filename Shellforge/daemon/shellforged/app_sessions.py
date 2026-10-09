@@ -49,19 +49,20 @@ class AppSessions:
 
     def __init__(self) -> None:
         self._sessions: list[RawSession] = []
-        self._updated = asyncio.Event()
+        #: When the last list arrived, on the event loop's clock; -inf before the first.
+        self.updated_at = float("-inf")
+        self._arrived = asyncio.Event()
 
     def replace(self, sessions: list[RawSession]) -> None:
         self._sessions = list(sessions)
-        self._updated.set()
+        self.updated_at = asyncio.get_running_loop().time()
+        self._arrived.set()
+        self._arrived = asyncio.Event()
 
     async def next_update(self, timeout: float) -> None:
-        """Waits for the app's next list, or `timeout` seconds. An agent's first hook can come before
-        the app has reported its new tab; re-reading the same list would drop it, as no new snapshot
-        comes from iTerm2 here."""
-        self._updated.clear()
+        """Waits for the app's next list, or `timeout` seconds."""
         with contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(self._updated.wait(), timeout)
+            await asyncio.wait_for(self._arrived.wait(), timeout)
 
     async def connect(self) -> str | None:
         return "Shellforge"
