@@ -57,16 +57,46 @@ struct DesignRulesTests {
 
     private static let exceptions = [
         // The sidebar and the Agent hooks sheet as M1a and M1c-3a drew them, before the design system
-        // came: waived as whole files (an empty line piece is the whole file), until M1b-2 rebuilds
-        // them on ShellforgeDesign and deletes these four. The stale check below then proves it did.
-        Exception(file: "ShellforgeUI/ShellforgeSidebar.swift", rule: .font, line: "",
-                  reason: "the placeholder sidebar, rebuilt on ShellforgeDesign in M1b-2"),
-        Exception(file: "ShellforgeUI/ShellforgeSidebar.swift", rule: .length, line: "",
-                  reason: "the placeholder sidebar, rebuilt on ShellforgeDesign in M1b-2"),
-        Exception(file: "ShellforgeUI/AgentHooksView.swift", rule: .font, line: "",
+        // came: one exception per line, as every other, until M1b-2 rebuilds both on ShellforgeDesign
+        // and deletes these. The stale check below then proves none is left.
+        Exception(file: "ShellforgeUI/AgentHooksView.swift", rule: .length, line: #"VStack(alignment: .leading, spacing: 12) {"#,
                   reason: "the placeholder Agent hooks sheet, rebuilt on ShellforgeDesign in M1b-2"),
-        Exception(file: "ShellforgeUI/AgentHooksView.swift", rule: .length, line: "",
+        Exception(file: "ShellforgeUI/AgentHooksView.swift", rule: .font, line: #"Text("Agent hooks").font(.headline)"#,
                   reason: "the placeholder Agent hooks sheet, rebuilt on ShellforgeDesign in M1b-2"),
+        Exception(file: "ShellforgeUI/AgentHooksView.swift", rule: .font, line: #".font(.callout)"#,
+                  reason: "the placeholder Agent hooks sheet, rebuilt on ShellforgeDesign in M1b-2"),
+        Exception(file: "ShellforgeUI/AgentHooksView.swift", rule: .colour, line: #".foregroundStyle(.secondary)"#,
+                  reason: "the placeholder Agent hooks sheet, rebuilt on ShellforgeDesign in M1b-2"),
+        Exception(file: "ShellforgeUI/AgentHooksView.swift", rule: .font, line: #".font(.caption)"#,
+                  reason: "the placeholder Agent hooks sheet, rebuilt on ShellforgeDesign in M1b-2"),
+        Exception(file: "ShellforgeUI/AgentHooksView.swift", rule: .colour, line: #".foregroundStyle(.red)"#,
+                  reason: "the placeholder Agent hooks sheet, rebuilt on ShellforgeDesign in M1b-2"),
+        Exception(file: "ShellforgeUI/AgentHooksView.swift", rule: .length, line: #".padding(20)"#,
+                  reason: "the placeholder Agent hooks sheet, rebuilt on ShellforgeDesign in M1b-2"),
+        Exception(file: "ShellforgeUI/AgentHooksView.swift", rule: .length, line: #".frame(width: 420)"#,
+                  reason: "the placeholder Agent hooks sheet, rebuilt on ShellforgeDesign in M1b-2"),
+        Exception(file: "ShellforgeUI/AgentHooksView.swift", rule: .length, line: #"VStack(alignment: .leading, spacing: 2) {"#,
+                  reason: "the placeholder Agent hooks sheet, rebuilt on ShellforgeDesign in M1b-2"),
+        Exception(file: "ShellforgeUI/ShellforgeSidebar.swift", rule: .font, line: #".font(.callout)"#,
+                  reason: "the placeholder sidebar, rebuilt on ShellforgeDesign in M1b-2"),
+        Exception(file: "ShellforgeUI/ShellforgeSidebar.swift", rule: .colour, line: #".foregroundStyle(.secondary)"#,
+                  reason: "the placeholder sidebar, rebuilt on ShellforgeDesign in M1b-2"),
+        Exception(file: "ShellforgeUI/ShellforgeSidebar.swift", rule: .length, line: #".padding(16)"#,
+                  reason: "the placeholder sidebar, rebuilt on ShellforgeDesign in M1b-2"),
+        Exception(file: "ShellforgeUI/ShellforgeSidebar.swift", rule: .font, line: #".font(.caption)"#,
+                  reason: "the placeholder sidebar, rebuilt on ShellforgeDesign in M1b-2"),
+        Exception(file: "ShellforgeUI/ShellforgeSidebar.swift", rule: .length, line: #".padding(12)"#,
+                  reason: "the placeholder sidebar, rebuilt on ShellforgeDesign in M1b-2"),
+        Exception(file: "ShellforgeUI/ShellforgeSidebar.swift", rule: .colour, line: #".foregroundStyle(model.helper == .helperUnreachable ? Color.secondary : Color.orange)"#,
+                  reason: "the placeholder sidebar, rebuilt on ShellforgeDesign in M1b-2"),
+        Exception(file: "ShellforgeUI/ShellforgeSidebar.swift", rule: .colour, line: #".foregroundStyle(.red)"#,
+                  reason: "the placeholder sidebar, rebuilt on ShellforgeDesign in M1b-2"),
+        Exception(file: "ShellforgeUI/ShellforgeSidebar.swift", rule: .font, line: #"Text("Shellforge").font(.headline)"#,
+                  reason: "the placeholder sidebar, rebuilt on ShellforgeDesign in M1b-2"),
+        Exception(file: "ShellforgeUI/ShellforgeSidebar.swift", rule: .length, line: #"HStack(spacing: 6) {"#,
+                  reason: "the placeholder sidebar, rebuilt on ShellforgeDesign in M1b-2"),
+        Exception(file: "ShellforgeUI/ShellforgeSidebar.swift", rule: .length, line: #".frame(width: 8, height: 8)"#,
+                  reason: "the placeholder sidebar, rebuilt on ShellforgeDesign in M1b-2"),
         Exception(file: "ShellforgeDesign/Metrics.swift", rule: .colour, line: "case .black: nsWeight = .black",
                   reason: "Font.Weight.black mapped to NSFont.Weight.black: a weight, not a colour"),
         Exception(file: "ShellforgeDesign/Hairline.swift", rule: .length, line: ".frame(height: 1)",
@@ -77,8 +107,11 @@ struct DesignRulesTests {
                   reason: "the SF Symbol standing in for a missing logo, sized as a fraction of that logo"),
     ]
 
+    /// Beyond AiTerm's rule: SwiftUI's and AppKit's named colours too (`.orange`, `Color.secondary`,
+    /// `NSColor.systemBlue`, a colour in a colour modifier or a ternary), none of which is a token —
+    /// AiTerm's regex saw only white and black, and the placeholder sidebar's orange got through.
     private static let colourLiteral = try! NSRegularExpression(
-        pattern: #"\b(?:NS)?Color\((?:red|white|srgbRed|calibratedRed|deviceRed|calibratedWhite|deviceWhite|genericGamma22White|displayP3Red|hue|srgbHue|calibratedHue|deviceHue):|\b(?:NS)?Color\.(?:white|black)\b|(?<![\w)\]])\.(?:white|black)\b"#)
+        pattern: #"\b(?:NS)?Color\((?:red|white|srgbRed|calibratedRed|deviceRed|calibratedWhite|deviceWhite|genericGamma22White|displayP3Red|hue|srgbHue|calibratedHue|deviceHue):|\b(?:NS)?Color\.(?:white|black)\b|(?<![\w)\]])\.(?:white|black)\b|\b(?:NS)?Color\.(?:red|orange|yellow|green|mint|teal|cyan|blue|indigo|purple|pink|brown|gray|grey|primary|secondary|accentColor)\b|\bNSColor\.(?:system\w+|\w+Color)\b|\b(?:foregroundStyle|foregroundColor|fill|stroke|strokeBorder|background|tint|accentColor)\(\s*\.(?:red|orange|yellow|green|mint|teal|cyan|blue|indigo|purple|pink|brown|gray|grey|primary|secondary)\b|[?:]\s*\.(?:red|orange|yellow|green|mint|teal|cyan|blue|indigo|purple|pink|brown|gray|grey)\b"#)
     private static let derivedColour = try! NSRegularExpression(pattern: #"\bPalette\.[\w.]+\.opacity\("#)
     private static let systemFont = try! NSRegularExpression(
         pattern: #"\.system\(|\bNSFont\.\w*[sS]ystemFont\w*\(|\.font\(\.(?:largeTitle|title2?|title3|headline|subheadline|body|callout|footnote|caption2?)\b"#)
@@ -99,8 +132,8 @@ struct DesignRulesTests {
         for (file, lines) in try Self.sources() {
             for line in lines {
                 for rule in Rule.allCases where rule.home != file && Self.matches(rule.pattern, line.code) {
-                    if let exception = Self.exceptions.first(where: { $0.file == file && $0.rule == rule && ($0.line.isEmpty || line.code.contains($0.line)) }) {
-                        used.insert("\(exception.file): \(exception.line)")
+                    if let exception = Self.exceptions.first(where: { $0.file == file && $0.rule == rule && line.code.contains($0.line) }) {
+                        used.insert(Self.key(exception))
                     } else {
                         violations.append("\(file):\(line.number): \(rule): \(line.code.trimmingCharacters(in: .whitespaces))")
                     }
@@ -111,9 +144,13 @@ struct DesignRulesTests {
             a colour that is not a Palette member, or a text size or length that is not a Metrics one — \
             name it there (or, for one view's own geometry, in a private static let with its reason): \(violations)
             """)
-        let stale = Self.exceptions.map { "\($0.file): \($0.line)" }.filter { !used.contains($0) }
+        let stale = Self.exceptions.map(Self.key).filter { !used.contains($0) }
         #expect(stale.isEmpty, "exceptions that no longer match anything — remove them: \(stale)")
     }
+
+    /// An exception's identity for the stale check: its rule too, so two exceptions for one line —
+    /// a font and a length on it — are each proved used, and neither outlives its literal unseen.
+    private static func key(_ exception: Exception) -> String { "\(exception.file) [\(exception.rule)]: \(exception.line)" }
 
     /// The patterns themselves, so a regex that quietly matches nothing cannot pass the scans.
     @Test func thePatternsCatchWhatTheyAreFor() {
@@ -123,7 +160,15 @@ struct DesignRulesTests {
                         "Color(hue: 0.5, saturation: 1, brightness: 1)"] {
             #expect(Self.matches(Self.colourLiteral, literal), "missed \(literal)")
         }
-        for fine in ["Palette.onAccent", "surface.ink", ".whitespaces", "Color(nsColor: .labelColor)", "blackBox"] {
+        // SwiftUI's and AppKit's named colours: none of them is AiTerm's, wherever they are written.
+        for literal in ["Color.orange", ".foregroundStyle(.orange)", ".fill(.blue)", ".foregroundColor(.red)",
+                        ".tint(.green)", ".foregroundStyle(.secondary)", "Color.secondary", "x ? .green : .blue",
+                        "NSColor.systemOrange", ".background(.gray)", ".stroke(.purple, lineWidth: 1)"] {
+            #expect(Self.matches(Self.colourLiteral, literal), "missed \(literal)")
+        }
+        for fine in ["Palette.onAccent", "surface.ink", ".whitespaces", "Color(nsColor: .labelColor)", "blackBox",
+                     "HelpText(\"x\", tone: .secondary)", "case .secondary:", ".fill(.clear)", "tone == .warning ? Palette.amber : Palette.muted",
+                     ".foregroundStyle(Palette.muted)", "Badge(style: .quiet)"] {
             #expect(!Self.matches(Self.colourLiteral, fine), "flagged \(fine)")
         }
         #expect(Self.matches(Self.derivedColour, ".fill(Palette.accent.opacity(0.2))"))
