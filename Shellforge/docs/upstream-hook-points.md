@@ -56,3 +56,26 @@ In the running Development build, driven through the Accessibility API, against 
 | Quit and relaunch | Not shown: macOS's "close windows when quitting" setting meant no windows were restored. Session variables are saved with each session in iTerm2's arrangement code (`PTYSession.m`), so tagged tabs should come back under their tasks when restoration is on. |
 
 Seen in passing: a SwiftUI task row's accessibility press does not select it (a mouse click does), and the project header's ⊕ is only reachable as a named accessibility action.
+
+## M1c-2b: verified on 9 October 2026
+
+Development build, against the scratch `trial-repo`, with AiTerm's daemon (port 47821) running alongside.
+
+1. At launch shellforged started within 4 s: `daemon.json` and the socket appeared, and the process
+   is Homebrew's Python 3.14 (the interpreter `PythonFinder` resolved) running
+   `-m shellforged run --socket …/Shellforge/shellforged.sock --hook-port 47831`. AiTerm's daemon
+   was untouched.
+2. `shellforged ctl sessions.list` listed every tab. A task's tab carried its lowercase `taskId`,
+   its worktree as `cwd`, and `active: true`.
+3. In a task tab running a binary named `codex`, the one-second tick moved the tab to agent `codex`.
+   Codex hooks, sent as that tab, turned the task's and tab's dots blue (`UserPromptSubmit`) and
+   then green (`Stop`). Selecting another task and then this one cleared the green dot, and the
+   daemon said `idle`.
+4. `kill -9` on the daemon cleared the dots, and the sidebar said "Reconnecting to Shellforge's
+   helper…". The supervisor started a new daemon within about 1 s, which listed all three tabs
+   again; the message went away, and a hook to the new daemon turned the dots blue.
+5. Quitting Shellforge ended the daemon within about 1 s, and removed its socket and `daemon.json`.
+
+A Claude hook from a plain shell tab changes nothing: Claude's hooks are placed by the agent's pid
+file, and Codex's only on a tab whose foreground job is `codex`. That is shellforged's resolver
+working as designed, not a gap.
