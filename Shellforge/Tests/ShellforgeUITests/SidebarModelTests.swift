@@ -10,7 +10,7 @@ import Testing
     var tabs: [TabSnapshot] = []
     var selectedTabId: String?
     var onChange: (@MainActor () -> Void)?
-    var opened: [(directory: String, taskId: UUID, projectId: UUID, title: String)] = []
+    var opened: [(directory: String, taskId: UUID, projectId: UUID, title: String, command: String?)] = []
     /// Ids are never reused, as iTerm2's are not, even after a tab closes.
     private var nextTab = 0
 
@@ -19,8 +19,8 @@ import Testing
         onChange?()
     }
 
-    func openTab(in directory: String, taskId: UUID, projectId: UUID, title: String) {
-        opened.append((directory, taskId, projectId, title))
+    func openTab(in directory: String, taskId: UUID, projectId: UUID, title: String, command: String?) {
+        opened.append((directory, taskId, projectId, title, command))
         nextTab += 1
         let tab = TabSnapshot(id: "s\(nextTab)", tabId: nextTab, title: title, taskId: taskId, projectId: projectId)
         tabs.append(tab)
@@ -241,7 +241,7 @@ import Testing
         let project = try #require(sidebar.tree.projects.first).id
         await sidebar.newTask(title: "One", in: project)
         let one = try #require(sidebar.selectedTaskId), first = try #require(host.tabs.last).id
-        host.openTab(in: repo.path, taskId: one, projectId: project, title: "second")
+        host.openTab(in: repo.path, taskId: one, projectId: project, title: "second", command: nil)
         let second = try #require(host.tabs.last).id
         host.userSwitched(to: first)
         feed.say(.done, session: second, task: one)
@@ -330,16 +330,87 @@ struct GitRepoForUI {
     let path: String
     let launcher: CommandLauncher
 
-    init() throws {
+    /// `installed` are agent CLIs the launcher finds: `exit 0` scripts in a bin of the repository's
+    /// own, ahead of git's folder, so what this Mac has installed never decides a test.
+    init(installed: [String] = []) throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("shellforge-uirepo-\(UUID().uuidString)").path
         path = "\(root)/repo"
         try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
-        let env = ["PATH": "/usr/bin:/bin", "HOME": root, "GIT_CONFIG_NOSYSTEM": "1",
+        try FileManager.default.createDirectory(atPath: "\(root)/bin", withIntermediateDirectories: true)
+        for name in installed {
+            try "#!/bin/sh\nexit 0\n".write(toFile: "\(root)/bin/\(name)", atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: "\(root)/bin/\(name)")
+        }
+        let env = ["PATH": "\(root)/bin:/usr/bin:/bin", "HOME": root, "GIT_CONFIG_NOSYSTEM": "1",
                    "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"]
         launcher = CommandLauncher { ResolvedEnvironment(variables: env, source: .loginShell("/bin/sh")) }
         for args in [["init", "-q", "-b", "main"], ["commit", "-q", "--allow-empty", "-m", "first"]] {
             let out = try launcher.run("git", ["-C", path] + args)
             guard out.status == 0 else { throw GitFailure(command: "git", message: out.stderr) }
         }
+    }
+}
+
+extension SidebarModel {
+    /// A task as the New Task sheet would create it, for the tests that only need one to exist:
+    /// Claude Code on `opus`, named `title`, from `main`.
+    func newTask(title: String, in projectId: UUID) async {
+        var draft = TaskDraft(baseBranch: "main", agentId: "claude", model: "opus", reasoning: nil)
+        draft.setTitle(title)
+        try? await newTask(draft: draft, in: projectId)
+    }
+}
+
+@MainActor @Suite struct NewTaskWiringTests {
+    private let folder = FileManager.default.temporaryDirectory.appendingPathComponent("shellforge-wiring-\(UUID().uuidString)")
+
+    private func modelWithProject(installed: [String] = []) async throws -> (SidebarModel, FakeTerminalHost, WorkspaceDocument, UUID) {
+        let repo = try GitRepoForUI(installed: installed)
+        let host = FakeTerminalHost()
+        let document = WorkspaceDocument(store: WorkspaceStore(folder: folder))
+        let model = SidebarModel(host: host, document: document, launcher: repo.launcher, catalogue: { _ in [] })
+        await model.addProject(folder: repo.path)
+        return (model, host, document, try #require(document.workspace.projects.first).id)
+    }
+
+    @Test func aNewTaskOpensItsTabRunningTheAgent() async throws {
+        let (model, host, document, project) = try await modelWithProject()
+        var draft = TaskDraft(baseBranch: "main", agentId: "claude", model: "opus", reasoning: "high")
+        draft.setTitle("Login")
+        draft.promptText = "fix it"
+        try await model.newTask(draft: draft, in: project)
+        let opened = try #require(host.opened.last)
+        #expect(opened.directory.hasSuffix("/.worktrees/login"))
+        #expect(opened.command == "claude --model opus --effort high 'fix it'")
+        #expect(document.workspace.lastAgentByProject[project] == "claude")
+        #expect(document.workspace.lastModelByAgent["claude"] == "opus")
+    }
+
+    @Test func theNextSheetOpensWithTheLastAgentWhileItIsInstalled() async throws {
+        let (model, _, document, project) = try await modelWithProject(installed: ["claude", "codex"])
+        try document.update { $0.lastAgentByProject[project] = "codex" }
+        let sheet = try #require(model.makeNewTaskModel(for: project))
+        #expect(sheet.availableAgents == ["claude", "codex"])
+        #expect(sheet.draft.agentId == "codex")
+        try document.update { $0.lastAgentByProject[project] = "pi" }
+        #expect(model.makeNewTaskModel(for: project)?.draft.agentId == "claude", "an uninstalled last agent gives way to the first installed")
+    }
+
+    @Test func aFailedCreateLeavesNoTaskAndThrows() async throws {
+        let (model, host, document, project) = try await modelWithProject()
+        var draft = TaskDraft(baseBranch: "no-such-branch", agentId: "claude", model: "opus", reasoning: nil)
+        draft.setTitle("Login")
+        await #expect(throws: GitFailure.self) { try await model.newTask(draft: draft, in: project) }
+        #expect(document.workspace.tasks.isEmpty && host.opened.isEmpty)
+    }
+
+    /// A task reopened from the sidebar, its tab long closed, is a shell: the agent ran once.
+    @Test func reopeningATaskStartsNoAgent() async throws {
+        let (model, host, _, project) = try await modelWithProject()
+        await model.newTask(title: "Login", in: project)
+        let task = try #require(model.tree.projects.first?.tasks.first).id
+        host.close(try #require(host.tabs.first).id)
+        model.select(task: task)
+        #expect(host.opened.count == 2 && host.opened.last?.command == nil)
     }
 }

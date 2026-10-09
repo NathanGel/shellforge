@@ -11,8 +11,9 @@ public protocol TerminalHost: AnyObject {
     /// Called whenever a tab opens, closes, is renamed or is selected — by the sidebar or by iTerm2.
     var onChange: (@MainActor () -> Void)? { get set }
     func select(tab id: String)
-    /// Opens a tab in `directory`, running the login shell, tagged with the task and project, and selects it.
-    func openTab(in directory: String, taskId: UUID, projectId: UUID, title: String)
+    /// Opens a tab in `directory`, running the login shell, tagged with the task and project, and
+    /// selects it. `command` is typed into its shell once it starts: the task's agent.
+    func openTab(in directory: String, taskId: UUID, projectId: UUID, title: String, command: String?)
 }
 
 /// What the sidebar needs from the helper: its status, what the daemon says about the sessions,
@@ -49,16 +50,24 @@ public final class SidebarModel: ObservableObject {
     private let host: TerminalHost
     private let document: WorkspaceDocument
     private let launcher: CommandLauncher
+    /// The agents New Task offers.
+    public let agents: [AgentDefinition]
+    /// An agent's model list, read off the main actor.
+    private let catalogue: @Sendable (AgentDefinition) throws -> [AgentModel]
     private var subscription: AnyCancellable?
     private let feed: SessionFeed?
     private var feedSubscriptions: [AnyCancellable] = []
     /// The tab selected at the last refresh: moving to another is opening it.
     private var lastSelectedTab: String?
 
-    public init(host: TerminalHost, document: WorkspaceDocument, launcher: CommandLauncher, feed: SessionFeed? = nil) {
+    public init(host: TerminalHost, document: WorkspaceDocument, launcher: CommandLauncher, feed: SessionFeed? = nil,
+                agents: [AgentDefinition] = AgentPresets.all,
+                catalogue: @escaping @Sendable (AgentDefinition) throws -> [AgentModel] = { _ in [] }) {
         self.host = host
         self.document = document
         self.launcher = launcher
+        self.agents = agents
+        self.catalogue = catalogue
         self.feed = feed
         lastError = document.loadProblem
         host.onChange = { [weak self] in self?.refresh() }
@@ -92,22 +101,45 @@ public final class SidebarModel: ObservableObject {
         }
     }
 
-    public func newTask(title: String, in projectId: UUID) async {
-        guard let project = document.workspace.projects.first(where: { $0.id == projectId }) else { return }
+    /// The New Task sheet for `projectId`: the agent last started there while its CLI is installed,
+    /// else the first installed one; its last model; and the project's branches, read when shown.
+    public func makeNewTaskModel(for projectId: UUID) -> NewTaskModel? {
+        guard let project = document.workspace.projects.first(where: { $0.id == projectId }), !agents.isEmpty else { return nil }
         let launcher = self.launcher
-        working = "Creating \(title)…"
-        defer { working = nil }
-        let made = await Task.detached { try TaskWorktrees.create(title: title, in: project, base: nil, launcher: launcher) }.result
-        attempt {
-            let task = try made.get()
-            try document.update { workspace in
-                workspace.tasks.append(task)
-                // A task made in a folded project is shown: the project unfolds for it.
-                if let i = workspace.projects.firstIndex(where: { $0.id == projectId }) { workspace.projects[i].collapsed = false }
-            }
-            selectedTaskId = task.id
-            host.openTab(in: task.worktreePath, taskId: task.id, projectId: project.id, title: task.title)
+        let available = Set(agents.filter { launcher.locate($0.command) != nil }.map(\.id))
+        let last = document.workspace.lastAgentByProject[projectId]
+        let agentId = last.flatMap { available.contains($0) ? $0 : nil }
+            ?? agents.first { available.contains($0.id) }?.id ?? agents[0].id
+        let draft = TaskDraft(baseBranch: Repository.fallbackDefaultBranch, agentId: agentId, model: "", reasoning: nil)
+        let path = project.path
+        return NewTaskModel(project: project, agents: agents, available: available, draft: draft,
+                            rememberedModels: document.workspace.lastModelByAgent, catalogue: catalogue,
+                            branches: { Repository.branches(of: path, launcher: launcher) },
+                            submit: { [weak self] draft in try await self?.newTask(draft: draft, in: projectId) })
+    }
+
+    /// AiTerm's create: the worktree on the draft's branch, the agent's command (its first prompt
+    /// written beside it when too long or too strange to type), then the task saved and its tab
+    /// opened running the agent. Throws, with nothing saved, so the sheet keeps its draft and says why.
+    public func newTask(draft: TaskDraft, in projectId: UUID) async throws {
+        guard let project = document.workspace.projects.first(where: { $0.id == projectId }),
+              let agent = agents.first(where: { $0.id == draft.agentId }) else { return }
+        let launcher = self.launcher
+        let made = try await BackgroundWork.run { () throws -> (TaskItem, String) in
+            let task = try TaskWorktrees.create(draft: draft, in: project, launcher: launcher)
+            let command = try AgentCommand.build(agent: agent, model: draft.model, reasoning: draft.reasoning,
+                                                 prompt: AgentCommand.composePrompt(userText: draft.promptText),
+                                                 worktreePath: task.worktreePath, launcher: launcher)
+            return (task, command)
         }
+        try document.update { workspace in
+            workspace.tasks.append(made.0)
+            workspace.remember(draft, projectId: projectId)
+            // A task made in a folded project is shown: the project unfolds for it.
+            if let i = workspace.projects.firstIndex(where: { $0.id == projectId }) { workspace.projects[i].collapsed = false }
+        }
+        selectedTaskId = made.0.id
+        host.openTab(in: made.0.worktreePath, taskId: made.0.id, projectId: projectId, title: made.0.title, command: made.1)
     }
 
     /// Shows the task: its first open tab, or a new one in its worktree when none is open.
@@ -115,7 +147,8 @@ public final class SidebarModel: ObservableObject {
         guard let node = tree.projects.lazy.flatMap(\.tasks).first(where: { $0.id == id }) else { return }
         guard let tab = node.tabs.first else {
             selectedTaskId = id
-            host.openTab(in: node.task.worktreePath, taskId: id, projectId: node.task.projectId, title: node.task.title)
+            // A shell, as AiTerm's New Terminal: the agent ran once, in the task's first tab.
+            host.openTab(in: node.task.worktreePath, taskId: id, projectId: node.task.projectId, title: node.task.title, command: nil)
             return
         }
         if tab.id == host.selectedTabId {

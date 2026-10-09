@@ -59,7 +59,7 @@ import Testing
         await model.newTask(title: "Beta", in: project)
         #expect(titles(model.rows) == ["project repo", "task Alpha", "task Beta"])
         let beta = try #require(model.selectedTaskId)
-        host.openTab(in: repo.path, taskId: beta, projectId: project, title: "Beta 2")
+        host.openTab(in: repo.path, taskId: beta, projectId: project, title: "Beta 2", command: nil)
         #expect(titles(model.rows) == ["project repo", "task Alpha", "task Beta", "tab Beta", "tab Beta 2"])
     }
 
@@ -72,7 +72,7 @@ import Testing
         await model.newTask(title: "Alpha", in: project)
         #expect(selected(model.rows) == ["task Alpha"])
         let alpha = try #require(model.selectedTaskId)
-        host.openTab(in: repo.path, taskId: alpha, projectId: project, title: "Alpha 2")
+        host.openTab(in: repo.path, taskId: alpha, projectId: project, title: "Alpha 2", command: nil)
         #expect(selected(model.rows) == ["tab Alpha 2"])
         host.tabs.append(TabSnapshot(id: "s9", tabId: 9, title: "zsh", taskId: nil, projectId: nil))
         host.userSwitched(to: "s9")

@@ -24,19 +24,26 @@ final class iTermShellforgeSidebar: NSObject {
     static let hooks = AgentHooksModel(integrations: HookIntegrations(resources: .bundled(resourceURL: Bundle.main.resourceURL)),
                                        names: Dictionary(uniqueKeysWithValues: AgentPresets.all.map { ($0.id, $0.name) }))
 
+    /// Every agent's model list, read from the user's own home.
+    nonisolated static let catalogue = ModelCatalogue(home: FileManager.default.homeDirectoryForCurrentUser, launcher: launcher)
+
     /// The one workspace every window's sidebar shows and changes.
     static let document = WorkspaceDocument(store: WorkspaceStore())
 
     /// A new sidebar for `windowController`'s window.
     @objc static func makeView(for windowController: PseudoTerminal) -> NSView {
         let host = iTermShellforgeHost(windowController: windowController)
-        let model = SidebarModel(host: host, document: document, launcher: launcher, feed: link)
+        let model = SidebarModel(host: host, document: document, launcher: launcher, feed: link,
+                                 agents: AgentPresets.all, catalogue: { try catalogue.models(for: $0) })
         return ShellforgeSidebar.makeView(model: model, chooseFolder: FolderChooser.choose, hooks: hooks)
     }
 
     /// The default profile changed to run the login shell in `directory`.
-    nonisolated static func taskTabProfile(base: [AnyHashable: Any], directory: String) -> [AnyHashable: Any] {
+    /// `initialText` is typed into the shell once it starts — the task's agent — already escaped for
+    /// iTerm2's interpolated-string evaluator (`TabCommand.initialText`).
+    nonisolated static func taskTabProfile(base: [AnyHashable: Any], directory: String, initialText: String? = nil) -> [AnyHashable: Any] {
         var profile = base
+        if let initialText { profile[KEY_INITIAL_TEXT] = initialText }
         profile[KEY_CUSTOM_COMMAND] = "No"
         profile[KEY_CUSTOM_DIRECTORY] = kProfilePreferenceInitialDirectoryCustomValue
         profile[KEY_WORKING_DIRECTORY] = directory
@@ -101,9 +108,10 @@ final class iTermShellforgeHost: TerminalHost {
         onChange?()
     }
 
-    func openTab(in directory: String, taskId: UUID, projectId: UUID, title: String) {
+    func openTab(in directory: String, taskId: UUID, projectId: UUID, title: String, command: String?) {
         guard let windowController, let base = ProfileModel.sharedInstance()?.defaultBookmark() else { return }
-        let profile = iTermShellforgeSidebar.taskTabProfile(base: base, directory: directory)
+        let profile = iTermShellforgeSidebar.taskTabProfile(base: base, directory: directory,
+                                                            initialText: command.map(TabCommand.initialText))
         iTermSessionLauncher.launchBookmark(profile, in: windowController, style: .tab, withURL: nil,
                                             hotkeyWindowType: .none, makeKey: true, canActivate: true,
                                             respectTabbingMode: false, index: nil, command: nil,

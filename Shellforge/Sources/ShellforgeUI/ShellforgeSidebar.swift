@@ -35,11 +35,6 @@ struct SidebarView: View {
     /// The window the sidebar is drawn in, which the Agent hooks panel hangs from.
     @State private var anchor = WindowAnchor()
     @State private var sheet = PanelSlot()
-    @State private var newTaskProject: UUID?
-    @State private var newTaskTitle = ""
-    /// The new task's field takes the keyboard when it appears; without it, iTerm2's terminal keeps
-    /// it, and the title and Return would go to the shell.
-    @FocusState private var titleFocused: Bool
     @Environment(\.interfaceScale) private var scale
 
     var body: some View {
@@ -68,9 +63,8 @@ struct SidebarView: View {
             ProjectHeaderRow(node: node, collapsed: collapsed, provider: model.providers[node.id] ?? .git,
                              statuses: node.tasks.map { model.status(ofTask: $0.id) },
                              toggle: { model.toggleCollapsed(node.id) },
-                             newTask: { beginNewTask(in: node.id) })
+                             newTask: { showNewTask(in: node.id) })
                 .listRowSeparator(.hidden)
-            if newTaskProject == node.id { newTaskField(node.project).listRowSeparator(.hidden) }
         case .task(let node, let selected):
             TaskRowView(node: node, selected: selected, agents: model.avatars(forTask: node.id),
                         status: model.status(ofTask: node.id), activate: { model.select(task: node.id) })
@@ -95,29 +89,9 @@ struct SidebarView: View {
         if let folder = chooseFolder() { Task { await model.addProject(folder: folder) } }
     }
 
-    private func beginNewTask(in project: UUID) {
-        newTaskTitle = ""
-        newTaskProject = project
-        // Next turn: the field exists once the list has drawn it.
-        DispatchQueue.main.async { titleFocused = true }
-    }
-
-    /// The new task's title, typed where the task will appear; Return creates it, Escape or clicking
-    /// away lets it go.
-    private func newTaskField(_ project: Project) -> some View {
-        TextField("Task title", text: $newTaskTitle)
-            .focused($titleFocused)
-            .onChange(of: titleFocused) { focused in if !focused { newTaskProject = nil } }
-            .textFieldStyle(.plain)
-            .font(Typography.body)
-            .foregroundStyle(Palette.text)
-            .fieldChrome()
-            .padding(.leading, scale(Space.section))
-            .onSubmit {
-                let title = newTaskTitle.trimmingCharacters(in: .whitespaces)
-                newTaskProject = nil
-                if !title.isEmpty { Task { await model.newTask(title: title, in: project.id) } }
-            }
-            .onExitCommand { newTaskProject = nil }
+    /// AiTerm's New Task sheet, in its own dark panel on the sidebar's window; one at a time.
+    private func showNewTask(in project: UUID) {
+        guard let newTask = model.makeNewTaskModel(for: project) else { return }
+        sheet.present(over: anchor.window) { dismiss in NewTaskSheet(model: newTask, dismiss: dismiss) }
     }
 }

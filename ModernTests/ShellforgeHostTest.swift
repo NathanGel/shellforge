@@ -19,4 +19,18 @@ final class ShellforgeHostTest: XCTestCase {
         XCTAssertEqual(profile[KEY_WORKING_DIRECTORY] as? String, "/r/aiterm/.worktrees/fix-login")
         XCTAssertEqual(profile[KEY_NAME] as? String, "Default")
     }
+
+    /// The agent's command reaches the tab as its initial text, exactly as handed over — the
+    /// backslashes `TabCommand.initialText` doubled stay doubled for iTerm2's evaluator to undo.
+    func testTheInitialTextIsSentWithItsBackslashes() {
+        let profile = iTermShellforgeSidebar.taskTabProfile(base: [:], directory: "/tmp/x", initialText: #" claude 'a \\(b)'"#)
+        XCTAssertEqual(profile[KEY_INITIAL_TEXT] as? String, #" claude 'a \\(b)'"#)
+        XCTAssertEqual(profile[KEY_WORKING_DIRECTORY] as? String, "/tmp/x")
+    }
+
+    /// A reopened task's tab is a shell: no initial text is added.
+    func testAShellTabHasNoInitialTextOfItsOwn() {
+        let profile = iTermShellforgeSidebar.taskTabProfile(base: [:], directory: "/tmp/x", initialText: nil)
+        XCTAssertNil(profile[KEY_INITIAL_TEXT])
+    }
 }
