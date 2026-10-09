@@ -17,7 +17,7 @@ final class ShellforgeSidebarLayoutTest: XCTestCase {
         inputs.contentViewHeight = 600
         inputs.tabBarHeight = 28
         inputs.toolbeltWidth = 200
-        inputs.shouldShowToolbelt = toolbelt
+        inputs.shouldShowToolbelt = ObjCBool(toolbelt)
         inputs.tabBarVisible = true
         inputs.tabPosition = kLayoutTabPositionTop
         inputs.divisionViewHeight = 1
