@@ -13,14 +13,19 @@ import Testing
 @Suite struct TokenParityTests {
     static let pinned = "c1f851e574d0c8dd45a95957449c8798d60b65f4"
     static let ported = ["Palette", "Metrics", "Surface", "InterfaceScale", "Logos", "IconSource", "Badge", "Hairline",
-                         "SidebarHeading", "SymbolMark", "FormField"]
+                         "SidebarHeading", "SymbolMark", "FormField", "Input", "Select", "SegmentedControl", "Kbd", "SearchField"]
     /// Ported files that differ from AiTerm's on purpose (ledgered).
-    static let changed: Set = ["FormField"]
+    static let changed: Set = ["FormField", "Input", "SegmentedControl"]
     /// SHA-256 of each ported file, normalised, as reviewed.
     static let baseline: [String: String] = [
         "Badge": "cde41a8fd041703814a5212741732e5cdd33108a0f5a34e811a15d7f27d67081",
         "FormField": "d2450a5864c2a2acb674de92b35abcf2e6d081ff5cb2c8daf67dc2872fbbf46f",
         "Hairline": "ab5976604f277a70104f15faa8d6d8effaa90519135e36862a2d24d48231e4f0",
+        "Input": "efe2209ee6317b2f79eb518517aa611c250e29d164861d3d23bc8c872cad4cce",
+        "Kbd": "353eb6097c664e69e70ca5eeae00f6dd16fbd75c6731b9e15fa5a3fb13509609",
+        "SearchField": "be937c4cb1723ca16f8b44691b96edd587f447a5139e6b478efc0b6b03db8c13",
+        "SegmentedControl": "2c2d22dc1bc22cb14ce260f2792f6ff6c9f668922176dccfba1847b7c5b4ab4a",
+        "Select": "1dd66bc87b8fdd973eb9dc19cdbf9ba6273a329a17b6895bd3ee0e96544621dd",
         "IconSource": "0c382ef8d9e44a1d3ba36767a8aa73ff1d9bdf0fb89217efe798e52267134794",
         "InterfaceScale": "8cd10c61121676480e5fae9e24d5e9499ee7babcb165739c16514f3174cda745",
         "Logos": "af2e1ee98ac438ca5bc59b58aa2fcffca6269ad502c2b1c73f78b875dfd7a4f5",

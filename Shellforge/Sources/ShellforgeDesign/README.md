@@ -4,10 +4,11 @@
 > AiTerm's design system unchanged: the values, the rules and the components are AiTerm's.
 >
 > **Ported so far:** Palette, Metrics, Surface, InterfaceScale, Logos, IconSource, Badge, Hairline,
-> SidebarHeading, SymbolMark, FormField and HelpText. The sheet primitives below (`Input`,
-> `SearchField`, `SegmentedControl`, `Select`, `Kbd`, `ControlChrome`, `FrontToBackStack`) and the
-> view patterns arrive with the screens that use them; until then this file describes them as
-> AiTerm has them.
+> SidebarHeading, SymbolMark, FormField, HelpText, ControlChrome, Input, SearchField,
+> SegmentedControl, Select and Kbd. `FrontToBackStack` needs macOS 15 and is not ported. The view
+> patterns arrive with the screens that use them; until then this file describes them as AiTerm has
+> them. For macOS 13, `Input` removes its undo observers in a plain `deinit`, and `SegmentedControl`
+> turns off SwiftUI's focus effect only where it exists (macOS 14 and later).
 
 The design system, in code. This file and the Swift beside it are the source of truth — there is no
 generated token file, no canvas and no build step. The page
