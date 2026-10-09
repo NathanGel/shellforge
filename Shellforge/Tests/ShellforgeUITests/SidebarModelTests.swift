@@ -3,6 +3,7 @@ import Foundation
 import Testing
 @testable import ShellforgeCore
 @testable import ShellforgeUI
+@testable import ShellforgeTestSupport
 
 /// Stands in for one iTerm2 window: a list of tabs, the selected one, and the calls made.
 @MainActor final class FakeTerminalHost: TerminalHost {
@@ -48,6 +49,16 @@ import Testing
     var statusPublisher: AnyPublisher<HelperStatus, Never> { $status.eraseToAnyPublisher() }
     var storePublisher: AnyPublisher<SessionStore, Never> { $store.eraseToAnyPublisher() }
     func markSeen(task: UUID) { seen.append(task) }
+
+    /// The daemon saying, at once, each session's state and agent, each in a tab of its own.
+    func sayAll(_ sessions: [(state: SessionState, session: String, task: UUID, agent: SessionAgent)]) {
+        var next = SessionStore()
+        next.apply(.snapshot(DaemonSnapshot(protocolVersion: 1, connected: true, sessions: sessions.enumerated().map { index, s in
+            SessionInfo(sessionId: s.session, windowId: "w", tabIndex: index, taskId: s.task.uuidString.lowercased(), projectId: nil,
+                        agent: s.agent, model: nil, state: s.state, title: "t", cwd: "/wt")
+        }, usage: .empty)))
+        store = next
+    }
 
     /// The daemon saying `state` for one session of `task`.
     func say(_ state: SessionState, session: String, task: UUID) {
@@ -247,6 +258,49 @@ import Testing
         #expect(sidebar.helper == .pythonMissing)
         feed.status = .connected
         #expect(sidebar.helper == .connected)
+    }
+
+    @Test func avatarsShowTheAgentsOfATasksTabsAndDropShells() async throws {
+        let repo = try GitRepoForUI()
+        let host = FakeTerminalHost(), feed = FakeFeed()
+        let sidebar = SidebarModel(host: host, document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher, feed: feed)
+        await sidebar.addProject(folder: repo.path)
+        await sidebar.newTask(title: "One", in: try #require(sidebar.tree.projects.first).id)
+        let task = try #require(sidebar.selectedTaskId)
+        feed.sayAll([(.idle, "a", task, .shell), (.working, "b", task, .claude), (.needsInput, "c", task, .codex)])
+        #expect(sidebar.avatars(forTask: task) == [.codex, .claude])   // most urgent first, the shell dropped
+        #expect(sidebar.avatars(forTab: "b") == [.claude])
+    }
+
+    @Test func avatarsCountEveryAgentTab() async throws {
+        let repo = try GitRepoForUI()
+        let host = FakeTerminalHost(), feed = FakeFeed()
+        let sidebar = SidebarModel(host: host, document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher, feed: feed)
+        await sidebar.addProject(folder: repo.path)
+        await sidebar.newTask(title: "One", in: try #require(sidebar.tree.projects.first).id)
+        let task = try #require(sidebar.selectedTaskId)
+        feed.sayAll([(.working, "a", task, .claude), (.working, "b", task, .codex), (.idle, "c", task, .grok)])
+        #expect(sidebar.avatars(forTask: task).count == 3)
+    }
+
+    @Test func aProjectRemembersItIsCollapsed() async throws {
+        let repo = try GitRepoForUI()
+        let sidebar = SidebarModel(host: FakeTerminalHost(), document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher)
+        await sidebar.addProject(folder: repo.path)
+        let id = try #require(sidebar.tree.projects.first).id
+        sidebar.toggleCollapsed(id)
+        #expect(try WorkspaceStore(folder: folder).load().workspace.projects.first?.collapsed == true)
+        sidebar.toggleCollapsed(id)
+        #expect(try WorkspaceStore(folder: folder).load().workspace.projects.first?.collapsed == false)
+    }
+
+    @Test func aGitHubProjectShowsGitHubsMark() async throws {
+        let repo = try GitRepoForUI()
+        _ = try repo.launcher.run("/usr/bin/git", ["-C", repo.path, "remote", "add", "origin", "git@github.com:a/b.git"])
+        let sidebar = SidebarModel(host: FakeTerminalHost(), document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher)
+        await sidebar.addProject(folder: repo.path)
+        let id = try #require(sidebar.tree.projects.first).id
+        #expect(await eventually { sidebar.providers[id] == .github })
     }
 }
 

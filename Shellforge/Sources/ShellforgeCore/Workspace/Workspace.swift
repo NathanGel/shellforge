@@ -7,12 +7,25 @@ public struct Project: Codable, Equatable, Sendable, Identifiable {
     /// The repository's top-level folder.
     public var path: String
     public var addedAt: Date
+    /// Whether the sidebar shows only its header, as AiTerm's project rows fold.
+    public var collapsed: Bool
 
-    public init(id: UUID = UUID(), name: String, path: String, addedAt: Date = Date()) {
+    public init(id: UUID = UUID(), name: String, path: String, addedAt: Date = Date(), collapsed: Bool = false) {
         self.id = id
         self.name = name
         self.path = path
         self.addedAt = addedAt
+        self.collapsed = collapsed
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, name, path, addedAt, collapsed }
+
+    /// A workspace saved before projects could fold loads them unfolded.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(id: try c.decode(UUID.self, forKey: .id), name: try c.decode(String.self, forKey: .name),
+                  path: try c.decode(String.self, forKey: .path), addedAt: try c.decode(Date.self, forKey: .addedAt),
+                  collapsed: try c.decodeIfPresent(Bool.self, forKey: .collapsed) ?? false)
     }
 }
 

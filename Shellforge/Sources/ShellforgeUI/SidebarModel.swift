@@ -39,6 +39,8 @@ public final class SidebarModel: ObservableObject {
     @Published public private(set) var sessions = SessionStore()
     /// How far the chain to the helper reaches; the sidebar says it while it is a problem.
     @Published public private(set) var helper: HelperStatus = .starting
+    /// Where each project's code lives, for its row's mark; read from git off the main thread.
+    @Published public private(set) var providers: [UUID: Provider] = [:]
 
     private let host: TerminalHost
     private let document: WorkspaceDocument
@@ -124,11 +126,50 @@ public final class SidebarModel: ObservableObject {
 
     private func refresh(_ workspace: Workspace? = nil) {
         tree = SidebarTree.build(workspace ?? document.workspace, tabs: host.tabs)
+        detectProviders(tree.projects.map(\.project))
         // Follow iTerm2: whatever tab is selected decides the task shown.
         let opened = host.selectedTabId != lastSelectedTab
         lastSelectedTab = host.selectedTabId
         if let selected = host.tabs.first(where: { $0.id == host.selectedTabId }), let task = tree.task(owning: selected) {
             shown(task.id, explicit: opened)
+        }
+    }
+
+    /// The agents of a task's tabs, as AiTerm's avatar group shows them: the most urgent first, then by
+    /// tab; plain shells are no agent. Two tabs of one agent are two marks.
+    public func avatars(forTask id: UUID) -> [SessionAgent] { Self.agents(sessions.sessions(ofTask: id)) }
+    public func avatars(forTab id: String) -> [SessionAgent] { Self.agents(sessions.sessions(ofTab: id)) }
+
+    private static func agents(_ sessions: [SessionInfo]) -> [SessionAgent] {
+        func rank(_ state: SessionState) -> Int {
+            switch state { case .needsInput: 0; case .working: 1; case .done: 2; case .idle: 3 }
+        }
+        return sessions.filter { $0.agent != .shell }
+            .sorted { (rank($0.state), $0.tabIndex, $0.sessionId) < (rank($1.state), $1.tabIndex, $1.sessionId) }
+            .map(\.agent)
+    }
+
+    /// Folds or unfolds a project, as AiTerm's chevron does; kept with the workspace.
+    public func toggleCollapsed(_ project: UUID) {
+        attempt {
+            try document.update { workspace in
+                if let i = workspace.projects.firstIndex(where: { $0.id == project }) { workspace.projects[i].collapsed.toggle() }
+            }
+        }
+    }
+
+    /// Reads each project's provider it does not know yet, off the main thread.
+    /// `projects` is the tree's: `@Published` announces before it stores, so the document's own copy is
+    /// the one before the change when a refresh asks.
+    private func detectProviders(_ projects: [Project]) {
+        let unknown = projects.filter { providers[$0.id] == nil }
+        guard !unknown.isEmpty else { return }
+        let launcher = self.launcher
+        Task {
+            let found = await BackgroundWork.run {
+                unknown.map { ($0.id, ProviderDetector.provider(ofRepositoryAt: $0.path, launcher: launcher)) }
+            }
+            for (id, provider) in found { providers[id] = provider }
         }
     }
 

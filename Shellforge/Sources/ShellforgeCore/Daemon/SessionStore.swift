@@ -42,6 +42,19 @@ public struct SessionStore: Equatable, Sendable {
         return TaskStatus.aggregate(sessions.values.filter { TabKey($0) == tab }.map(\.state))
     }
 
+    /// The sessions in every tab one of `id`'s sessions is in — a tab's split panes are its task's.
+    public func sessions(ofTask id: UUID) -> [SessionInfo] {
+        let tabs = Set(sessions.values.filter { $0.taskUUID == id }.map(TabKey.init))
+        return sessions.values.filter { tabs.contains(TabKey($0)) }
+    }
+
+    /// The sessions in the tab `sessionId` is in.
+    public func sessions(ofTab sessionId: String) -> [SessionInfo] {
+        guard let session = sessions[sessionId] else { return [] }
+        let tab = TabKey(session)
+        return sessions.values.filter { TabKey($0) == tab }
+    }
+
     /// A tab, as the daemon places its sessions: the window and the tab's index in it.
     private struct TabKey: Hashable {
         let windowId: String, tabIndex: Int
