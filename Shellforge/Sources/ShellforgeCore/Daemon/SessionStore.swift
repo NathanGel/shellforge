@@ -27,14 +27,25 @@ public struct SessionStore: Equatable, Sendable {
         }
     }
 
-    /// The task's most urgent tab: needs input, then working, then done, then idle.
+    /// The task's most urgent pane, in every tab one of its sessions is in: needs input, then
+    /// working, then done, then idle. Only the pane that opened a tab carries the task's tag; a
+    /// split beside it is the task's too.
     public func status(ofTask id: UUID) -> SessionState {
-        TaskStatus.aggregate(sessions.values.filter { $0.taskUUID == id }.map(\.state))
+        let tabs = Set(sessions.values.filter { $0.taskUUID == id }.map(TabKey.init))
+        return TaskStatus.aggregate(sessions.values.filter { tabs.contains(TabKey($0)) }.map(\.state))
     }
 
-    /// The tab's own state; idle for a tab the daemon does not know.
+    /// The most urgent pane of the tab `sessionId` is in; idle for a session the daemon does not know.
     public func status(ofTab sessionId: String) -> SessionState {
-        sessions[sessionId]?.state ?? .idle
+        guard let session = sessions[sessionId] else { return .idle }
+        let tab = TabKey(session)
+        return TaskStatus.aggregate(sessions.values.filter { TabKey($0) == tab }.map(\.state))
+    }
+
+    /// A tab, as the daemon places its sessions: the window and the tab's index in it.
+    private struct TabKey: Hashable {
+        let windowId: String, tabIndex: Int
+        init(_ session: SessionInfo) { windowId = session.windowId; tabIndex = session.tabIndex }
     }
 }
 

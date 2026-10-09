@@ -21,6 +21,8 @@ public final class DaemonLink: ObservableObject {
     /// The list the attached daemon last took; nil when it must be sent whatever it holds.
     private var lastSent: [SessionReport]?
     private var sending = false
+    /// The attached client when it turned out not to take lists (`sessions.update` unknown to it).
+    private weak var refused: DaemonClient?
 
     public init(socketPath: String = ShellforgePaths.socketPath, daemonDir: URL?,
                 findPython: @escaping @Sendable () -> URL?, reports: @escaping @MainActor () -> [SessionReport]) {
@@ -65,7 +67,7 @@ public final class DaemonLink: ObservableObject {
     /// Reads `reports()` and sends it when it differs from the last list the daemon took. One send
     /// is in flight at a time; a change made meanwhile goes when it returns.
     public func reportsMayHaveChanged() {
-        guard let client, !sending else { return }
+        guard let client, client !== refused, !sending else { return }
         let current = reports()
         guard current != lastSent else { return }
         sending = true
@@ -73,11 +75,19 @@ public final class DaemonLink: ObservableObject {
             do {
                 try await client.updateSessions(current)
                 if self.client === client { lastSent = current }
+                sending = false
+                // A change made while this one was in flight.
+                reportsMayHaveChanged()
             } catch {
+                // Not retried at once: a list refused every time would be resent for good. The next
+                // change, tick or connection sends it again.
+                sending = false
                 lastSent = nil
+                if let error = error as? DaemonError, error.isMismatch, self.client === client {
+                    refused = client
+                    status = .helperMismatch
+                }
             }
-            sending = false
-            reportsMayHaveChanged()
         }
     }
 
@@ -92,7 +102,7 @@ public final class DaemonLink: ObservableObject {
             if connection == nil {
                 connection = DaemonConnection(socketPath: socketPath,
                     onClient: { [weak self] in self?.attached($0) },
-                    onStatus: { [weak self] in self?.status = $0 },
+                    onStatus: { [weak self] in self?.connectionSaid($0) },
                     onEvent: { [weak self] in self?.store.apply($0) })
             }
             connection?.start()
@@ -100,6 +110,14 @@ public final class DaemonLink: ObservableObject {
         case .failed(let attempt, let message): if attempt >= 2 { status = .helperFailing(message) }
         case .starting, .running, .stopped: break
         }
+    }
+
+    /// What the connection says about the helper, except where the link knows better: a helper that
+    /// keeps stopping stays said between its restarts, and one that refused the list stays a mismatch.
+    func connectionSaid(_ said: HelperStatus) {
+        if case .helperFailing = status, said == .helperUnreachable { return }
+        if said == .connected, let refused, refused === client { return }
+        status = said
     }
 
     /// A new connection knows nothing this one sent; a lost one leaves no status worth showing.

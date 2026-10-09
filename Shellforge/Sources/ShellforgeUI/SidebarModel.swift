@@ -46,6 +46,8 @@ public final class SidebarModel: ObservableObject {
     private var subscription: AnyCancellable?
     private let feed: SessionFeed?
     private var feedSubscriptions: [AnyCancellable] = []
+    /// The tab selected at the last refresh: moving to another is opening it.
+    private var lastSelectedTab: String?
 
     public init(host: TerminalHost, document: WorkspaceDocument, launcher: CommandLauncher, feed: SessionFeed? = nil) {
         self.host = host
@@ -101,11 +103,18 @@ public final class SidebarModel: ObservableObject {
     /// Shows the task: its first open tab, or a new one in its worktree when none is open.
     public func select(task id: UUID) {
         guard let node = tree.projects.lazy.flatMap(\.tasks).first(where: { $0.id == id }) else { return }
-        shown(id, explicit: true)
-        if let tab = node.tabs.first {
-            host.select(tab: tab.id)
-        } else {
+        guard let tab = node.tabs.first else {
+            selectedTaskId = id
             host.openTab(in: node.task.worktreePath, taskId: id, projectId: node.task.projectId, title: node.task.title)
+            return
+        }
+        if tab.id == host.selectedTabId {
+            // Nothing will move: picking the task is the only sign it was looked at.
+            shown(id, explicit: true)
+        } else {
+            // Selecting the tab refreshes, and the refresh sees it opened.
+            selectedTaskId = id
+            host.select(tab: tab.id)
         }
     }
 
@@ -116,16 +125,19 @@ public final class SidebarModel: ObservableObject {
     private func refresh(_ workspace: Workspace? = nil) {
         tree = SidebarTree.build(workspace ?? document.workspace, tabs: host.tabs)
         // Follow iTerm2: whatever tab is selected decides the task shown.
+        let opened = host.selectedTabId != lastSelectedTab
+        lastSelectedTab = host.selectedTabId
         if let selected = host.tabs.first(where: { $0.id == host.selectedTabId }), let task = tree.task(owning: selected) {
-            shown(task.id, explicit: false)
+            shown(task.id, explicit: opened)
         }
     }
 
     public func status(ofTask id: UUID) -> SessionState { sessions.status(ofTask: id) }
     public func status(ofTab id: String) -> SessionState { sessions.status(ofTab: id) }
 
-    /// The task the user is now looking at. A done one has been seen — when the user picked it
-    /// (`explicit`) or the selection moved to it, not on every refresh while it stays selected.
+    /// The task the user is now looking at. A done one has been seen — when the user picked it or
+    /// opened one of its tabs (`explicit`), or the selection moved to it; not on every refresh while
+    /// it stays selected.
     private func shown(_ id: UUID, explicit: Bool) {
         let changed = selectedTaskId != id
         selectedTaskId = id

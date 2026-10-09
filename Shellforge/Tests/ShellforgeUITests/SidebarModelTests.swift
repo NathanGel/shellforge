@@ -222,6 +222,23 @@ import Testing
         #expect(feed.seen == [one])
     }
 
+    @Test func openingTheDoneTabOfTheShownTaskMarksItSeen() async throws {
+        let repo = try GitRepoForUI()
+        let host = FakeTerminalHost(), feed = FakeFeed()
+        let sidebar = SidebarModel(host: host, document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher, feed: feed)
+        await sidebar.addProject(folder: repo.path)
+        let project = try #require(sidebar.tree.projects.first).id
+        await sidebar.newTask(title: "One", in: project)
+        let one = try #require(sidebar.selectedTaskId), first = try #require(host.tabs.last).id
+        host.openTab(in: repo.path, taskId: one, projectId: project, title: "second")
+        let second = try #require(host.tabs.last).id
+        host.userSwitched(to: first)
+        feed.say(.done, session: second, task: one)
+        #expect(feed.seen.isEmpty)            // the task is shown, but not the tab that finished
+        host.userSwitched(to: second)
+        #expect(feed.seen == [one])
+    }
+
     @Test func theHelpersProblemIsShownAndClearedWhenItConnects() async throws {
         let repo = try GitRepoForUI()
         let feed = FakeFeed()

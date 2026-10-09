@@ -64,15 +64,21 @@ import Testing
     }
 
     @Test func shutdownBeforePythonIsFoundStartsNothing() async throws {
+        // The "Python" is a script that leaves a mark: a supervisor that started would run it.
+        let dir = try daemonDir(), mark = dir.appendingPathComponent("started")
+        let python = dir.appendingPathComponent("python3")
+        try "#!/bin/sh\ntouch '\(mark.path)'\n".write(to: python, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: python.path)
         let gate = DispatchSemaphore(value: 0), asked = Locked(false)
-        let link = DaemonLink(daemonDir: try daemonDir(), findPython: {
-            asked.withLock { $0 = true }; gate.wait(); return URL(fileURLWithPath: "/usr/bin/false")
+        let link = DaemonLink(socketPath: "/tmp/sf-link-\(UUID().uuidString.prefix(8)).sock", daemonDir: dir, findPython: {
+            asked.withLock { $0 = true }; gate.wait(); return python
         }, reports: { [] })
         link.start()
         #expect(await eventually { asked.withLock { $0 } })
         link.shutdown()
         gate.signal()
-        try await Task.sleep(for: .milliseconds(200))
+        try await Task.sleep(for: .milliseconds(500))
+        #expect(!FileManager.default.fileExists(atPath: mark.path))
         #expect(link.status == .starting)
     }
 
@@ -142,5 +148,57 @@ import Testing
         #expect(await eventually {
             server.received.contains { ($0["params"] as? [String: Any])?["taskId"] as? String == "6f0e2c1a-9b3d-4e5f-8a7b-0c1d2e3f4a5b" }
         })
+    }
+
+    /// The daemon's answer to `sessions.update`, as a fake server gives it.
+    private func rejectingServer(code: String) -> FakeSocketServer {
+        let server = FakeSocketServer(path: "/tmp/sf-link-\(UUID().uuidString.prefix(8)).sock")
+        server.handler = { req in
+            req["method"] as? String == "sessions.update"
+                ? ["id": req["id"]!, "error": ["code": code, "message": "no"]]
+                : Self.snapshotReply(req)
+        }
+        server.start()
+        return server
+    }
+
+    /// A list the daemon refused is tried again on the next change or tick, not at once: refused
+    /// every time, an immediate retry would spin the main actor for good.
+    @Test func aRefusedListWaitsForTheNextTickToBeSentAgain() async throws {
+        let server = rejectingServer(code: "bad_params")
+        let link = DaemonLink(socketPath: server.path, daemonDir: nil, findPython: { nil }, reports: { [report("A")] })
+        defer { link.shutdown(); server.stop() }
+        link.supervisorChanged(.listening(pid: 1))
+        #expect(await eventually { updates(server).count == 1 })
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(updates(server).count == 1)
+        link.reportsMayHaveChanged()
+        #expect(await eventually { updates(server).count == 2 })
+    }
+
+    /// A daemon that does not know `sessions.update` is from another build: said so, and not sent
+    /// to again.
+    @Test func aDaemonWithoutSessionsUpdateIsAMismatch() async throws {
+        let server = rejectingServer(code: "unknown_method")
+        let link = DaemonLink(socketPath: server.path, daemonDir: nil, findPython: { nil }, reports: { [report("A")] })
+        defer { link.shutdown(); server.stop() }
+        link.supervisorChanged(.listening(pid: 1))
+        #expect(await eventually { link.status == .helperMismatch })
+        link.reportsMayHaveChanged()
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(updates(server).count == 1)
+    }
+
+    /// A helper that keeps stopping says where its log is; the connection's "Reconnecting…" between
+    /// its restarts does not replace that. Anything else the connection says does.
+    @Test func aHelperThatKeepsStoppingIsNotHiddenByReconnecting() {
+        let link = DaemonLink(daemonDir: nil, findPython: { nil }, reports: { [] })
+        link.supervisorChanged(.failed(attempt: 2, message: "exited with status 1"))
+        link.connectionSaid(.helperUnreachable)
+        #expect(link.status == .helperFailing("exited with status 1"))
+        link.connectionSaid(.connected)
+        #expect(link.status == .connected)
+        link.connectionSaid(.helperUnreachable)
+        #expect(link.status == .helperUnreachable)
     }
 }

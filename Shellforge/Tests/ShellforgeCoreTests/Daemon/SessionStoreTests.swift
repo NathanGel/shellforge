@@ -8,6 +8,25 @@ import Testing
                     agent: .claude, model: nil, state: state, title: id, cwd: "/r")
     }
 
+    private func pane(_ id: String, tab: Int, task: UUID?, _ state: SessionState) -> SessionInfo {
+        SessionInfo(sessionId: id, windowId: "pty-1", tabIndex: tab, taskId: task?.uuidString.lowercased(), projectId: nil,
+                    agent: .codex, model: nil, state: state, title: id, cwd: "/r")
+    }
+
+    /// A tab is all its panes: an agent waiting in a split beside the selected one shows on the tab,
+    /// and on the task the tab belongs to, though only the pane that opened the tab carries the tag.
+    @Test func aTabAndItsTaskShowEveryPaneOfTheTab() {
+        let task = UUID()
+        var store = SessionStore()
+        store.apply(.snapshot(DaemonSnapshot(protocolVersion: 1, connected: true, sessions: [
+            pane("a", tab: 0, task: task, .idle), pane("b", tab: 0, task: nil, .needsInput), pane("c", tab: 1, task: nil, .working),
+        ], usage: .empty)))
+        #expect(store.status(ofTab: "a") == .needsInput)
+        #expect(store.status(ofTab: "b") == .needsInput)
+        #expect(store.status(ofTask: task) == .needsInput)
+        #expect(store.status(ofTab: "c") == .working)       // another tab's pane is not this tab's
+    }
+
     @Test func eventsBeforeTheSnapshotAreIgnored() {
         var store = SessionStore()
         store.apply(.sessionOpened(session("a", task: nil, .working)))
@@ -28,7 +47,7 @@ import Testing
         let task = UUID()
         var store = SessionStore()
         store.apply(.snapshot(DaemonSnapshot(protocolVersion: 1, connected: true, sessions: [
-            session("a", task: task, .done), session("b", task: task, .needsInput), session("c", task: nil, .working)],
+            pane("a", tab: 0, task: task, .done), pane("b", tab: 1, task: task, .needsInput), pane("c", tab: 2, task: nil, .working)],
             usage: .empty)))
         #expect(store.status(ofTask: task) == .needsInput)
         #expect(store.status(ofTab: "c") == .working)

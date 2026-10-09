@@ -143,25 +143,31 @@ while True:
     }
 
     /// The loop delivers nothing that came before its own snapshot: a daemon may broadcast between
-    /// accepting the socket and answering, and those events are older than the snapshot.
+    /// accepting the socket and answering, and those events are older than the snapshot. The fake
+    /// writes its early event before the reply, so the order on the wire is fixed.
     @Test func eventsBeforeTheSnapshotAreNotDelivered() async throws {
-        let path = "/tmp/sf-conn-\(UUID().uuidString.prefix(8)).sock"
-        let server = FakeSocketServer(path: path)
-        server.handler = { req in
-            ["id": req["id"]!, "result": ["protocolVersion": 1, "connected": true, "sessions": [], "usage": ["claude": NSNull(), "codex": NSNull()]]]
-        }
-        server.start()
+        let server = try await PythonSocketServer.start(script: """
+import json,socket,sys
+s=socket.socket(socket.AF_UNIX)
+s.bind(sys.argv[1]);s.listen()
+c,_=s.accept()
+with c:
+ f=c.makefile('rb')
+ for line in f:
+  m=json.loads(line)
+  c.sendall((json.dumps({'event':'session.closed','payload':{'sessionId':'early'}})+'\\n').encode())
+  result={'protocolVersion':1,'connected':True,'sessions':[],'usage':{'claude':None,'codex':None}}
+  c.sendall((json.dumps({'id':m['id'],'result':result})+'\\n').encode())
+  c.sendall((json.dumps({'event':'session.closed','payload':{'sessionId':'late'}})+'\\n').encode())
+""")
+        defer { server.stop() }
         var events: [DaemonEvent] = []
-        let connection = DaemonConnection(socketPath: path, onClient: { _ in }, onStatus: { _ in }, onEvent: { events.append($0) })
-        defer { connection.stop(); server.stop() }
+        let connection = DaemonConnection(socketPath: server.path, onClient: { _ in }, onStatus: { _ in }, onEvent: { events.append($0) })
+        defer { connection.stop() }
         connection.start()
-        // Off the main actor: the connection's own task runs there.
-        #expect(await BackgroundWork.run { server.waitForClient(timeout: 5) })
-        server.push(event: "session.closed", payload: ["sessionId": "early"])
-        #expect(await eventually { events.contains { if case .snapshot = $0 { true } else { false } } })
-        server.push(event: "session.closed", payload: ["sessionId": "late"])
-        #expect(await eventually { events.count == 2 })
-        guard case .snapshot = events[0], case .sessionClosed("late") = events[1] else { Issue.record("got \(events)"); return }
+        #expect(await eventually { events.count >= 2 })
+        try await Task.sleep(for: .milliseconds(100))
+        guard events.count == 2, case .snapshot = events[0], case .sessionClosed("late") = events[1] else { Issue.record("got \(events)"); return }
     }
 }
 
