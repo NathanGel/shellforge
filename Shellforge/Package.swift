@@ -14,8 +14,10 @@ let package = Package(
     targets: [
         .target(name: "ShellforgeCore", path: "Sources/ShellforgeCore"),
         .target(name: "ShellforgeUI", dependencies: ["ShellforgeCore"], path: "Sources/ShellforgeUI"),
-        .testTarget(name: "ShellforgeCoreTests", dependencies: ["ShellforgeCore"], path: "Tests/ShellforgeCoreTests"),
-        .testTarget(name: "ShellforgeUITests", dependencies: ["ShellforgeUI", "ShellforgeCore"], path: "Tests/ShellforgeUITests"),
+        // Fakes and helpers the test targets share; test targets cannot share a source file.
+        .target(name: "ShellforgeTestSupport", dependencies: ["ShellforgeCore"], path: "Tests/ShellforgeTestSupport"),
+        .testTarget(name: "ShellforgeCoreTests", dependencies: ["ShellforgeCore", "ShellforgeTestSupport"], path: "Tests/ShellforgeCoreTests"),
+        .testTarget(name: "ShellforgeUITests", dependencies: ["ShellforgeUI", "ShellforgeCore", "ShellforgeTestSupport"], path: "Tests/ShellforgeUITests"),
     ],
     swiftLanguageModes: [.v6]
 )
