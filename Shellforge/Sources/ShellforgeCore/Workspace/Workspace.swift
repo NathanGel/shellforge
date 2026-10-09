@@ -39,16 +39,25 @@ public struct TaskItem: Codable, Equatable, Sendable, Identifiable {
     public var worktreePath: String
     /// The branch the task's branch was made from.
     public var baseBranch: String
+    /// The agent the task's first tab started (`AgentDefinition.id`), with its model and reasoning
+    /// level; nil for a task made before New Task picked one.
+    public var agent: String?
+    public var model: String?
+    public var reasoning: String?
     public var createdAt: Date
 
     public init(id: UUID = UUID(), projectId: UUID, title: String, branch: String, worktreePath: String,
-                baseBranch: String, createdAt: Date = Date()) {
+                baseBranch: String, agent: String? = nil, model: String? = nil, reasoning: String? = nil,
+                createdAt: Date = Date()) {
         self.id = id
         self.projectId = projectId
         self.title = title
         self.branch = branch
         self.worktreePath = worktreePath
         self.baseBranch = baseBranch
+        self.agent = agent
+        self.model = model
+        self.reasoning = reasoning
         self.createdAt = createdAt
     }
 }
@@ -59,10 +68,32 @@ public struct Workspace: Codable, Equatable, Sendable {
     public var version: Int = 1
     public var projects: [Project] = []
     public var tasks: [TaskItem] = []
+    /// What the next New Task opens with: the agent last started in each project, and the model
+    /// last used with each agent (AiTerm's `AppState.lastAgentByProject` and `lastModelByAgent`).
+    public var lastAgentByProject: [UUID: String] = [:]
+    public var lastModelByAgent: [String: String] = [:]
 
     public init(projects: [Project] = [], tasks: [TaskItem] = []) {
         self.projects = projects
         self.tasks = tasks
+    }
+
+    private enum CodingKeys: String, CodingKey { case version, projects, tasks, lastAgentByProject, lastModelByAgent }
+
+    /// A file written before a key existed reads it as empty.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        version = try c.decodeIfPresent(Int.self, forKey: .version) ?? 1
+        projects = try c.decodeIfPresent([Project].self, forKey: .projects) ?? []
+        tasks = try c.decodeIfPresent([TaskItem].self, forKey: .tasks) ?? []
+        lastAgentByProject = try c.decodeIfPresent([UUID: String].self, forKey: .lastAgentByProject) ?? [:]
+        lastModelByAgent = try c.decodeIfPresent([String: String].self, forKey: .lastModelByAgent) ?? [:]
+    }
+
+    /// What the next New Task in this project opens with: this agent, and this model for it.
+    public mutating func remember(_ draft: TaskDraft, projectId: UUID) {
+        lastAgentByProject[projectId] = draft.agentId
+        lastModelByAgent[draft.agentId] = draft.model
     }
 
     /// The project's tasks, oldest first.

@@ -46,6 +46,35 @@ public enum TaskWorktrees {
         return TaskItem(projectId: project.id, title: title, branch: name, worktreePath: "\(root)/\(name)", baseBranch: base)
     }
 
+    public enum Refusal: Error, Equatable, LocalizedError {
+        case invalidBranch(String), emptyTitle, emptyModel
+        public var errorDescription: String? {
+            switch self {
+            case .invalidBranch(let branch): return "“\(branch)” is not a valid Git branch name."
+            case .emptyTitle: return "Enter a task name."
+            case .emptyModel: return "Choose an available model."
+            }
+        }
+    }
+
+    /// AiTerm's `TaskCreator.create`: `<project>/.worktrees/<unused slug>` on the draft's branch from its base.
+    public static func create(draft: TaskDraft, in project: Project, launcher: CommandLauncher) throws -> TaskItem {
+        guard !draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw Refusal.emptyTitle }
+        guard !draft.model.isEmpty else { throw Refusal.emptyModel }
+        guard BranchNaming.isValid(draft.branch, launcher: launcher) else { throw Refusal.invalidBranch(draft.branch) }
+        func git(_ args: [String]) throws -> String {
+            let out = try launcher.run("git", ["-C", project.path] + args)
+            guard out.status == 0 else { throw GitFailure(command: "git " + args.joined(separator: " "), message: out.stderr) }
+            return out.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let slug = BranchNaming.unused(draft.worktreeSlug, in: project.path)
+        let path = "\(project.path)/.worktrees/\(slug)"
+        try exclude(".worktrees/", gitDir: git(["rev-parse", "--git-common-dir"]), project: project)
+        _ = try git(["worktree", "add", "-q", "-b", draft.branch, path, draft.baseBranch])
+        return TaskItem(projectId: project.id, title: draft.title, branch: draft.branch, worktreePath: path,
+                        baseBranch: draft.baseBranch, agent: draft.agentId, model: draft.model, reasoning: draft.reasoning)
+    }
+
     /// Adds `pattern` to the repository's `info/exclude` once, so the worktrees never show as untracked.
     private static func exclude(_ pattern: String, gitDir: String, project: Project) throws {
         let dir = gitDir.hasPrefix("/") ? gitDir : "\(project.path)/\(gitDir)"

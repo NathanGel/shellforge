@@ -18,9 +18,16 @@ struct GitRepoFixture {
         _ = try git("commit", "-q", "--allow-empty", "-m", "first")
     }
 
+    /// A project at the repository, as the sidebar would add it.
+    var project: Project { Project(name: "repo", path: path) }
+
     @discardableResult
-    func git(_ args: String...) throws -> String {
-        let out = try launcher.run("git", ["-C", path] + args)
+    func git(_ args: String...) throws -> String { try git(args, in: path) }
+
+    /// git run in `directory` — a worktree of this repository, say.
+    @discardableResult
+    func git(_ args: [String], in directory: String) throws -> String {
+        let out = try launcher.run("git", ["-C", directory] + args)
         guard out.status == 0 else { throw GitFailure(command: "git " + args.joined(separator: " "), message: out.stderr) }
         return out.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
     }
