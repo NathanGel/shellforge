@@ -5576,6 +5576,7 @@
 		FF762198E91EE94A792CFEC8 /* ai-models.json in Resources */ = {isa = PBXBuildFile; fileRef = DF18C01510605DB0C639038F /* ai-models.json */; };
 		364D24FC328DB1D5D49A1483 /* iTermShellforgeSidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 912AC095DBF148E3E0F01930 /* iTermShellforgeSidebar.swift */; };
 		8E92B788E38AF1E4302C0809 /* shellforged in Copy shellforged */ = {isa = PBXBuildFile; fileRef = 41DC27B3DB848ABF8A59FF7E /* shellforged */; };
+		573DD493A7C4FB2D8E410B20 /* hooks in Copy hooks */ = {isa = PBXBuildFile; fileRef = CEC28578E1772CA7042373DF /* hooks */; };
 		D86C83673C968664A30FCE79 /* ShellforgeUI in Frameworks */ = {isa = PBXBuildFile; productRef = 45EDD04F5F06C95A90D633E0 /* ShellforgeUI */; };
 		E2F3C106E443EEE6158740C8 /* ShellforgeCore in Frameworks */ = {isa = PBXBuildFile; productRef = 0206A3F9B522FACD0DC44B11 /* ShellforgeCore */; };
 /* End PBXBuildFile section */
@@ -5738,6 +5739,17 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
+		C60A3BAF3A6CC7E25EFB7C8C /* Copy hooks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 7;
+			files = (
+				573DD493A7C4FB2D8E410B20 /* hooks in Copy hooks */,
+			);
+			name = "Copy hooks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		4FAA9656B835E2CD14391A75 /* Copy shellforged */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
@@ -10001,6 +10013,7 @@
 		FDF6EB8657CCD10A7A568A61 /* iTermURLActionFactory+Testing.h */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.h; path = "iTermURLActionFactory+Testing.h"; sourceTree = "<group>"; };
 		912AC095DBF148E3E0F01930 /* iTermShellforgeSidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iTermShellforgeSidebar.swift; sourceTree = "<group>"; };
 		41DC27B3DB848ABF8A59FF7E /* shellforged */ = {isa = PBXFileReference; lastKnownFileType = folder; name = shellforged; path = Shellforge/daemon/shellforged; sourceTree = SOURCE_ROOT; };
+		CEC28578E1772CA7042373DF /* hooks */ = {isa = PBXFileReference; lastKnownFileType = folder; name = hooks; path = Shellforge/hooks; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -14306,6 +14319,7 @@
 				A68ADA0429CCBE420008E092 /* CommandInfoViewController.swift */,
 				912AC095DBF148E3E0F01930 /* iTermShellforgeSidebar.swift */,
 				41DC27B3DB848ABF8A59FF7E /* shellforged */,
+				CEC28578E1772CA7042373DF /* hooks */,
 				A62A78E22F988080007CAA0B /* CommandInfoViewController.xib */,
 				A6DBC9D9286399C6002911BE /* ContentNavigationShortcut.swift */,
 				A665388A2D10AB0B004B723B /* CursorSmearView.swift */,
@@ -17939,6 +17953,7 @@
 				874206480564169600CFC3F1 /* Headers */,
 				8742064A0564169600CFC3F1 /* Resources */,
 				4FAA9656B835E2CD14391A75 /* Copy shellforged */,
+				C60A3BAF3A6CC7E25EFB7C8C /* Copy hooks */,
 				8742064E0564169600CFC3F1 /* Sources */,
 				874206510564169600CFC3F1 /* Frameworks */,
 				874206560564169600CFC3F1 /* CopyFiles */,

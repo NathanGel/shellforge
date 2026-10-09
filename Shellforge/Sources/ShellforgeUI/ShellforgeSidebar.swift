@@ -9,9 +9,10 @@ public enum ShellforgeSidebar {
     public static let width: CGFloat = 240
 
     /// The view the window places at its left edge: as wide as the sidebar, and only its height
-    /// follows the window's. `chooseFolder` asks the user for a project folder (an open panel).
-    public static func makeView(model: SidebarModel, chooseFolder: @escaping @MainActor () -> String?) -> NSView {
-        let host = NSHostingView(rootView: SidebarView(model: model, chooseFolder: chooseFolder))
+    /// follows the window's. `chooseFolder` asks the user for a project folder (an open panel);
+    /// `hooks` is the app's Agent hooks sheet.
+    public static func makeView(model: SidebarModel, chooseFolder: @escaping @MainActor () -> String?, hooks: AgentHooksModel) -> NSView {
+        let host = NSHostingView(rootView: SidebarView(model: model, chooseFolder: chooseFolder, hooks: hooks))
         host.frame = NSRect(x: 0, y: 0, width: width, height: 400)
         host.autoresizingMask = [.height]
         return host
@@ -21,6 +22,8 @@ public enum ShellforgeSidebar {
 struct SidebarView: View {
     @ObservedObject var model: SidebarModel
     let chooseFolder: @MainActor () -> String?
+    @ObservedObject var hooks: AgentHooksModel
+    @State private var showingHooks = false
     @State private var newTaskProject: UUID?
     @State private var newTaskTitle = ""
 
@@ -84,8 +87,18 @@ struct SidebarView: View {
             }
             .buttonStyle(.borderless)
             .help("Add a project folder")
+            Button {
+                showingHooks = true
+            } label: {
+                Image(systemName: "bolt.horizontal.circle")
+            }
+            .buttonStyle(.borderless)
+            .help("Agent hooks")
         }
         .padding(16)
+        .sheet(isPresented: $showingHooks) {
+            AgentHooksView(model: hooks, dismiss: { showingHooks = false })
+        }
     }
 
     private func projectHeader(_ project: Project) -> some View {

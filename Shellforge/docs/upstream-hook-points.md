@@ -18,8 +18,9 @@ this list short; new behaviour belongs in the Shellforge package.
 | `ModernTests/ShellforgeSidebarLayoutTest.swift` (new) | Calculator tests for the sidebar column | Synchronized test folder: no project entry needed |
 | `iTerm2.xcodeproj/project.pbxproj` | Folder reference `Shellforge/daemon/shellforged`, copied by a "Copy shellforged" phase to `Contents/Resources/daemon/` | The app ships its helper; alone in its folder, which is the daemon's PYTHONPATH, away from iTerm2's own scripts at the top of Resources |
 | `sources/AppKit/iTermApplicationDelegate.m` (`applicationDidFinishLaunching:`) | `[iTermShellforgeSidebar startHelper]` | Starts shellforged and the one-second report tick; both stop at `iTermApplicationWillTerminate` |
-| `sources/TerminalView/iTermShellforgeSidebar.swift` | The app's `DaemonLink`; every session reported; the sidebar fed its statuses; a tab change sends at once | Status dots from the agents' hooks |
+| `sources/TerminalView/iTermShellforgeSidebar.swift` | The app's `DaemonLink` and Agent hooks model; every session reported; the sidebar fed its statuses; a tab change sends at once | Status dots from the agents' hooks |
 | `ModernTests/ShellforgeReportsTest.swift` (new) | iTerm2's names for the session variables Shellforge reads | ModernTests cannot link ShellforgeCore, so the reading itself is tested in the package |
+| `iTerm2.xcodeproj/project.pbxproj` | Folder reference `Shellforge/hooks`, copied by a "Copy hooks" phase to `Contents/Resources/hooks` | The status-line shims and the PI extension the Agent hooks sheet installs from |
 
 ## M0: verified on 9 October 2026
 
