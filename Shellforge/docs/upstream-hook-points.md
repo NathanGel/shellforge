@@ -13,18 +13,18 @@ this list short; new behaviour belongs in the Shellforge package.
 | `sources/TerminalView/iTermShellforgeSidebar.swift` (new) | `@objc` bridge to `ShellforgeUI` | Objective-C cannot import the Swift package |
 | `ModernTests/ShellforgeSidebarLayoutTest.swift` (new) | Calculator tests for the sidebar column | Synchronized test folder: no project entry needed |
 
-## M0: still to verify once Xcode is installed
+## M0: verified on 9 October 2026
 
-Written without Xcode. Checked so far: the Shellforge package builds and its tests pass with
-swiftly; the layout calculator compiles with clang and passes the sidebar checks in every tab-bar
-position. Not yet compiled: the root view, the bridge, the project-file entries, `main.m`.
+Built with Xcode 27.0 (`make paranoid-deps` without the `sfsymbolenum` step, whose output is
+committed and which needs the SF Symbols app; then `make Development`).
 
-1. `make setup`, `make paranoid-deps`, `make`: the app builds with the package linked.
-2. `ModernTests` pass, including `ShellforgeSidebarLayoutTest`.
-3. The built app is named Shellforge, runs beside stock iTerm2, and writes to
-   `~/Library/Application Support/Shellforge` and the `Shellforge` preferences suite.
-4. Every terminal window shows the sidebar on the left; tabs, splits, the toolbelt and full screen
-   still lay out correctly.
+1. The app builds with the package linked; `ShellforgeUI` is in `iTermSwiftPackages.framework`.
+2. `ShellforgeSidebarLayoutTest` (4) and iTerm2's `iTermLayoutCalculatorTest` (31) pass; the
+   package's 40 tests pass with swiftly.
+3. The built app is `io.github.nathangel.shellforge`, named Shellforge, without an update feed. It
+   runs beside stock iTerm2 and writes `~/Library/Application Support/Shellforge` and the
+   `Shellforge` preferences suite.
+4. A terminal window shows the sidebar on the left and the session to its right.
 
 Known gap: `constrainToolbeltWidth` limits the toolbelt against the whole window width, not the
 width left after the sidebar, so a very narrow window with the toolbelt open can squeeze the
