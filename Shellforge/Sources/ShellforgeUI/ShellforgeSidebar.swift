@@ -49,6 +49,12 @@ struct SidebarView: View {
                 }
             }
             .listStyle(.sidebar)
+            if let working = model.working {
+                Text(working)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(12)
+            }
             if let error = model.lastError {
                 Text(error)
                     .font(.caption)
@@ -66,7 +72,7 @@ struct SidebarView: View {
             Text("Shellforge").font(.headline)
             Spacer()
             Button {
-                if let folder = chooseFolder() { model.addProject(folder: folder) }
+                if let folder = chooseFolder() { Task { await model.addProject(folder: folder) } }
             } label: {
                 Image(systemName: "plus")
             }
@@ -96,7 +102,7 @@ struct SidebarView: View {
             .onSubmit {
                 let title = newTaskTitle.trimmingCharacters(in: .whitespaces)
                 newTaskProject = nil
-                if !title.isEmpty { model.newTask(title: title, in: project.id) }
+                if !title.isEmpty { Task { await model.newTask(title: title, in: project.id) } }
             }
             .onExitCommand { newTaskProject = nil }
     }

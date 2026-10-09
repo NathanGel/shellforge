@@ -6,7 +6,7 @@ import Testing
 @MainActor @Suite struct SidebarTests {
     private func sidebarModel() throws -> SidebarModel {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("shellforge-view-\(UUID().uuidString)")
-        return SidebarModel(host: FakeTerminalHost(), store: WorkspaceStore(folder: folder), launcher: try GitRepoForUI().launcher)
+        return SidebarModel(host: FakeTerminalHost(), document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: try GitRepoForUI().launcher)
     }
 
     @Test func theHostViewIsAsWideAsTheSidebar() throws {

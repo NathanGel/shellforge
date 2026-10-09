@@ -19,10 +19,13 @@ final class iTermShellforgeSidebar: NSObject {
     /// One shared launcher, so the login shell's environment is read once per app run.
     static let launcher = CommandLauncher()
 
+    /// The one workspace every window's sidebar shows and changes.
+    static let document = WorkspaceDocument(store: WorkspaceStore())
+
     /// A new sidebar for `windowController`'s window.
     @objc static func makeView(for windowController: PseudoTerminal) -> NSView {
         let host = iTermShellforgeHost(windowController: windowController)
-        let model = SidebarModel(host: host, store: WorkspaceStore(), launcher: launcher)
+        let model = SidebarModel(host: host, document: document, launcher: launcher)
         return ShellforgeSidebar.makeView(model: model, chooseFolder: {
             let panel = NSOpenPanel()
             panel.canChooseDirectories = true
