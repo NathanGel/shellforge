@@ -46,18 +46,25 @@ enum ChildProcess {
     }
 }
 
-/// Drains a pipe on its own thread, so a child that fills one pipe while we read the other never stalls.
+/// Drains a pipe on a thread of its own, so a child that fills one pipe while we read the other
+/// never stalls. Its own thread, not a slot on a shared queue: a reader blocks until end of output,
+/// and a command that leaves a background job holding its pipe (an SSH tunnel) would otherwise tie
+/// up shared threads until other commands' readers never got to run. What has arrived is kept as it
+/// arrives, so an end of output that comes late still leaves the output that came on time.
 private final class PipeReader: @unchecked Sendable {
     private let lock = NSLock()
     private var data = Data()
     private let done = DispatchSemaphore(value: 0)
 
     init(_ handle: FileHandle) {
-        DispatchQueue.global().async { [self] in
-            let all = handle.readDataToEndOfFile()
-            lock.withLock { data = all }
+        let thread = Thread { [self] in
+            while case let chunk = handle.availableData, !chunk.isEmpty {
+                lock.withLock { data.append(chunk) }
+            }
             done.signal()
         }
+        thread.name = "ShellforgeCore.PipeReader"
+        thread.start()
     }
 
     func text(waiting seconds: TimeInterval) -> String {
