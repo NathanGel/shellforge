@@ -20,4 +20,15 @@ import Testing
         project.tunnels = [TunnelDefinition(alias: "db-staging", autoStart: .onTaskOpen), TunnelDefinition(alias: "cache", autoStart: .never)]
         #expect(try JSONDecoder().decode(Project.self, from: JSONEncoder().encode(project)) == project)
     }
+
+    /// A task's tab gets the tunnels' ports as exported variables before its command, sorted, each
+    /// value one shell word; with no command, the exports alone; with neither, nothing typed.
+    @Test func theTabExportsThePortsBeforeItsCommand() {
+        #expect(TabCommand.exporting(["SHELLFORGE_TUNNEL_WEB_PORT": "8080", "SHELLFORGE_TUNNEL_DB_PORT": "5432"], then: "claude 'go'")
+                == "export SHELLFORGE_TUNNEL_DB_PORT='5432' SHELLFORGE_TUNNEL_WEB_PORT='8080'; claude 'go'")
+        #expect(TabCommand.exporting(["SHELLFORGE_TUNNEL_DB_PORT": "5432"], then: nil) == "export SHELLFORGE_TUNNEL_DB_PORT='5432'")
+        #expect(TabCommand.exporting([:], then: "claude") == "claude")
+        #expect(TabCommand.exporting([:], then: nil) == nil)
+        #expect(TabCommand.exporting(["X": "it's"], then: nil) == #"export X='it'\''s'"#)
+    }
 }

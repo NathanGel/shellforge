@@ -123,7 +123,11 @@ struct SidebarView: View {
                              toggle: { model.toggleCollapsed(node.id) },
                              newTask: { showNewTask(in: node.id) },
                              newReview: { showNewReview(in: node.id) },
-                             editJiraProjects: { showJiraProjects(for: node.id) })
+                             editJiraProjects: { showJiraProjects(for: node.id) },
+                             editTunnels: { showTunnels(for: node.id) })
+                .listRowSeparator(.hidden)
+        case .tunnel(let tunnel):
+            TunnelRowView(row: tunnel, start: { model.startTunnel(tunnel.alias) }, stop: { model.stopTunnel(tunnel.alias) })
                 .listRowSeparator(.hidden)
         case .task(let node, let selected):
             TaskRowView(node: node, selected: selected, agents: model.avatars(forTask: node.id),
@@ -171,6 +175,16 @@ struct SidebarView: View {
             JiraProjectSheet(projectName: project.name, linked: project.jiraProjects, canSubmit: true,
                              loadProjects: model.loadJiraProjects,
                              submit: { model.setJiraProjects($0, on: id) }, dismiss: dismiss)
+        }
+    }
+
+    /// The sheet that edits a project's tunnels, opened on the list as it is now; the config is read
+    /// again for it, off the main actor.
+    private func showTunnels(for id: UUID) {
+        guard let project = model.project(id) else { return }
+        sheet.present(over: anchor.window) { dismiss in
+            TunnelsSheet(projectName: project.name, linked: project.tunnels, loadHosts: model.loadSSHHosts,
+                         submit: { model.setTunnels($0, on: id) }, dismiss: dismiss)
         }
     }
 

@@ -42,7 +42,7 @@ struct SidebarHeader: View {
 }
 
 /// A project: its chevron, its provider's mark, its name and Jira badge, and the "+" that starts a
-/// task; right-clicked, New Task… and Jira Projects….
+/// task; right-clicked, New Task…, Jira Projects… and Tunnels….
 struct ProjectHeaderRow: View {
     let node: ProjectNode
     let collapsed: Bool
@@ -53,6 +53,7 @@ struct ProjectHeaderRow: View {
     let newTask: () -> Void
     let newReview: () -> Void
     let editJiraProjects: () -> Void
+    var editTunnels: () -> Void = {}
     @Environment(\.interfaceScale) private var scale
 
     /// An empty project has nothing to fold.
@@ -89,6 +90,7 @@ struct ProjectHeaderRow: View {
             newItems
             Divider()
             Button("Jira Projects…", action: editJiraProjects)
+            Button("Tunnels…", action: editTunnels)
         }
     }
 

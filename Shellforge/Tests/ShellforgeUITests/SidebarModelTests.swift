@@ -10,7 +10,7 @@ import Testing
     var tabs: [TabSnapshot] = []
     var selectedTabId: String?
     var onChange: (@MainActor () -> Void)?
-    var opened: [(directory: String, taskId: UUID, projectId: UUID, title: String, command: String?)] = []
+    var opened: [(directory: String, taskId: UUID, projectId: UUID, title: String, command: String?, environment: [String: String])] = []
     /// Ids are never reused, as iTerm2's are not, even after a tab closes.
     private var nextTab = 0
 
@@ -19,8 +19,8 @@ import Testing
         onChange?()
     }
 
-    func openTab(in directory: String, taskId: UUID, projectId: UUID, title: String, command: String?) {
-        opened.append((directory, taskId, projectId, title, command))
+    func openTab(in directory: String, taskId: UUID, projectId: UUID, title: String, command: String?, environment: [String: String]) {
+        opened.append((directory, taskId, projectId, title, command, environment))
         nextTab += 1
         let tab = TabSnapshot(id: "s\(nextTab)", tabId: nextTab, title: title, taskId: taskId, projectId: projectId)
         tabs.append(tab)
@@ -285,7 +285,7 @@ import Testing
         let project = try #require(sidebar.tree.projects.first).id
         await sidebar.newTask(title: "One", in: project)
         let one = try #require(sidebar.selectedTaskId), first = try #require(host.tabs.last).id
-        host.openTab(in: repo.path, taskId: one, projectId: project, title: "second", command: nil)
+        host.openTab(in: repo.path, taskId: one, projectId: project, title: "second", command: nil, environment: [:])
         let second = try #require(host.tabs.last).id
         host.userSwitched(to: first)
         feed.say(.done, session: second, task: one)

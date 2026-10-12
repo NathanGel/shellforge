@@ -120,6 +120,20 @@ async def test_starting_a_running_tunnel_does_nothing(ssh_env):
     await tunnels.stop_all()
 
 
+async def test_two_starts_at_once_run_one_ssh(ssh_env):
+    """Two windows auto-starting the same tunnel: the second start comes before the first's run
+    has said "connecting", and must not start a second ssh beside it."""
+    events = Events()
+    tunnels = fast(events)
+    await tunnels.start("db", ssh_env())
+    first = tunnels._tunnels["db"]
+    await tunnels.start("db", ssh_env())
+    assert tunnels._tunnels["db"] is first
+    await wait_until(lambda: "up" in events.states("db"))
+    assert events.states("db") == ["connecting", "up"]
+    await tunnels.stop_all()
+
+
 async def test_the_ssh_arguments_and_environment_are_the_tunnels_own(ssh_env):
     events = Events()
     tunnels = fast(events)

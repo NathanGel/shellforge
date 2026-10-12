@@ -54,9 +54,10 @@ class TunnelSupervisor:
         return tunnel.process.pid if tunnel and tunnel.process else None
 
     async def start(self, alias: str, environment: dict[str, str]) -> None:
-        """Starts `alias`'s tunnel; nothing when it is already connecting or up."""
+        """Starts `alias`'s tunnel; nothing while its run is going -- connecting, up, or a start
+        just made whose run has not said so yet."""
         current = self._tunnels.get(alias)
-        if current and current.state in ("connecting", "up"):
+        if current and current.task is not None and not current.task.done() and not current.stopping:
             return
         tunnel = _Tunnel(alias, environment)
         self._tunnels[alias] = tunnel

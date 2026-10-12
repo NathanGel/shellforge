@@ -3,8 +3,9 @@ import Foundation
 /// A host in `~/.ssh/config` that Shellforge can run as a tunnel: its alias, and the local ports it
 /// forwards. Read only, to offer the hosts and show their ports; `ssh -N <alias>` applies the
 /// forwards itself, exactly as `ssh <alias>` does.
-public struct SSHHost: Equatable, Sendable {
+public struct SSHHost: Equatable, Sendable, Identifiable {
     public var alias: String
+    public var id: String { alias }
     public var forwards: [LocalForward]
     public init(alias: String, forwards: [LocalForward]) { self.alias = alias; self.forwards = forwards }
 }
@@ -21,6 +22,28 @@ public struct LocalForward: Equatable, Sendable {
 
     /// `5432 → db.internal:5432`, as a row shows it.
     public var label: String { "\(localPort) → \(remoteHost):\(remotePort)" }
+}
+
+/// Where the hosts are read from: `~/.ssh/config` in the app, a temporary file in the tests.
+public struct SSHConfigSource: Sendable {
+    public let file: URL
+    public let home: URL
+
+    public init(file: URL, home: URL) { self.file = file; self.home = home }
+
+    /// The user's own `~/.ssh/config`.
+    public static var user: SSHConfigSource {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        return SSHConfigSource(file: home.appendingPathComponent(".ssh/config"), home: home)
+    }
+
+    public func read() -> [SSHHost] { SSHConfig.hosts(in: file, home: home) }
+
+    /// When the file last changed, to read it again only then; nil when there is none. A file it
+    /// includes changing alone is seen at the next read the sheet makes.
+    public func stamp() -> Date? {
+        (try? FileManager.default.attributesOfItem(atPath: file.path))?[.modificationDate] as? Date
+    }
 }
 
 public enum SSHConfig {
