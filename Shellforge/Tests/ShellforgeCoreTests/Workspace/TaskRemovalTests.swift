@@ -103,6 +103,37 @@ import Testing
         #expect(try branchExists(repo, task.branch))
     }
 
+    /// git refusing a dirty worktree, then failing to list the worktrees when asked again: a failed
+    /// answer is not "git no longer knows it", and the checkout — its changes — must stay.
+    @Test func aWorktreeListThatFailsNeverCountsAsGone() throws {
+        let repo = try GitRepoFixture()
+        let task = try task(repo)
+        let file = task.worktreePath + "/important.txt"
+        try "work in progress".write(toFile: file, atomically: true, encoding: .utf8)
+        // A git that answers the first `worktree list` and fails every one after it.
+        let bin = FileManager.default.temporaryDirectory.appendingPathComponent("flaky-git-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: bin, withIntermediateDirectories: true)
+        let script = """
+        #!/bin/sh
+        case "$*" in *"worktree list"*)
+          if [ -e "\(bin)/listed" ]; then exit 1; fi
+          touch "\(bin)/listed";;
+        esac
+        exec /usr/bin/git "$@"
+        """
+        try script.write(toFile: bin + "/git", atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin + "/git")
+        var variables = repo.launcher.reload().variables
+        variables["PATH"] = bin + ":" + (variables["PATH"] ?? "/usr/bin:/bin")
+        let env = variables
+        let flaky = CommandLauncher { ResolvedEnvironment(variables: env, source: .loginShell("/bin/sh")) }
+
+        #expect(throws: (any Error).self) {
+            _ = try TaskRemoval.remove(task: task, project: repo.project, deleteBranch: false, force: false, launcher: flaky)
+        }
+        #expect(try String(contentsOfFile: file, encoding: .utf8) == "work in progress")
+    }
+
     /// Only a leftover of Shellforge's own is deleted: a folder outside `.worktrees/` that git does
     /// not know as a worktree is refused and kept, whatever is in it.
     @Test func aFolderOutsideTheWorktreesIsNeverDeleted() throws {

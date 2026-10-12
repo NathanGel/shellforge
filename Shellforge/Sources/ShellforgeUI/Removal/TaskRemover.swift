@@ -21,11 +21,11 @@ extension SidebarModel {
     /// first is asking or running does nothing.
     @discardableResult
     public func confirmRemove(taskId id: UUID) async -> Bool {
-        guard !asking.contains(id), removals[id] != .removing,
+        guard !removalBoard.asking.contains(id), removalBoard.removals[id] != .removing,
               let shown = document.workspace.tasks.first(where: { $0.id == id }),
               document.workspace.projects.contains(where: { $0.id == shown.projectId }) else { return false }
-        asking.insert(id)
-        defer { asking.remove(id) }
+        removalBoard.asking.insert(id)
+        defer { removalBoard.asking.remove(id) }
         let answer = await prompter.ask(AlertPrompt(
             message: "Remove task “\(shown.title)”?",
             detail: "Deletes the worktree and closes its tabs:\n\n\(shown.worktreePath)",
@@ -35,7 +35,7 @@ extension SidebarModel {
         // Decided on the task as it is once answered: across the await it, or its project, can be gone.
         guard answer.confirmed, let task = document.workspace.tasks.first(where: { $0.id == id }),
               let project = document.workspace.projects.first(where: { $0.id == task.projectId }) else { return false }
-        removals[id] = .removing
+        removalBoard.removals[id] = .removing
         do {
             var force = false
             let launcher = self.launcher
@@ -45,11 +45,11 @@ extension SidebarModel {
                     message: "The worktree has uncommitted changes",
                     detail: "Removing this worktree permanently deletes its uncommitted changes and untracked files.",
                     buttons: ["Keep Task", "Delete Changes and Remove"], escape: 0))
-                guard unsaved.button == 1 else { removals[id] = nil; return false }
+                guard unsaved.button == 1 else { removalBoard.removals[id] = nil; return false }
                 force = true
             }
             guard host.closeTabs(ofTask: id) else {
-                removals[id] = .stopped("Not removed: its tabs did not close")
+                removalBoard.removals[id] = .stopped("Not removed: its tabs did not close")
                 lastError = "Couldn’t remove the task. Its tabs did not close, so nothing was deleted."
                 return false
             }
@@ -59,10 +59,10 @@ extension SidebarModel {
             }
             await settleBranch(of: task, in: project, after: result)
             try document.update { $0.tasks.removeAll { $0.id == id } }
-            removals[id] = nil
+            removalBoard.removals[id] = nil
             return true
         } catch {
-            removals[id] = .stopped("Not removed")
+            removalBoard.removals[id] = .stopped("Not removed")
             lastError = "Couldn’t remove the task. " + Self.reason(of: error)
             return false
         }
@@ -78,8 +78,10 @@ extension SidebarModel {
             let answer = await prompter.ask(AlertPrompt(
                 message: "Delete branch \(task.branch)?",
                 detail: "It has commits that aren’t on \(base.isEmpty ? "its base" : base). Deleting the branch deletes them too.",
-                buttons: ["Delete Branch", "Keep Branch"], defaultDeletes: true, escape: 1))
-            guard answer.confirmed else { return }
+                // Asked straight after Remove, so ↩ pressed twice must not lose commits: keeping is
+                // the default, on ↩ and ⎋ both, as Keep Task is.
+                buttons: ["Keep Branch", "Delete Branch"], escape: 0))
+            guard answer.button == 1 else { return }
             let launcher = self.launcher
             do {
                 try await BackgroundWork.run { try TaskRemoval.deleteUnmergedBranch(of: task, in: project, launcher: launcher) }

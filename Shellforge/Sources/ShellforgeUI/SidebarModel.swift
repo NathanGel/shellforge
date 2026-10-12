@@ -51,12 +51,13 @@ public final class SidebarModel: ObservableObject {
     @Published public private(set) var helper: HelperStatus = .starting
     /// Where each project's code lives, for its row's mark; read from git off the main thread.
     @Published public private(set) var providers: [UUID: Provider] = [:]
-    /// Each task row's removal: running, or why the last one stopped. Set by `confirmRemove`.
-    @Published public internal(set) var removals: [UUID: RowRemoval] = [:]
+    /// Each task row's removal: running, or why the last one stopped — in every window, from the
+    /// board they share.
+    public var removals: [UUID: RowRemoval] { removalBoard.removals }
     /// Where Remove asks its questions; the app hands in `ModalPrompter`, tests a script.
     public var prompter: Prompter = NullPrompter()
-    /// The tasks whose Remove is asking its first question.
-    var asking: Set<UUID> = []
+    let removalBoard: RemovalBoard
+    private var boardSubscription: AnyCancellable?
     /// How many projects' providers have been looked up, for the test that holds it to one each.
     private(set) var providerLookups = 0
     /// Projects whose provider is being looked up now.
@@ -83,6 +84,7 @@ public final class SidebarModel: ObservableObject {
                 jiraSettings: @escaping @Sendable () -> JiraConfig? = { JiraSettings.load() }) {
         self.host = host
         self.jiraSettings = jiraSettings
+        removalBoard = RemovalBoard.shared(for: document)
         self.document = document
         self.launcher = launcher
         self.agents = agents
@@ -93,6 +95,10 @@ public final class SidebarModel: ObservableObject {
         // @Published announces before it stores, so the new value is passed along.
         subscription = document.$workspace.dropFirst().sink { [weak self] workspace in
             MainActor.assumeIsolated { self?.refresh(workspace) }
+        }
+        // A removal in any window redraws this one's rows.
+        boardSubscription = removalBoard.objectWillChange.sink { [weak self] _ in
+            MainActor.assumeIsolated { self?.objectWillChange.send() }
         }
         if let feed {
             feedSubscriptions = [

@@ -92,7 +92,7 @@ public enum TaskRemoval {
             // git drops its record of the worktree even when it cannot delete all of it — a process
             // still running there wrote files back — and every later `remove` then fails "is not a
             // working tree". The checkout is gone; what is left is files nothing tracks.
-            if (try? registered(worktreePath, in: projectPath, launcher: launcher)) == .some(nil) {
+            if (try? registered(worktreePath, in: projectPath, launcher: launcher) == nil) == true {
                 return try deleteLeftover(worktreePath, in: projectPath)
             }
             if let lockReason {

@@ -114,14 +114,16 @@ import Testing
     }
 
     @Test func anUnmergedBranchAsksBeforeItsCommitsGo() async throws {
-        let s = try await setup([Self.removeAndBranch, AlertAnswer(button: 1)])
+        let s = try await setup([Self.removeAndBranch, AlertAnswer(button: 0)])
         _ = try s.git("commit", "-q", "--allow-empty", "-m", "work", in: s.task.worktreePath)
 
         #expect(await s.sidebar.confirmRemove(taskId: s.task.id))
         let asked = try #require(s.prompter.asked.last)
         #expect(asked.message == "Delete branch \(s.task.branch)?")
         #expect(asked.detail == "It has commits that aren’t on main. Deleting the branch deletes them too.")
-        #expect(asked.buttons == ["Delete Branch", "Keep Branch"] && asked.defaultDeletes)
+        // Asked straight after Remove, so ↩ pressed twice must not lose commits: keeping is the
+        // default, on ↩ and ⎋ both, and deleting the plain grey button beside it.
+        #expect(asked.buttons == ["Keep Branch", "Delete Branch"] && !asked.defaultDeletes && asked.escapeButton == 0)
         #expect(s.row == nil, "Keep Branch still removes the task")
         #expect(try s.branchExists())
 
@@ -130,7 +132,7 @@ import Testing
         let second = try TaskWorktrees.create(title: "Fix logout", in: project, base: "main", launcher: s.repo.launcher)
         try s.document.update { $0.tasks.append(second) }
         _ = try s.git("commit", "-q", "--allow-empty", "-m", "work", in: second.worktreePath)
-        s.prompter.answers = [Self.removeAndBranch, AlertAnswer(button: 0)]
+        s.prompter.answers = [Self.removeAndBranch, AlertAnswer(button: 1)]
         #expect(await s.sidebar.confirmRemove(taskId: second.id))
         #expect(try s.git("for-each-ref", "--format=%(refname)", "refs/heads/" + second.branch).isEmpty)
     }
@@ -144,6 +146,25 @@ import Testing
         #expect(s.prompter.asked.count == 1, "the second Remove asks nothing")
         s.prompter.release()
         #expect(await first.value == false)
+    }
+
+    /// Every window has a sidebar of its own over the one workspace: a Remove in one window is the
+    /// task's only Remove, and every window's row says what it left.
+    @Test func oneRemovalAtATimeAcrossWindows() async throws {
+        let s = try await setup([Self.remove])
+        s.host.closesTabs = false
+        let other = SidebarModel(host: FakeTerminalHost(), document: s.document, launcher: s.repo.launcher, jiraSettings: { nil })
+        let otherPrompter = ScriptedPrompter([Self.remove])
+        other.prompter = otherPrompter
+
+        s.prompter.hold = true
+        let first = Task { await s.sidebar.confirmRemove(taskId: s.task.id) }
+        while s.prompter.asked.isEmpty { await Task.yield() }
+        #expect(await other.confirmRemove(taskId: s.task.id) == false)
+        #expect(otherPrompter.asked.isEmpty, "the other window's Remove asks nothing")
+        s.prompter.release()
+        #expect(await first.value == false)
+        #expect(other.removals[s.task.id] == .stopped("Not removed: its tabs did not close"))
     }
 
     @Test func tabsThatWillNotCloseStopTheRemoval() async throws {
