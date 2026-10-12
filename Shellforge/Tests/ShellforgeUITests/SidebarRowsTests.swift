@@ -29,6 +29,7 @@ import Testing
             case .project(let node, _): "project \(node.project.name)"
             case .task(let node, _): "task \(node.task.title)"
             case .tab(let tab, _): "tab \(tab.title)"
+            case .tunnel(let row): "tunnel \(row.alias)"
             case .otherTabsHeading: "other tabs"
             }
         }
@@ -59,7 +60,7 @@ import Testing
         await model.newTask(title: "Beta", in: project)
         #expect(titles(model.rows) == ["project repo", "task Alpha", "task Beta"])
         let beta = try #require(model.selectedTaskId)
-        host.openTab(in: repo.path, taskId: beta, projectId: project, title: "Beta 2", command: nil)
+        host.openTab(in: repo.path, taskId: beta, projectId: project, title: "Beta 2", command: nil, environment: [:])
         #expect(titles(model.rows) == ["project repo", "task Alpha", "task Beta", "tab Beta", "tab Beta 2"])
     }
 
@@ -72,7 +73,7 @@ import Testing
         await model.newTask(title: "Alpha", in: project)
         #expect(selected(model.rows) == ["task Alpha"])
         let alpha = try #require(model.selectedTaskId)
-        host.openTab(in: repo.path, taskId: alpha, projectId: project, title: "Alpha 2", command: nil)
+        host.openTab(in: repo.path, taskId: alpha, projectId: project, title: "Alpha 2", command: nil, environment: [:])
         #expect(selected(model.rows) == ["tab Alpha 2"])
         host.tabs.append(TabSnapshot(id: "s9", tabId: 9, title: "zsh", taskId: nil, projectId: nil))
         host.userSwitched(to: "s9")

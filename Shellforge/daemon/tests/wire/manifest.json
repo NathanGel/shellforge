@@ -15,6 +15,7 @@
     "session.changed",
     "session.closed",
     "session.opened",
+    "tunnel.changed",
     "usage.changed",
     "window.activated",
     "window.closed"
@@ -36,6 +37,7 @@
       "session.changed": "event.session.changed.json",
       "session.closed": "event.session.closed.json",
       "session.opened": "event.session.opened.json",
+      "tunnel.changed": "event.tunnel.changed.json",
       "usage.changed": "event.usage.changed.json",
       "window.activated": "event.window.activated.json",
       "window.closed": "event.window.closed.json"
@@ -64,6 +66,15 @@
       ],
       "tab.create": [
         "reply.tab.create.json"
+      ],
+      "tunnels.list": [
+        "reply.tunnels.list.json"
+      ],
+      "tunnels.start": [
+        "reply.tunnels.start.json"
+      ],
+      "tunnels.stop": [
+        "reply.tunnels.stop.json"
       ],
       "usage.get": [
         "reply.usage.get.json"
@@ -99,6 +110,9 @@
     "sessions.setTitles",
     "sessions.update",
     "tab.create",
+    "tunnels.list",
+    "tunnels.start",
+    "tunnels.stop",
     "usage.get",
     "window.activate",
     "window.close",

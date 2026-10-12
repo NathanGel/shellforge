@@ -110,4 +110,14 @@ public enum TabCommand {
     public static func initialText(_ command: String) -> String {
         " " + command.replacingOccurrences(of: "\\", with: "\\\\")
     }
+
+    /// `command` after an `export` of `environment`, sorted by name and each value quoted: how a
+    /// task's tab gets its tunnels' ports, since an iTerm2 profile has no environment of its own.
+    /// Nil when there is nothing to type.
+    public static func exporting(_ environment: [String: String], then command: String?) -> String? {
+        guard !environment.isEmpty else { return command }
+        let exports = "export " + environment.sorted { $0.key < $1.key }
+            .map { "\($0.key)=\(AgentCommand.shellQuote($0.value))" }.joined(separator: " ")
+        return command.map { "\(exports); \($0)" } ?? exports
+    }
 }

@@ -137,6 +137,8 @@ public struct DaemonSnapshot: Decodable, Equatable, Sendable {
     public var itermVersion: String? = nil
     public var itermAuthError: String? = nil
     public var itermCookieRequest: Int? = nil
+    /// Every tunnel the daemon runs or ran; none from a helper older than tunnels.
+    public var tunnels: [TunnelInfo]? = nil
 
     public init(protocolVersion: Int, connected: Bool, sessions: [SessionInfo], usage: UsageSnapshot) {
         self.protocolVersion = protocolVersion; self.connected = connected; self.sessions = sessions; self.usage = usage
@@ -180,7 +182,33 @@ public struct SessionReport: Codable, Equatable, Sendable {
 public enum DaemonEvent: Equatable, Sendable {
     case snapshot(DaemonSnapshot)
     case sessionOpened(SessionInfo), sessionClosed(String), sessionChanged(SessionInfo)
-    case usageChanged(UsageSnapshot), unknown(String)
+    case usageChanged(UsageSnapshot), tunnelChanged(TunnelInfo), unknown(String)
+}
+
+/// Where an SSH tunnel stands, as the daemon's supervisor says (`shellforged/tunnels.py`).
+public enum TunnelState: String, Codable, Equatable, Sendable {
+    /// Not running: never started, or stopped.
+    case stopped
+    /// ssh is starting, or restarting after a drop.
+    case connecting
+    /// ssh has held its forwards for a moment.
+    case up
+    /// ssh ended before it was up; `error` says why, and it is not restarted.
+    case failed
+}
+
+/// One tunnel, as `tunnel.changed` and the snapshot carry it.
+public struct TunnelInfo: Codable, Equatable, Sendable {
+    public var alias: String
+    public var state: TunnelState
+    /// ssh's last line, for a failure or a drop.
+    public var error: String?
+    /// When it came to this state, in the daemon's clock's seconds.
+    public var since: Double
+
+    public init(alias: String, state: TunnelState, error: String?, since: Double) {
+        self.alias = alias; self.state = state; self.error = error; self.since = since
+    }
 }
 
 /// What routes a line from the daemon: a reply's `id` and `error`, or an event's name. The rest of

@@ -13,6 +13,8 @@ public final class DaemonLink: ObservableObject {
     private let daemonDir: URL?
     private let findPython: @Sendable () -> URL?
     private let reports: @MainActor () -> [SessionReport]
+    /// The login shell's environment, which tunnels start with: the helper has none of its own.
+    private let environment: @Sendable () -> [String: String]
     private var supervisor: DaemonSupervisor?
     private var connection: DaemonConnection?
     private var client: DaemonClient?
@@ -25,11 +27,13 @@ public final class DaemonLink: ObservableObject {
     private weak var refused: DaemonClient?
 
     public init(socketPath: String = ShellforgePaths.socketPath, daemonDir: URL?,
-                findPython: @escaping @Sendable () -> URL?, reports: @escaping @MainActor () -> [SessionReport]) {
+                findPython: @escaping @Sendable () -> URL?, reports: @escaping @MainActor () -> [SessionReport],
+                environment: @escaping @Sendable () -> [String: String] = { [:] }) {
         self.socketPath = socketPath
         self.daemonDir = daemonDir
         self.findPython = findPython
         self.reports = reports
+        self.environment = environment
     }
 
     /// Looks for Python off the main thread — a login shell and a check per candidate — then starts
@@ -94,6 +98,22 @@ public final class DaemonLink: ObservableObject {
     public func markSeen(task: UUID) {
         guard let client else { return }
         Task { _ = try? await client.markSeen(task: task) }
+    }
+
+    /// Starts `alias`'s tunnel with the login environment, read off the main thread — the first
+    /// read asks a login shell. Its state comes back as `tunnel.changed`.
+    public func startTunnel(alias: String) {
+        guard let client else { return }
+        let environment = self.environment
+        Task {
+            let variables = await BackgroundWork.run { environment() }
+            _ = try? await client.startTunnel(alias: alias, environment: variables)
+        }
+    }
+
+    public func stopTunnel(alias: String) {
+        guard let client else { return }
+        Task { _ = try? await client.stopTunnel(alias: alias) }
     }
 
     func supervisorChanged(_ state: DaemonSupervisor.State) {

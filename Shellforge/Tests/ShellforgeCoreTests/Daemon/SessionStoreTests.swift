@@ -43,6 +43,19 @@ import Testing
         #expect(store.sessions.keys.sorted() == ["b"])
     }
 
+    /// Each tunnel's state, from the snapshot and then from every change the daemon broadcasts.
+    @Test func tunnelEventsKeepTheirStateCurrent() {
+        var store = SessionStore()
+        var snapshot = DaemonSnapshot(protocolVersion: 1, connected: true, sessions: [], usage: .empty)
+        snapshot.tunnels = [TunnelInfo(alias: "db", state: .up, error: nil, since: 1)]
+        store.apply(.snapshot(snapshot))
+        #expect(store.tunnels["db"]?.state == .up)
+        store.apply(.tunnelChanged(TunnelInfo(alias: "db", state: .failed, error: "bind: Address already in use", since: 2)))
+        store.apply(.tunnelChanged(TunnelInfo(alias: "cache", state: .connecting, error: nil, since: 3)))
+        #expect(store.tunnels["db"] == TunnelInfo(alias: "db", state: .failed, error: "bind: Address already in use", since: 2))
+        #expect(store.tunnels.keys.sorted() == ["cache", "db"])
+    }
+
     @Test func aTaskShowsItsMostUrgentTab() {
         let task = UUID()
         var store = SessionStore()

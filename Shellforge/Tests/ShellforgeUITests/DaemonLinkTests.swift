@@ -150,6 +150,26 @@ import Testing
         })
     }
 
+    /// A tunnel starts with the login shell's environment — the daemon has no `SSH_AUTH_SOCK` or
+    /// `PATH` of its own — and stops by its alias.
+    @Test func tunnelsStartWithTheLoginEnvironmentAndStopByAlias() async throws {
+        let server = server()
+        let link = DaemonLink(socketPath: server.path, daemonDir: nil, findPython: { nil }, reports: { [] },
+                              environment: { ["PATH": "/opt/bin", "SSH_AUTH_SOCK": "/tmp/agent"] })
+        defer { link.shutdown(); server.stop() }
+        link.supervisorChanged(.listening(pid: 1))
+        #expect(await eventually { link.status == .connected })
+        link.startTunnel(alias: "db")
+        link.stopTunnel(alias: "db")
+        func sent(_ method: String) -> [String: Any]? {
+            server.received.first { $0["method"] as? String == method }?["params"] as? [String: Any]
+        }
+        #expect(await eventually { sent("tunnels.start") != nil && sent("tunnels.stop") != nil })
+        #expect(sent("tunnels.start")?["alias"] as? String == "db")
+        #expect(sent("tunnels.start")?["environment"] as? [String: String] == ["PATH": "/opt/bin", "SSH_AUTH_SOCK": "/tmp/agent"])
+        #expect(sent("tunnels.stop")?["alias"] as? String == "db")
+    }
+
     /// The daemon's answer to `sessions.update`, as a fake server gives it.
     private func rejectingServer(code: String) -> FakeSocketServer {
         let server = FakeSocketServer(path: "/tmp/sf-link-\(UUID().uuidString.prefix(8)).sock")

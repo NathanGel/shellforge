@@ -67,7 +67,7 @@ final class iTermShellforgeSidebar: NSObject {
     @objc static func makeView(for windowController: PseudoTerminal) -> NSView {
         let host = iTermShellforgeHost(windowController: windowController)
         let model = SidebarModel(host: host, document: document, launcher: launcher, feed: link,
-                                 agents: AgentPresets.all, catalogue: { try catalogue.models(for: $0) })
+                                 agents: AgentPresets.all, catalogue: { try catalogue.models(for: $0) }, sshConfig: .user)
         model.prompter = ModalPrompter()
         sidebars.add(model)
         return ShellforgeSidebar.makeView(model: model, chooseFolder: FolderChooser.choose, hooks: hooks, machine: machine,
@@ -157,10 +157,12 @@ final class iTermShellforgeHost: TerminalHost {
         return closed
     }
 
-    func openTab(in directory: String, taskId: UUID, projectId: UUID, title: String, command: String?) {
+    /// The tunnels' ports are exported before the command, in the line typed into the shell: an
+    /// iTerm2 profile has no environment of its own to carry them.
+    func openTab(in directory: String, taskId: UUID, projectId: UUID, title: String, command: String?, environment: [String: String]) {
         guard let windowController, let base = ProfileModel.sharedInstance()?.defaultBookmark() else { return }
         let profile = iTermShellforgeSidebar.taskTabProfile(base: base, directory: directory,
-                                                            initialText: command.map(TabCommand.initialText))
+                                                            initialText: TabCommand.exporting(environment, then: command).map(TabCommand.initialText))
         iTermSessionLauncher.launchBookmark(profile, in: windowController, style: .tab, withURL: nil,
                                             hotkeyWindowType: .none, makeKey: true, canActivate: true,
                                             respectTabbingMode: false, index: nil, command: nil,
@@ -179,7 +181,8 @@ extension iTermShellforgeSidebar {
     /// that folder is the daemon's PYTHONPATH, and iTerm2's own scripts sit at the top of Resources.
     static let link = DaemonLink(daemonDir: Bundle.main.resourceURL?.appendingPathComponent("daemon"),
                                  findPython: { PythonFinder.find(launcher: launcher).map(URL.init(fileURLWithPath:)) },
-                                 reports: { allReports() })
+                                 reports: { allReports() },
+                                 environment: { launcher.environment.variables })
     private static var tick: Timer?
 
     /// Starts the helper and the report tick; both stop at iTermApplicationWillTerminate.

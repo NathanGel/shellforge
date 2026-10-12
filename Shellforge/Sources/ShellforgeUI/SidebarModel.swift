@@ -12,8 +12,9 @@ public protocol TerminalHost: AnyObject {
     var onChange: (@MainActor () -> Void)? { get set }
     func select(tab id: String)
     /// Opens a tab in `directory`, running the login shell, tagged with the task and project, and
-    /// selects it. `command` is typed into its shell once it starts: the task's agent.
-    func openTab(in directory: String, taskId: UUID, projectId: UUID, title: String, command: String?)
+    /// selects it. `command` is typed into its shell once it starts: the task's agent. `environment`
+    /// is set in that shell first: the project's running tunnels' ports.
+    func openTab(in directory: String, taskId: UUID, projectId: UUID, title: String, command: String?, environment: [String: String])
     /// Closes every tab tagged with the task, in every window — what removing it starts with. True
     /// once none is left open.
     func closeTabs(ofTask id: UUID) -> Bool
@@ -32,6 +33,8 @@ public protocol SessionFeed: AnyObject {
     var statusPublisher: AnyPublisher<HelperStatus, Never> { get }
     var storePublisher: AnyPublisher<SessionStore, Never> { get }
     func markSeen(task: UUID)
+    func startTunnel(alias: String)
+    func stopTunnel(alias: String)
 }
 
 /// The sidebar's state for one window: the shared workspace, this window's tabs, and which task is
@@ -76,8 +79,16 @@ public final class SidebarModel: ObservableObject {
     let gitLabSettings: @Sendable () -> GitLabConfig?
     let gitHubSettings: @Sendable () -> GitHubConfig?
     private var subscription: AnyCancellable?
-    private let feed: SessionFeed?
+    let feed: SessionFeed?
     private var feedSubscriptions: [AnyCancellable] = []
+
+    // -- tunnels (SidebarModel+Tunnels.swift) --
+    let sshConfig: SSHConfigSource
+    /// The config's hosts by alias, as last read; nil until a project with tunnels asks for them.
+    @Published public internal(set) var sshHosts: [String: SSHHost]?
+    var readingSSH = false
+    /// The `.onLaunch` tunnels asked of the helper now connected; emptied when it goes.
+    var launchRequested: Set<String> = []
     /// The tab selected at the last refresh: moving to another is opening it.
     private var lastSelectedTab: String?
 
@@ -86,8 +97,10 @@ public final class SidebarModel: ObservableObject {
                 catalogue: @escaping @Sendable (AgentDefinition) throws -> [AgentModel] = { _ in [] },
                 jiraSettings: @escaping @Sendable () -> JiraConfig? = { JiraSettings.load() },
                 gitLabSettings: @escaping @Sendable () -> GitLabConfig? = { GitLabSettings.load() },
-                gitHubSettings: @escaping @Sendable () -> GitHubConfig? = { GitHubSettings.load() }) {
+                gitHubSettings: @escaping @Sendable () -> GitHubConfig? = { GitHubSettings.load() },
+                sshConfig: SSHConfigSource = .none) {
         self.host = host
+        self.sshConfig = sshConfig
         self.jiraSettings = jiraSettings
         self.gitLabSettings = gitLabSettings
         self.gitHubSettings = gitHubSettings
@@ -110,7 +123,12 @@ public final class SidebarModel: ObservableObject {
         if let feed {
             feedSubscriptions = [
                 feed.storePublisher.sink { [weak self] store in MainActor.assumeIsolated { self?.take(store) } },
-                feed.statusPublisher.sink { [weak self] status in MainActor.assumeIsolated { self?.helper = status } },
+                feed.statusPublisher.sink { [weak self] status in
+                    MainActor.assumeIsolated {
+                        self?.helper = status
+                        self?.autoStartOnLaunch()
+                    }
+                },
             ]
         }
         refresh()
@@ -178,7 +196,8 @@ public final class SidebarModel: ObservableObject {
             if let i = workspace.projects.firstIndex(where: { $0.id == projectId }) { workspace.projects[i].collapsed = false }
         }
         selectedTaskId = made.0.id
-        host.openTab(in: made.0.worktreePath, taskId: made.0.id, projectId: projectId, title: made.0.title, command: made.1)
+        host.openTab(in: made.0.worktreePath, taskId: made.0.id, projectId: projectId, title: made.0.title, command: made.1,
+                     environment: openingTaskTab(in: projectId))
     }
 
     // -- New Review ----------------------------------------------------------------------
@@ -229,7 +248,8 @@ public final class SidebarModel: ObservableObject {
             if let i = workspace.projects.firstIndex(where: { $0.id == projectId }) { workspace.projects[i].collapsed = false }
         }
         selectedTaskId = made.0.id
-        host.openTab(in: made.0.worktreePath, taskId: made.0.id, projectId: projectId, title: made.0.title, command: made.1)
+        host.openTab(in: made.0.worktreePath, taskId: made.0.id, projectId: projectId, title: made.0.title, command: made.1,
+                     environment: openingTaskTab(in: projectId))
     }
 
     /// Shows the task: its first open tab, or a new one in its worktree when none is open.
@@ -238,7 +258,8 @@ public final class SidebarModel: ObservableObject {
         guard let tab = node.tabs.first else {
             selectedTaskId = id
             // A shell, as AiTerm's New Terminal: the agent ran once, in the task's first tab.
-            host.openTab(in: node.task.worktreePath, taskId: id, projectId: node.task.projectId, title: node.task.title, command: nil)
+            host.openTab(in: node.task.worktreePath, taskId: id, projectId: node.task.projectId, title: node.task.title, command: nil,
+                         environment: openingTaskTab(in: node.task.projectId))
             return
         }
         if tab.id == host.selectedTabId {
@@ -257,6 +278,7 @@ public final class SidebarModel: ObservableObject {
 
     private func refresh(_ workspace: Workspace? = nil) {
         tree = SidebarTree.build(workspace ?? document.workspace, tabs: host.tabs)
+        refreshSSHHosts(tree.projects.map(\.project))
         contexts.prune(keeping: Set(tree.projects.flatMap(\.tasks).map { FooterRow.task($0.id) } + tree.otherTabs.map { FooterRow.tab($0.tabId) }))
         detectProviders(tree.projects.map(\.project))
         // Follow iTerm2: whatever tab is selected decides the task shown.
@@ -287,6 +309,7 @@ public final class SidebarModel: ObservableObject {
         // A snapshot only fills what is not known yet, so seeding on every update is safe.
         contexts.seed(from: Array(store.sessions.values), row: row)
         sessions = store
+        autoStartOnLaunch()
     }
 
     /// A session's footer row, read against `store` — the update being taken, so a pane that appears
@@ -349,6 +372,7 @@ public final class SidebarModel: ObservableObject {
         for node in tree.projects {
             rows.append(.project(node, collapsed: node.project.collapsed))
             guard !node.project.collapsed else { continue }
+            rows += tunnelRows(of: node.project).map(SidebarRow.tunnel)
             for task in node.tasks {
                 let listsTabs = task.id == selectedTaskId && task.tabs.count > 1
                 let ownsCurrent = task.tabs.contains { $0.id == current }

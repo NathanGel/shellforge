@@ -24,10 +24,14 @@ enum SettingsTone: Equatable {
 /// meaning each. `size` is points on screen — a card passes `Size.statusMarkSmall`, the footer
 /// `scale(Size.statusMarkSmall)`.
 struct ToneDot: View {
-    let tone: SettingsTone
+    let color: Color
     let size: CGFloat
 
+    init(tone: SettingsTone, size: CGFloat) { color = tone.color; self.size = size }
+    /// A tunnel row's state, which has a failure the three tones do not.
+    init(color: Color, size: CGFloat) { self.color = color; self.size = size }
+
     var body: some View {
-        Circle().fill(tone.color).frame(width: size, height: size)
+        Circle().fill(color).frame(width: size, height: size)
     }
 }

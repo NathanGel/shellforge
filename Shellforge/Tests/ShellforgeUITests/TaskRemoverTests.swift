@@ -51,7 +51,7 @@ import Testing
         let project = try #require(document.workspace.projects.first)
         let task = try TaskWorktrees.create(title: "Fix login", in: project, base: "main", launcher: repo.launcher)
         try document.update { $0.tasks.append(task) }
-        host.openTab(in: task.worktreePath, taskId: task.id, projectId: project.id, title: "claude", command: nil)
+        host.openTab(in: task.worktreePath, taskId: task.id, projectId: project.id, title: "claude", command: nil, environment: [:])
         return Setup(sidebar: sidebar, host: host, prompter: prompter, repo: repo, document: document, task: task)
     }
 
