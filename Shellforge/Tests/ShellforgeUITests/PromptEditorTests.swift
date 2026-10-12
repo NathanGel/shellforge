@@ -200,6 +200,27 @@ import Testing
         #expect(text.value == "draw $imagegen ")
     }
 
+    /// An emoji before the token is two UTF-16 units and one Character: the editor converts the
+    /// caret one way and the token's range back, and replaces exactly `/bra`.
+    @Test func acceptConvertsBetweenUTF16AndCharacters() throws {
+        let text = TextBox()
+        let completions = PromptCompletions()
+        completions.all = [AgentCompletion(name: "brainstorming", kind: .skill, detail: nil, source: .user)]
+        let editor = PromptEditor(text: Binding(get: { text.value }, set: { text.value = $0 }),
+                                  agentId: "claude", completions: completions)
+            .frame(width: 420, height: 150)
+        let host = NSHostingView(rootView: editor)
+        host.frame = NSRect(x: 0, y: 0, width: 420, height: 150)
+        host.layoutSubtreeIfNeeded()
+
+        let textView = try #require(descendant(of: NSScrollView.self, in: host)?.documentView as? NSTextView)
+        let delegate = try #require(textView.delegate)
+        textView.insertText("😀 /bra", replacementRange: textView.selectedRange())
+        #expect(completions.isOpen)
+        #expect(delegate.textView?(textView, doCommandBy: #selector(NSResponder.insertNewline(_:))) == true)
+        #expect(text.value == "😀 /brainstorming ")
+    }
+
     @Test func popupKeepsItsCaretPositionWhenItFits() {
         #expect(CompletionPopup.leading(anchorX: 12, width: 200, fieldWidth: 420) == 12)
         #expect(CompletionPopup.leading(anchorX: 300, width: 200, fieldWidth: 420) == 220)
@@ -279,5 +300,23 @@ import Testing
         #expect(!NewTaskSheet.closeList(step: 3, completions: completions), "the next ⎋ goes back a step")
         completions.visible = completions.all
         #expect(!NewTaskSheet.closeList(step: 1, completions: completions), "no popup on the task step")
+    }
+
+    /// The popup opens only with the caret at a word's end: accepting mid-word would leave the rest
+    /// of the word behind ("/brainstorming rain").
+    @Test func aCaretMidWordOpensNoPopup() {
+        #expect(SkillCatalog.trigger(in: "/brain", caret: 2) == nil)
+        #expect(SkillCatalog.trigger(in: "/brain more", caret: 2) == nil)
+        #expect(SkillCatalog.trigger(in: "/brain more", caret: 6)?.query == "brain")
+        #expect(SkillCatalog.trigger(in: "/brain", caret: 6)?.query == "brain")
+    }
+
+    /// Leaving the prompt step — Back, or Continue past it — closes the popup, so coming back finds
+    /// no stale list and ↩ is a newline again.
+    @Test func leavingThePromptStepClosesThePopup() {
+        let completions = PromptCompletions()
+        completions.visible = [AgentCompletion(name: "brainstorming", kind: .skill, detail: nil, source: .user)]
+        NewTaskSheet.leave(step: 3, completions: completions)
+        #expect(!completions.isOpen)
     }
 }

@@ -11,7 +11,8 @@ import Testing
                        submit: @escaping @MainActor (TaskDraft) async throws -> Void = { _ in }) -> NewTaskModel {
         NewTaskModel(project: project, agents: AgentPresets.all, available: available,
                      draft: TaskDraft(baseBranch: "main", agentId: "claude", model: "", reasoning: nil),
-                     rememberedModels: [:], catalogue: { [opus] _ in [opus] }, branches: { ["main"] }, submit: submit)
+                     rememberedModels: [:], catalogue: { [opus] _ in [opus] }, branches: { ["main"] }, submit: submit,
+                     home: FileManager.default.temporaryDirectory.appendingPathComponent("nt-home-\(UUID().uuidString)"))
     }
 
     @Test func theFirstStepNeedsOnlyAName() async {
@@ -91,5 +92,14 @@ import Testing
         await sheet.loadCatalogue()
         #expect(sheet.completions.all.map(\.name) == ["imagegen"])
         #expect(!sheet.completions.isOpen)
+    }
+
+    /// Switching agent drops the old agent's list at once, not when the new one has loaded.
+    @Test func switchingAgentDropsTheOldListAtOnce() {
+        let sheet = model()
+        sheet.completions.all = [AgentCompletion(name: "brainstorming", kind: .skill, detail: nil, source: .user)]
+        sheet.completions.visible = sheet.completions.all
+        sheet.selectAgent("codex")
+        #expect(!sheet.completions.isOpen && sheet.completions.all.isEmpty)
     }
 }

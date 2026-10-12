@@ -259,7 +259,8 @@ import Foundation
         #expect(SkillCatalog.trigger(in: "do it /rev", caret: 10)?.query == "rev")
         #expect(SkillCatalog.trigger(in: "http://x", caret: 8) == nil, "a slash inside a word is not a command")
         #expect(SkillCatalog.trigger(in: "/bra more", caret: 9) == nil, "the caret has left the token")
-        #expect(SkillCatalog.trigger(in: "/bra", caret: 2)?.query == "b", "only the text up to the caret is the query")
+        // Shellforge: mid-word offers nothing (AiTerm offered "b"); see aCaretMidWordOpensNoPopup.
+        #expect(SkillCatalog.trigger(in: "/bra", caret: 2) == nil, "a pick mid-word would leave the rest of the word")
         // The token's range is what gets replaced when a completion is picked.
         let t = SkillCatalog.trigger(in: "hi /rev", caret: 7)
         #expect(t?.range == 3..<7)

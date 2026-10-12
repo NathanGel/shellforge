@@ -5,7 +5,7 @@ import SwiftUI
 
 /// AiTerm's New Task sheet: Task, Agent and Prompt, the step bar, the command preview under every
 /// step past the first, the destination line that ends steps 1 and 3, and the footer. Its Jira
-/// ticket field (M1d) and the prompt's completions (M1c-3d) are not here yet.
+/// ticket field arrives with M1d.
 struct NewTaskSheet: View {
     @ObservedObject var model: NewTaskModel
     let dismiss: @MainActor () -> Void
@@ -106,6 +106,11 @@ struct NewTaskSheet: View {
         return true
     }
 
+    /// Leaving `step`: the prompt step's popup goes with it.
+    static func leave(step: Int, completions: PromptCompletions) {
+        if step == 3 { completions.close() }
+    }
+
     enum BackMove: Equatable { case step(Int), dismiss, stay }
 
     /// ⎋ and Back are one move: a step back, or the sheet closed from the first step — never while
@@ -117,7 +122,7 @@ struct NewTaskSheet: View {
 
     private func back() {
         switch Self.back(from: step, creating: model.creating) {
-        case .step(let previous): step = previous
+        case .step(let previous): Self.leave(step: step, completions: model.completions); step = previous
         // A turn later, as AiTerm's `afterThisEvent`: the panel is not closed under the event.
         case .dismiss: Task { @MainActor in dismiss() }
         case .stay: break
@@ -128,6 +133,7 @@ struct NewTaskSheet: View {
     /// `canAdvance` gates both.
     private func advance() {
         if step == 3 { create(); return }
+        Self.leave(step: step, completions: model.completions)
         step += 1
     }
 

@@ -313,10 +313,13 @@ public enum SkillCatalog {
 
     /// The token the caret sits in, when it is a command token: it starts at the beginning of a
     /// word, opens with `/`, and has no whitespace in it. `range` covers the `/` and the typed
-    /// query, which is what a picked completion replaces.
+    /// query, which is what a picked completion replaces. Only with the caret at the token's end:
+    /// a pick mid-word would leave the rest of the word behind ("/brainstorming rain"), so there
+    /// Shellforge offers none, where AiTerm did.
     public static func trigger(in text: String, caret: Int) -> CompletionTrigger? {
         let chars = Array(text)
         guard caret >= 0, caret <= chars.count else { return nil }
+        guard caret == chars.count || chars[caret].isWhitespace else { return nil }
         var start = caret
         while start > 0, !chars[start - 1].isWhitespace { start -= 1 }
         guard start < caret, chars[start] == trigger else { return nil }

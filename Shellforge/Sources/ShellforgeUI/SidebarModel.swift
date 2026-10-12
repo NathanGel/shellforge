@@ -121,7 +121,8 @@ public final class SidebarModel: ObservableObject {
         return NewTaskModel(project: project, agents: agents, available: available, draft: draft,
                             rememberedModels: document.workspace.lastModelByAgent, catalogue: catalogue,
                             branches: { Repository.branches(of: path, launcher: launcher) },
-                            submit: { [weak self] draft in try await self?.newTask(draft: draft, in: projectId) })
+                            submit: { [weak self] draft in try await self?.newTask(draft: draft, in: projectId) },
+                            home: FileManager.default.homeDirectoryForCurrentUser)
     }
 
     /// AiTerm's create: the worktree on the draft's branch, the agent's command (its first prompt

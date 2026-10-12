@@ -64,7 +64,7 @@ public final class NewTaskModel: ObservableObject, Identifiable {
                 catalogue: @escaping @Sendable (AgentDefinition) throws -> [AgentModel],
                 branches: @escaping @Sendable () -> [String],
                 submit: @escaping @MainActor (TaskDraft) async throws -> Void,
-                home: URL = FileManager.default.homeDirectoryForCurrentUser) {
+                home: URL) {
         self.home = home
         self.project = project
         self.agents = agents
@@ -113,6 +113,9 @@ public final class NewTaskModel: ObservableObject, Identifiable {
     public func selectAgent(_ id: String) {
         guard id != draft.agentId else { return }
         draft.agentId = id
+        // The old agent's list goes now, not when the new one has loaded.
+        completions.all = []
+        completions.close()
         models = []
         catalogueLoaded = false
         catalogueFailure = nil
