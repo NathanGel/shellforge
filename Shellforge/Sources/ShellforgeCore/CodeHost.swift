@@ -1,4 +1,4 @@
-// Ported from AiTerm (app/Sources/AiTermCore/CodeHost.swift), GPLv3, Laurens D'Hondt.
+// Ported from AiTerm (app/Sources/AiTermCore/CodeHost.swift and Models.swift: MergeRequestRef), GPLv3, Laurens D'Hondt.
 import Foundation
 
 /// The service a release, a merge request or a pull request lives on, as copy names it. GitLab is
@@ -37,4 +37,15 @@ public struct MergeRequest: Equatable, Sendable, Identifiable {
     public var host: CodeHost { CodeHost(webURL: url) }
     /// `!87` for GitLab, `#87` for GitHub.
     public var reference: String { host.reference(iid) }
+}
+
+/// The merge request a review task keeps (AiTerm's `Models.swift`): its number, title and page.
+public struct MergeRequestRef: Codable, Equatable, Sendable {
+    public var iid: Int, title: String, url: String
+    public init(iid: Int, title: String, url: String) { self.iid = iid; self.title = title; self.url = url }
+}
+
+public extension MergeRequestRef {
+    var host: CodeHost { CodeHost(webURL: url) }
+    var reference: String { host.reference(iid) }
 }
