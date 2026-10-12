@@ -38,7 +38,7 @@ public struct EnvironmentReport: Equatable, Sendable {
 
 /// The rc files a login shell reads — `~/.zshenv`, `~/.zprofile`, `~/.zshrc` — watched by their
 /// modification dates, so a tool installed and put on PATH is found without a relaunch. A file
-/// created or deleted counts as a change.
+/// created or deleted counts as a change; a linked file is judged by its target.
 public struct RCFiles: Sendable {
     public static let names = [".zshenv", ".zprofile", ".zshrc"]
     private let files: [URL]
@@ -50,7 +50,8 @@ public struct RCFiles: Sendable {
 
     /// Whether any of them changed since the last call; the first call only looks.
     public mutating func changed() -> Bool {
-        let now = files.map { (try? FileManager.default.attributesOfItem(atPath: $0.path))?[.modificationDate] as? Date }
+        // Through a link to its target: a dotfile manager's ~/.zshrc is a link, and the edit is there.
+        let now = files.map { (try? FileManager.default.attributesOfItem(atPath: $0.resolvingSymlinksInPath().path))?[.modificationDate] as? Date }
         defer { last = now }
         guard let last else { return false }
         return now != last

@@ -40,8 +40,8 @@ import Testing
     @Test func aLoginShellEnvironmentWarnsNothing() async throws {
         let launcher = CommandLauncher(resolve: { ResolvedEnvironment(variables: ["PATH": "/usr/bin"], source: .loginShell("/bin/zsh")) })
         let sidebar = model(launcher)
-        try await Task.sleep(for: .milliseconds(200))
+        #expect(await eventually { launcher.readAt != nil }, "the environment was read at start, off the main actor")
+        try await Task.sleep(for: .milliseconds(50))
         #expect(sidebar.environmentWarning == nil)
-        #expect(launcher.readAt != nil, "the environment was read at start, off the main actor")
     }
 }

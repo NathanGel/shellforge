@@ -96,6 +96,19 @@ import Testing
         #expect(!changed4, "once per change")
     }
 
+    /// A dotfile manager (stow, chezmoi, yadm) makes `~/.zshrc` a link: the edited file is its target.
+    @Test func anEditedLinkedRCFileIsAChange() throws {
+        let home = try folder("home"), dotfiles = try folder("dotfiles")
+        let target = dotfiles.appendingPathComponent("zshrc")
+        try "export A=1\n".write(to: target, atomically: true, encoding: .utf8)
+        try FileManager.default.createSymbolicLink(atPath: home.appendingPathComponent(".zshrc").path, withDestinationPath: target.path)
+        var files = RCFiles(home: home)
+        _ = files.changed()
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(60)], ofItemAtPath: target.path)
+        let changed = files.changed()
+        #expect(changed)
+    }
+
     @Test func aCreatedOrDeletedFileIsAChange() throws {
         let home = try folder("home")
         var files = RCFiles(home: home)
