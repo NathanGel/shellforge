@@ -265,8 +265,9 @@ links (proposal E2, 8 Oct 2026): the first linked project's key, which opens tha
 when it links more — `Space.snug` after it a boxed `+n` `Badge`, as `BranchLabelView` counts a
 window's other branches. The `+n` opens a menu of every project, the first included — `KEY — Name`
 in the order they were linked, each opening its own — then "Jira Projects…", greyed while the
-workspace is locked. The `+n` stays when Settings › Interface turns the project key off, since it is
-not a key; its tooltip names every project and VoiceOver the rest ("2 more Jira projects: PAY and
+workspace is locked (Shellforge has no lock yet, so it is always enabled). The `+n` stays when
+Settings › Interface turns the project key off, since it is not a key (Shellforge has no Interface
+tab yet; the key always shows); its tooltip names every project and VoiceOver the rest ("2 more Jira projects: PAY and
 WEB"). `ProjectJiraBadge` decides all of it, tested without rendering; `ProjectJiraBadgeView` draws
 it. One mark per row, so linking projects takes little of the name's room.
 
