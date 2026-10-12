@@ -51,14 +51,20 @@ public final class SidebarModel: ObservableObject {
     @Published public private(set) var helper: HelperStatus = .starting
     /// Where each project's code lives, for its row's mark; read from git off the main thread.
     @Published public private(set) var providers: [UUID: Provider] = [:]
+    /// Each task row's removal: running, or why the last one stopped. Set by `confirmRemove`.
+    @Published public internal(set) var removals: [UUID: RowRemoval] = [:]
+    /// Where Remove asks its questions; the app hands in `ModalPrompter`, tests a script.
+    public var prompter: Prompter = NullPrompter()
+    /// The tasks whose Remove is asking its first question.
+    var asking: Set<UUID> = []
     /// How many projects' providers have been looked up, for the test that holds it to one each.
     private(set) var providerLookups = 0
     /// Projects whose provider is being looked up now.
     private var detecting: Set<UUID> = []
 
-    private let host: TerminalHost
-    private let document: WorkspaceDocument
-    private let launcher: CommandLauncher
+    let host: TerminalHost
+    let document: WorkspaceDocument
+    let launcher: CommandLauncher
     /// The agents New Task offers.
     public let agents: [AgentDefinition]
     /// An agent's model list, read off the main actor.

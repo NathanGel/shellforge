@@ -126,7 +126,9 @@ struct SidebarView: View {
                 .listRowSeparator(.hidden)
         case .task(let node, let selected):
             TaskRowView(node: node, selected: selected, agents: model.avatars(forTask: node.id),
-                        status: model.status(ofTask: node.id), activate: { model.select(task: node.id) })
+                        status: model.status(ofTask: node.id), removal: model.removals[node.id],
+                        activate: { model.select(task: node.id) },
+                        remove: { Task { await model.confirmRemove(taskId: node.id) } })
                 .listRowSeparator(.hidden)
         case .tab(let tab, let selected):
             TabRowView(tab: tab, selected: selected, agents: model.avatars(forTab: tab.id),

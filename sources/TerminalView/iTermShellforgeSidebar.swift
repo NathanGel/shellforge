@@ -68,6 +68,7 @@ final class iTermShellforgeSidebar: NSObject {
         let host = iTermShellforgeHost(windowController: windowController)
         let model = SidebarModel(host: host, document: document, launcher: launcher, feed: link,
                                  agents: AgentPresets.all, catalogue: { try catalogue.models(for: $0) })
+        model.prompter = ModalPrompter()
         sidebars.add(model)
         return ShellforgeSidebar.makeView(model: model, chooseFolder: FolderChooser.choose, hooks: hooks, machine: machine,
                                           backpack: backpack, showBackpack: { [weak windowController] present in

@@ -100,7 +100,10 @@ struct TaskRowView: View {
     let selected: Bool
     let agents: [SessionAgent]
     let status: SessionState
+    /// Its removal, running or stopped; nil when none.
+    var removal: RowRemoval? = nil
     let activate: () -> Void
+    var remove: () -> Void = {}
     @Environment(\.interfaceScale) private var scale
 
     var body: some View {
@@ -109,15 +112,20 @@ struct TaskRowView: View {
                 AvatarGroupView(group: Self.marks(agents))
                 VStack(alignment: .leading, spacing: scale(Space.tight)) {
                     RowTitle(node.task.title)
-                    // The ticket, then the branch — the branch last because it is the one thing that
-                    // truncates. Quiet badges carry no box, so `Space.gap` is what keeps them apart.
-                    HStack(spacing: scale(Space.gap)) {
-                        if let ticket = TaskTicketBadge(jira: node.task.jira) {
-                            Badge(ticket.label, icon: .brand(Palette.jira), help: ticket.help, style: .quiet,
-                                  action: ticket.url.map { url in { ExternalLink.open(url) } })
+                    // A removal says so in the badge line's place and at its height, so the row keeps its own.
+                    if let caption = Self.caption(removal) {
+                        RowCaption(caption.text, warns: caption.warns).frame(height: scale(Size.chip))
+                    } else {
+                        // The ticket, then the branch — the branch last because it is the one thing that
+                        // truncates. Quiet badges carry no box, so `Space.gap` is what keeps them apart.
+                        HStack(spacing: scale(Space.gap)) {
+                            if let ticket = TaskTicketBadge(jira: node.task.jira) {
+                                Badge(ticket.label, icon: .brand(Palette.jira), help: ticket.help, style: .quiet,
+                                      action: ticket.url.map { url in { ExternalLink.open(url) } })
+                            }
+                            BranchLabelView(label: BranchLabel(name: node.task.branch, extra: 0, drifted: false, detail: ""))
+                                .layoutPriority(1)
                         }
-                        BranchLabelView(label: BranchLabel(name: node.task.branch, extra: 0, drifted: false, detail: ""))
-                            .layoutPriority(1)
                     }
                 }
                 Spacer(minLength: scale(Space.tight))
@@ -127,6 +135,18 @@ struct TaskRowView: View {
         }
         .accessibilityLabel(node.task.title)
         .accessibilityValue(status.label)
+        .contextMenu {
+            Button("Remove Task…", role: .destructive, action: remove).disabled(removal == .removing)
+        }
+    }
+
+    /// What the row says of its removal: "Removing…" while it runs, why it stopped after.
+    static func caption(_ removal: RowRemoval?) -> (text: String, warns: Bool)? {
+        switch removal {
+        case nil: nil
+        case .removing: ("Removing…", false)
+        case .stopped(let note): (note, true)
+        }
     }
 
     /// AiTerm's task row: the agents it was told of, and none when there are none.
