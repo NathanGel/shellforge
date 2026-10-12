@@ -145,6 +145,17 @@ final class iTermShellforgeHost: TerminalHost {
         onChange?()
     }
 
+    /// Every window's tabs, not only this one's: a task's tabs can be anywhere. `closeTab:` closes
+    /// without asking, as AiTerm's removal closes the task's window.
+    func closeTabs(ofTask id: UUID) -> Bool {
+        let windows = (iTermController.sharedInstance()?.terminals() ?? []) as [PseudoTerminal]
+        let closed = TaskTabs.close(taskId: id, in: windows, tabs: { $0.tabs() }, paneTags: { tab in
+            tab.sessions().map { $0.genericScope.value(forVariableName: ShellforgeTags.task) as? String }
+        }, close: { window, tab in window.close(tab) })
+        onChange?()
+        return closed
+    }
+
     func openTab(in directory: String, taskId: UUID, projectId: UUID, title: String, command: String?) {
         guard let windowController, let base = ProfileModel.sharedInstance()?.defaultBookmark() else { return }
         let profile = iTermShellforgeSidebar.taskTabProfile(base: base, directory: directory,

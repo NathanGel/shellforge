@@ -28,6 +28,18 @@ import Testing
         onChange?()
     }
 
+    /// The tasks whose tabs were asked to close, and whether they then did.
+    var closedTasks: [UUID] = []
+    var closesTabs = true
+
+    func closeTabs(ofTask id: UUID) -> Bool {
+        closedTasks.append(id)
+        guard closesTabs else { return false }
+        tabs.removeAll { $0.taskId == id }
+        onChange?()
+        return true
+    }
+
     /// iTerm2 switching tabs on its own, as Cmd-Shift-] does.
     func userSwitched(to id: String) {
         selectedTabId = id

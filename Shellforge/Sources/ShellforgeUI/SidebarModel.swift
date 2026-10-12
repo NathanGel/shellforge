@@ -14,6 +14,9 @@ public protocol TerminalHost: AnyObject {
     /// Opens a tab in `directory`, running the login shell, tagged with the task and project, and
     /// selects it. `command` is typed into its shell once it starts: the task's agent.
     func openTab(in directory: String, taskId: UUID, projectId: UUID, title: String, command: String?)
+    /// Closes every tab tagged with the task, in every window — what removing it starts with. True
+    /// once none is left open.
+    func closeTabs(ofTask id: UUID) -> Bool
 }
 
 /// The draft's agent's CLI was not on the login shell's `PATH` when Create ran.
