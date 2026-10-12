@@ -63,11 +63,19 @@ public struct TaskItem: Codable, Equatable, Sendable, Identifiable {
     public var reasoning: String?
     /// The Jira ticket the task was made from.
     public var jira: JiraRef?
+    /// The merge request a review was made from.
+    public var mr: MergeRequestRef?
+    /// Assigning one replaces what the file had: the new value is what is saved from then on.
+    public var kind: TaskKind { didSet { savedKind = kind.rawValue } }
     public var createdAt: Date
+    /// `kind` as the file has it, written back as it was: none for a task saved without one, and a
+    /// raw value a newer build saved, which this build reads as `.task`.
+    private var savedKind: String?
 
+    /// A `.task` is made with no `kind` to save, as every task has been: only a review is stamped.
     public init(id: UUID = UUID(), projectId: UUID, title: String, branch: String, worktreePath: String,
                 baseBranch: String, agent: String? = nil, model: String? = nil, reasoning: String? = nil,
-                jira: JiraRef? = nil, createdAt: Date = Date()) {
+                jira: JiraRef? = nil, kind: TaskKind = .task, mr: MergeRequestRef? = nil, createdAt: Date = Date()) {
         self.jira = jira
         self.id = id
         self.projectId = projectId
@@ -78,8 +86,68 @@ public struct TaskItem: Codable, Equatable, Sendable, Identifiable {
         self.agent = agent
         self.model = model
         self.reasoning = reasoning
+        self.kind = kind
+        self.mr = mr
         self.createdAt = createdAt
+        savedKind = kind == .task ? nil : kind.rawValue
     }
+
+    /// "Task" or "Review": what the row's menu and its alerts call it.
+    public var kindName: String { kind.displayName }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, projectId, title, branch, worktreePath, baseBranch, agent, model, reasoning, jira, kind, mr, createdAt
+    }
+
+    /// Written by hand, as AiTerm's is, so a `kind` this build has no case for is kept rather than
+    /// failing the whole workspace load.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        projectId = try c.decode(UUID.self, forKey: .projectId)
+        title = try c.decode(String.self, forKey: .title)
+        branch = try c.decode(String.self, forKey: .branch)
+        worktreePath = try c.decode(String.self, forKey: .worktreePath)
+        baseBranch = try c.decode(String.self, forKey: .baseBranch)
+        agent = try c.decodeIfPresent(String.self, forKey: .agent)
+        model = try c.decodeIfPresent(String.self, forKey: .model)
+        reasoning = try c.decodeIfPresent(String.self, forKey: .reasoning)
+        jira = try c.decodeIfPresent(JiraRef.self, forKey: .jira)
+        savedKind = try c.decodeIfPresent(String.self, forKey: .kind)
+        kind = savedKind.flatMap(TaskKind.init(rawValue:)) ?? .task
+        mr = try c.decodeIfPresent(MergeRequestRef.self, forKey: .mr)
+        createdAt = try c.decode(Date.self, forKey: .createdAt)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(projectId, forKey: .projectId)
+        try c.encode(title, forKey: .title)
+        try c.encode(branch, forKey: .branch)
+        try c.encode(worktreePath, forKey: .worktreePath)
+        try c.encode(baseBranch, forKey: .baseBranch)
+        try c.encodeIfPresent(agent, forKey: .agent)
+        try c.encodeIfPresent(model, forKey: .model)
+        try c.encodeIfPresent(reasoning, forKey: .reasoning)
+        try c.encodeIfPresent(jira, forKey: .jira)
+        try c.encodeIfPresent(savedKind, forKey: .kind)
+        try c.encodeIfPresent(mr, forKey: .mr)
+        try c.encode(createdAt, forKey: .createdAt)
+    }
+}
+
+/// Which of the two branch-shaped flows made a task; only `== .review` is ever tested. A task saved
+/// without one — every task is — reads as `.task`, and so does a raw value this build does not know;
+/// `TaskItem` keeps what the file had for the resave. AiTerm's `TaskKind`.
+public enum TaskKind: String, Codable, Equatable, Sendable {
+    case task, review
+    public init(from decoder: Decoder) throws {
+        self = TaskKind(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .task
+    }
+
+    /// The kind as copy names it — "Remove Review…" — capitalised, as a menu item has it.
+    public var displayName: String { self == .review ? "Review" : "Task" }
 }
 
 /// Everything the sidebar saves: projects in sidebar order, and their tasks.
