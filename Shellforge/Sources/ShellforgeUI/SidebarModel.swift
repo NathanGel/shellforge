@@ -122,6 +122,8 @@ public final class SidebarModel: ObservableObject {
                             rememberedModels: document.workspace.lastModelByAgent, catalogue: catalogue,
                             branches: { Repository.branches(of: path, launcher: launcher) },
                             submit: { [weak self] draft in try await self?.newTask(draft: draft, in: projectId) },
+                            // Read once, as the sheet opens: a Keychain read is too slow for every keystroke.
+                            searchIssues: NewTaskModel.jiraSearcher(jira: JiraSettings.load()),
                             home: FileManager.default.homeDirectoryForCurrentUser)
     }
 

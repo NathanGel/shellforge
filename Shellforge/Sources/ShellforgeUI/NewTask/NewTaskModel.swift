@@ -40,6 +40,13 @@ public final class NewTaskModel: ObservableObject, Identifiable {
     @Published public private(set) var catalogueFailure: String?
     @Published public private(set) var creating = false
     @Published public private(set) var error: CreationFailure?
+    /// The ticket field: what is typed, what the last search found, and why it found nothing.
+    @Published public var query = ""
+    @Published public private(set) var results: [JiraTicket] = []
+    @Published public private(set) var searchError: String?
+    private let searchIssues: @MainActor (String) async throws -> [JiraTicket]
+    private var searchTask: Task<Void, Never>?
+    private var searchGeneration = 0
     /// The agent's commands and skills for the prompt's `/` popup, read with its models.
     public let completions = PromptCompletions()
     /// Whose skills and commands the prompt completes.
@@ -64,8 +71,10 @@ public final class NewTaskModel: ObservableObject, Identifiable {
                 catalogue: @escaping @Sendable (AgentDefinition) throws -> [AgentModel],
                 branches: @escaping @Sendable () -> [String],
                 submit: @escaping @MainActor (TaskDraft) async throws -> Void,
+                searchIssues: @escaping @MainActor (String) async throws -> [JiraTicket] = { _ in [] },
                 home: URL) {
         self.home = home
+        self.searchIssues = searchIssues
         self.project = project
         self.agents = agents
         self.availableAgents = available
@@ -167,6 +176,61 @@ public final class NewTaskModel: ObservableObject, Identifiable {
         do { try await submit(draft); return true }
         catch { self.error = CreationFailure(error) }
         return false
+    }
+
+    // -- the Jira ticket field (AiTerm's CreationModel search) --------------------------------
+
+    /// What the ticket field searches: every project the account can see, until projects are linked.
+    public var ticketPlaceholder: String { "Search by key or title" }
+
+    public func cancelSearch() {
+        searchGeneration += 1
+        searchTask?.cancel()
+        searchTask = nil
+    }
+
+    /// The field's text as it is typed: kept, and searched for after a pause.
+    public func setQuery(_ text: String) {
+        query = text
+        cancelSearch()
+        searchTask = Task { await search(text: text, debounce: true) }
+    }
+
+    /// Back to the default list, as clearing a pick does: an empty query, searched at once.
+    public func reopenSearch() { setQuery("") }
+
+    /// An answer that arrives after a newer search, or after the search was abandoned, is dropped.
+    /// A failure clears the list: rows from an earlier query beside an error about this one would
+    /// read as its answer.
+    public func search(text: String, debounce: Bool = false) async {
+        searchGeneration += 1
+        let generation = searchGeneration
+        do {
+            if debounce { try await Task.sleep(for: .milliseconds(250)) }
+            try Task.checkCancellation()
+            let found = try await searchIssues(text)
+            guard !Task.isCancelled, generation == searchGeneration else { return }
+            results = found; searchError = nil
+        } catch {
+            guard !Task.isCancelled, generation == searchGeneration else { return }
+            results = []
+            searchError = error.localizedDescription
+        }
+    }
+
+    /// AiTerm's `jiraSearcher`: an empty query lists the person's open tickets, anything else
+    /// searches for it. `jira` is the connection as it stood when the sheet opened — reading it is a
+    /// Keychain call, too slow for every keystroke.
+    public static func jiraSearcher(jira: JiraConfig?) -> @MainActor (String) async throws -> [JiraTicket] {
+        { text in
+            guard let config = jira else {
+                throw ActionUnavailable("Connect Jira in Settings, or continue without a ticket.")
+            }
+            let client = JiraClient(config: config)
+            return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? try await client.myOpenIssues(projects: [])
+                : try await client.search(text: text, projects: [])
+        }
     }
 
     /// Names the missing CLIs and where Settings installs them; nothing when every one is there.

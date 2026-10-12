@@ -2,16 +2,19 @@ import Foundation
 import Testing
 @testable import ShellforgeCore
 @testable import ShellforgeUI
+@testable import ShellforgeTestSupport
 
 @MainActor @Suite struct NewTaskModelTests {
     private let opus = AgentModel(id: "opus", label: "Opus", detail: nil, efforts: ["low", "high"], defaultEffort: "high")
     private let project = Project(name: "demo", path: FileManager.default.temporaryDirectory.appendingPathComponent("nt-\(UUID().uuidString)").path)
 
     private func model(available: Set<String> = ["claude", "codex", "grok", "pi"],
+                       searchIssues: @escaping @MainActor (String) async throws -> [JiraTicket] = { _ in [] },
                        submit: @escaping @MainActor (TaskDraft) async throws -> Void = { _ in }) -> NewTaskModel {
         NewTaskModel(project: project, agents: AgentPresets.all, available: available,
                      draft: TaskDraft(baseBranch: "main", agentId: "claude", model: "", reasoning: nil),
                      rememberedModels: [:], catalogue: { [opus] _ in [opus] }, branches: { ["main"] }, submit: submit,
+                     searchIssues: searchIssues,
                      home: FileManager.default.temporaryDirectory.appendingPathComponent("nt-home-\(UUID().uuidString)"))
     }
 
@@ -101,5 +104,65 @@ import Testing
         sheet.completions.visible = sheet.completions.all
         sheet.selectAgent("codex")
         #expect(!sheet.completions.isOpen && sheet.completions.all.isEmpty)
+    }
+
+    // -- the Jira ticket field (AiTerm's TaskCreationModelTests) ----------------------------
+
+    @Test func lateSearchCannotReplaceNewerResultsOrAPickedTicket() async throws {
+        final class Pending { var byText: [String: CheckedContinuation<[JiraTicket], Error>] = [:] }
+        let pending = Pending()
+        let sheet = model(searchIssues: { text in try await withCheckedThrowingContinuation { pending.byText[text] = $0 } })
+        let first = Task { await sheet.search(text: "old") }
+        await eventually { pending.byText["old"] != nil }
+        let second = Task { await sheet.search(text: "new") }
+        await eventually { pending.byText["new"] != nil }
+        let ticket = JiraTicket(key: "MOB-1", summary: "Newest", description: "", issueType: nil, status: nil, url: "https://example.com")
+        try #require(pending.byText["new"]).resume(returning: [ticket])
+        await second.value
+        try #require(pending.byText["old"]).resume(returning: [])
+        await first.value
+        #expect(sheet.results == [ticket])
+        let third = Task { await sheet.search(text: "abandoned") }
+        await eventually { pending.byText["abandoned"] != nil }
+        sheet.cancelSearch()
+        sheet.draft.apply(ticket: ticket)
+        try #require(pending.byText["abandoned"]).resume(throwing: JiraError.unauthorized)
+        await third.value
+        #expect(sheet.draft.ticket == ticket)
+        #expect(sheet.searchError == nil)
+    }
+
+    @Test func withoutAJiraConnectionASearchSaysSo() async {
+        let search = NewTaskModel.jiraSearcher(jira: nil)
+        await #expect { try await search("login") } throws: {
+            ($0 as? ActionUnavailable)?.message == "Connect Jira in Settings, or continue without a ticket."
+        }
+    }
+
+    @Test func withoutJiraTheFieldSaysHowAndCreateStillWorks() async {
+        let sheet = model(searchIssues: NewTaskModel.jiraSearcher(jira: nil))
+        await sheet.search(text: "")
+        #expect(sheet.searchError == "Connect Jira in Settings, or continue without a ticket.")
+        sheet.draft.setTitle("Login")
+        await sheet.loadCatalogue()
+        #expect(await sheet.create())
+    }
+
+    @Test func thePreviewedCommandCarriesTheTicketOnlyWhenItIsIncluded() async {
+        let sheet = model()
+        await sheet.loadCatalogue()
+        let ticket = JiraTicket(key: "ML-7", summary: "Drain the queue", description: nil,
+                                issueType: "Task", status: "To Do", url: "https://example/ML-7")
+        sheet.draft.apply(ticket: ticket)
+        sheet.draft.promptText = "Start here."
+        sheet.draft.appendTicket = true
+        #expect(sheet.previewCommand.contains("ML-7: Drain the queue"))
+        #expect(sheet.previewCommand.contains("Start here."))
+        sheet.draft.appendTicket = false
+        #expect(!sheet.previewCommand.contains("ML-7"))
+    }
+
+    @Test func theTicketFieldSearchesEveryProjectUntilSomeAreLinked() {
+        #expect(model().ticketPlaceholder == "Search by key or title")
     }
 }

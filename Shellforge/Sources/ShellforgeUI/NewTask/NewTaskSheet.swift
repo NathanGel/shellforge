@@ -5,11 +5,15 @@ import SwiftUI
 
 /// AiTerm's New Task sheet: Task, Agent and Prompt, the step bar, the command preview under every
 /// step past the first, the destination line that ends steps 1 and 3, and the footer. Its Jira
-/// ticket field arrives with M1d.
+/// ticket field searches every Jira project the account can see until projects are linked (M1d-2).
 struct NewTaskSheet: View {
     @ObservedObject var model: NewTaskModel
     let dismiss: @MainActor () -> Void
     @State private var step = 1
+    @State private var ticketsOpen = false
+    /// A result row's key column: a Jira key of up to eight characters in the mono code face, so
+    /// the summaries after it start on one line.
+    private static let ticketKeyWidth: CGFloat = 74
 
     /// The branch-type popup's column: its longest type, `chore`, in monospace plus the popup's
     /// chevron and bezel — no wider, since every point it takes comes out of the branch name
@@ -33,7 +37,15 @@ struct NewTaskSheet: View {
                     switch step {
                     case 1: taskStep
                     case 2: AgentStep(model: model)
-                    default: PromptStep(text: $model.draft.promptText, agentId: model.draft.agentId, completions: model.completions)
+                    default:
+                        VStack(alignment: .leading, spacing: Space.block) {
+                            PromptStep(text: $model.draft.promptText, agentId: model.draft.agentId, completions: model.completions)
+                                .zIndex(1)
+                            if model.draft.ticket != nil {
+                                Toggle("Include Jira ticket details", isOn: $model.draft.appendTicket)
+                                    .toggleStyle(.checkbox).font(Typography.body)
+                            }
+                        }
                     }
                 }
                 // The prompt's popup hangs over the command preview: AiTerm's FrontToBackStack.
@@ -46,9 +58,14 @@ struct NewTaskSheet: View {
                            missingAgentNote: Self.footerNote(agents: model.agents, available: model.availableAgents),
                            createLabel: "Create Task", creating: model.creating,
                            canAdvance: model.canAdvance(step: step),
-                           closeList: { Self.closeList(step: step, completions: model.completions) },
+                           closeList: {
+                               if step == 1, ticketsOpen { ticketsOpen = false; return true }
+                               return Self.closeList(step: step, completions: model.completions)
+                           },
                            back: back, advance: advance)
         }
+        .task { await model.search(text: "") }
+        .onDisappear { model.cancelSearch() }
         .task { await model.loadBranches() }
         .task(id: model.draft.agentId) { await model.loadCatalogue() }
     }
@@ -63,6 +80,34 @@ struct NewTaskSheet: View {
 
     private var taskStep: some View {
         VStack(alignment: .leading, spacing: Space.block) {
+            FormField("Jira ticket (optional)") {
+                SearchPicker(placeholder: model.ticketPlaceholder,
+                             query: Binding(get: { model.query }, set: { model.setQuery($0) }),
+                             open: $ticketsOpen,
+                             items: model.results, selection: model.draft.ticket,
+                             row: { ticket in
+                                 // The lane column stays for a ticket without one, so every summary
+                                 // is cut at the same place.
+                                 PickerResultRow(mark: .brand(Palette.jira), key: ticket.key, keyWidth: Self.ticketKeyWidth,
+                                                 title: ticket.summary, detail: ticket.status ?? "")
+                             },
+                             selected: { selectedTicket($0) },
+                             onPick: { ticket in
+                                 model.cancelSearch()
+                                 model.draft.apply(ticket: ticket)
+                             },
+                             toggleHelp: { $0 ? "Hide tickets" : "Show my open tickets" })
+                if model.draft.ticket == nil {
+                    if let message = model.searchError {
+                        HelpText(message, tone: .warning)
+                    } else {
+                        HelpText("Select a ticket to fill in the name, type and branch.")
+                    }
+                }
+            }
+            // The ticket list hangs over the fields below it: AiTerm's FrontToBackStack.
+            .zIndex(1)
+
             FormField("Task name") {
                 Input(placeholder: "Describe the task", text: Binding(get: { model.draft.title }, set: { model.draft.setTitle($0) }))
             }
@@ -79,6 +124,14 @@ struct NewTaskSheet: View {
                     Select(values: baseBranchChoices, selection: $model.draft.baseBranch, label: { $0 }, monospaced: true)
                 }.frame(width: Self.baseBranchWidth)
             }
+        }
+    }
+
+    private func selectedTicket(_ ticket: JiraTicket) -> some View {
+        PickedItemField(mark: .brand(Palette.jira), key: ticket.key, title: ticket.summary, trailing: {
+            if let status = ticket.status { LaneChip(lane: status, brand: Palette.jira, ink: Palette.link) }
+        }, clearHelp: "Clear ticket") {
+            model.draft.apply(ticket: nil); model.reopenSearch(); ticketsOpen = true
         }
     }
 
