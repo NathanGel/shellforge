@@ -26,11 +26,16 @@ extension SidebarModel {
               document.workspace.projects.contains(where: { $0.id == shown.projectId }) else { return false }
         removalBoard.asking.insert(id)
         defer { removalBoard.asking.remove(id) }
+        let isReview = shown.kind == .review
+        // A review's branch is the merge request's: its Remove never offers to delete it — the
+        // removal releases it only when nothing would be lost.
         let answer = await prompter.ask(AlertPrompt(
-            message: "Remove task “\(shown.title)”?",
-            detail: "Deletes the worktree and closes its tabs:\n\n\(shown.worktreePath)",
+            message: "Remove \(isReview ? "review" : "task") “\(shown.title)”?",
+            detail: isReview
+                ? "Deletes the worktree and closes its tabs. Its local branch goes too, unless it has commits origin lacks:\n\n\(shown.worktreePath)"
+                : "Deletes the worktree and closes its tabs:\n\n\(shown.worktreePath)",
             buttons: ["Remove", "Cancel"],
-            checkbox: "Also delete branch \(shown.branch)",
+            checkbox: isReview ? nil : "Also delete branch \(shown.branch)",
             defaultDeletes: true))
         // Decided on the task as it is once answered: across the await it, or its project, can be gone.
         guard answer.confirmed, let task = document.workspace.tasks.first(where: { $0.id == id }),
@@ -44,7 +49,7 @@ extension SidebarModel {
                 let unsaved = await prompter.ask(AlertPrompt(
                     message: "The worktree has uncommitted changes",
                     detail: "Removing this worktree permanently deletes its uncommitted changes and untracked files.",
-                    buttons: ["Keep Task", "Delete Changes and Remove"], escape: 0))
+                    buttons: ["Keep \(task.kindName)", "Delete Changes and Remove"], escape: 0))
                 guard unsaved.button == 1 else { removalBoard.removals[id] = nil; return false }
                 force = true
             }
@@ -71,6 +76,7 @@ extension SidebarModel {
     /// The worktree is gone: a branch git kept is asked about now, or said why it stayed. The task
     /// goes either way.
     private func settleBranch(of task: TaskItem, in project: Project, after result: TaskRemoval.Removed) async {
+        if let kept = result.keptBranch { lastError = kept.note(branch: task.branch) }
         switch result.branchRefusal {
         case nil:
             return

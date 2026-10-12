@@ -116,3 +116,22 @@ struct TaskTicketBadge: Equatable {
         }
     }
 }
+
+/// A review's request badge: AiTerm's `TaskRowBadges.mergeRequest` — its `!n` or `#n`, opening the
+/// request, its title on hover, in its host's mark.
+struct TaskRequestBadge: Equatable {
+    var label: String
+    var help: String
+    var url: String
+    var host: CodeHost
+
+    init(label: String, help: String, url: String, host: CodeHost) {
+        self.label = label; self.help = help; self.url = url; self.host = host
+    }
+
+    /// None for a task, or a review made from a branch rather than a request.
+    init?(mr: MergeRequestRef?) {
+        guard let mr else { return nil }
+        self.init(label: mr.reference, help: mr.title, url: mr.url, host: mr.host)
+    }
+}

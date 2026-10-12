@@ -51,6 +51,7 @@ struct ProjectHeaderRow: View {
     let statuses: [SessionState]
     let toggle: () -> Void
     let newTask: () -> Void
+    let newReview: () -> Void
     let editJiraProjects: () -> Void
     @Environment(\.interfaceScale) private var scale
 
@@ -80,17 +81,22 @@ struct ProjectHeaderRow: View {
             .gesture(TapGesture().onEnded(toggle), including: collapses ? .all : .subviews)
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(collapses ? .isButton : [])
-            AddMenu(help: "New task", enabled: true) {
-                Button("New Task…", action: newTask)
-            }
+            AddMenu(help: "New task or review", enabled: true) { newItems }
         }
         .frame(height: scale(Size.projectRow)).padding(.leading, scale(Space.base)).padding(.trailing, SidebarRowLayout.trailingInset(scale))
         .modifier(RowPill(selected: false))
         .contextMenu {
-            Button("New Task…", action: newTask)
+            newItems
             Divider()
             Button("Jira Projects…", action: editJiraProjects)
         }
+    }
+
+    /// What the "+" and the context menu both offer. A review needs a remote to have merge
+    /// requests or branches anyone else pushed, so a project with none cannot start one.
+    @ViewBuilder private var newItems: some View {
+        Button("New Task…", action: newTask)
+        Button("New Review…", action: newReview).disabled(provider == .none)
     }
 }
 
@@ -123,6 +129,10 @@ struct TaskRowView: View {
                                 Badge(ticket.label, icon: .brand(Palette.jira), help: ticket.help, style: .quiet,
                                       action: ticket.url.map { url in { ExternalLink.open(url) } })
                             }
+                            if let request = TaskRequestBadge(mr: node.task.mr) {
+                                Badge(request.label, icon: .brand(request.host.brand), help: request.help, style: .quiet,
+                                      action: { ExternalLink.open(request.url) })
+                            }
                             BranchLabelView(label: BranchLabel(name: node.task.branch, extra: 0, drifted: false, detail: ""))
                                 .layoutPriority(1)
                         }
@@ -136,7 +146,7 @@ struct TaskRowView: View {
         .accessibilityLabel(node.task.title)
         .accessibilityValue(status.label)
         .contextMenu {
-            Button("Remove Task…", role: .destructive, action: remove).disabled(removal == .removing)
+            Button("Remove \(node.task.kindName)…", role: .destructive, action: remove).disabled(removal == .removing)
         }
     }
 

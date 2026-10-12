@@ -197,4 +197,54 @@ import Testing
         #expect(s.sidebar.removals[s.task.id] == .stopped("Not removed"))
         #expect(s.sidebar.lastError?.hasPrefix("Couldn’t remove the task.") == true, "\(s.sidebar.lastError ?? "nil")")
     }
+
+    // -- reviews -----------------------------------------------------------------------------
+
+    /// A merge request's branch checked out as a review in the setup's repository, its origin a
+    /// bare repository holding the branch.
+    private func review(in s: Setup) throws -> TaskItem {
+        let remote = (s.repo.path as NSString).deletingLastPathComponent + "/remote.git"
+        _ = try s.git("init", "-q", "--bare", remote)
+        _ = try s.git("remote", "add", "origin", remote)
+        _ = try s.git("branch", "feat/mr-branch")
+        _ = try s.git("push", "-q", "origin", "main", "feat/mr-branch")
+        _ = try s.git("branch", "-q", "-D", "feat/mr-branch")
+        let project = try #require(s.document.workspace.projects.first)
+        var draft = ReviewDraft(mr: nil, agentId: "claude", model: "opus", reasoning: nil)
+        draft.setTitle("Gift card"); draft.setBranch("feat/mr-branch")
+        let review = try ReviewWorktrees.create(draft: draft, in: project, launcher: s.repo.launcher)
+        try s.document.update { $0.tasks.append(review) }
+        return review
+    }
+
+    /// A review's branch is the merge request's: its Remove never offers to delete it, and says so.
+    @Test func aReviewIsNeverOfferedItsBranch() async throws {
+        let s = try await setup([Self.cancel])
+        let review = try review(in: s)
+        #expect(await s.sidebar.confirmRemove(taskId: review.id) == false)
+        let asked = try #require(s.prompter.asked.last)
+        #expect(asked.message == "Remove review “Gift card”?")
+        #expect(asked.detail == "Deletes the worktree and closes its tabs. Its local branch goes too, unless it has commits origin lacks:\n\n\(review.worktreePath)")
+        #expect(asked.checkbox == nil)
+    }
+
+    /// Unpushed fixes keep the review's branch; the review still goes, and the banner says why.
+    @Test func removingAReviewKeepsAnUnpushedBranchAndSaysWhy() async throws {
+        let s = try await setup([Self.remove])
+        let review = try review(in: s)
+        _ = try s.git("commit", "-q", "--allow-empty", "-m", "fix", in: review.worktreePath)
+        #expect(await s.sidebar.confirmRemove(taskId: review.id))
+        #expect(s.document.workspace.tasks.contains { $0.id == review.id } == false)
+        #expect(!(try s.git("for-each-ref", "--format=%(refname)", "refs/heads/feat/mr-branch")).isEmpty)
+        #expect(s.sidebar.lastError == "Branch feat/mr-branch kept: 1 commit not on origin.")
+    }
+
+    /// A pushed review's local branch goes with it, quietly.
+    @Test func removingAPushedReviewReleasesItsBranch() async throws {
+        let s = try await setup([Self.remove])
+        let review = try review(in: s)
+        #expect(await s.sidebar.confirmRemove(taskId: review.id))
+        #expect(try s.git("for-each-ref", "--format=%(refname)", "refs/heads/feat/mr-branch").isEmpty)
+        #expect(s.sidebar.lastError == nil)
+    }
 }

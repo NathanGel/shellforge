@@ -82,4 +82,14 @@ import ShellforgeCore
     @Test func aTaskWithoutATicketWearsNone() {
         #expect(TaskTicketBadge(jira: nil) == nil)
     }
+
+    // -- a review's request (BadgeDetailsTests) ---------------------------------------------------
+
+    @Test func aGitHubReviewWearsAHashNumberAndAGitLabOneABang() throws {
+        let pull = try #require(TaskRequestBadge(mr: MergeRequestRef(iid: 87, title: "Add diff setting", url: "https://github.com/octocat/hello/pull/87")))
+        #expect(pull == .init(label: "#87", help: "Add diff setting", url: "https://github.com/octocat/hello/pull/87", host: .gitHub))
+        let merge = try #require(TaskRequestBadge(mr: MergeRequestRef(iid: 4, title: "Gift card", url: "https://git.example.net/x/-/merge_requests/4")))
+        #expect(merge.label == "!4" && merge.host == .gitLab)
+        #expect(TaskRequestBadge(mr: nil) == nil)
+    }
 }

@@ -180,7 +180,7 @@ public struct Workspace: Codable, Equatable, Sendable {
     }
 
     /// What the next New Task in this project opens with: this agent, and this model for it.
-    public mutating func remember(_ draft: TaskDraft, projectId: UUID) {
+    public mutating func remember(_ draft: some AgentDraft, projectId: UUID) {
         lastAgentByProject[projectId] = draft.agentId
         lastModelByAgent[draft.agentId] = draft.model
     }

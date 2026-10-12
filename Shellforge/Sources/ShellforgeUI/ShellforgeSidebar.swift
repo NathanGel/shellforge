@@ -122,6 +122,7 @@ struct SidebarView: View {
                              statuses: node.tasks.map { model.status(ofTask: $0.id) },
                              toggle: { model.toggleCollapsed(node.id) },
                              newTask: { showNewTask(in: node.id) },
+                             newReview: { showNewReview(in: node.id) },
                              editJiraProjects: { showJiraProjects(for: node.id) })
                 .listRowSeparator(.hidden)
         case .task(let node, let selected):
@@ -170,6 +171,15 @@ struct SidebarView: View {
             JiraProjectSheet(projectName: project.name, linked: project.jiraProjects, canSubmit: true,
                              loadProjects: model.loadJiraProjects,
                              submit: { model.setJiraProjects($0, on: id) }, dismiss: dismiss)
+        }
+    }
+
+    /// AiTerm's New Review sheet, in the sidebar's one panel: prepared off the main actor first — the
+    /// project's remote and the connections are read for its search.
+    private func showNewReview(in project: UUID) {
+        Task { @MainActor in
+            guard let review = await model.makeReviewModel(for: project) else { return }
+            sheet.present(over: anchor.window) { dismiss in NewReviewSheet(model: review, dismiss: dismiss) }
         }
     }
 

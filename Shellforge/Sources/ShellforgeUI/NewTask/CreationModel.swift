@@ -26,35 +26,38 @@ public struct CreationFailure: Equatable {
 
 /// What a creation sheet is for — New Task or New Review — and what that changes: AiTerm's
 /// `CreationKind`. The rest of `CreationModel` is the same for both.
+/// A class, as AiTerm's is: a kind can keep state of its own — New Review's pick refusal and branch
+/// filter — which its model's methods change, announcing the change on the model.
 @MainActor
-public protocol CreationKind {
+public protocol CreationKind: AnyObject {
     associatedtype Draft: AgentDraft
     /// What the sheet's search field lists: a Jira ticket, a merge request.
     associatedtype Item: Identifiable & Equatable
     /// The worktree directory the draft wants, before an unused one is found.
-    static func slug(of draft: Draft) -> String
+    func slug(of draft: Draft) -> String
     /// The agent's first prompt, as the command will carry it.
-    static func prompt(of draft: Draft) -> String?
+    func prompt(of draft: Draft) -> String?
     /// Whether the first step is filled in enough to go on.
-    static func firstStepDone(_ draft: Draft) -> Bool
+    func firstStepDone(_ draft: Draft) -> Bool
     /// The project's branches, once read: what the draft takes from them, given the draft it opened with.
-    static func branchesLoaded(_ found: [String], into draft: inout Draft, opened: Draft)
+    func branchesLoaded(_ found: [String], into draft: inout Draft, opened: Draft)
 }
 
 /// New Task: a ticket, a new branch from a base, and the ticket's details in the prompt.
-public enum TaskCreation: CreationKind {
+public final class TaskCreation: CreationKind {
     public typealias Draft = TaskDraft
     public typealias Item = JiraTicket
-    public static func slug(of draft: TaskDraft) -> String { draft.worktreeSlug }
-    public static func prompt(of draft: TaskDraft) -> String? {
+    public init() {}
+    public func slug(of draft: TaskDraft) -> String { draft.worktreeSlug }
+    public func prompt(of draft: TaskDraft) -> String? {
         AgentCommand.composePrompt(userText: draft.promptText, ticket: draft.ticket, appendTicket: draft.appendTicket)
     }
-    public static func firstStepDone(_ draft: TaskDraft) -> Bool {
+    public func firstStepDone(_ draft: TaskDraft) -> Bool {
         !draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
     /// The base the draft opened with is replaced by the repository's default, unless the person
     /// picked another meanwhile.
-    public static func branchesLoaded(_ found: [String], into draft: inout TaskDraft, opened: TaskDraft) {
+    public func branchesLoaded(_ found: [String], into draft: inout TaskDraft, opened: TaskDraft) {
         if draft.baseBranch == opened.baseBranch, let first = found.first { draft.baseBranch = first }
     }
 }
@@ -68,6 +71,8 @@ public typealias NewTaskModel = CreationModel<TaskCreation>
 @MainActor
 public final class CreationModel<Kind: CreationKind>: ObservableObject, Identifiable {
     public nonisolated let id = UUID()
+    /// What the sheet is for, with whatever state of its own that keeps.
+    public let kind: Kind
     public let project: Project
     public let agents: [AgentDefinition]
     @Published public var draft: Kind.Draft
@@ -85,7 +90,7 @@ public final class CreationModel<Kind: CreationKind>: ObservableObject, Identifi
     /// Whether the list hangs open under its field. AiTerm keeps this in the sheet; here the model
     /// holds it, so the ways it closes — ⎋, a click past it, leaving the step — are testable.
     @Published public var listOpen = false
-    @Published public private(set) var searchError: String?
+    @Published public internal(set) var searchError: String?
     private let searchItems: @MainActor (String) async throws -> [Kind.Item]
     private var searchTask: Task<Void, Never>?
     private var searchGeneration = 0
@@ -107,13 +112,14 @@ public final class CreationModel<Kind: CreationKind>: ObservableObject, Identifi
     /// `worktreeSlug` stats the worktree directory; remembered per slug so a redraw does not.
     private var unusedSlugMemo: (slug: String, unused: String)?
 
-    public init(project: Project, agents: [AgentDefinition], available: Set<String>, draft: Kind.Draft,
+    public init(kind: Kind, project: Project, agents: [AgentDefinition], available: Set<String>, draft: Kind.Draft,
                 rememberedModels: [String: String],
                 catalogue: @escaping @Sendable (AgentDefinition) throws -> [AgentModel],
                 branches: @escaping @Sendable () -> [String],
                 submit: @escaping @MainActor (Kind.Draft) async throws -> Void,
                 search: @escaping @MainActor (String) async throws -> [Kind.Item] = { _ in [] },
                 home: URL) {
+        self.kind = kind
         self.home = home
         self.searchItems = search
         self.project = project
@@ -132,7 +138,7 @@ public final class CreationModel<Kind: CreationKind>: ObservableObject, Identifi
 
     /// The worktree directory the sheet names: the one create will make.
     public var worktreeSlug: String {
-        let slug = Kind.slug(of: draft)
+        let slug = kind.slug(of: draft)
         guard !slug.isEmpty else { return "" }
         if let memo = unusedSlugMemo, memo.slug == slug { return memo.unused }
         let unused = BranchNaming.unused(slug, in: project.path)
@@ -143,7 +149,7 @@ public final class CreationModel<Kind: CreationKind>: ObservableObject, Identifi
     /// The exact command the task will run, built without touching the disk.
     public var previewCommand: String {
         AgentCommand.previewCommand(agent: agent, model: draft.model, reasoning: draft.reasoning,
-                                    prompt: Kind.prompt(of: draft))
+                                    prompt: kind.prompt(of: draft))
     }
 
     public var selectedModelIsCurrent: Bool { catalogueLoaded && models.contains { $0.id == draft.model } }
@@ -155,7 +161,7 @@ public final class CreationModel<Kind: CreationKind>: ObservableObject, Identifi
     /// Step 1 needs what its kind asks — a name, for a task; the agent and prompt steps need an
     /// agent that can run.
     public func canAdvance(step: Int) -> Bool {
-        guard !creating, Kind.firstStepDone(draft) else { return false }
+        guard !creating, kind.firstStepDone(draft) else { return false }
         return step == 1 || agentIsReady
     }
 
@@ -206,7 +212,7 @@ public final class CreationModel<Kind: CreationKind>: ObservableObject, Identifi
         let found = await BackgroundWork.run { list() }
         guard !Task.isCancelled else { return }
         branches = found
-        Kind.branchesLoaded(found, into: &draft, opened: opened)
+        kind.branchesLoaded(found, into: &draft, opened: opened)
     }
 
     /// False means nothing was created and the same draft can be corrected — notably when git
@@ -276,7 +282,7 @@ extension CreationModel where Kind == TaskCreation {
                             submit: @escaping @MainActor (TaskDraft) async throws -> Void,
                             searchIssues: @escaping @MainActor (String) async throws -> [JiraTicket] = { _ in [] },
                             home: URL) {
-        self.init(project: project, agents: agents, available: available, draft: draft, rememberedModels: rememberedModels,
+        self.init(kind: TaskCreation(), project: project, agents: agents, available: available, draft: draft, rememberedModels: rememberedModels,
                   catalogue: catalogue, branches: branches, submit: submit, search: searchIssues, home: home)
     }
 
