@@ -11,6 +11,11 @@ public struct TaskDraft: Equatable, Sendable {
     public private(set) var title = "", branchType = BranchType.feat, branchName = ""
     public var baseBranch: String, agentId: String, model: String, reasoning: String?
     public var promptText = "", appendTicket = true
+    /// Open the project's SSH host in a pane beside the agent, when it has one.
+    public var openSSH = true
+    /// The host New Task offered as that pane when it opened; nil when it offered none, so the box
+    /// was never shown.
+    public var paneHost: String?
     private var titleEdited = false, branchEdited = false, typeEdited = false
 
     public var branch: String { "\(branchType.rawValue)/\(branchName)" }

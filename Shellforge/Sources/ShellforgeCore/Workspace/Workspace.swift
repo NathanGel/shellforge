@@ -14,6 +14,8 @@ public struct Project: Codable, Equatable, Sendable, Identifiable {
     public var jiraProjects: [JiraProjectRef]
     /// The SSH tunnels this project runs (`~/.ssh/config` hosts), in the order they were added.
     public var tunnels: [TunnelDefinition] = []
+    /// The `~/.ssh/config` host New Task can open in a pane beside the agent; nil for none.
+    public var sshHost: String?
 
     public init(id: UUID = UUID(), name: String, path: String, addedAt: Date = Date(), collapsed: Bool = false,
                 jiraProjects: [JiraProjectRef] = []) {
@@ -25,7 +27,7 @@ public struct Project: Codable, Equatable, Sendable, Identifiable {
         self.jiraProjects = jiraProjects
     }
 
-    private enum CodingKeys: String, CodingKey { case id, name, path, addedAt, collapsed, jiraProjects, tunnels }
+    private enum CodingKeys: String, CodingKey { case id, name, path, addedAt, collapsed, jiraProjects, tunnels, sshHost }
 
     /// A workspace saved before projects could fold loads them unfolded, and one saved before they
     /// could link Jira projects links none.
@@ -37,6 +39,7 @@ public struct Project: Codable, Equatable, Sendable, Identifiable {
                   jiraProjects: try c.decodeIfPresent([JiraProjectRef].self, forKey: .jiraProjects) ?? [])
         // A workspace saved before tunnels has none.
         tunnels = try c.decodeIfPresent([TunnelDefinition].self, forKey: .tunnels) ?? []
+        sshHost = try c.decodeIfPresent(String.self, forKey: .sshHost)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -48,6 +51,7 @@ public struct Project: Codable, Equatable, Sendable, Identifiable {
         try c.encode(collapsed, forKey: .collapsed)
         try c.encode(jiraProjects, forKey: .jiraProjects)
         try c.encode(tunnels, forKey: .tunnels)
+        try c.encodeIfPresent(sshHost, forKey: .sshHost)
     }
 }
 
@@ -165,13 +169,15 @@ public struct Workspace: Codable, Equatable, Sendable {
     /// last used with each agent (AiTerm's `AppState.lastAgentByProject` and `lastModelByAgent`).
     public var lastAgentByProject: [UUID: String] = [:]
     public var lastModelByAgent: [String: String] = [:]
+    /// Whether New Task last opened each project's SSH pane: the box opens as it was left.
+    public var lastOpenSSHByProject: [UUID: Bool] = [:]
 
     public init(projects: [Project] = [], tasks: [TaskItem] = []) {
         self.projects = projects
         self.tasks = tasks
     }
 
-    private enum CodingKeys: String, CodingKey { case version, projects, tasks, lastAgentByProject, lastModelByAgent }
+    private enum CodingKeys: String, CodingKey { case version, projects, tasks, lastAgentByProject, lastModelByAgent, lastOpenSSHByProject }
 
     /// A file written before the remembered choices existed reads them as empty; one without its
     /// projects or tasks is not a workspace and fails, rather than reading as an empty one to be saved over.
@@ -182,6 +188,7 @@ public struct Workspace: Codable, Equatable, Sendable {
         tasks = try c.decode([TaskItem].self, forKey: .tasks)
         lastAgentByProject = try c.decodeIfPresent([UUID: String].self, forKey: .lastAgentByProject) ?? [:]
         lastModelByAgent = try c.decodeIfPresent([String: String].self, forKey: .lastModelByAgent) ?? [:]
+        lastOpenSSHByProject = try c.decodeIfPresent([UUID: Bool].self, forKey: .lastOpenSSHByProject) ?? [:]
     }
 
     /// What the next New Task in this project opens with: this agent, and this model for it.

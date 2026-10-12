@@ -56,6 +56,25 @@ extension SidebarModel {
         }
     }
 
+    /// Names the project's SSH host, or none.
+    public func setSSHHost(_ alias: String?, on projectId: UUID) {
+        guard let current = project(projectId), current.sshHost != alias else { return }
+        do {
+            try document.update { workspace in
+                if let i = workspace.projects.firstIndex(where: { $0.id == projectId }) { workspace.projects[i].sshHost = alias }
+            }
+            lastError = nil
+        } catch {
+            lastError = String(describing: error)
+        }
+    }
+
+    /// The project's SSH host while the config has it: what New Task offers beside the agent.
+    func paneHost(of project: Project) -> String? {
+        guard let alias = project.sshHost, sshHosts?[alias] != nil else { return nil }
+        return alias
+    }
+
     /// The project's tunnels as rows, in its order.
     public func tunnelRows(of project: Project) -> [TunnelRowItem] {
         project.tunnels.map { tunnel in
@@ -129,7 +148,7 @@ extension SidebarModel {
     /// an included file is a port a new tab would otherwise get wrong; the rows redraw only when
     /// the hosts changed.
     func refreshSSHHosts(_ projects: [Project]) {
-        guard !readingSSH, projects.contains(where: { !$0.tunnels.isEmpty }) else { return }
+        guard !readingSSH, projects.contains(where: { !$0.tunnels.isEmpty || $0.sshHost != nil }) else { return }
         readingSSH = true
         let source = sshConfig
         Task {

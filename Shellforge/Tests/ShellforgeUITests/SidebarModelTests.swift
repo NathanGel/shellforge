@@ -10,7 +10,11 @@ import Testing
     var tabs: [TabSnapshot] = []
     var selectedTabId: String?
     var onChange: (@MainActor () -> Void)?
-    var opened: [(directory: String, taskId: UUID, projectId: UUID, title: String, command: String?, environment: [String: String])] = []
+    var opened: [(directory: String, taskId: UUID, projectId: UUID, title: String, command: String?, environment: [String: String],
+                  beside: String?)] = []
+    var onSplitRefused: (@MainActor @Sendable (String) -> Void)?
+    /// iTerm2 refusing the split: a tmux tab, a window too small.
+    var refusesSplit = false
     /// Ids are never reused, as iTerm2's are not, even after a tab closes.
     private var nextTab = 0
 
@@ -19,8 +23,10 @@ import Testing
         onChange?()
     }
 
-    func openTab(in directory: String, taskId: UUID, projectId: UUID, title: String, command: String?, environment: [String: String]) {
-        opened.append((directory, taskId, projectId, title, command, environment))
+    func openTab(in directory: String, taskId: UUID, projectId: UUID, title: String, command: String?, environment: [String: String],
+                 beside: String?) {
+        opened.append((directory, taskId, projectId, title, command, environment, beside))
+        if beside != nil, refusesSplit { onSplitRefused?(title) }
         nextTab += 1
         let tab = TabSnapshot(id: "s\(nextTab)", tabId: nextTab, title: title, taskId: taskId, projectId: projectId)
         tabs.append(tab)

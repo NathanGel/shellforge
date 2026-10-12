@@ -7,6 +7,7 @@
 //
 
 import AppKit
+import Combine
 import ShellforgeCore
 import ShellforgeUI
 
@@ -94,6 +95,7 @@ final class iTermShellforgeSidebar: NSObject {
 final class iTermShellforgeHost: TerminalHost {
     private weak var windowController: PseudoTerminal?
     var onChange: (@MainActor @Sendable () -> Void)?
+    var onSplitRefused: (@MainActor @Sendable (String) -> Void)?
     private var observers: [NSObjectProtocol] = []
 
     init(windowController: PseudoTerminal) {
@@ -173,7 +175,9 @@ final class iTermShellforgeHost: TerminalHost {
 
     /// The tunnels' ports are exported before the command, in the line typed into the shell: an
     /// iTerm2 profile has no environment of its own to carry them.
-    func openTab(in directory: String, taskId: UUID, projectId: UUID, title: String, command: String?, environment: [String: String]) {
+    /// `beside`, when given, runs in a pane split off to the right of the agent's, in the same folder.
+    func openTab(in directory: String, taskId: UUID, projectId: UUID, title: String, command: String?, environment: [String: String],
+                 beside: String?) {
         guard let windowController, let base = ProfileModel.sharedInstance()?.defaultBookmark() else { return }
         let profile = iTermShellforgeSidebar.taskTabProfile(base: base, directory: directory,
                                                             initialText: TabCommand.exporting(environment, then: command).map(TabCommand.initialText))
@@ -183,8 +187,39 @@ final class iTermShellforgeHost: TerminalHost {
                                             makeSession: nil, didMakeSession: { session in
             session.genericScope.setValue(taskId.uuidString.lowercased(), forVariableNamed: ShellforgeTags.task)
             session.genericScope.setValue(projectId.uuidString.lowercased(), forVariableNamed: ShellforgeTags.project)
-        }, completion: { [weak self] _, _ in
-            MainActor.assumeIsolated { self?.onChange?() }
+        }, completion: { [weak self] session, ok in
+            MainActor.assumeIsolated {
+                self?.onChange?()
+                guard let beside else { return }
+                guard ok else { self?.onSplitRefused?(title); return }
+                self?.split(session, running: beside, in: directory, base: base, title: title)
+            }
+        })
+    }
+
+    /// The pane beside a task's agent: a vertical split after it, typing `command` in `directory`.
+    /// iTerm2 can refuse a split (a tmux tab, a window too small): the task stays open, and says so.
+    private func split(_ session: PTYSession, running command: String, in directory: String, base: [AnyHashable: Any], title: String) {
+        let profile = iTermShellforgeSidebar.taskTabProfile(base: base, directory: directory, initialText: TabCommand.initialText(command))
+        guard let windowController, windowController.canSplitPaneVertically(true, withBookmark: profile) else {
+            onSplitRefused?(title)
+            return
+        }
+        // The split can fail twice over: no pane made (completion), or its shell not launched (ready).
+        // Said once.
+        let refusal = SplitRefusal { [weak self] in self?.onSplitRefused?(title) }
+        windowController.asyncSplitVertically(true, before: false, profile: profile, targetSession: session, completion: { [weak self, weak windowController] pane, ok in
+            MainActor.assumeIsolated {
+                if pane == nil || !ok {
+                    refusal.say()
+                } else {
+                    // A new pane takes the focus; the task was made to talk to its agent.
+                    windowController?.tab(for: session)?.setActiveSessionPreservingMaximization(session)
+                }
+                self?.onChange?()
+            }
+        }, ready: { _, ok in
+            MainActor.assumeIsolated { if !ok { refusal.say() } }
         })
     }
 }
@@ -240,5 +275,74 @@ extension iTermShellforgeSidebar {
                 }
             }
         }
+    }
+}
+
+
+/// View › Tunnels: Start or Stop per linked tunnel, kept current as the workspace and the tunnels'
+/// states change. iTerm2's Open Quickly searches the main menu, so this is the palette's way in.
+extension iTermShellforgeSidebar {
+    private static let tunnelMenu = TunnelMenuController()
+
+    /// Empty under ModernTests: building it reads the user's own workspace, which a test run must
+    /// not touch, as `startHelper` does not start the helper there.
+    @objc static func tunnelsMenu() -> NSMenu {
+        guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return NSMenu(title: "Tunnels") }
+        return tunnelMenu.menu
+    }
+
+    /// The first window's sidebar: where a tunnel's start is checked and its keep-running read.
+    fileprivate static var anySidebar: SidebarModel? { sidebars.allObjects.first }
+}
+
+@MainActor
+private final class TunnelMenuController: NSObject, NSMenuItemValidation {
+    let menu = NSMenu(title: "Tunnels")
+    private var subscription: AnyCancellable?
+
+    override init() {
+        super.init()
+        let document = iTermShellforgeSidebar.document, link = iTermShellforgeSidebar.link
+        // Rebuilt only when the items change, never under an open menu for a token tally.
+        subscription = TunnelMenu.items(projects: document.$workspace.map(\.projects).eraseToAnyPublisher(),
+                                        stores: link.$store.eraseToAnyPublisher())
+            .sink { [weak self] items in MainActor.assumeIsolated { self?.rebuild(items) } }
+    }
+
+    private func rebuild(_ items: [TunnelMenuItem]) {
+        menu.removeAllItems()
+        guard !items.isEmpty else {
+            menu.addItem(NSMenuItem(title: TunnelMenu.emptyTitle, action: nil, keyEquivalent: ""))
+            return
+        }
+        for item in items {
+            let menuItem = NSMenuItem(title: item.title, action: #selector(choose(_:)), keyEquivalent: "")
+            menuItem.target = self
+            menuItem.representedObject = item.alias
+            menuItem.tag = item.starts ? 1 : 0
+            menu.addItem(menuItem)
+        }
+    }
+
+    @objc func choose(_ sender: NSMenuItem) {
+        guard let alias = sender.representedObject as? String, let sidebar = iTermShellforgeSidebar.anySidebar else { return }
+        if sender.tag == 1 { sidebar.startTunnel(alias) } else { sidebar.stopTunnel(alias) }
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        TunnelMenu.isEnabled(haveSidebar: iTermShellforgeSidebar.anySidebar != nil)
+    }
+}
+
+/// A split's refusal, said at most once.
+@MainActor
+private final class SplitRefusal {
+    private var said = false
+    private let action: () -> Void
+    init(_ action: @escaping () -> Void) { self.action = action }
+    func say() {
+        guard !said else { return }
+        said = true
+        action()
     }
 }
