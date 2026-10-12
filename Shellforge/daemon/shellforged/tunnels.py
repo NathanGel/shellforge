@@ -34,15 +34,20 @@ FATAL = ("Address already in use", "forwarding failed", "cannot listen to port",
 
 
 class _Tunnel:
-    def __init__(self, alias: str, environment: dict[str, str]):
-        self.alias, self.environment = alias, environment
+    def __init__(self, alias: str, environment: dict[str, str], keep_running: bool = False):
+        self.alias, self.environment, self.keep_running = alias, environment, keep_running
         self.state, self.error, self.since = "stopped", None, 0.0
+        self.bytes_in: int | None = None
+        self.bytes_out: int | None = None
+        self.held_by: str | None = None
+        self.needs_input: bool | None = None
         self.process: asyncio.subprocess.Process | None = None
         self.task: asyncio.Task[None] | None = None
         self.stopping = False
 
     def to_json(self) -> dict[str, Any]:
-        return {"alias": self.alias, "state": self.state, "error": self.error, "since": self.since}
+        return {"alias": self.alias, "state": self.state, "error": self.error, "since": self.since,
+                "bytesIn": self.bytes_in, "bytesOut": self.bytes_out, "heldBy": self.held_by, "needsInput": self.needs_input}
 
 
 class TunnelSupervisor:
@@ -61,7 +66,7 @@ class TunnelSupervisor:
         tunnel = self._tunnels.get(alias)
         return tunnel.process.pid if tunnel and tunnel.process else None
 
-    async def start(self, alias: str, environment: dict[str, str]) -> None:
+    async def start(self, alias: str, environment: dict[str, str], keep_running: bool = False) -> None:
         """Starts `alias`'s tunnel; nothing while its run is going -- connecting, up, or a start
         just made whose run has not said so yet."""
         if self._closed:
@@ -71,7 +76,7 @@ class TunnelSupervisor:
         if current and current.task is not None and not current.task.done() and not current.stopping \
                 and current.state != "failed":
             return
-        tunnel = _Tunnel(alias, environment)
+        tunnel = _Tunnel(alias, environment, keep_running)
         self._tunnels[alias] = tunnel
         tunnel.task = asyncio.get_running_loop().create_task(self._run(tunnel))
 

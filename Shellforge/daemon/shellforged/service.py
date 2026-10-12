@@ -19,7 +19,7 @@ from .iterm_port import ItermPort
 from .offload import run_detached
 from .publisher import Publisher
 from .resolver import SessionResolver
-from .rpc_params import frame_param, guard, param, require_iterm
+from .rpc_params import frame_param, guard, optional_param, param, require_iterm
 from .rpc_server import RpcError, RpcServer
 from .models import HARNESS_BY_AGENT, SessionInfo, TokenTally
 from .sessions import SessionRegistry, SnapshotDiff
@@ -207,7 +207,8 @@ class Service:
         environment = param(p, "environment", dict)
         if not all(isinstance(k, str) and isinstance(v, str) for k, v in environment.items()):
             raise RpcError(protocol.BAD_PARAMS, "environment must map strings to strings")
-        await self.tunnels.start(alias, environment)
+        keep_running = optional_param(p, "keepRunning", bool) or False
+        await self.tunnels.start(alias, environment, keep_running)
         return {"ok": True}
 
     async def _h_tunnels_stop(self, p: Any) -> dict[str, Any]:

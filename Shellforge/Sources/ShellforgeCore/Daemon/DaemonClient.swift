@@ -471,7 +471,7 @@ public final class DaemonClient: Sendable {
     struct ChangedResult: Decodable { var changed: Int }
     struct TaskParams: Encodable { var taskId: String }
     struct SessionsParams: Encodable { var sessions: [SessionReport] }
-    struct TunnelStartParams: Encodable { var alias: String, environment: [String: String] }
+    struct TunnelStartParams: Encodable { var alias: String, environment: [String: String], keepRunning: Bool }
     struct TunnelParams: Encodable { var alias: String }
     struct OkResult: Decodable { var ok: Bool }
 
@@ -498,8 +498,9 @@ public final class DaemonClient: Sendable {
 
     /// Starts the `~/.ssh/config` host `alias` as a tunnel, run with `environment` — the app's login
     /// shell's, which the daemon, started from launchd's, does not have.
-    public func startTunnel(alias: String, environment: [String: String]) async throws {
-        _ = try await request(.tunnelsStart, params: TunnelStartParams(alias: alias, environment: environment), as: OkResult.self)
+    public func startTunnel(alias: String, environment: [String: String], keepRunning: Bool = false) async throws {
+        _ = try await request(.tunnelsStart, params: TunnelStartParams(alias: alias, environment: environment, keepRunning: keepRunning),
+                              as: OkResult.self)
     }
 
     public func stopTunnel(alias: String) async throws {

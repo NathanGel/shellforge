@@ -31,4 +31,12 @@ import Testing
         #expect(TabCommand.exporting([:], then: nil) == nil)
         #expect(TabCommand.exporting(["X": "it's"], then: nil) == #"export X='it'\''s'"#)
     }
+
+    /// A project saved before keep-running decodes with it off; one with it on keeps it.
+    @Test func keepRunningIsOffForAnOldProjectAndKeptOtherwise() throws {
+        let old = #"{"alias":"db","autoStart":"never"}"#.data(using: .utf8)!
+        #expect(try JSONDecoder().decode(TunnelDefinition.self, from: old).keepRunning == false)
+        let kept = TunnelDefinition(alias: "db", autoStart: .onLaunch, keepRunning: true)
+        #expect(try JSONDecoder().decode(TunnelDefinition.self, from: JSONEncoder().encode(kept)) == kept)
+    }
 }

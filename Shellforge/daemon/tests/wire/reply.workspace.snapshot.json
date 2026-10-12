@@ -66,7 +66,11 @@
     "tunnels": [
       {
         "alias": "db-staging",
+        "bytesIn": null,
+        "bytesOut": null,
         "error": "ssh isn’t on the login shell’s PATH.",
+        "heldBy": null,
+        "needsInput": null,
         "since": 1000,
         "state": "failed"
       }

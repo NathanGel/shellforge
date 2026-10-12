@@ -89,6 +89,26 @@ final class DaemonClientTests {
         try await client.startTunnel(alias: "db-staging", environment: ["SSH_AUTH_SOCK": "/tmp/agent.sock", "PATH": "/usr/bin"])
     }
 
+    @Test func aTunnelThatKeepsRunningSaysSoWithItsStart() async throws {
+        server.handler = { req in
+            #expect((req["params"] as? [String: Any])?["keepRunning"] as? Bool == true)
+            return ["id": req["id"]!, "result": ["ok": true]]
+        }
+        try client.connect()
+        #expect(server.waitForClient(timeout: 2))
+        try await client.startTunnel(alias: "db-staging", environment: [:], keepRunning: true)
+    }
+
+    /// A tunnel's traffic, who holds it and whether it needs an answer are read when the daemon
+    /// sends them, and absent from an older daemon.
+    @Test func aTunnelsNewFieldsAreReadAndOptional() throws {
+        let full = #"{"alias":"db","state":"up","error":null,"since":1,"bytesIn":2749,"bytesOut":2594,"heldBy":"tab","needsInput":false}"#
+        let info = try JSONDecoder().decode(TunnelInfo.self, from: Data(full.utf8))
+        #expect(info.bytesIn == 2749 && info.bytesOut == 2594 && info.heldBy == .tab && info.needsInput == false)
+        let old = try JSONDecoder().decode(TunnelInfo.self, from: Data(#"{"alias":"db","state":"up","error":null,"since":1}"#.utf8))
+        #expect(old.bytesIn == nil && old.heldBy == nil && old.needsInput == nil)
+    }
+
     @Test func stoppingATunnelSendsItsAlias() async throws {
         server.handler = { req in
             #expect(req["method"] as? String == "tunnels.stop")
