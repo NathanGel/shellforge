@@ -67,8 +67,11 @@ final class iTermShellforgeSidebar: NSObject {
     /// A new sidebar for `windowController`'s window.
     @objc static func makeView(for windowController: PseudoTerminal) -> NSView {
         let host = iTermShellforgeHost(windowController: windowController)
+        // Read for each new window: an agent file added since shows in that window's New Task.
+        let loaded = AgentFiles.load(AgentRegistry())
         let model = SidebarModel(host: host, document: document, launcher: launcher, feed: link,
-                                 agents: AgentPresets.all, catalogue: { try catalogue.models(for: $0) }, sshConfig: .user)
+                                 agents: loaded.agents, catalogue: { try catalogue.models(for: $0) }, sshConfig: .user)
+        if let problem = loaded.problem { model.lastError = problem }
         model.prompter = ModalPrompter()
         sidebars.add(model)
         return ShellforgeSidebar.makeView(model: model, chooseFolder: FolderChooser.choose, hooks: hooks, machine: machine,
