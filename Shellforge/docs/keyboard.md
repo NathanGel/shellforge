@@ -20,6 +20,11 @@ checks in the running app that each key below is in the main menu once.
 
 Each acts on the key window's sidebar — a sheet of it may be key — and is off where its rule says.
 
+A profile given a shortcut in Settings › Profiles › General gets ⌃⌘ and that key in the Profiles
+menu. The Tasks and View menus come first in the menu bar, so a profile shortcut on N, R, P, A, L,
+S, [ or ] is shadowed by Shellforge's item: give such a profile another key. A key mapping of your
+own (Settings › Keys, or a profile's Keys) runs before any menu item, as in iTerm2.
+
 ## View menu
 
 | Keys | Action | Notes |
@@ -30,9 +35,9 @@ Each acts on the key window's sidebar — a sheet of it may be key — and is of
 
 ## The sidebar's edge
 
-Its right edge drags it to a width, from its minimum (360 pt) to 720 pt. In a window wide enough,
-the terminal keeps at least 320 pt; under 680 pt the sidebar stays at its minimum and the terminal
-has what is left. Each window keeps its own width; the last one dragged is where new windows start.
+Its right edge drags it to a width, from its minimum (360 pt) to 720 pt. The terminal always keeps
+at least 320 pt: in a window under 680 pt, too narrow for both, the sidebar steps aside until the
+window is wider. Each window keeps its own width; the last one dragged is where new windows start.
 
 ## Sheets
 

@@ -38,8 +38,9 @@ import Testing
         #expect(SidebarLayoutSettings.width(500, windowWidth: 2_000) == 500)
         #expect(SidebarLayoutSettings.width(500, windowWidth: 700) == 700 - SidebarLayoutSettings.terminalMinWidth,
                 "the terminal keeps its minimum; the sidebar gives way")
-        #expect(SidebarLayoutSettings.width(500, windowWidth: 500) == Size.sidebarMinWidth,
-                "under 680 pt the sidebar keeps its minimum and the terminal has what is left")
+        #expect(SidebarLayoutSettings.width(500, windowWidth: 500) == 0,
+                "under 680 pt both minimums do not fit: the terminal keeps its own, and the sidebar steps aside")
+        #expect(SidebarLayoutSettings.width(500, windowWidth: 680) == Size.sidebarMinWidth)
         #expect(SidebarLayoutSettings.width(500, windowWidth: 200) == 0, "a window too narrow for both: the terminal")
     }
 

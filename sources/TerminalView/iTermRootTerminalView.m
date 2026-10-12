@@ -1245,7 +1245,8 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
 
 // Shellforge: a 3 pt handle on the sidebar's right edge, as the left tab bar has.
 - (void)updateShellforgeSidebarDragHandle {
-    if (!_shellforgeSidebar || _shellforgeSidebarHidden) {
+    // Hidden, or stepped aside in a window too narrow for it and the terminal both.
+    if (!_shellforgeSidebar || _shellforgeSidebarHidden || self.shellforgeSidebarWidth == 0) {
         _shellforgeSidebarDragHandle.hidden = YES;
         return;
     }

@@ -39,10 +39,10 @@ public struct SidebarLayoutSettings {
     public static func clamped(_ width: CGFloat) -> CGFloat { min(max(width, Size.sidebarMinWidth), Self.maxWidth) }
 
     /// The width a window of `windowWidth` gives the sidebar: the preferred one, less what the
-    /// terminal needs to keep `terminalMinWidth`, never under the sidebar's own minimum — and
-    /// none at all in a window too narrow even for that.
+    /// terminal needs to keep `terminalMinWidth`. When even the sidebar's minimum would leave the
+    /// terminal less than that, the sidebar steps aside: the terminal is what the window is for.
     public static func width(_ preferred: CGFloat, windowWidth: CGFloat) -> CGFloat {
-        let width = min(clamped(preferred), max(windowWidth - Self.terminalMinWidth, Size.sidebarMinWidth))
-        return width > windowWidth ? 0 : width
+        let room = windowWidth - Self.terminalMinWidth
+        return room < Size.sidebarMinWidth ? 0 : min(clamped(preferred), room)
     }
 }

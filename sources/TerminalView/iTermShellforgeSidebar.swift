@@ -428,7 +428,8 @@ private final class TasksMenuController: NSObject, NSMenuItemValidation {
 
 /// The sidebar's width, as dragged, and whether new windows start with it hidden (⌃⌘S).
 extension iTermShellforgeSidebar {
-    private static var layout: SidebarLayoutSettings { SidebarLayoutSettings(defaults: .standard) }
+    /// Through iTerm2's own defaults domain, so a `-suite` run keeps its own sidebar.
+    private static var layout: SidebarLayoutSettings { SidebarLayoutSettings(defaults: iTermUserDefaults.userDefaults()) }
 
     /// The preferred width a new window starts with: the last one dragged, in any window.
     @objc static func defaultPreferredWidth() -> CGFloat { layout.width }

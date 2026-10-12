@@ -453,8 +453,17 @@ static NSModalResponse iTermCompareRenderingRunModal(id self, SEL _cmd) {
     }
 }
 
+// Shellforge: the key window's terminal, as the Tasks menu finds it: a sheet of its sidebar may be
+// key, and its parent is meant. Not currentTerminal, which stays the last terminal while Settings
+// or another panel is key.
+- (iTermRootTerminalView *)shellforgeKeyRootView {
+    NSWindow *window = NSApp.keyWindow.sheetParent ?: NSApp.keyWindow ?: NSApp.mainWindow;
+    id controller = window.windowController;
+    return [controller isKindOfClass:[PseudoTerminal class]] ? [(PseudoTerminal *)controller contentView] : nil;
+}
+
 - (IBAction)shellforgeToggleSidebar:(id)sender {
-    [[[[iTermController sharedInstance] currentTerminal] contentView] toggleShellforgeSidebar];
+    [[self shellforgeKeyRootView] toggleShellforgeSidebar];
 }
 
 - (IBAction)shellforgeToggleBackpack:(id)sender {
@@ -463,7 +472,7 @@ static NSModalResponse iTermCompareRenderingRunModal(id self, SEL _cmd) {
 
 - (BOOL)validateMenuItem:(NSMenuItem *)menuItem {
     if (menuItem.action == @selector(shellforgeToggleSidebar:)) {
-        iTermRootTerminalView *root = [[[iTermController sharedInstance] currentTerminal] contentView];
+        iTermRootTerminalView *root = [self shellforgeKeyRootView];
         menuItem.title = root.shellforgeSidebarHidden ? @"Show Sidebar" : @"Hide Sidebar";
         return root.hasShellforgeSidebar;
     }
