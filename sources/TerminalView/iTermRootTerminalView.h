@@ -102,6 +102,8 @@ extern const NSInteger iTermRootTerminalViewWindowNumberLabelWidth;
 @property(nonatomic, readonly) CGFloat shellforgeSidebarWidth;
 // Shellforge: ⌃⌘S hides the sidebar in this window.
 @property(nonatomic, readonly) BOOL shellforgeSidebarHidden;
+// Shellforge: the width the sidebar will have in this window (0 when hidden), for fitting the window.
+@property(nonatomic, readonly) CGFloat shellforgeSidebarPreferredWidth;
 - (void)toggleShellforgeSidebar;
 
 // Should the toolbelt be visible?

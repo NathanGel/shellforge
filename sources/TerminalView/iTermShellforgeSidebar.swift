@@ -430,12 +430,20 @@ private final class TasksMenuController: NSObject, NSMenuItemValidation {
 extension iTermShellforgeSidebar {
     private static var layout: SidebarLayoutSettings { SidebarLayoutSettings(defaults: .standard) }
 
-    /// The width a window of `windowWidth` gives the sidebar.
-    @objc static func width(forWindowWidth windowWidth: CGFloat) -> CGFloat {
-        SidebarLayoutSettings.width(layout.width, windowWidth: windowWidth)
+    /// The preferred width a new window starts with: the last one dragged, in any window.
+    @objc static func defaultPreferredWidth() -> CGFloat { layout.width }
+
+    /// The width a window of `windowWidth` gives a sidebar that prefers `preferred`.
+    @objc static func width(forPreferred preferred: CGFloat, windowWidth: CGFloat) -> CGFloat {
+        SidebarLayoutSettings.width(preferred, windowWidth: windowWidth)
     }
 
-    @objc static func setPreferredWidth(_ width: CGFloat) { layout.width = width }
+    /// A window's preferred width after a drag of `delta`, saved to seed new windows.
+    @objc static func dragged(_ preferred: CGFloat, by delta: CGFloat) -> CGFloat {
+        let width = SidebarLayoutSettings.dragged(preferred, by: delta)
+        layout.width = width
+        return width
+    }
 
     @objc static func startsHidden() -> Bool { layout.hidden }
 

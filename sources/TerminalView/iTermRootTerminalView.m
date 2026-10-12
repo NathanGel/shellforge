@@ -135,6 +135,8 @@ NS_CLASS_AVAILABLE_MAC(10_14)
     NSView *_shellforgeSidebar;
     // Shellforge: ⌃⌘S hides it in this window; its right edge drags it to a width.
     BOOL _shellforgeSidebarHidden;
+    // Shellforge: this window's own preferred width; the saved one only seeds new windows.
+    CGFloat _shellforgeSidebarPreferredWidth;
     iTermDragHandleView *_shellforgeSidebarDragHandle;
     BOOL _tabViewFrameReduced;
     BOOL _haveShownToolbelt;
@@ -263,6 +265,7 @@ NS_CLASS_AVAILABLE_MAC(10_14)
         _shellforgeSidebar = [iTermShellforgeSidebar makeViewFor:(PseudoTerminal *)delegate];
         [self addSubview:_shellforgeSidebar];
         _shellforgeSidebarHidden = [iTermShellforgeSidebar startsHidden];
+        _shellforgeSidebarPreferredWidth = [iTermShellforgeSidebar defaultPreferredWidth];
 
         _windowNumberLabel = [NSTextField newLabelStyledTextField];
         if (@available(macOS 10.16, *)) {
@@ -1216,7 +1219,13 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
     if (!_shellforgeSidebar || _shellforgeSidebarHidden) {
         return 0;
     }
-    return [iTermShellforgeSidebar widthForWindowWidth:NSWidth(self.bounds)];
+    return [iTermShellforgeSidebar widthForPreferred:_shellforgeSidebarPreferredWidth windowWidth:NSWidth(self.bounds)];
+}
+
+// Shellforge: what fitting the window to its tabs adds for the sidebar: the width it will have,
+// not the width a window still at its starting size gives it (as iTerm2 does for left tabs).
+- (CGFloat)shellforgeSidebarPreferredWidth {
+    return (!_shellforgeSidebar || _shellforgeSidebarHidden) ? 0 : _shellforgeSidebarPreferredWidth;
 }
 
 - (BOOL)shellforgeSidebarHidden {
@@ -1982,7 +1991,7 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
     if (dragHandle == _shellforgeSidebarDragHandle) {
         // Shellforge: the sidebar's width, as dragged; it returns how far the edge actually moved.
         const CGFloat before = self.shellforgeSidebarWidth;
-        [iTermShellforgeSidebar setPreferredWidth:before + delta];
+        _shellforgeSidebarPreferredWidth = [iTermShellforgeSidebar dragged:_shellforgeSidebarPreferredWidth by:delta];
         [self layoutSubviews];
         return self.shellforgeSidebarWidth - before;
     }

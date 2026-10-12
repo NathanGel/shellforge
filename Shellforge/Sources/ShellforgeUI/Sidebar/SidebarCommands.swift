@@ -25,12 +25,15 @@ extension SidebarModel {
 
     /// The tasks waiting on the user — needing input, or done and not yet seen — in sidebar order.
     public var waitingOnYou: [UUID] {
-        tree.projects.flatMap(\.tasks).map(\.id).filter { [.needsInput, .done].contains(status(ofTask: $0)) }
+        tree.projects.flatMap(\.tasks).map(\.id)
+            .filter { removals[$0] == nil && [.needsInput, .done].contains(status(ofTask: $0)) }
     }
 
     /// The tasks Next and Previous step through: those of the open projects, in sidebar order.
     var steppableTasks: [UUID] {
-        tree.projects.filter { !$0.project.collapsed }.flatMap(\.tasks).map(\.id)
+        // A task being removed has had its tabs closed: stepping onto it would only open a shell in
+        // a worktree on its way out.
+        tree.projects.filter { !$0.project.collapsed }.flatMap(\.tasks).map(\.id).filter { removals[$0] == nil }
     }
 
     public func can(_ command: SidebarCommand) -> Bool {
@@ -66,7 +69,7 @@ extension SidebarModel {
         } else {
             next = offset > 0 ? 0 : tasks.count - 1
         }
-        select(task: tasks[next])
+        show(task: tasks[next])
     }
 
     /// AiTerm's Focus View: the projects with a task waiting on the user open, the rest fold, and
@@ -75,7 +78,7 @@ extension SidebarModel {
         let waiting = Set(waitingOnYou)
         let tasks = document.workspace.tasks
         setCollapsed { project in !tasks.contains { $0.projectId == project && waiting.contains($0.id) } }
-        if let first = waitingOnYou.first { select(task: first) }
+        if let first = waitingOnYou.first { show(task: first) }
     }
 
     private func setCollapsed(_ collapsed: (UUID) -> Bool) {

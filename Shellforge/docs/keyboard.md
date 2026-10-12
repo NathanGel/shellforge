@@ -30,8 +30,9 @@ Each acts on the key window's sidebar — a sheet of it may be key — and is of
 
 ## The sidebar's edge
 
-Its right edge drags it to a width, from its minimum (360 pt) to 720 pt, always leaving the
-terminal 320 pt. The width is remembered.
+Its right edge drags it to a width, from its minimum (360 pt) to 720 pt. In a window wide enough,
+the terminal keeps at least 320 pt; under 680 pt the sidebar stays at its minimum and the terminal
+has what is left. Each window keeps its own width; the last one dragged is where new windows start.
 
 ## Sheets
 

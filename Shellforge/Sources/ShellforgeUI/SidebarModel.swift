@@ -327,6 +327,15 @@ public final class SidebarModel: ObservableObject {
         }
     }
 
+    /// The keyboard's way to a task (Next, Previous, Focus View): its tab in this window when it has
+    /// one, else only the selection. Unlike a click it opens nothing: stepping through tasks must not
+    /// leave a shell behind for each, nor a second tab for one whose tab is in another window.
+    public func show(task id: UUID) {
+        guard let node = tree.projects.lazy.flatMap(\.tasks).first(where: { $0.id == id }) else { return }
+        selectedTaskId = id
+        if let tab = node.tabs.first, tab.id != host.selectedTabId { host.select(tab: tab.id) }
+    }
+
     public func select(tab id: String) {
         host.select(tab: id)
     }

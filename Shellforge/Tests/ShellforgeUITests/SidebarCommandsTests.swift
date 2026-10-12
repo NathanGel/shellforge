@@ -67,9 +67,26 @@ import Testing
         #expect(empty.selectedTaskId == nil)
     }
 
+    /// Stepping through tasks moves the selection; it never opens a tab for a task with none here —
+    /// holding ⌃⌘] over ten tasks must not leave ten new shells.
+    @Test func steppingOpensNoTabs() throws {
+        let (model, host, _, _) = try model()
+        for _ in 0..<5 { model.perform(.nextTask) }
+        model.perform(.previousTask)
+        #expect(host.opened.isEmpty)
+    }
+
+    @Test func aTaskBeingRemovedIsSteppedOver() throws {
+        let (model, _, _, ids) = try model()
+        model.removalBoard.removals[try #require(ids["a2"])] = .removing
+        model.perform(.nextTask)
+        model.perform(.nextTask)
+        #expect(model.selectedTaskId == ids["b1"], "a2 is being removed")
+    }
+
     @Test func focusViewOpensWhatWaitsAndShowsTheFirst() throws {
         let feed = FakeFeed()
-        let (model, _, document, ids) = try model(feed: feed)
+        let (model, host, document, ids) = try model(feed: feed)
         model.toggleCollapsed(try #require(ids["b"]))
         feed.sayAll([(.needsInput, "s1", try #require(ids["b1"]), .claude), (.working, "s2", try #require(ids["a1"]), .claude)])
         #expect(model.waitingOnYou == [ids["b1"]])
@@ -77,6 +94,7 @@ import Testing
         #expect(document.workspace.projects.first { $0.id == ids["b"] }?.collapsed == false, "the project with a task waiting opens")
         #expect(document.workspace.projects.first { $0.id == ids["a"] }?.collapsed == true, "the rest fold")
         #expect(model.selectedTaskId == ids["b1"])
+        #expect(host.opened.isEmpty, "Focus View shows the task; it opens no tab")
     }
 
     @Test func listViewOpensEveryProject() throws {

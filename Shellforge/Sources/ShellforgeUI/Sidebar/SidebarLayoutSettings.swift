@@ -32,7 +32,11 @@ public struct SidebarLayoutSettings {
         nonmutating set { defaults.set(newValue, forKey: Self.hiddenKey) }
     }
 
-    static func clamped(_ width: CGFloat) -> CGFloat { min(max(width, Size.sidebarMinWidth), Self.maxWidth) }
+    /// A window's preferred width after its edge moved `delta`: from its own preferred width, not
+    /// the width a narrow window gave it, within the limits.
+    public static func dragged(_ preferred: CGFloat, by delta: CGFloat) -> CGFloat { clamped(preferred + delta) }
+
+    public static func clamped(_ width: CGFloat) -> CGFloat { min(max(width, Size.sidebarMinWidth), Self.maxWidth) }
 
     /// The width a window of `windowWidth` gives the sidebar: the preferred one, less what the
     /// terminal needs to keep `terminalMinWidth`, never under the sidebar's own minimum — and

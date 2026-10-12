@@ -38,6 +38,16 @@ import Testing
         #expect(SidebarLayoutSettings.width(500, windowWidth: 2_000) == 500)
         #expect(SidebarLayoutSettings.width(500, windowWidth: 700) == 700 - SidebarLayoutSettings.terminalMinWidth,
                 "the terminal keeps its minimum; the sidebar gives way")
+        #expect(SidebarLayoutSettings.width(500, windowWidth: 500) == Size.sidebarMinWidth,
+                "under 680 pt the sidebar keeps its minimum and the terminal has what is left")
         #expect(SidebarLayoutSettings.width(500, windowWidth: 200) == 0, "a window too narrow for both: the terminal")
+    }
+
+    /// A window's preferred width is its own: dragged from what it was, kept within the limits —
+    /// never from the width a narrow window happened to give it.
+    @Test func aDragMovesThePreferredWidth() {
+        #expect(SidebarLayoutSettings.dragged(700, by: -5) == 695)
+        #expect(SidebarLayoutSettings.dragged(700, by: 500) == SidebarLayoutSettings.maxWidth)
+        #expect(SidebarLayoutSettings.dragged(400, by: -500) == Size.sidebarMinWidth)
     }
 }
