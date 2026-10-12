@@ -95,6 +95,7 @@ final class iTermShellforgeSidebar: NSObject {
 final class iTermShellforgeHost: TerminalHost {
     private weak var windowController: PseudoTerminal?
     var onChange: (@MainActor @Sendable () -> Void)?
+    var onSplitRefused: (@MainActor @Sendable (String) -> Void)?
     private var observers: [NSObjectProtocol] = []
 
     init(windowController: PseudoTerminal) {
@@ -174,19 +175,44 @@ final class iTermShellforgeHost: TerminalHost {
 
     /// The tunnels' ports are exported before the command, in the line typed into the shell: an
     /// iTerm2 profile has no environment of its own to carry them.
-    func openTab(in directory: String, taskId: UUID, projectId: UUID, title: String, command: String?, environment: [String: String]) {
+    /// `beside`, when given, runs in a pane split off to the right of the agent's, in the same folder.
+    func openTab(in directory: String, taskId: UUID, projectId: UUID, title: String, command: String?, environment: [String: String],
+                 beside: String?) {
         guard let windowController, let base = ProfileModel.sharedInstance()?.defaultBookmark() else { return }
         let profile = iTermShellforgeSidebar.taskTabProfile(base: base, directory: directory,
                                                             initialText: TabCommand.exporting(environment, then: command).map(TabCommand.initialText))
+        let made = MadeSession()
         iTermSessionLauncher.launchBookmark(profile, in: windowController, style: .tab, withURL: nil,
                                             hotkeyWindowType: .none, makeKey: true, canActivate: true,
                                             respectTabbingMode: false, index: nil, command: nil,
                                             makeSession: nil, didMakeSession: { session in
             session.genericScope.setValue(taskId.uuidString.lowercased(), forVariableNamed: ShellforgeTags.task)
             session.genericScope.setValue(projectId.uuidString.lowercased(), forVariableNamed: ShellforgeTags.project)
+            made.session = session
         }, completion: { [weak self] _, _ in
-            MainActor.assumeIsolated { self?.onChange?() }
+            MainActor.assumeIsolated {
+                self?.onChange?()
+                if let beside, let session = made.session {
+                    self?.split(session, running: beside, in: directory, base: base, title: title)
+                }
+            }
         })
+    }
+
+    /// The pane beside a task's agent: a vertical split after it, typing `command` in `directory`.
+    /// iTerm2 can refuse a split (a tmux tab, a window too small): the task stays open, and says so.
+    private func split(_ session: PTYSession, running command: String, in directory: String, base: [AnyHashable: Any], title: String) {
+        let profile = iTermShellforgeSidebar.taskTabProfile(base: base, directory: directory, initialText: TabCommand.initialText(command))
+        guard let windowController, windowController.canSplitPaneVertically(true, withBookmark: profile) else {
+            onSplitRefused?(title)
+            return
+        }
+        windowController.asyncSplitVertically(true, before: false, profile: profile, targetSession: session, completion: { [weak self] pane, ok in
+            MainActor.assumeIsolated {
+                if pane == nil || !ok { self?.onSplitRefused?(title) }
+                self?.onChange?()
+            }
+        }, ready: { _, _ in })
     }
 }
 
@@ -299,3 +325,7 @@ private final class TunnelMenuController: NSObject, NSMenuItemValidation {
         TunnelMenu.isEnabled(haveSidebar: iTermShellforgeSidebar.anySidebar != nil)
     }
 }
+
+
+/// The session `launchBookmark` made, handed from its didMakeSession block to its completion.
+private final class MadeSession { var session: PTYSession? }

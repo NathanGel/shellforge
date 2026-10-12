@@ -10,16 +10,26 @@ public protocol TerminalHost: AnyObject {
     var selectedTabId: String? { get }
     /// Called whenever a tab opens, closes, is renamed or is selected — by the sidebar or by iTerm2.
     var onChange: (@MainActor () -> Void)? { get set }
+    /// Called with a task's title when its tab opened but the pane beside it could not.
+    var onSplitRefused: (@MainActor @Sendable (String) -> Void)? { get set }
     func select(tab id: String)
     /// Opens a tab in `directory`, running the login shell, tagged with the task and project, and
     /// selects it. `command` is typed into its shell once it starts: the task's agent. `environment`
     /// is set in that shell first: the project's running tunnels' ports.
-    func openTab(in directory: String, taskId: UUID, projectId: UUID, title: String, command: String?, environment: [String: String])
+    func openTab(in directory: String, taskId: UUID, projectId: UUID, title: String, command: String?, environment: [String: String],
+                 beside: String?)
     /// Closes every tab tagged with the task, in every window — what removing it starts with. True
     /// once none is left open.
     func closeTabs(ofTask id: UUID) -> Bool
     /// Opens a tab of no task in `directory`, typing `command` into its shell, and selects it.
     func openTab(in directory: String, title: String, command: String)
+}
+
+extension TerminalHost {
+    /// A task's tab with nothing beside its agent.
+    func openTab(in directory: String, taskId: UUID, projectId: UUID, title: String, command: String?, environment: [String: String]) {
+        openTab(in: directory, taskId: taskId, projectId: projectId, title: title, command: command, environment: environment, beside: nil)
+    }
 }
 
 /// The draft's agent's CLI was not on the login shell's `PATH` when Create ran.
@@ -115,6 +125,7 @@ public final class SidebarModel: ObservableObject {
         self.feed = feed
         lastError = document.loadProblem
         host.onChange = { [weak self] in self?.refresh() }
+        host.onSplitRefused = { [weak self] title in self?.lastError = "The ssh pane couldn’t open beside \(title)." }
         // @Published announces before it stores, so the new value is passed along.
         subscription = document.$workspace.dropFirst().sink { [weak self] workspace in
             MainActor.assumeIsolated { self?.refresh(workspace) }
@@ -163,7 +174,8 @@ public final class SidebarModel: ObservableObject {
         let last = document.workspace.lastAgentByProject[projectId]
         let agentId = last.flatMap { available.contains($0) ? $0 : nil }
             ?? agents.first { available.contains($0.id) }?.id ?? agents[0].id
-        let draft = TaskDraft(baseBranch: Repository.fallbackDefaultBranch, agentId: agentId, model: "", reasoning: nil)
+        var draft = TaskDraft(baseBranch: Repository.fallbackDefaultBranch, agentId: agentId, model: "", reasoning: nil)
+        draft.openSSH = document.workspace.lastOpenSSHByProject[projectId] ?? true
         let path = project.path
         return NewTaskModel(project: project, agents: agents, available: available, draft: draft,
                             rememberedModels: document.workspace.lastModelByAgent, catalogue: catalogue,
@@ -171,6 +183,7 @@ public final class SidebarModel: ObservableObject {
                             submit: { [weak self] draft in try await self?.newTask(draft: draft, in: projectId) },
                             // Read once, as the sheet opens: a Keychain read is too slow for every keystroke.
                             searchIssues: NewTaskModel.jiraSearcher(for: project, jira: jiraSettings()),
+                            sshHost: paneHost(of: project),
                             home: FileManager.default.homeDirectoryForCurrentUser)
     }
 
@@ -195,12 +208,14 @@ public final class SidebarModel: ObservableObject {
         try document.update { workspace in
             workspace.tasks.append(made.0)
             workspace.remember(draft, projectId: projectId)
+            if project.sshHost != nil { workspace.lastOpenSSHByProject[projectId] = draft.openSSH }
             // A task made in a folded project is shown: the project unfolds for it.
             if let i = workspace.projects.firstIndex(where: { $0.id == projectId }) { workspace.projects[i].collapsed = false }
         }
         selectedTaskId = made.0.id
+        let beside = draft.openSSH ? paneHost(of: project).map(SSHConfig.paneCommand(alias:)) : nil
         host.openTab(in: made.0.worktreePath, taskId: made.0.id, projectId: projectId, title: made.0.title, command: made.1,
-                     environment: openingTaskTab(in: projectId))
+                     environment: openingTaskTab(in: projectId), beside: beside)
     }
 
     // -- New Review ----------------------------------------------------------------------

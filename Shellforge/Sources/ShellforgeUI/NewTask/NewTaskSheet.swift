@@ -46,6 +46,10 @@ struct NewTaskSheet: View {
                                 Toggle("Include Jira ticket details", isOn: $model.draft.appendTicket)
                                     .toggleStyle(.checkbox).font(Typography.body)
                             }
+                            if let host = model.kind.sshHost {
+                                Toggle("Open ssh \(host) beside the agent", isOn: $model.draft.openSSH)
+                                    .toggleStyle(.checkbox).font(Typography.body)
+                            }
                         }
                     }
                 }

@@ -47,7 +47,9 @@ public protocol CreationKind: AnyObject {
 public final class TaskCreation: CreationKind {
     public typealias Draft = TaskDraft
     public typealias Item = JiraTicket
-    public init() {}
+    /// The project's SSH host, while the config has it: New Task offers it as a pane beside the agent.
+    public let sshHost: String?
+    public init(sshHost: String? = nil) { self.sshHost = sshHost }
     public func slug(of draft: TaskDraft) -> String { draft.worktreeSlug }
     public func prompt(of draft: TaskDraft) -> String? {
         AgentCommand.composePrompt(userText: draft.promptText, ticket: draft.ticket, appendTicket: draft.appendTicket)
@@ -281,8 +283,8 @@ extension CreationModel where Kind == TaskCreation {
                             branches: @escaping @Sendable () -> [String],
                             submit: @escaping @MainActor (TaskDraft) async throws -> Void,
                             searchIssues: @escaping @MainActor (String) async throws -> [JiraTicket] = { _ in [] },
-                            home: URL) {
-        self.init(kind: TaskCreation(), project: project, agents: agents, available: available, draft: draft, rememberedModels: rememberedModels,
+                            sshHost: String? = nil, home: URL) {
+        self.init(kind: TaskCreation(sshHost: sshHost), project: project, agents: agents, available: available, draft: draft, rememberedModels: rememberedModels,
                   catalogue: catalogue, branches: branches, submit: submit, search: searchIssues, home: home)
     }
 

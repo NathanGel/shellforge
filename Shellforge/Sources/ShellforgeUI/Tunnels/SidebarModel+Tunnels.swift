@@ -69,6 +69,12 @@ extension SidebarModel {
         }
     }
 
+    /// The project's SSH host while the config has it: what New Task offers beside the agent.
+    func paneHost(of project: Project) -> String? {
+        guard let alias = project.sshHost, sshHosts?[alias] != nil else { return nil }
+        return alias
+    }
+
     /// The project's tunnels as rows, in its order.
     public func tunnelRows(of project: Project) -> [TunnelRowItem] {
         project.tunnels.map { tunnel in
@@ -142,7 +148,7 @@ extension SidebarModel {
     /// an included file is a port a new tab would otherwise get wrong; the rows redraw only when
     /// the hosts changed.
     func refreshSSHHosts(_ projects: [Project]) {
-        guard !readingSSH, projects.contains(where: { !$0.tunnels.isEmpty }) else { return }
+        guard !readingSSH, projects.contains(where: { !$0.tunnels.isEmpty || $0.sshHost != nil }) else { return }
         readingSSH = true
         let source = sshConfig
         Task {

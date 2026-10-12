@@ -169,13 +169,15 @@ public struct Workspace: Codable, Equatable, Sendable {
     /// last used with each agent (AiTerm's `AppState.lastAgentByProject` and `lastModelByAgent`).
     public var lastAgentByProject: [UUID: String] = [:]
     public var lastModelByAgent: [String: String] = [:]
+    /// Whether New Task last opened each project's SSH pane: the box opens as it was left.
+    public var lastOpenSSHByProject: [UUID: Bool] = [:]
 
     public init(projects: [Project] = [], tasks: [TaskItem] = []) {
         self.projects = projects
         self.tasks = tasks
     }
 
-    private enum CodingKeys: String, CodingKey { case version, projects, tasks, lastAgentByProject, lastModelByAgent }
+    private enum CodingKeys: String, CodingKey { case version, projects, tasks, lastAgentByProject, lastModelByAgent, lastOpenSSHByProject }
 
     /// A file written before the remembered choices existed reads them as empty; one without its
     /// projects or tasks is not a workspace and fails, rather than reading as an empty one to be saved over.
@@ -186,6 +188,7 @@ public struct Workspace: Codable, Equatable, Sendable {
         tasks = try c.decode([TaskItem].self, forKey: .tasks)
         lastAgentByProject = try c.decodeIfPresent([UUID: String].self, forKey: .lastAgentByProject) ?? [:]
         lastModelByAgent = try c.decodeIfPresent([String: String].self, forKey: .lastModelByAgent) ?? [:]
+        lastOpenSSHByProject = try c.decodeIfPresent([UUID: Bool].self, forKey: .lastOpenSSHByProject) ?? [:]
     }
 
     /// What the next New Task in this project opens with: this agent, and this model for it.

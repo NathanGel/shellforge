@@ -44,6 +44,10 @@ public struct SSHConfigSource: Sendable {
 }
 
 public enum SSHConfig {
+    /// What the pane beside a task's agent runs for a project's host: `ssh <alias>`, as the user
+    /// would type it, the alias one shell word.
+    public static func paneCommand(alias: String) -> String { "ssh " + AgentCommand.shellWord(alias) }
+
     /// The concrete `Host` aliases in `file` — none with `*`, `?` or `!` — in file order, each with
     /// its `LocalForward`s. `Include` is followed (relative to `~/.ssh`, globbed), each file once, so
     /// an include loop ends; `Match` blocks are skipped. A missing file has no hosts.
