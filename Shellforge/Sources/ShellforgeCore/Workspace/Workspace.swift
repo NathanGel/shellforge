@@ -9,23 +9,40 @@ public struct Project: Codable, Equatable, Sendable, Identifiable {
     public var addedAt: Date
     /// Whether the sidebar shows only its header, as AiTerm's project rows fold.
     public var collapsed: Bool
+    /// The Jira projects whose tickets belong to this one, in the order they were linked. Empty:
+    /// New Task searches every Jira project.
+    public var jiraProjects: [JiraProjectRef]
 
-    public init(id: UUID = UUID(), name: String, path: String, addedAt: Date = Date(), collapsed: Bool = false) {
+    public init(id: UUID = UUID(), name: String, path: String, addedAt: Date = Date(), collapsed: Bool = false,
+                jiraProjects: [JiraProjectRef] = []) {
         self.id = id
         self.name = name
         self.path = path
         self.addedAt = addedAt
         self.collapsed = collapsed
+        self.jiraProjects = jiraProjects
     }
 
-    private enum CodingKeys: String, CodingKey { case id, name, path, addedAt, collapsed }
+    private enum CodingKeys: String, CodingKey { case id, name, path, addedAt, collapsed, jiraProjects }
 
-    /// A workspace saved before projects could fold loads them unfolded.
+    /// A workspace saved before projects could fold loads them unfolded, and one saved before they
+    /// could link Jira projects links none.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.init(id: try c.decode(UUID.self, forKey: .id), name: try c.decode(String.self, forKey: .name),
                   path: try c.decode(String.self, forKey: .path), addedAt: try c.decode(Date.self, forKey: .addedAt),
-                  collapsed: try c.decodeIfPresent(Bool.self, forKey: .collapsed) ?? false)
+                  collapsed: try c.decodeIfPresent(Bool.self, forKey: .collapsed) ?? false,
+                  jiraProjects: try c.decodeIfPresent([JiraProjectRef].self, forKey: .jiraProjects) ?? [])
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(path, forKey: .path)
+        try c.encode(addedAt, forKey: .addedAt)
+        try c.encode(collapsed, forKey: .collapsed)
+        try c.encode(jiraProjects, forKey: .jiraProjects)
     }
 }
 
