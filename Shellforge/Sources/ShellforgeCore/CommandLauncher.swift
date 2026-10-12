@@ -10,11 +10,19 @@ public final class CommandLauncher: @unchecked Sendable {
     private let resolve: @Sendable () -> ResolvedEnvironment
     private let lock = NSLock()
     private var cached: ResolvedEnvironment?
+    private let clock: @Sendable () -> Date
+    private var read: Date?
 
-    /// `resolve` reads the environment; the default asks the user's login shell.
-    public init(resolve: @escaping @Sendable () -> ResolvedEnvironment = CommandLauncher.loginShell) {
+    /// `resolve` reads the environment; the default asks the user's login shell. `clock` stamps
+    /// each read, for Settings › Core.
+    public init(resolve: @escaping @Sendable () -> ResolvedEnvironment = CommandLauncher.loginShell,
+                clock: @escaping @Sendable () -> Date = { Date() }) {
         self.resolve = resolve
+        self.clock = clock
     }
+
+    /// When the environment was last read; nil before the first use.
+    public var readAt: Date? { lock.withLock { read } }
 
     /// The user's `$SHELL`, or zsh, macOS's default, asked with what this process inherited.
     public static let loginShell: @Sendable () -> ResolvedEnvironment = {
@@ -28,6 +36,7 @@ public final class CommandLauncher: @unchecked Sendable {
             if let cached { return cached }
             let fresh = resolve()
             cached = fresh
+            read = clock()
             return fresh
         }
     }
@@ -36,7 +45,8 @@ public final class CommandLauncher: @unchecked Sendable {
     @discardableResult
     public func reload() -> ResolvedEnvironment {
         let fresh = resolve()
-        lock.withLock { cached = fresh }
+        let now = clock()
+        lock.withLock { cached = fresh; read = now }
         return fresh
     }
 
@@ -91,6 +101,6 @@ public struct CommandNotFound: Error, CustomStringConvertible, Sendable {
         case .loginShell(let shell): origin = "the environment of your login shell, \(shell)"
         case .fallback(let reason): origin = "a fallback environment, because \(reason)"
         }
-        return "\(name) was not found. Searched PATH: \(searchedPath) (from \(origin))."
+        return "\(name) was not found. Searched PATH: \(searchedPath) (from \(origin)). Settings › Core shows the environment Shellforge uses."
     }
 }
