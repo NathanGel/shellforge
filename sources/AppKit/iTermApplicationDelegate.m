@@ -26,6 +26,8 @@
  */
 
 #import "iTermApplicationDelegate.h"
+#import "PseudoTerminal+Private.h"
+#import "iTermRootTerminalView.h"
 
 #import "AppearancePreferencesViewController.h"
 #import "ColorsMenuItemView.h"
@@ -381,6 +383,23 @@ static NSModalResponse iTermCompareRenderingRunModal(id self, SEL _cmd) {
     backpackItem.target = self;
     [viewMenu addItem:backpackItem];
 
+    // Shellforge: Hide Sidebar, ⌃⌘S as in Finder and Mail.
+    NSMenuItem *sidebarItem = [[[NSMenuItem alloc] initWithTitle:@"Hide Sidebar"
+                                                          action:@selector(shellforgeToggleSidebar:)
+                                                   keyEquivalent:@"s"] autorelease];
+    sidebarItem.keyEquivalentModifierMask = NSEventModifierFlagControl | NSEventModifierFlagCommand;
+    sidebarItem.target = self;
+    [viewMenu addItem:sidebarItem];
+
+    // Shellforge: the Tasks menu after View, its keys all ⌃⌘ ones iTerm2 leaves free.
+    NSMenuItem *tasksItem = [[[NSMenuItem alloc] initWithTitle:@"Tasks" action:nil keyEquivalent:@""] autorelease];
+    tasksItem.submenu = [iTermShellforgeSidebar tasksMenu];
+    tasksItem.submenu.title = @"Tasks";
+    const NSInteger viewIndex = [[NSApp mainMenu] indexOfItemWithSubmenu:viewMenu];
+    if (viewIndex >= 0) {
+        [[NSApp mainMenu] insertItem:tasksItem atIndex:viewIndex + 1];
+    }
+
     // Shellforge: Tunnels, one item per linked tunnel; Open Quickly finds them by their titles.
     NSMenuItem *tunnelsItem = [[[NSMenuItem alloc] initWithTitle:@"Tunnels" action:nil keyEquivalent:@""] autorelease];
     tunnelsItem.submenu = [iTermShellforgeSidebar tunnelsMenu];
@@ -434,11 +453,29 @@ static NSModalResponse iTermCompareRenderingRunModal(id self, SEL _cmd) {
     }
 }
 
+// Shellforge: the key window's terminal, as the Tasks menu finds it: a sheet of its sidebar may be
+// key, and its parent is meant. Not currentTerminal, which stays the last terminal while Settings
+// or another panel is key.
+- (iTermRootTerminalView *)shellforgeKeyRootView {
+    NSWindow *window = NSApp.keyWindow.sheetParent ?: NSApp.keyWindow ?: NSApp.mainWindow;
+    id controller = window.windowController;
+    return [controller isKindOfClass:[PseudoTerminal class]] ? [(PseudoTerminal *)controller contentView] : nil;
+}
+
+- (IBAction)shellforgeToggleSidebar:(id)sender {
+    [[self shellforgeKeyRootView] toggleShellforgeSidebar];
+}
+
 - (IBAction)shellforgeToggleBackpack:(id)sender {
     [iTermShellforgeSidebar toggleBackpack:sender];
 }
 
 - (BOOL)validateMenuItem:(NSMenuItem *)menuItem {
+    if (menuItem.action == @selector(shellforgeToggleSidebar:)) {
+        iTermRootTerminalView *root = [self shellforgeKeyRootView];
+        menuItem.title = root.shellforgeSidebarHidden ? @"Show Sidebar" : @"Hide Sidebar";
+        return root.hasShellforgeSidebar;
+    }
     if (menuItem.action == @selector(shellforgeToggleBackpack:)) {
         menuItem.state = [iTermShellforgeSidebar backpackIsOn] ? NSControlStateValueOn : NSControlStateValueOff;
         return YES;

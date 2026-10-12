@@ -133,6 +133,11 @@ NS_CLASS_AVAILABLE_MAC(10_14)
 @implementation iTermRootTerminalView {
     // Shellforge: the projects → tasks → tabs sidebar at the window's left edge.
     NSView *_shellforgeSidebar;
+    // Shellforge: ⌃⌘S hides it in this window; its right edge drags it to a width.
+    BOOL _shellforgeSidebarHidden;
+    // Shellforge: this window's own preferred width; the saved one only seeds new windows.
+    CGFloat _shellforgeSidebarPreferredWidth;
+    iTermDragHandleView *_shellforgeSidebarDragHandle;
     BOOL _tabViewFrameReduced;
     BOOL _haveShownToolbelt;
     iTermStoplightHotbox *_stoplightHotbox;
@@ -259,6 +264,8 @@ NS_CLASS_AVAILABLE_MAC(10_14)
 
         _shellforgeSidebar = [iTermShellforgeSidebar makeViewFor:(PseudoTerminal *)delegate];
         [self addSubview:_shellforgeSidebar];
+        _shellforgeSidebarHidden = [iTermShellforgeSidebar startsHidden];
+        _shellforgeSidebarPreferredWidth = [iTermShellforgeSidebar defaultPreferredWidth];
 
         _windowNumberLabel = [NSTextField newLabelStyledTextField];
         if (@available(macOS 10.16, *)) {
@@ -1209,7 +1216,50 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
 }
 
 - (CGFloat)shellforgeSidebarWidth {
-    return _shellforgeSidebar ? [iTermShellforgeSidebar width] : 0;
+    if (!_shellforgeSidebar || _shellforgeSidebarHidden) {
+        return 0;
+    }
+    return [iTermShellforgeSidebar widthForPreferred:_shellforgeSidebarPreferredWidth windowWidth:NSWidth(self.bounds)];
+}
+
+// Shellforge: what fitting the window to its tabs adds for the sidebar: the width it will have,
+// not the width a window still at its starting size gives it (as iTerm2 does for left tabs).
+- (CGFloat)shellforgeSidebarPreferredWidth {
+    return (!_shellforgeSidebar || _shellforgeSidebarHidden) ? 0 : _shellforgeSidebarPreferredWidth;
+}
+
+- (BOOL)shellforgeSidebarHidden {
+    return _shellforgeSidebarHidden;
+}
+
+// Shellforge: ⌃⌘S. New windows open as the last toggle left them.
+- (void)toggleShellforgeSidebar {
+    if (!_shellforgeSidebar) {
+        return;
+    }
+    _shellforgeSidebarHidden = !_shellforgeSidebarHidden;
+    [iTermShellforgeSidebar setStartsHidden:_shellforgeSidebarHidden];
+    [self layoutSubviews];
+    [_delegate rootTerminalViewDidResizeContentArea];
+}
+
+// Shellforge: a 3 pt handle on the sidebar's right edge, as the left tab bar has.
+- (void)updateShellforgeSidebarDragHandle {
+    // Hidden, or stepped aside in a window too narrow for it and the terminal both.
+    if (!_shellforgeSidebar || _shellforgeSidebarHidden || self.shellforgeSidebarWidth == 0) {
+        _shellforgeSidebarDragHandle.hidden = YES;
+        return;
+    }
+    const CGFloat handleWidth = 3;
+    const NSRect sidebar = _shellforgeSidebar.frame;
+    const NSRect frame = NSMakeRect(NSMaxX(sidebar) - handleWidth, NSMinY(sidebar), handleWidth, NSHeight(sidebar));
+    if (!_shellforgeSidebarDragHandle) {
+        _shellforgeSidebarDragHandle = [[iTermDragHandleView alloc] initWithFrame:frame];
+        _shellforgeSidebarDragHandle.delegate = self;
+        [self addSubview:_shellforgeSidebarDragHandle];
+    }
+    _shellforgeSidebarDragHandle.frame = frame;
+    _shellforgeSidebarDragHandle.hidden = NO;
 }
 
 - (BOOL)tabBarShouldBeVisibleEvenWhenOnLoan {
@@ -1356,7 +1406,7 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
     inputs.leftTabBarWidth = _leftTabBarWidth;
 
     // Shellforge sidebar
-    inputs.leftPanelWidth = _shellforgeSidebar ? [iTermShellforgeSidebar width] : 0;
+    inputs.leftPanelWidth = self.shellforgeSidebarWidth;
 
     // Toolbelt
     inputs.toolbeltWidth = floor(self.toolbeltWidth);
@@ -1675,6 +1725,8 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
     }
     _shellforgeSidebar.frame =
         [iTermLayoutCalculator calculateLayoutWithInputs:[self layoutInputsForWindow:thisWindow]].leftPanelFrame;
+    _shellforgeSidebar.hidden = _shellforgeSidebarHidden;
+    [self updateShellforgeSidebarDragHandle];
     if (@available(macOS 12.0, *)) {
         const CGFloat notchHeight = [self notchInset];
         _notchMask.hidden = (notchHeight == 0);
@@ -1937,6 +1989,13 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
 
 // For the left-side or right-side tab bar.
 - (CGFloat)dragHandleView:(iTermDragHandleView *)dragHandle didMoveBy:(CGFloat)delta {
+    if (dragHandle == _shellforgeSidebarDragHandle) {
+        // Shellforge: the sidebar's width, as dragged; it returns how far the edge actually moved.
+        const CGFloat before = self.shellforgeSidebarWidth;
+        _shellforgeSidebarPreferredWidth = [iTermShellforgeSidebar dragged:_shellforgeSidebarPreferredWidth by:delta];
+        [self layoutSubviews];
+        return self.shellforgeSidebarWidth - before;
+    }
     CGFloat originalValue = _leftTabBarPreferredWidth;
     const BOOL isRight = ([iTermPreferences intForKey:kPreferenceKeyTabPosition] == PSMTab_RightTab);
     const CGFloat signedDelta = isRight ? -delta : delta;

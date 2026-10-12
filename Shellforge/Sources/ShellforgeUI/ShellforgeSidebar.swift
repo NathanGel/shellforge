@@ -111,6 +111,15 @@ struct SidebarView: View {
         .background(WindowReader(anchor: anchor))
         // The View menu's ⌘B opens the sheet on the key window's sidebar: this one says how.
         .onAppear { showBackpack(presentBackpack) }
+        // The Tasks menu's keys that need a sheet: shown as the "+" or the row's menu would.
+        .onReceive(model.sheetRequests) { request in
+            switch request {
+            case .newTask(let project): showNewTask(in: project)
+            case .newReview(let project): showNewReview(in: project)
+            case .addProject: addProject()
+            case .removeTask(let task): Task { await model.confirmRemove(taskId: task) }
+            }
+        }
     }
 
     @ViewBuilder private func rowView(_ row: SidebarRow) -> some View {

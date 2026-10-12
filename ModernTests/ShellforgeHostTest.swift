@@ -43,6 +43,20 @@ final class ShellforgeHostTest: XCTestCase {
         XCTAssertEqual(commandB.map(\.title), ["Backpack Mode"])
     }
 
+    /// Each of Shellforge's ⌃⌘ keys (the Tasks menu and Hide Sidebar) is in the main menu once:
+    /// none shadows an iTerm2 shortcut, and none is shadowed.
+    func testShellforgesControlCommandKeysAreTheirsAlone() {
+        guard let main = NSApp.mainMenu else { return XCTFail("no main menu") }
+        func items(_ menu: NSMenu) -> [NSMenuItem] { menu.items.flatMap { [$0] + ($0.submenu.map(items) ?? []) } }
+        let all = items(main)
+        for key in ["n", "r", "p", "]", "[", "\u{8}", "a", "l", "s"] {
+            let users = all.filter {
+                $0.keyEquivalent == key && $0.keyEquivalentModifierMask.intersection(.deviceIndependentFlagsMask) == [.control, .command]
+            }
+            XCTAssertEqual(users.count, 1, "⌃⌘\(key) is used by \(users.map(\.title))")
+        }
+    }
+
     /// Backpack Mode's keys are this Mac's state, never a shared setting: iTerm2's "load settings
     /// from a custom folder" clears syncable keys at launch, before Backpack's crash recovery reads
     /// `backpack.engaged`, and would carry a Mac's engaged flag and hotspot to every other Mac.

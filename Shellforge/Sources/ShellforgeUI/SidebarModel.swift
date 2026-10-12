@@ -74,6 +74,8 @@ public final class SidebarModel: ObservableObject {
     public var removals: [UUID: RowRemoval] { removalBoard.removals }
     /// Where Remove asks its questions; the app hands in `ModalPrompter`, tests a script.
     public var prompter: Prompter = NullPrompter()
+    /// Keyboard commands that need one of the sidebar's sheets (SidebarCommands.swift).
+    public let sheetRequests = PassthroughSubject<SidebarSheetRequest, Never>()
     /// After Settings' Reload: the app tells every window's sidebar, as the launcher is shared.
     public var onEnvironmentReloaded: (@MainActor () -> Void)?
     let removalBoard: RemovalBoard
@@ -323,6 +325,15 @@ public final class SidebarModel: ObservableObject {
             selectedTaskId = id
             host.select(tab: tab.id)
         }
+    }
+
+    /// The keyboard's way to a task (Next, Previous, Focus View): its tab in this window when it has
+    /// one, else only the selection. Unlike a click it opens nothing: stepping through tasks must not
+    /// leave a shell behind for each, nor a second tab for one whose tab is in another window.
+    public func show(task id: UUID) {
+        guard let node = tree.projects.lazy.flatMap(\.tasks).first(where: { $0.id == id }) else { return }
+        selectedTaskId = id
+        if let tab = node.tabs.first, tab.id != host.selectedTabId { host.select(tab: tab.id) }
     }
 
     public func select(tab id: String) {
