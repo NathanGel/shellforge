@@ -69,7 +69,7 @@ import Testing
     var storePublisher: AnyPublisher<SessionStore, Never> { $store.eraseToAnyPublisher() }
     func markSeen(task: UUID) { seen.append(task) }
     var tunnelCalls: [String] = []
-    func startTunnel(alias: String) { tunnelCalls.append("start \(alias)") }
+    func startTunnel(alias: String, keepRunning: Bool) { tunnelCalls.append("start \(alias)" + (keepRunning ? " (keep)" : "")) }
     func stopTunnel(alias: String) { tunnelCalls.append("stop \(alias)") }
     func holdTunnel(alias: String, port: Int) { tunnelCalls.append("hold \(alias) \(port)") }
 

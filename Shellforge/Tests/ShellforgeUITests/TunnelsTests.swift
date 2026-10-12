@@ -207,4 +207,54 @@ import Testing
         #expect(tab.directory == model.project(project)?.path)
         #expect(feed.tunnelCalls == ["hold db 5432"])
     }
+
+    // -- M2b: uptime, traffic, the tab, keep running --
+
+    private func upRow(since: Double, bytesIn: Int? = nil, bytesOut: Int? = nil, heldBy: TunnelHolder? = nil) -> TunnelRowItem {
+        TunnelRowItem(projectId: UUID(), alias: "db", forwards: [LocalForward(bind: nil, localPort: 5432, remoteHost: "db", remotePort: 5432)],
+                      state: .up, error: nil, missing: false, since: since, bytesIn: bytesIn, bytesOut: bytesOut, heldBy: heldBy)
+    }
+
+    @Test func theUptimeLineReadsWell() {
+        #expect(TunnelRowView.uptime(seconds: 20) == "0m")
+        #expect(TunnelRowView.uptime(seconds: 59 * 60) == "59m")
+        #expect(TunnelRowView.uptime(seconds: 2 * 3600 + 5 * 60) == "2h 5m")
+        #expect(TunnelRowView.uptime(seconds: 3 * 86400 + 4 * 3600 + 59) == "3d 4h")
+        #expect(TunnelRowView.uptime(seconds: -5) == "0m", "a clock that moved back is no negative uptime")
+    }
+
+    @Test func theRowSaysUptimeAndTraffic() {
+        let now = Date(timeIntervalSince1970: 10_000)
+        let bytes = { (n: Int) in ByteCountFormatter.string(fromByteCount: Int64(n), countStyle: .file) }
+        #expect(TunnelRowView.detail(upRow(since: 10_000 - 7500, bytesIn: 1_200_000, bytesOut: 30_000), now: now)
+                == "up 2h 5m · ↓ \(bytes(1_200_000)) ↑ \(bytes(30_000))")
+        #expect(TunnelRowView.detail(upRow(since: 10_000 - 60), now: now) == "up 1m", "no traffic until it is sampled")
+        #expect(TunnelRowView.detail(upRow(since: 0, heldBy: .tab), now: now) == "In a tab")
+        var stopped = upRow(since: 0)
+        stopped.state = .stopped
+        #expect(TunnelRowView.detail(stopped, now: now) == nil)
+        #expect(TunnelRowView.look(upRow(since: 0, heldBy: .tab)).action == nil, "the tab holds it: stopping is closing that tab")
+        #expect(TunnelRowView.portsHelp(upRow(since: 0)) == "Held by db: ssh db in a tab warns it cannot bind 5432, and still connects.")
+    }
+
+    @Test func theRowOffersTheTabWhenSshNeedsInput() {
+        var row = upRow(since: 0)
+        row.state = .failed
+        row.error = "Host key verification failed."
+        row.needsInput = true
+        let look = TunnelRowView.look(row)
+        #expect(look.answersInTab && look.action == .start && look.caption == "Host key verification failed.")
+        row.needsInput = nil
+        #expect(!TunnelRowView.look(row).answersInTab)
+    }
+
+    @Test func keepRunningIsSentWithTheStart() async throws {
+        let (model, _, feed, _, project) = try await model(tunnels: [TunnelDefinition(alias: "db", keepRunning: true),
+                                                                     TunnelDefinition(alias: "web")])
+        #expect(await eventually { model.sshHosts != nil })
+        model.startTunnel("db")
+        model.startTunnel("web")
+        #expect(feed.tunnelCalls == ["start db (keep)", "start web"])
+        #expect(model.tunnelRows(of: project).map(\.keepRunning) == [true, false])
+    }
 }

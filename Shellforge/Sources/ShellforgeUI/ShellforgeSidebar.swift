@@ -127,7 +127,8 @@ struct SidebarView: View {
                              editTunnels: { showTunnels(for: node.id) })
                 .listRowSeparator(.hidden)
         case .tunnel(let tunnel):
-            TunnelRowView(row: tunnel, start: { model.startTunnel(tunnel.alias) }, stop: { model.stopTunnel(tunnel.alias) })
+            TunnelRowView(row: tunnel, start: { model.startTunnel(tunnel.alias) }, stop: { model.stopTunnel(tunnel.alias) },
+                          answerInTab: { model.answerInTab(tunnel.alias, in: tunnel.projectId) })
                 .listRowSeparator(.hidden)
         case .task(let node, let selected):
             TaskRowView(node: node, selected: selected, agents: model.avatars(forTask: node.id),

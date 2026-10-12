@@ -35,7 +35,7 @@ public protocol SessionFeed: AnyObject {
     var statusPublisher: AnyPublisher<HelperStatus, Never> { get }
     var storePublisher: AnyPublisher<SessionStore, Never> { get }
     func markSeen(task: UUID)
-    func startTunnel(alias: String)
+    func startTunnel(alias: String, keepRunning: Bool)
     func stopTunnel(alias: String)
     func holdTunnel(alias: String, port: Int)
 }

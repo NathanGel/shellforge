@@ -4,13 +4,20 @@ import ShellforgeCore
 /// One of a project's tunnels as its sidebar row draws it: the alias, the config's forwards, what
 /// the helper says of it, and whether the config still has the host.
 public struct TunnelRowItem: Equatable, Identifiable, Sendable {
-    public let projectId: UUID
-    public let alias: String
-    public let forwards: [LocalForward]
-    public let state: TunnelState
-    public let error: String?
+    public var projectId: UUID
+    public var alias: String
+    public var forwards: [LocalForward]
+    public var state: TunnelState
+    public var error: String?
     /// The alias is no longer a host in the config: the row says so and cannot start.
-    public let missing: Bool
+    public var missing: Bool
+    /// When it came to its state, in seconds since 1970 (the daemon's wall clock).
+    public var since: Double = 0
+    public var bytesIn: Int? = nil
+    public var bytesOut: Int? = nil
+    public var heldBy: TunnelHolder? = nil
+    public var needsInput: Bool? = nil
+    public var keepRunning = false
     public var id: String { "\(projectId)-\(alias)" }
 
     /// The local ports, as the row shows them: `5432, 6379`.
@@ -48,7 +55,9 @@ extension SidebarModel {
             let host = sshHosts?[tunnel.alias]
             return TunnelRowItem(projectId: project.id, alias: tunnel.alias, forwards: host?.forwards ?? [],
                                  state: info?.state ?? .stopped, error: info?.error,
-                                 missing: sshHosts != nil && host == nil)
+                                 missing: sshHosts != nil && host == nil, since: info?.since ?? 0,
+                                 bytesIn: info?.bytesIn, bytesOut: info?.bytesOut, heldBy: info?.heldBy,
+                                 needsInput: info?.needsInput, keepRunning: tunnel.keepRunning)
         }
     }
 
@@ -62,7 +71,12 @@ extension SidebarModel {
             lastError = "\(alias) isn’t in ~/.ssh/config."
             return
         }
-        feed?.startTunnel(alias: alias)
+        feed?.startTunnel(alias: alias, keepRunning: keepsRunning(alias))
+    }
+
+    /// Whether any project keeps `alias` running past a quit.
+    func keepsRunning(_ alias: String) -> Bool {
+        document.workspace.projects.contains { $0.tunnels.contains { $0.alias == alias && $0.keepRunning } }
     }
 
     public func stopTunnel(_ alias: String) { feed?.stopTunnel(alias: alias) }
@@ -137,7 +151,7 @@ extension SidebarModel {
                 && sessions.tunnels[tunnel.alias] == nil && sshHosts[tunnel.alias] != nil
                 && !launchRequested.contains(tunnel.alias) {
                 launchRequested.insert(tunnel.alias)
-                feed?.startTunnel(alias: tunnel.alias)
+                feed?.startTunnel(alias: tunnel.alias, keepRunning: keepsRunning(tunnel.alias))
             }
         }
     }
@@ -164,7 +178,7 @@ extension SidebarModel {
         var started = Set<String>()
         for tunnel in project.tunnels where tunnel.autoStart == .onTaskOpen {
             guard sshHosts?[tunnel.alias] != nil, ![.connecting, .up].contains(tunnelState(tunnel.alias)) else { continue }
-            feed?.startTunnel(alias: tunnel.alias)
+            feed?.startTunnel(alias: tunnel.alias, keepRunning: keepsRunning(tunnel.alias))
             started.insert(tunnel.alias)
         }
         return started
