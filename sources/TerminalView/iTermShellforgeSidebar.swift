@@ -73,6 +73,7 @@ final class iTermShellforgeSidebar: NSObject {
                                  agents: loaded.agents, catalogue: { try catalogue.models(for: $0) }, sshConfig: .user)
         if let problem = loaded.problem { model.lastError = problem }
         model.prompter = ModalPrompter()
+        windows.add(model, for: windowController)
         model.onEnvironmentReloaded = { environmentChanged() }
         sidebars.add(model)
         return ShellforgeSidebar.makeView(model: model, chooseFolder: FolderChooser.choose, hooks: hooks, machine: machine,
@@ -380,5 +381,48 @@ private final class SplitRefusal {
         guard !said else { return }
         said = true
         action()
+    }
+}
+
+
+/// The Tasks menu: Shellforge's keyboard commands, each acting on the key window's sidebar.
+extension iTermShellforgeSidebar {
+    /// Each window's sidebar, by its window controller.
+    static let windows = SidebarWindows()
+    private static let tasksController = TasksMenuController()
+
+    @objc static func tasksMenu() -> NSMenu { tasksController.menu }
+
+    /// The key window's sidebar: a panel of ours (a sheet) may be key, and its parent is meant.
+    static var keySidebar: SidebarModel? {
+        let window = NSApp.keyWindow.map { $0.sheetParent ?? $0 } ?? NSApp.mainWindow
+        return windows.model(for: window?.windowController)
+    }
+}
+
+@MainActor
+private final class TasksMenuController: NSObject, NSMenuItemValidation {
+    let menu = NSMenu(title: "Tasks")
+
+    override init() {
+        super.init()
+        for item in SidebarCommandMenu.items {
+            guard let command = item.command else { menu.addItem(.separator()); continue }
+            let menuItem = NSMenuItem(title: item.title, action: #selector(performCommand(_:)), keyEquivalent: item.key)
+            menuItem.keyEquivalentModifierMask = NSEvent.ModifierFlags(rawValue: item.modifiers.rawValue)
+            menuItem.target = self
+            menuItem.tag = command.rawValue
+            menu.addItem(menuItem)
+        }
+    }
+
+    @objc func performCommand(_ sender: NSMenuItem) {
+        guard let command = SidebarCommand(rawValue: sender.tag) else { return }
+        iTermShellforgeSidebar.keySidebar?.perform(command)
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        guard let command = SidebarCommand(rawValue: menuItem.tag), let sidebar = iTermShellforgeSidebar.keySidebar else { return false }
+        return sidebar.can(command)
     }
 }

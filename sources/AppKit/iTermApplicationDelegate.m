@@ -381,6 +381,15 @@ static NSModalResponse iTermCompareRenderingRunModal(id self, SEL _cmd) {
     backpackItem.target = self;
     [viewMenu addItem:backpackItem];
 
+    // Shellforge: the Tasks menu after View, its keys all ⌃⌘ ones iTerm2 leaves free.
+    NSMenuItem *tasksItem = [[[NSMenuItem alloc] initWithTitle:@"Tasks" action:nil keyEquivalent:@""] autorelease];
+    tasksItem.submenu = [iTermShellforgeSidebar tasksMenu];
+    tasksItem.submenu.title = @"Tasks";
+    const NSInteger viewIndex = [[NSApp mainMenu] indexOfItemWithSubmenu:viewMenu];
+    if (viewIndex >= 0) {
+        [[NSApp mainMenu] insertItem:tasksItem atIndex:viewIndex + 1];
+    }
+
     // Shellforge: Tunnels, one item per linked tunnel; Open Quickly finds them by their titles.
     NSMenuItem *tunnelsItem = [[[NSMenuItem alloc] initWithTitle:@"Tunnels" action:nil keyEquivalent:@""] autorelease];
     tunnelsItem.submenu = [iTermShellforgeSidebar tunnelsMenu];

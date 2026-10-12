@@ -106,4 +106,26 @@ import Testing
         let (model, _, _, _) = try model()
         #expect(!model.can(.removeTask))
     }
+
+    // -- the menus --
+
+    @Test func noKeyIsUsedTwice() {
+        let keys = SidebarCommandMenu.items.filter { $0.command != nil }.map { "\($0.modifiers.rawValue)-\($0.key)" } + ["\(SidebarCommandMenu.toggleSidebar.modifiers.rawValue)-\(SidebarCommandMenu.toggleSidebar.key)"]
+        #expect(Set(keys).count == keys.count)
+        #expect(Set(SidebarCommandMenu.items.compactMap(\.command)) == Set(SidebarCommand.allCases), "every command has its item")
+        #expect(SidebarCommandMenu.items.allSatisfy { $0.command == nil || $0.modifiers == [.control, .command] }, "⌃⌘, clear of iTerm2's keys")
+    }
+
+    @Test func commandsGoToTheKeyWindowsSidebar() throws {
+        let (first, _, _, _) = try model(projects: ["a"])
+        let (second, _, _, _) = try model(projects: ["b"])
+        let windows = SidebarWindows()
+        let one = NSObject(), two = NSObject()
+        windows.add(first, for: one)
+        windows.add(second, for: two)
+        #expect(windows.model(for: two) === second)
+        #expect(windows.model(for: one) === first)
+        #expect(windows.model(for: NSObject()) == nil, "a window of no sidebar: none, never another window's")
+        #expect(windows.model(for: nil) == nil)
+    }
 }

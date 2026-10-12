@@ -88,3 +88,57 @@ extension SidebarModel {
         }
     }
 }
+
+/// The Tasks menu and View's Hide Sidebar, as one list the app builds its menus from: every key is
+/// ⌃⌘ and a letter or bracket iTerm2's own `MainMenu.xib` leaves free (⌃⌘F and the ⌃⌘ arrows are
+/// iTerm2's; an uppercase key there means ⇧).
+public enum SidebarCommandMenu {
+    public struct Item: Sendable {
+        public let title: String
+        public let key: String
+        public let modifiers: NSEventModifierFlagsValue
+        /// Nil for a separator.
+        public let command: SidebarCommand?
+    }
+
+    /// `NSEvent.ModifierFlags`, kept to its raw value so ShellforgeUI stays free of AppKit here.
+    public struct NSEventModifierFlagsValue: OptionSet, Sendable, Hashable {
+        public let rawValue: UInt
+        public init(rawValue: UInt) { self.rawValue = rawValue }
+        public static let control = NSEventModifierFlagsValue(rawValue: 1 << 18)
+        public static let command = NSEventModifierFlagsValue(rawValue: 1 << 20)
+    }
+
+    private static let keys: NSEventModifierFlagsValue = [.control, .command]
+
+    public static let items: [Item] = [
+        Item(title: "New Task…", key: "n", modifiers: keys, command: .newTask),
+        Item(title: "New Review…", key: "r", modifiers: keys, command: .newReview),
+        Item(title: "Add Project…", key: "p", modifiers: keys, command: .addProject),
+        Item(title: "", key: "", modifiers: [], command: nil),
+        Item(title: "Next Task", key: "]", modifiers: keys, command: .nextTask),
+        Item(title: "Previous Task", key: "[", modifiers: keys, command: .previousTask),
+        Item(title: "Remove Task…", key: "\u{8}", modifiers: keys, command: .removeTask),
+        Item(title: "", key: "", modifiers: [], command: nil),
+        Item(title: "Focus View", key: "a", modifiers: keys, command: .focusView),
+        Item(title: "List View", key: "l", modifiers: keys, command: .listView),
+    ]
+
+    /// View › Hide Sidebar (Show Sidebar while hidden), the key Finder and Mail use.
+    public static let toggleSidebar = Item(title: "Hide Sidebar", key: "s", modifiers: keys, command: nil)
+}
+
+/// Each window's sidebar, so a menu command acts on the key window's and never another's.
+@MainActor
+public final class SidebarWindows {
+    private let models = NSMapTable<AnyObject, SidebarModel>.weakToWeakObjects()
+
+    public init() {}
+
+    public func add(_ model: SidebarModel, for window: AnyObject) { models.setObject(model, forKey: window) }
+
+    public func model(for window: AnyObject?) -> SidebarModel? {
+        guard let window else { return nil }
+        return models.object(forKey: window)
+    }
+}
