@@ -181,20 +181,18 @@ final class iTermShellforgeHost: TerminalHost {
         guard let windowController, let base = ProfileModel.sharedInstance()?.defaultBookmark() else { return }
         let profile = iTermShellforgeSidebar.taskTabProfile(base: base, directory: directory,
                                                             initialText: TabCommand.exporting(environment, then: command).map(TabCommand.initialText))
-        let made = MadeSession()
         iTermSessionLauncher.launchBookmark(profile, in: windowController, style: .tab, withURL: nil,
                                             hotkeyWindowType: .none, makeKey: true, canActivate: true,
                                             respectTabbingMode: false, index: nil, command: nil,
                                             makeSession: nil, didMakeSession: { session in
             session.genericScope.setValue(taskId.uuidString.lowercased(), forVariableNamed: ShellforgeTags.task)
             session.genericScope.setValue(projectId.uuidString.lowercased(), forVariableNamed: ShellforgeTags.project)
-            made.session = session
-        }, completion: { [weak self] _, _ in
+        }, completion: { [weak self] session, ok in
             MainActor.assumeIsolated {
                 self?.onChange?()
-                if let beside, let session = made.session {
-                    self?.split(session, running: beside, in: directory, base: base, title: title)
-                }
+                guard let beside else { return }
+                guard ok else { self?.onSplitRefused?(title); return }
+                self?.split(session, running: beside, in: directory, base: base, title: title)
             }
         })
     }
@@ -207,12 +205,22 @@ final class iTermShellforgeHost: TerminalHost {
             onSplitRefused?(title)
             return
         }
-        windowController.asyncSplitVertically(true, before: false, profile: profile, targetSession: session, completion: { [weak self] pane, ok in
+        // The split can fail twice over: no pane made (completion), or its shell not launched (ready).
+        // Said once.
+        let refusal = SplitRefusal { [weak self] in self?.onSplitRefused?(title) }
+        windowController.asyncSplitVertically(true, before: false, profile: profile, targetSession: session, completion: { [weak self, weak windowController] pane, ok in
             MainActor.assumeIsolated {
-                if pane == nil || !ok { self?.onSplitRefused?(title) }
+                if pane == nil || !ok {
+                    refusal.say()
+                } else {
+                    // A new pane takes the focus; the task was made to talk to its agent.
+                    windowController?.tab(for: session)?.setActiveSessionPreservingMaximization(session)
+                }
                 self?.onChange?()
             }
-        }, ready: { _, _ in })
+        }, ready: { _, ok in
+            MainActor.assumeIsolated { if !ok { refusal.say() } }
+        })
     }
 }
 
@@ -276,7 +284,12 @@ extension iTermShellforgeSidebar {
 extension iTermShellforgeSidebar {
     private static let tunnelMenu = TunnelMenuController()
 
-    @objc static func tunnelsMenu() -> NSMenu { tunnelMenu.menu }
+    /// Empty under ModernTests: building it reads the user's own workspace, which a test run must
+    /// not touch, as `startHelper` does not start the helper there.
+    @objc static func tunnelsMenu() -> NSMenu {
+        guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return NSMenu(title: "Tunnels") }
+        return tunnelMenu.menu
+    }
 
     /// The first window's sidebar: where a tunnel's start is checked and its keep-running read.
     fileprivate static var anySidebar: SidebarModel? { sidebars.allObjects.first }
@@ -285,24 +298,19 @@ extension iTermShellforgeSidebar {
 @MainActor
 private final class TunnelMenuController: NSObject, NSMenuItemValidation {
     let menu = NSMenu(title: "Tunnels")
-    private var subscriptions: [AnyCancellable] = []
+    private var subscription: AnyCancellable?
 
     override init() {
         super.init()
         let document = iTermShellforgeSidebar.document, link = iTermShellforgeSidebar.link
-        subscriptions = [
-            document.$workspace.sink { [weak self] workspace in
-                MainActor.assumeIsolated { self?.rebuild(projects: workspace.projects, store: link.store) }
-            },
-            link.$store.sink { [weak self] store in
-                MainActor.assumeIsolated { self?.rebuild(projects: document.workspace.projects, store: store) }
-            },
-        ]
+        // Rebuilt only when the items change, never under an open menu for a token tally.
+        subscription = TunnelMenu.items(projects: document.$workspace.map(\.projects).eraseToAnyPublisher(),
+                                        stores: link.$store.eraseToAnyPublisher())
+            .sink { [weak self] items in MainActor.assumeIsolated { self?.rebuild(items) } }
     }
 
-    private func rebuild(projects: [Project], store: SessionStore) {
+    private func rebuild(_ items: [TunnelMenuItem]) {
         menu.removeAllItems()
-        let items = TunnelMenu.items(projects: projects, store: store)
         guard !items.isEmpty else {
             menu.addItem(NSMenuItem(title: TunnelMenu.emptyTitle, action: nil, keyEquivalent: ""))
             return
@@ -326,6 +334,15 @@ private final class TunnelMenuController: NSObject, NSMenuItemValidation {
     }
 }
 
-
-/// The session `launchBookmark` made, handed from its didMakeSession block to its completion.
-private final class MadeSession { var session: PTYSession? }
+/// A split's refusal, said at most once.
+@MainActor
+private final class SplitRefusal {
+    private var said = false
+    private let action: () -> Void
+    init(_ action: @escaping () -> Void) { self.action = action }
+    func say() {
+        guard !said else { return }
+        said = true
+        action()
+    }
+}

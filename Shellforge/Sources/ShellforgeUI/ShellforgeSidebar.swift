@@ -210,7 +210,9 @@ struct SidebarView: View {
 
     /// AiTerm's New Task sheet, in its own dark panel on the sidebar's window; one at a time.
     private func showNewTask(in project: UUID) {
-        guard let newTask = model.makeNewTaskModel(for: project) else { return }
-        sheet.present(over: anchor.window) { dismiss in NewTaskSheet(model: newTask, dismiss: dismiss) }
+        Task { @MainActor in
+            guard let newTask = await model.prepareNewTask(for: project) else { return }
+            sheet.present(over: anchor.window) { dismiss in NewTaskSheet(model: newTask, dismiss: dismiss) }
+        }
     }
 }

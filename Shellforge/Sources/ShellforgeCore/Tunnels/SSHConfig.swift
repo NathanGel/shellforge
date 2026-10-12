@@ -44,9 +44,18 @@ public struct SSHConfigSource: Sendable {
 }
 
 public enum SSHConfig {
-    /// What the pane beside a task's agent runs for a project's host: `ssh <alias>`, as the user
-    /// would type it, the alias one shell word.
-    public static func paneCommand(alias: String) -> String { "ssh " + AgentCommand.shellWord(alias) }
+    /// Whether `alias` can be typed into a terminal and handed to ssh as a destination: no control
+    /// character, which a terminal acts on before the shell sees any quoting, and no leading `-`,
+    /// which ssh reads as an option. An alias that fails is never offered.
+    static func isTypable(_ alias: String) -> Bool {
+        !alias.isEmpty && !alias.hasPrefix("-")
+            && alias.unicodeScalars.allSatisfy { !CharacterSet.controlCharacters.contains($0) && !CharacterSet.whitespaces.contains($0) }
+    }
+
+    /// What the pane beside a task's agent runs for a project's host: `ssh <alias>` without the
+    /// host's forwards — those belong to its tunnel, which an interactive ssh would fight for the
+    /// same local ports. The alias is one shell word.
+    public static func paneCommand(alias: String) -> String { "ssh -o ClearAllForwardings=yes " + AgentCommand.shellWord(alias) }
 
     /// The concrete `Host` aliases in `file` — none with `*`, `?` or `!` — in file order, each with
     /// its `LocalForward`s. `Include` is followed (relative to `~/.ssh`, globbed), each file once, so
@@ -76,7 +85,7 @@ public enum SSHConfig {
                 switch keyword {
                 case "host":
                     let patterns = Self.tokens(value)
-                    current = patterns.filter { !$0.contains("*") && !$0.contains("?") && !$0.hasPrefix("!") }
+                    current = patterns.filter { !$0.contains("*") && !$0.contains("?") && !$0.hasPrefix("!") && SSHConfig.isTypable($0) }
                     for alias in current where forwards[alias] == nil { order.append(alias); forwards[alias] = [] }
                 case "match":
                     current = []

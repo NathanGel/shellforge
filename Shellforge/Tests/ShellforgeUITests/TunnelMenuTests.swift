@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import Testing
 @testable import ShellforgeCore
@@ -43,5 +44,23 @@ import Testing
     @Test func noTunnelsSaySo() {
         #expect(TunnelMenu.items(projects: [project("api", [])], store: store([])).isEmpty)
         #expect(TunnelMenu.emptyTitle == "No Tunnels — add one from a project’s Tunnels…")
+    }
+
+    /// The menu is rebuilt when its items change, not on every event the helper sends — a token
+    /// tally many times a second would rebuild an open menu under the pointer.
+    @Test func theMenuChangesOnlyWithItsItems() {
+        let workspace = PassthroughSubject<[Project], Never>()
+        let stores = PassthroughSubject<SessionStore, Never>()
+        var seen: [[TunnelMenuItem]] = []
+        let subscription = TunnelMenu.items(projects: workspace.eraseToAnyPublisher(), stores: stores.eraseToAnyPublisher())
+            .sink { seen.append($0) }
+        workspace.send([project("api", ["db"])])
+        stores.send(store([]))
+        stores.send(store([]))
+        stores.send(store([TunnelInfo(alias: "other", state: .up, error: nil, since: 1)]))
+        stores.send(store([TunnelInfo(alias: "db", state: .up, error: nil, since: 1)]))
+        stores.send(store([TunnelInfo(alias: "db", state: .up, error: nil, since: 2)]))
+        #expect(seen.map { $0.map(\.title) } == [["Start Tunnel db"], ["Stop Tunnel db"]])
+        _ = subscription
     }
 }

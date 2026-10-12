@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import ShellforgeCore
 
@@ -23,6 +24,13 @@ public enum TunnelMenu {
             let running = [.connecting, .up].contains(store.tunnels[tunnel.alias]?.state)
             return TunnelMenuItem(alias: tunnel.alias, title: "\(running ? "Stop" : "Start") Tunnel \(tunnel.alias)", starts: !running)
         }
+    }
+
+    /// The items as the workspace's projects and the helper's tunnels change, sent only when they
+    /// differ: the helper sends a new store for every event, token tallies included.
+    public static func items(projects: AnyPublisher<[Project], Never>, stores: AnyPublisher<SessionStore, Never>)
+        -> AnyPublisher<[TunnelMenuItem], Never> {
+        projects.combineLatest(stores).map { items(projects: $0, store: $1) }.removeDuplicates().eraseToAnyPublisher()
     }
 
     /// An item acts through a window's sidebar; with every window closed there is none.

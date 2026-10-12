@@ -84,4 +84,12 @@ import Testing
         let config = try write("Include config\nHost loop\n  LocalForward 5 a:5\n")
         #expect(SSHConfig.hosts(in: config, home: home).map(\.alias).first == "loop")
     }
+
+    /// An alias is typed into a terminal — the tunnel's tab, the pane beside an agent — where a
+    /// control character acts before the shell sees any quoting, and ssh reads a leading `-` as an
+    /// option. Such an alias is never offered.
+    @Test func anAliasATerminalWouldActOnIsNotAHost() throws {
+        let config = try write("Host ok\nHost bad\u{15}touch${IFS}/tmp/x\nHost -oProxyCommand=x\nHost tab\u{7f}x\nHost also-ok\n")
+        #expect(SSHConfig.hosts(in: config, home: home).map(\.alias) == ["ok", "also-ok"])
+    }
 }

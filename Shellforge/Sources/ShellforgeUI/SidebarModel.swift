@@ -165,6 +165,13 @@ public final class SidebarModel: ObservableObject {
         }
     }
 
+    /// The New Task sheet for `projectId`, the SSH config read first when the project names a host:
+    /// the pane it offers is the config's now, not the last refresh's.
+    public func prepareNewTask(for projectId: UUID) async -> NewTaskModel? {
+        if project(projectId)?.sshHost != nil { _ = await loadSSHHosts() }
+        return makeNewTaskModel(for: projectId)
+    }
+
     /// The New Task sheet for `projectId`: the agent last started there while its CLI is installed,
     /// else the first installed one; its last model; and the project's branches, read when shown.
     public func makeNewTaskModel(for projectId: UUID) -> NewTaskModel? {
@@ -175,7 +182,8 @@ public final class SidebarModel: ObservableObject {
         let agentId = last.flatMap { available.contains($0) ? $0 : nil }
             ?? agents.first { available.contains($0.id) }?.id ?? agents[0].id
         var draft = TaskDraft(baseBranch: Repository.fallbackDefaultBranch, agentId: agentId, model: "", reasoning: nil)
-        draft.openSSH = document.workspace.lastOpenSSHByProject[projectId] ?? true
+        draft.paneHost = paneHost(of: project)
+        draft.openSSH = draft.paneHost != nil && document.workspace.lastOpenSSHByProject[projectId] ?? true
         let path = project.path
         return NewTaskModel(project: project, agents: agents, available: available, draft: draft,
                             rememberedModels: document.workspace.lastModelByAgent, catalogue: catalogue,
@@ -208,12 +216,14 @@ public final class SidebarModel: ObservableObject {
         try document.update { workspace in
             workspace.tasks.append(made.0)
             workspace.remember(draft, projectId: projectId)
-            if project.sshHost != nil { workspace.lastOpenSSHByProject[projectId] = draft.openSSH }
+            // Only a box the sheet showed is a choice to remember.
+            if draft.paneHost != nil { workspace.lastOpenSSHByProject[projectId] = draft.openSSH }
             // A task made in a folded project is shown: the project unfolds for it.
             if let i = workspace.projects.firstIndex(where: { $0.id == projectId }) { workspace.projects[i].collapsed = false }
         }
         selectedTaskId = made.0.id
-        let beside = draft.openSSH ? paneHost(of: project).map(SSHConfig.paneCommand(alias:)) : nil
+        // The pane the sheet offered, never one the config grew since it opened.
+        let beside = draft.openSSH ? draft.paneHost.map(SSHConfig.paneCommand(alias:)) : nil
         host.openTab(in: made.0.worktreePath, taskId: made.0.id, projectId: projectId, title: made.0.title, command: made.1,
                      environment: openingTaskTab(in: projectId), beside: beside)
     }

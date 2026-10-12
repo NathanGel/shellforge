@@ -24,10 +24,12 @@ import Testing
         return (model, host, document, project)
     }
 
-    private func draft(openSSH: Bool) -> TaskDraft {
+    /// The draft as the sheet hands it up: the host it offered, and the box as left.
+    private func draft(openSSH: Bool, offered: String? = "box") -> TaskDraft {
         var draft = TaskDraft(baseBranch: "main", agentId: "claude", model: "opus", reasoning: nil)
         draft.setTitle("Login")
         draft.openSSH = openSSH
+        draft.paneHost = offered
         return draft
     }
 
@@ -36,7 +38,7 @@ import Testing
         #expect(await eventually { model.sshHosts != nil })
         #expect(model.makeNewTaskModel(for: project)?.kind.sshHost == "box")
         try await model.newTask(draft: draft(openSSH: true), in: project)
-        #expect(host.opened.last?.beside == "ssh box")
+        #expect(host.opened.last?.beside == "ssh -o ClearAllForwardings=yes box")
     }
 
     @Test func untickedItOpensAlone() async throws {
@@ -48,10 +50,23 @@ import Testing
 
     @Test func aGoneHostIsNotOffered() async throws {
         let (model, host, _, project) = try await model(host: "gone")
-        #expect(await eventually { model.sshHosts != nil })
-        #expect(model.makeNewTaskModel(for: project)?.kind.sshHost == nil)
-        try await model.newTask(draft: draft(openSSH: true), in: project)
+        let sheet = try #require(await model.prepareNewTask(for: project))
+        #expect(sheet.kind.sshHost == nil && sheet.draft.paneHost == nil)
+        var draft = draft(openSSH: true, offered: sheet.draft.paneHost)
+        draft.openSSH = sheet.draft.openSSH
+        try await model.newTask(draft: draft, in: project)
         #expect(host.opened.last?.beside == nil)
+    }
+
+    /// New Task reads the config as it opens: right after launch, before any refresh has, and after
+    /// the host left the config since the last read.
+    @Test func newTaskReadsTheConfigAsItOpens() async throws {
+        let (model, _, _, project) = try await model(host: "box")
+        model.sshHosts = nil
+        #expect(await model.prepareNewTask(for: project)?.draft.paneHost == "box", "no wait for a refresh")
+        let config = folder.appendingPathComponent("ssh_config")
+        try "Host other\n".write(to: config, atomically: true, encoding: .utf8)
+        #expect(await model.prepareNewTask(for: project)?.draft.paneHost == nil, "a host gone since the last read")
     }
 
     @Test func aRefusedSplitIsSaid() async throws {
@@ -64,8 +79,8 @@ import Testing
     }
 
     @Test func thePaneCommandQuotesTheAlias() {
-        #expect(SSHConfig.paneCommand(alias: "box") == "ssh box")
-        #expect(SSHConfig.paneCommand(alias: "a$b") == "ssh 'a$b'")
+        #expect(SSHConfig.paneCommand(alias: "box") == "ssh -o ClearAllForwardings=yes box")
+        #expect(SSHConfig.paneCommand(alias: "a$b") == "ssh -o ClearAllForwardings=yes 'a$b'")
     }
 
     @Test func theChoiceIsRememberedPerProject() async throws {
@@ -75,5 +90,21 @@ import Testing
         try await model.newTask(draft: draft(openSSH: false), in: project)
         #expect(document.workspace.lastOpenSSHByProject[project] == false)
         #expect(model.makeNewTaskModel(for: project)?.draft.openSSH == false)
+    }
+
+    /// The sheet opened before the config was read showed no box: the task opens alone, whatever
+    /// the config says by the time Create is clicked, and the choice is not remembered.
+    @Test func aPaneTheSheetNeverOfferedIsNotOpened() async throws {
+        let (model, host, document, project) = try await model(host: "box")
+        #expect(await eventually { model.sshHosts != nil })
+        try await model.newTask(draft: draft(openSSH: true, offered: nil), in: project)
+        #expect(host.opened.last?.beside == nil)
+        #expect(document.workspace.lastOpenSSHByProject[project] == nil)
+    }
+
+    @Test func theSheetCarriesTheHostItOffered() async throws {
+        let (model, _, _, project) = try await model(host: "box")
+        #expect(await eventually { model.sshHosts != nil })
+        #expect(model.makeNewTaskModel(for: project)?.draft.paneHost == "box")
     }
 }
