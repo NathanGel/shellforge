@@ -292,6 +292,9 @@ public final class SidebarModel: ObservableObject {
 
     // -- Jira projects ----------------------------------------------------------------
 
+    /// The project as the workspace holds it now.
+    public func project(_ id: UUID) -> Project? { document.workspace.projects.first { $0.id == id } }
+
     /// Every Jira project the account can see, for a project's Jira Projects sheet. The connection
     /// is read off the main actor: the Keychain is slow.
     public func loadJiraProjects() async throws -> [JiraProjectRef] {

@@ -159,6 +159,16 @@ struct SidebarView: View {
         if let folder = chooseFolder() { Task { await model.addProject(folder: folder) } }
     }
 
+    /// The sheet that edits a project's linked Jira projects, opened on the list as it is now.
+    private func showJiraProjects(for id: UUID) {
+        guard let project = model.project(id) else { return }
+        sheet.present(over: anchor.window) { dismiss in
+            JiraProjectSheet(projectName: project.name, linked: project.jiraProjects, canSubmit: true,
+                             loadProjects: model.loadJiraProjects,
+                             submit: { model.setJiraProjects($0, on: id) }, dismiss: dismiss)
+        }
+    }
+
     /// AiTerm's New Task sheet, in its own dark panel on the sidebar's window; one at a time.
     private func showNewTask(in project: UUID) {
         guard let newTask = model.makeNewTaskModel(for: project) else { return }
