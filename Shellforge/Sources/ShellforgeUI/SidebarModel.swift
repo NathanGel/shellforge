@@ -74,6 +74,8 @@ public final class SidebarModel: ObservableObject {
     public var removals: [UUID: RowRemoval] { removalBoard.removals }
     /// Where Remove asks its questions; the app hands in `ModalPrompter`, tests a script.
     public var prompter: Prompter = NullPrompter()
+    /// Keyboard commands that need one of the sidebar's sheets (SidebarCommands.swift).
+    public let sheetRequests = PassthroughSubject<SidebarSheetRequest, Never>()
     /// After Settings' Reload: the app tells every window's sidebar, as the launcher is shared.
     public var onEnvironmentReloaded: (@MainActor () -> Void)?
     let removalBoard: RemovalBoard
