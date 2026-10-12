@@ -121,4 +121,23 @@ import Testing
         let changed6 = files.changed()
         #expect(changed6)
     }
+
+    /// Two reloads at once — Settings' Reload and a changed rc file — the later one's environment
+    /// stays, whichever finishes first.
+    @Test func theLatestReloadWinsWhicheverFinishesFirst() async throws {
+        let first = DispatchSemaphore(value: 0)
+        let calls = Locked(0)
+        let launcher = CommandLauncher(resolve: {
+            let n = calls.withLock { (count: inout Int) -> Int in count += 1; return count }
+            if n == 1 { first.wait() }  // the first reload is slow
+            return ResolvedEnvironment(variables: ["PATH": "/read-\(n)"], source: .loginShell("/bin/zsh"))
+        })
+        let slow = Thread { launcher.reload() }
+        slow.start()
+        while calls.withLock({ $0 }) < 1 { try await Task.sleep(for: .milliseconds(5)) }
+        launcher.reload()               // the second, started later, finishes first
+        first.signal()
+        while !slow.isFinished { try await Task.sleep(for: .milliseconds(5)) }
+        #expect(launcher.environment.variables["PATH"] == "/read-2")
+    }
 }

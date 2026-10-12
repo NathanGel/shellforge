@@ -241,9 +241,15 @@ extension iTermShellforgeSidebar {
     /// The login shell's rc files, as last seen: a change reads the environment again (PRD E9).
     nonisolated(unsafe) private static var rcFiles = RCFiles(home: FileManager.default.homeDirectoryForCurrentUser)
 
+    /// One rc check at a time: `rcFiles` is touched only by the check in flight.
+    private static var checkingRC = false
+
     /// Reads the environment again, off the main thread, when an rc file changed.
     private static func checkRCFiles() {
+        guard !checkingRC else { return }
+        checkingRC = true
         Task {
+            defer { checkingRC = false }
             let reread = await BackgroundWork.run { () -> Bool in
                 guard rcFiles.changed() else { return false }
                 launcher.reload()

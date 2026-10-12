@@ -189,6 +189,10 @@ public final class SidebarModel: ObservableObject {
     /// The New Task sheet for `projectId`, the SSH config read first when the project names a host:
     /// the pane it offers is the config's now, not the last refresh's.
     public func prepareNewTask(for projectId: UUID) async -> NewTaskModel? {
+        // The sheet looks for each agent's CLI on PATH: read the environment here first, off the
+        // main actor, so a New Task opened right after launch runs no login shell on it.
+        let launcher = self.launcher
+        _ = await BackgroundWork.run { launcher.environment }
         if project(projectId)?.sshHost != nil { _ = await loadSSHHosts() }
         return makeNewTaskModel(for: projectId)
     }

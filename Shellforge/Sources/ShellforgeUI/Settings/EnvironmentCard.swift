@@ -21,11 +21,14 @@ public final class EnvironmentModel: ObservableObject {
 
     /// The report from the environment as read, reading it first if it has not been.
     public func load() async {
+        guard !reading else { return }
+        reading = true
         let launcher = self.launcher, agents = self.agents
         report = await BackgroundWork.run { EnvironmentReport.make(launcher: launcher, agents: agents) }
+        reading = false
     }
 
-    /// Reads the environment again; a press while it reads does nothing.
+    /// Reads the environment again; a press while it reads — the first load included — does nothing.
     public func reload() async {
         guard !reading else { return }
         reading = true

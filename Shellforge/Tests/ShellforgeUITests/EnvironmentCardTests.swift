@@ -62,4 +62,18 @@ import Testing
         #expect(EnvironmentCard.status(fallback, now: now) == SettingsStatus(.attention, "A fallback PATH: /bin/zsh did not answer within 15 s"))
         #expect(EnvironmentCard.status(nil, now: now) == SettingsStatus(.idle, "Reading your login shell…"))
     }
+
+    @Test func reloadWaitsForTheFirstLoad() async {
+        let resolver = Resolver(held: false)
+        let gate = DispatchSemaphore(value: 0)
+        let model = EnvironmentModel(launcher: CommandLauncher(resolve: { gate.wait(); return resolver.read() }), agents: [])
+        let load = Task { await model.load() }
+        #expect(await eventually { model.reading }, "the first load disables Reload too")
+        // Released twice: a second read started in error must not hang the run, only fail it.
+        let reload = Task { await model.reload() }
+        gate.signal(); gate.signal()
+        await load.value
+        await reload.value
+        #expect(resolver.reads.withLock { $0 } == 1)
+    }
 }

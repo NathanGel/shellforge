@@ -12,6 +12,8 @@ public final class CommandLauncher: @unchecked Sendable {
     private var cached: ResolvedEnvironment?
     private let clock: @Sendable () -> Date
     private var read: Date?
+    /// Counts the reloads begun, so an older one finishing last never replaces a newer one's read.
+    private var started = 0, published = 0
 
     /// `resolve` reads the environment; the default asks the user's login shell. `clock` stamps
     /// each read, for Settings › Core.
@@ -44,10 +46,17 @@ public final class CommandLauncher: @unchecked Sendable {
     /// Reads the environment again, for Settings' Reload or after an rc file changed.
     @discardableResult
     public func reload() -> ResolvedEnvironment {
+        let generation = lock.withLock { started += 1; return started }
         let fresh = resolve()
         let now = clock()
-        lock.withLock { cached = fresh; read = now }
-        return fresh
+        return lock.withLock {
+            // A reload begun after this one has published already: its read is the newer.
+            guard generation > published else { return cached ?? fresh }
+            published = generation
+            cached = fresh
+            read = now
+            return fresh
+        }
     }
 
     /// The executable `command` runs: itself when it is a path, else the first executable file of
