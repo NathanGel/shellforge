@@ -56,6 +56,19 @@ extension SidebarModel {
         }
     }
 
+    /// Names the project's SSH host, or none.
+    public func setSSHHost(_ alias: String?, on projectId: UUID) {
+        guard let current = project(projectId), current.sshHost != alias else { return }
+        do {
+            try document.update { workspace in
+                if let i = workspace.projects.firstIndex(where: { $0.id == projectId }) { workspace.projects[i].sshHost = alias }
+            }
+            lastError = nil
+        } catch {
+            lastError = String(describing: error)
+        }
+    }
+
     /// The project's tunnels as rows, in its order.
     public func tunnelRows(of project: Project) -> [TunnelRowItem] {
         project.tunnels.map { tunnel in

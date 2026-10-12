@@ -124,7 +124,8 @@ struct SidebarView: View {
                              newTask: { showNewTask(in: node.id) },
                              newReview: { showNewReview(in: node.id) },
                              editJiraProjects: { showJiraProjects(for: node.id) },
-                             editTunnels: { showTunnels(for: node.id) })
+                             editTunnels: { showTunnels(for: node.id) },
+                             editSSHHost: { showSSHHost(for: node.id) })
                 .listRowSeparator(.hidden)
         case .tunnel(let tunnel):
             TunnelRowView(row: tunnel, start: { model.startTunnel(tunnel.alias) }, stop: { model.stopTunnel(tunnel.alias) },
@@ -186,6 +187,15 @@ struct SidebarView: View {
         sheet.present(over: anchor.window) { dismiss in
             TunnelsSheet(projectName: project.name, linked: project.tunnels, loadHosts: model.loadSSHHosts,
                          submit: { model.setTunnels($0, on: id) }, dismiss: dismiss)
+        }
+    }
+
+    /// The sheet that names a project's SSH host; the config is read again for it.
+    private func showSSHHost(for id: UUID) {
+        guard let project = model.project(id) else { return }
+        sheet.present(over: anchor.window) { dismiss in
+            SSHHostSheet(projectName: project.name, current: project.sshHost, loadHosts: model.loadSSHHosts,
+                         submit: { model.setSSHHost($0, on: id) }, dismiss: dismiss)
         }
     }
 

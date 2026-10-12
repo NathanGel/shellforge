@@ -14,6 +14,8 @@ public struct Project: Codable, Equatable, Sendable, Identifiable {
     public var jiraProjects: [JiraProjectRef]
     /// The SSH tunnels this project runs (`~/.ssh/config` hosts), in the order they were added.
     public var tunnels: [TunnelDefinition] = []
+    /// The `~/.ssh/config` host New Task can open in a pane beside the agent; nil for none.
+    public var sshHost: String?
 
     public init(id: UUID = UUID(), name: String, path: String, addedAt: Date = Date(), collapsed: Bool = false,
                 jiraProjects: [JiraProjectRef] = []) {
@@ -25,7 +27,7 @@ public struct Project: Codable, Equatable, Sendable, Identifiable {
         self.jiraProjects = jiraProjects
     }
 
-    private enum CodingKeys: String, CodingKey { case id, name, path, addedAt, collapsed, jiraProjects, tunnels }
+    private enum CodingKeys: String, CodingKey { case id, name, path, addedAt, collapsed, jiraProjects, tunnels, sshHost }
 
     /// A workspace saved before projects could fold loads them unfolded, and one saved before they
     /// could link Jira projects links none.
@@ -37,6 +39,7 @@ public struct Project: Codable, Equatable, Sendable, Identifiable {
                   jiraProjects: try c.decodeIfPresent([JiraProjectRef].self, forKey: .jiraProjects) ?? [])
         // A workspace saved before tunnels has none.
         tunnels = try c.decodeIfPresent([TunnelDefinition].self, forKey: .tunnels) ?? []
+        sshHost = try c.decodeIfPresent(String.self, forKey: .sshHost)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -48,6 +51,7 @@ public struct Project: Codable, Equatable, Sendable, Identifiable {
         try c.encode(collapsed, forKey: .collapsed)
         try c.encode(jiraProjects, forKey: .jiraProjects)
         try c.encode(tunnels, forKey: .tunnels)
+        try c.encodeIfPresent(sshHost, forKey: .sshHost)
     }
 }
 
