@@ -35,7 +35,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
-from . import protocol
+from . import protocol, traffic
 
 log = logging.getLogger(__name__)
 
@@ -107,10 +107,13 @@ class _Tunnel:
 class TunnelSupervisor:
     def __init__(self, broadcast: Callable[[str, Any], Awaitable[None]], clock: Callable[[], float] = time.time,
                  up_after: float = 2.0, backoff_start: float = 1.0, backoff_cap: float = 30.0, steady_after: float = 60.0,
-                 ledger: Path | None = None, ps: Callable[[int], str | None] = ps_command):
+                 ledger: Path | None = None, ps: Callable[[int], str | None] = ps_command, traffic_every: float = 5.0,
+                 sample: Callable[[list[int]], Awaitable[dict[int, tuple[int, int]]]] = traffic.sample):
         self.broadcast, self.clock = broadcast, clock
         self.up_after, self.backoff_start, self.backoff_cap, self.steady_after = up_after, backoff_start, backoff_cap, steady_after
         self.ledger, self.ps = ledger, ps
+        self.traffic_every, self.sample = traffic_every, sample
+        self._sampler: asyncio.Task[None] | None = None
         self._tunnels: dict[str, _Tunnel] = {}
         # Set by stop_all: the daemon is going, and an ssh started now would outlive it.
         self._closed = False
@@ -138,6 +141,7 @@ class TunnelSupervisor:
         tunnel = _Tunnel(alias, environment, keep_running)
         self._tunnels[alias] = tunnel
         tunnel.task = asyncio.get_running_loop().create_task(self._run(tunnel))
+        self._start_sampler()
 
     async def stop(self, alias: str) -> None:
         """Ends `alias`'s ssh and any restart pending; it is stopped until started again."""
@@ -155,6 +159,9 @@ class TunnelSupervisor:
         asking it to stop, and an ssh still running then holds its port for good -- except those
         that keep running, which stay in the ledger for the next daemon."""
         self._closed = True
+        if self._sampler is not None:
+            self._sampler.cancel()
+            await asyncio.gather(self._sampler, return_exceptions=True)
         tunnels = list(self._tunnels.values())
         for tunnel in tunnels:
             tunnel.stopping = True
@@ -193,6 +200,7 @@ class TunnelSupervisor:
                 self._tunnels[tunnel.alias] = tunnel
                 tunnel.task = loop.create_task(self._watch_adopted(tunnel))
                 await self._broadcast(tunnel)
+                self._start_sampler()
             else:
                 leftovers.append(child)
         await self._end_all(leftovers, grace=1.0)
@@ -230,6 +238,8 @@ class TunnelSupervisor:
                 await self._set(tunnel, "failed", f"Couldn’t start ssh: {exc}")
                 return
             tunnel.child = _Child(popen.pid, popen, tunnel.alias, self.ps)
+            # nettop counts per process: a new ssh starts from nothing.
+            tunnel.bytes_in = tunnel.bytes_out = None
             self._write_ledger()
             started = loop.time()
             while popen.poll() is None:
@@ -316,10 +326,39 @@ class TunnelSupervisor:
         except OSError:
             log.exception("writing the tunnel ledger failed")
 
+    # -- traffic -----------------------------------------------------------------------------
+
+    def _start_sampler(self) -> None:
+        if self._sampler is None or self._sampler.done():
+            self._sampler = asyncio.get_running_loop().create_task(self._sample_forever())
+
+    async def _sample_forever(self) -> None:
+        """Every `traffic_every` seconds, the up tunnels' bytes; a change is broadcast. A sample that
+        fails is skipped -- the counts stay as they were -- and the loop goes on."""
+        while not self._closed:
+            await asyncio.sleep(self.traffic_every)
+            up = [t for t in self._tunnels.values() if t.state == "up" and t.child is not None]
+            if not up:
+                continue
+            try:
+                counts = await self.sample([t.child.pid for t in up if t.child is not None])
+            except Exception:  # noqa: BLE001 - traffic is shown, never relied on
+                log.exception("sampling tunnel traffic failed")
+                continue
+            for tunnel in up:
+                if tunnel.child is None or tunnel.child.pid not in counts or tunnel.state != "up":
+                    continue
+                received, sent = counts[tunnel.child.pid]
+                if (received, sent) != (tunnel.bytes_in, tunnel.bytes_out):
+                    tunnel.bytes_in, tunnel.bytes_out = received, sent
+                    await self._broadcast(tunnel)
+
     async def _set(self, tunnel: _Tunnel, state: str, error: str | None) -> None:
         if (tunnel.state, tunnel.error) == (state, error) and state != "connecting":
             return
         tunnel.state, tunnel.error, tunnel.since = state, error, self.clock()
+        if state != "up":
+            tunnel.bytes_in = tunnel.bytes_out = None
         if state == "up":
             # The ledger keeps when it came up, for an adopting daemon's uptime.
             self._write_ledger()
