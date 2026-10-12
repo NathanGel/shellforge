@@ -374,6 +374,38 @@ import Testing
         m.jira.runTest()
         #expect(m.jira.test == .failed("Enter a valid Jira site URL"))
     }
+
+    /// A token goes only over https: the app lets plain http reach local-network hosts, so an
+    /// `http://gitlab` or an IP address would carry it unencrypted. A URL with a user or password in
+    /// it is refused too, before it could be stored.
+    @Test(arguments: ["http://gitlab", "http://10.0.0.5", "https://me:secret@git.example.net", "ftp://git.example.net"])
+    func aGitLabHostThatIsNotPlainHTTPSIsRefusedAndNothingIsStoredOrTested(host: String) async {
+        let store = MemorySecretStore(), defaults = ScratchDefaults.make(), testers = Testers()
+        let m = model(store: store, defaults: defaults, testers: testers)
+        m.gitLab.fields.host = host
+        m.gitLab.fields.token = "gl-token"
+        #expect(m.save() == "Enter a valid GitLab host URL")
+        #expect(GitLabSettings.load(store: store, defaults: defaults) == nil)
+        try? await Task.sleep(for: .milliseconds(100))
+        #expect(testers.gitLabCalls.isEmpty, "the token was sent to \(host)")
+    }
+
+    @Test func aJiraSiteOverPlainHTTPIsRefused() {
+        let store = MemorySecretStore(), defaults = ScratchDefaults.make()
+        let m = model(store: store, defaults: defaults)
+        m.jira.fields = JiraFields(Self.jira)
+        m.jira.fields.site = "http://jira.local"
+        #expect(m.save() == "Enter a valid Jira site URL")
+        #expect(JiraSettings.load(store: store, defaults: defaults) == nil)
+    }
+
+    /// A client's refusal reaches the card in the client's own words.
+    @Test func aFailedTestSaysWhy() async {
+        let m = model(jira: Self.jira, jiraAnswer: { throw JiraError.unauthorized })
+        m.testConfigured()
+        await eventually { m.jira.test != nil && m.jira.test != .running }
+        #expect(m.jira.test == .failed(JiraError.unauthorized.localizedDescription))
+    }
 }
 
 private actor Gate {

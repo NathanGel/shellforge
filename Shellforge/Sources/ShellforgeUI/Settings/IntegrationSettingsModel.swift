@@ -21,6 +21,15 @@ protocol ServiceFields: Equatable {
 /// What the URL field starts on, so the person types only the host.
 private let urlPrefix = "https://"
 
+/// A site a token may be sent to: https, with a host, and no user or password of its own. The app
+/// lets plain http reach local-network hosts, so an `http://gitlab` or an IP address would carry the
+/// token unencrypted — AiTerm took any scheme; Shellforge does not.
+private func secureSite(_ text: String) -> URL? {
+    guard let url = URL(string: text), url.scheme?.lowercased() == "https", url.host?.isEmpty == false,
+          url.user == nil, url.password == nil else { return nil }
+    return url
+}
+
 private func typed(_ values: [String]) -> Bool {
     values.contains { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 }
@@ -34,7 +43,7 @@ struct JiraFields: ServiceFields {
         token = config?.token ?? ""
     }
 
-    var config: JiraConfig? { URL(string: site).flatMap { $0.host == nil ? nil : JiraConfig(siteURL: $0, email: email, token: token) } }
+    var config: JiraConfig? { secureSite(site).map { JiraConfig(siteURL: $0, email: email, token: token) } }
     var isConfigured: Bool { config != nil && !email.isEmpty && !token.isEmpty }
     var hasInput: Bool { typed([site == urlPrefix ? "" : site, email, token]) }
 }
@@ -47,7 +56,7 @@ struct GitLabFields: ServiceFields {
         token = config?.token ?? ""
     }
 
-    var config: GitLabConfig? { URL(string: host).flatMap { $0.host == nil ? nil : GitLabConfig(hostURL: $0, token: token) } }
+    var config: GitLabConfig? { secureSite(host).map { GitLabConfig(hostURL: $0, token: token) } }
     var isConfigured: Bool { config != nil && !token.isEmpty }
     var hasInput: Bool { typed([host == urlPrefix ? "" : host, token]) }
 }
