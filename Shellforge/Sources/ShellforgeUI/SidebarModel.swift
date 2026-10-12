@@ -70,8 +70,11 @@ public final class SidebarModel: ObservableObject {
     public let agents: [AgentDefinition]
     /// An agent's model list, read off the main actor.
     private let catalogue: @Sendable (AgentDefinition) throws -> [AgentModel]
-    /// Reads the saved Jira connection: the Keychain and the defaults. Tests hand in their own.
+    /// Read the saved Jira, GitLab and GitHub connections: the Keychain and the defaults. Tests hand
+    /// in their own.
     let jiraSettings: @Sendable () -> JiraConfig?
+    let gitLabSettings: @Sendable () -> GitLabConfig?
+    let gitHubSettings: @Sendable () -> GitHubConfig?
     private var subscription: AnyCancellable?
     private let feed: SessionFeed?
     private var feedSubscriptions: [AnyCancellable] = []
@@ -81,9 +84,13 @@ public final class SidebarModel: ObservableObject {
     public init(host: TerminalHost, document: WorkspaceDocument, launcher: CommandLauncher, feed: SessionFeed? = nil,
                 agents: [AgentDefinition] = AgentPresets.all,
                 catalogue: @escaping @Sendable (AgentDefinition) throws -> [AgentModel] = { _ in [] },
-                jiraSettings: @escaping @Sendable () -> JiraConfig? = { JiraSettings.load() }) {
+                jiraSettings: @escaping @Sendable () -> JiraConfig? = { JiraSettings.load() },
+                gitLabSettings: @escaping @Sendable () -> GitLabConfig? = { GitLabSettings.load() },
+                gitHubSettings: @escaping @Sendable () -> GitHubConfig? = { GitHubSettings.load() }) {
         self.host = host
         self.jiraSettings = jiraSettings
+        self.gitLabSettings = gitLabSettings
+        self.gitHubSettings = gitHubSettings
         removalBoard = RemovalBoard.shared(for: document)
         self.document = document
         self.launcher = launcher
