@@ -158,7 +158,10 @@ struct SidebarView: View {
     private func showMacSettings() {
         let integrations = IntegrationSettingsModel(jira: model.jiraSettings(), gitLab: model.gitLabSettings(),
                                                     gitHub: model.gitHubSettings())
-        sheet.present(over: anchor.window) { dismiss in SettingsPanel(backpack: backpack, integrations: integrations, close: dismiss) }
+        let environment = model.environmentModel()
+        sheet.present(over: anchor.window) { dismiss in
+            SettingsPanel(backpack: backpack, integrations: integrations, environment: environment, close: dismiss)
+        }
     }
 
     /// The Agent hooks sheet, in its own dark panel on the sidebar's window.
