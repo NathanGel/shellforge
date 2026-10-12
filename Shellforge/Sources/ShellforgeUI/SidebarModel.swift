@@ -60,6 +60,8 @@ public final class SidebarModel: ObservableObject {
     public let agents: [AgentDefinition]
     /// An agent's model list, read off the main actor.
     private let catalogue: @Sendable (AgentDefinition) throws -> [AgentModel]
+    /// Reads the saved Jira connection: the Keychain and the defaults. Tests hand in their own.
+    let jiraSettings: @Sendable () -> JiraConfig?
     private var subscription: AnyCancellable?
     private let feed: SessionFeed?
     private var feedSubscriptions: [AnyCancellable] = []
@@ -68,8 +70,10 @@ public final class SidebarModel: ObservableObject {
 
     public init(host: TerminalHost, document: WorkspaceDocument, launcher: CommandLauncher, feed: SessionFeed? = nil,
                 agents: [AgentDefinition] = AgentPresets.all,
-                catalogue: @escaping @Sendable (AgentDefinition) throws -> [AgentModel] = { _ in [] }) {
+                catalogue: @escaping @Sendable (AgentDefinition) throws -> [AgentModel] = { _ in [] },
+                jiraSettings: @escaping @Sendable () -> JiraConfig? = { JiraSettings.load() }) {
         self.host = host
+        self.jiraSettings = jiraSettings
         self.document = document
         self.launcher = launcher
         self.agents = agents
@@ -123,7 +127,7 @@ public final class SidebarModel: ObservableObject {
                             branches: { Repository.branches(of: path, launcher: launcher) },
                             submit: { [weak self] draft in try await self?.newTask(draft: draft, in: projectId) },
                             // Read once, as the sheet opens: a Keychain read is too slow for every keystroke.
-                            searchIssues: NewTaskModel.jiraSearcher(jira: JiraSettings.load()),
+                            searchIssues: NewTaskModel.jiraSearcher(for: project, jira: jiraSettings()),
                             home: FileManager.default.homeDirectoryForCurrentUser)
     }
 
@@ -284,6 +288,31 @@ public final class SidebarModel: ObservableObject {
             rows += tree.otherTabs.map { .tab($0, selected: selectedTaskId == nil && $0.id == current) }
         }
         return rows
+    }
+
+    // -- Jira projects ----------------------------------------------------------------
+
+    /// Every Jira project the account can see, for a project's Jira Projects sheet. The connection
+    /// is read off the main actor: the Keychain is slow.
+    public func loadJiraProjects() async throws -> [JiraProjectRef] {
+        let read = jiraSettings
+        guard let config = await BackgroundWork.run(read) else {
+            throw ActionUnavailable("Connect Jira in Settings to choose a Jira project.")
+        }
+        return try await JiraClient(config: config).projects()
+    }
+
+    /// Replaces the project's linked Jira projects with `jiraProjects`, each once, in their order.
+    /// An empty list unlinks them all: New Task then searches every Jira project.
+    public func setJiraProjects(_ jiraProjects: [JiraProjectRef], on projectId: UUID) {
+        let linked = jiraProjects.linkedOnce
+        guard let current = document.workspace.projects.first(where: { $0.id == projectId }),
+              current.jiraProjects != linked else { return }
+        attempt {
+            try document.update { workspace in
+                if let i = workspace.projects.firstIndex(where: { $0.id == projectId }) { workspace.projects[i].jiraProjects = linked }
+            }
+        }
     }
 
     /// Folds or unfolds a project, as AiTerm's chevron does; kept with the workspace.

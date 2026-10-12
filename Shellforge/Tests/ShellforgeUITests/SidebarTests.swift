@@ -7,7 +7,7 @@ import ShellforgeDesign
 @MainActor @Suite struct SidebarTests {
     private func sidebarModel() throws -> SidebarModel {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("shellforge-view-\(UUID().uuidString)")
-        return SidebarModel(host: FakeTerminalHost(), document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: try GitRepoForUI().launcher)
+        return SidebarModel(host: FakeTerminalHost(), document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: try GitRepoForUI().launcher, jiraSettings: { nil })
     }
 
     /// An Agent hooks sheet on a scratch home: building the view reads no file.

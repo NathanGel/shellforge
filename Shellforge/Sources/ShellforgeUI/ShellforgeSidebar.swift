@@ -146,7 +146,7 @@ struct SidebarView: View {
     /// The Mac card — what Backpack Mode needs from this Mac — in a panel of its own with Done, until
     /// Shellforge has a Settings window to hold it (AiTerm's Settings › Integrations › Mac).
     private func showMacSettings() {
-        let integrations = IntegrationSettingsModel(jira: JiraSettings.load())
+        let integrations = IntegrationSettingsModel(jira: model.jiraSettings())
         sheet.present(over: anchor.window) { dismiss in SettingsPanel(backpack: backpack, integrations: integrations, close: dismiss) }
     }
 

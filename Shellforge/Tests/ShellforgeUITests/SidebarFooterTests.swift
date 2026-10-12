@@ -11,7 +11,7 @@ import Testing
         let repo = try GitRepoForUI()
         let host = FakeTerminalHost(), feed = FakeFeed()
         let model = SidebarModel(host: host, document: WorkspaceDocument(store: WorkspaceStore(folder: folder)),
-                                 launcher: repo.launcher, feed: feed)
+                                 launcher: repo.launcher, feed: feed, jiraSettings: { nil })
         await model.addProject(folder: repo.path)
         let project = try #require(model.tree.projects.first).id
         await model.newTask(title: "Alpha", in: project)
@@ -53,7 +53,7 @@ import Testing
     /// its tab is gone — `aClosedTasksContextStays` — so "nothing selected" is a sidebar with neither.)
     @Test func nothingSelectedShowsTheMacAlone() async throws {
         let model = SidebarModel(host: FakeTerminalHost(), document: WorkspaceDocument(store: WorkspaceStore(folder: folder)),
-                                 launcher: try GitRepoForUI().launcher, feed: FakeFeed())
+                                 launcher: try GitRepoForUI().launcher, feed: FakeFeed(), jiraSettings: { nil })
         #expect(model.footerRow == nil)
     }
 

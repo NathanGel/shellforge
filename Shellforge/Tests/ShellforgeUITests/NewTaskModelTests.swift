@@ -8,10 +8,10 @@ import Testing
     private let opus = AgentModel(id: "opus", label: "Opus", detail: nil, efforts: ["low", "high"], defaultEffort: "high")
     private let project = Project(name: "demo", path: FileManager.default.temporaryDirectory.appendingPathComponent("nt-\(UUID().uuidString)").path)
 
-    private func model(available: Set<String> = ["claude", "codex", "grok", "pi"],
+    private func model(project: Project? = nil, available: Set<String> = ["claude", "codex", "grok", "pi"],
                        searchIssues: @escaping @MainActor (String) async throws -> [JiraTicket] = { _ in [] },
                        submit: @escaping @MainActor (TaskDraft) async throws -> Void = { _ in }) -> NewTaskModel {
-        NewTaskModel(project: project, agents: AgentPresets.all, available: available,
+        NewTaskModel(project: project ?? self.project, agents: AgentPresets.all, available: available,
                      draft: TaskDraft(baseBranch: "main", agentId: "claude", model: "", reasoning: nil),
                      rememberedModels: [:], catalogue: { [opus] _ in [opus] }, branches: { ["main"] }, submit: submit,
                      searchIssues: searchIssues,
@@ -133,14 +133,14 @@ import Testing
     }
 
     @Test func withoutAJiraConnectionASearchSaysSo() async {
-        let search = NewTaskModel.jiraSearcher(jira: nil)
+        let search = NewTaskModel.jiraSearcher(for: project, jira: nil)
         await #expect { try await search("login") } throws: {
             ($0 as? ActionUnavailable)?.message == "Connect Jira in Settings, or continue without a ticket."
         }
     }
 
     @Test func withoutJiraTheFieldSaysHowAndCreateStillWorks() async {
-        let sheet = model(searchIssues: NewTaskModel.jiraSearcher(jira: nil))
+        let sheet = model(searchIssues: NewTaskModel.jiraSearcher(for: project, jira: nil))
         await sheet.search(text: "")
         #expect(sheet.searchError == "Connect Jira in Settings, or continue without a ticket.")
         sheet.draft.setTitle("Login")
@@ -162,7 +162,29 @@ import Testing
         #expect(!sheet.previewCommand.contains("ML-7"))
     }
 
-    @Test func theTicketFieldSearchesEveryProjectUntilSomeAreLinked() {
-        #expect(model().ticketPlaceholder == "Search by key or title")
+    /// AiTerm's theTicketFieldNamesTheLinkedJiraProjectsItSearches, and the searcher handing those
+    /// projects to every query: the open-ticket list and a typed search alike.
+    @Test func theTicketFieldNamesAndSearchesTheLinkedProjects() async throws {
+        let site = URL(string: "https://example.atlassian.net")!
+        let linked = [JiraProjectRef(id: "1", key: "SHOP", name: "Storefront", siteURL: site),
+                      JiraProjectRef(id: "2", key: "PAY", name: "Payments", siteURL: site)]
+        func placeholder(_ jira: [JiraProjectRef]) -> String {
+            model(project: Project(name: "Repo", path: "/tmp/repo", jiraProjects: jira)).ticketPlaceholder
+        }
+        #expect(placeholder(linked) == "Search SHOP and PAY by key or title")
+        #expect(placeholder([linked[1]]) == "Search PAY by key or title")
+        #expect(placeholder([]) == "Search by key or title")
+
+        let stub = StubSession { _ in (200, Data(#"{"issues":[]}"#.utf8)) }
+        let config = JiraConfig(siteURL: site, email: "me@example.com", token: "t")
+        let search = NewTaskModel.jiraSearcher(for: Project(name: "Repo", path: "/tmp/repo", jiraProjects: linked),
+                                               jira: config, session: stub.session)
+        _ = try await search("")
+        _ = try await search("login")
+        let jqls = stub.requests.compactMap { request in
+            (try? JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any])?["jql"] as? String
+        }
+        #expect(!jqls.isEmpty)
+        #expect(jqls.allSatisfy { $0.contains(#"project in ("SHOP", "PAY")"#) }, "\(jqls)")
     }
 }

@@ -74,8 +74,37 @@ import Testing
 @MainActor @Suite struct SidebarModelTests {
     private let folder = FileManager.default.temporaryDirectory.appendingPathComponent("shellforge-model-\(UUID().uuidString)")
 
+    /// AiTerm's setJiraProjects: a project is linked once, in order; an empty list unlinks; it is saved.
+    @Test func linkingKeepsEachJiraProjectOnceAndAnEmptyListUnlinks() async throws {
+        let repo = try GitRepoForUI()
+        let document = WorkspaceDocument(store: WorkspaceStore(folder: folder))
+        let sidebar = SidebarModel(host: FakeTerminalHost(), document: document, launcher: repo.launcher, jiraSettings: { nil })
+        await sidebar.addProject(folder: repo.path)
+        let id = try #require(document.workspace.projects.first?.id)
+        let site = URL(string: "https://example.atlassian.net")!
+        let shop = JiraProjectRef(id: "10001", key: "SHOP", name: "Storefront", siteURL: site)
+        let pay = JiraProjectRef(id: "10002", key: "PAY", name: "Payments", siteURL: site)
+
+        sidebar.setJiraProjects([shop, pay, shop], on: id)
+        #expect(document.workspace.projects[0].jiraProjects == [shop, pay], "a project is linked once")
+        #expect(try WorkspaceStore(folder: folder).load().workspace.projects[0].jiraProjects == [shop, pay])
+
+        sidebar.setJiraProjects([], on: id)
+        #expect(document.workspace.projects[0].jiraProjects.isEmpty)
+        #expect(try WorkspaceStore(folder: folder).load().workspace.projects[0].jiraProjects.isEmpty)
+    }
+
+    @Test func withoutJiraTheProjectListSaysHow() async throws {
+        let repo = try GitRepoForUI()
+        let sidebar = SidebarModel(host: FakeTerminalHost(), document: WorkspaceDocument(store: WorkspaceStore(folder: folder)),
+                                   launcher: repo.launcher, jiraSettings: { nil })
+        await #expect { _ = try await sidebar.loadJiraProjects() } throws: {
+            ($0 as? ActionUnavailable)?.message == "Connect Jira in Settings to choose a Jira project."
+        }
+    }
+
     private func model(_ host: FakeTerminalHost, repo: GitRepoForUI, document: WorkspaceDocument? = nil) -> SidebarModel {
-        SidebarModel(host: host, document: document ?? WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher)
+        SidebarModel(host: host, document: document ?? WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher, jiraSettings: { nil })
     }
 
     @Test func addingAProjectListsItAndSavesIt() async throws {
@@ -156,7 +185,7 @@ import Testing
             calls.record(Thread.isMainThread)
             return repo.launcher.environment
         }
-        let sidebar = SidebarModel(host: FakeTerminalHost(), document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: launcher)
+        let sidebar = SidebarModel(host: FakeTerminalHost(), document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: launcher, jiraSettings: { nil })
         await sidebar.addProject(folder: repo.path)
         #expect(calls.values == [false])
         #expect(sidebar.tree.projects.count == 1)
@@ -192,7 +221,7 @@ import Testing
     @Test func aTaskShowsItsMostUrgentTabAndATabItsOwn() async throws {
         let repo = try GitRepoForUI()
         let host = FakeTerminalHost(), feed = FakeFeed()
-        let sidebar = SidebarModel(host: host, document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher, feed: feed)
+        let sidebar = SidebarModel(host: host, document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher, feed: feed, jiraSettings: { nil })
         await sidebar.addProject(folder: repo.path)
         await sidebar.newTask(title: "Fix login", in: try #require(sidebar.tree.projects.first).id)
         let task = try #require(sidebar.selectedTaskId), tab = try #require(host.tabs.first).id
@@ -204,7 +233,7 @@ import Testing
     @Test func openingADoneTaskMarksItSeenAndOpeningAnotherDoesNot() async throws {
         let repo = try GitRepoForUI()
         let host = FakeTerminalHost(), feed = FakeFeed()
-        let sidebar = SidebarModel(host: host, document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher, feed: feed)
+        let sidebar = SidebarModel(host: host, document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher, feed: feed, jiraSettings: { nil })
         await sidebar.addProject(folder: repo.path)
         let project = try #require(sidebar.tree.projects.first).id
         await sidebar.newTask(title: "One", in: project)
@@ -222,7 +251,7 @@ import Testing
     @Test func switchingToADoneTasksTabInITerm2MarksItSeen() async throws {
         let repo = try GitRepoForUI()
         let host = FakeTerminalHost(), feed = FakeFeed()
-        let sidebar = SidebarModel(host: host, document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher, feed: feed)
+        let sidebar = SidebarModel(host: host, document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher, feed: feed, jiraSettings: { nil })
         await sidebar.addProject(folder: repo.path)
         let project = try #require(sidebar.tree.projects.first).id
         await sidebar.newTask(title: "One", in: project)
@@ -236,7 +265,7 @@ import Testing
     @Test func openingTheDoneTabOfTheShownTaskMarksItSeen() async throws {
         let repo = try GitRepoForUI()
         let host = FakeTerminalHost(), feed = FakeFeed()
-        let sidebar = SidebarModel(host: host, document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher, feed: feed)
+        let sidebar = SidebarModel(host: host, document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher, feed: feed, jiraSettings: { nil })
         await sidebar.addProject(folder: repo.path)
         let project = try #require(sidebar.tree.projects.first).id
         await sidebar.newTask(title: "One", in: project)
@@ -253,7 +282,7 @@ import Testing
     @Test func theHelpersProblemIsShownAndClearedWhenItConnects() async throws {
         let repo = try GitRepoForUI()
         let feed = FakeFeed()
-        let sidebar = SidebarModel(host: FakeTerminalHost(), document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher, feed: feed)
+        let sidebar = SidebarModel(host: FakeTerminalHost(), document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher, feed: feed, jiraSettings: { nil })
         feed.status = .pythonMissing
         #expect(sidebar.helper == .pythonMissing)
         feed.status = .connected
@@ -263,7 +292,7 @@ import Testing
     @Test func avatarsShowEveryTabsAgentInTabOrder() async throws {
         let repo = try GitRepoForUI()
         let host = FakeTerminalHost(), feed = FakeFeed()
-        let sidebar = SidebarModel(host: host, document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher, feed: feed)
+        let sidebar = SidebarModel(host: host, document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher, feed: feed, jiraSettings: { nil })
         await sidebar.addProject(folder: repo.path)
         await sidebar.newTask(title: "One", in: try #require(sidebar.tree.projects.first).id)
         let task = try #require(sidebar.selectedTaskId)
@@ -275,7 +304,7 @@ import Testing
     @Test func avatarsCountEveryAgentTab() async throws {
         let repo = try GitRepoForUI()
         let host = FakeTerminalHost(), feed = FakeFeed()
-        let sidebar = SidebarModel(host: host, document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher, feed: feed)
+        let sidebar = SidebarModel(host: host, document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher, feed: feed, jiraSettings: { nil })
         await sidebar.addProject(folder: repo.path)
         await sidebar.newTask(title: "One", in: try #require(sidebar.tree.projects.first).id)
         let task = try #require(sidebar.selectedTaskId)
@@ -285,7 +314,7 @@ import Testing
 
     @Test func aProjectRemembersItIsCollapsed() async throws {
         let repo = try GitRepoForUI()
-        let sidebar = SidebarModel(host: FakeTerminalHost(), document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher)
+        let sidebar = SidebarModel(host: FakeTerminalHost(), document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher, jiraSettings: { nil })
         await sidebar.addProject(folder: repo.path)
         let id = try #require(sidebar.tree.projects.first).id
         sidebar.toggleCollapsed(id)
@@ -297,7 +326,7 @@ import Testing
     @Test func aGitHubProjectShowsGitHubsMark() async throws {
         let repo = try GitRepoForUI()
         _ = try repo.launcher.run("/usr/bin/git", ["-C", repo.path, "remote", "add", "origin", "git@github.com:a/b.git"])
-        let sidebar = SidebarModel(host: FakeTerminalHost(), document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher)
+        let sidebar = SidebarModel(host: FakeTerminalHost(), document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher, jiraSettings: { nil })
         await sidebar.addProject(folder: repo.path)
         let id = try #require(sidebar.tree.projects.first).id
         #expect(await eventually { sidebar.providers[id] == .github })
@@ -308,7 +337,7 @@ import Testing
     @Test func aProjectsProviderIsLookedUpOnceHoweverOftenTheSidebarRefreshes() async throws {
         let repo = try GitRepoForUI()
         let host = FakeTerminalHost()
-        let sidebar = SidebarModel(host: host, document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher)
+        let sidebar = SidebarModel(host: host, document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher, jiraSettings: { nil })
         await sidebar.addProject(folder: repo.path)
         for _ in 0..<5 { host.onChange?() }
         let id = try #require(sidebar.tree.projects.first).id
@@ -368,7 +397,7 @@ extension SidebarModel {
         let repo = try GitRepoForUI(installed: installed)
         let host = FakeTerminalHost()
         let document = WorkspaceDocument(store: WorkspaceStore(folder: folder))
-        let model = SidebarModel(host: host, document: document, launcher: repo.launcher, catalogue: { _ in [] })
+        let model = SidebarModel(host: host, document: document, launcher: repo.launcher, catalogue: { _ in [] }, jiraSettings: { nil })
         await model.addProject(folder: repo.path)
         return (model, host, document, try #require(document.workspace.projects.first).id)
     }

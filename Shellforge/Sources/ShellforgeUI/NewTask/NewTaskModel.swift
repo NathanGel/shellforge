@@ -183,8 +183,11 @@ public final class NewTaskModel: ObservableObject, Identifiable {
 
     // -- the Jira ticket field (AiTerm's CreationModel search) --------------------------------
 
-    /// What the ticket field searches: every project the account can see, until projects are linked.
-    public var ticketPlaceholder: String { "Search by key or title" }
+    /// The ticket field's placeholder names what it searches: the linked Jira projects, or — with
+    /// none linked — every project the account can see.
+    public var ticketPlaceholder: String {
+        project.jiraProjects.isEmpty ? "Search by key or title" : "Search \(project.jiraProjects.keyList) by key or title"
+    }
 
     public func cancelSearch() {
         searchGeneration += 1
@@ -221,18 +224,21 @@ public final class NewTaskModel: ObservableObject, Identifiable {
         }
     }
 
-    /// AiTerm's `jiraSearcher`: an empty query lists the person's open tickets, anything else
-    /// searches for it. `jira` is the connection as it stood when the sheet opened — reading it is a
-    /// Keychain call, too slow for every keystroke.
-    public static func jiraSearcher(jira: JiraConfig?) -> @MainActor (String) async throws -> [JiraTicket] {
-        { text in
+    /// AiTerm's `jiraSearcher`: an empty query lists the person's open tickets, across every linked
+    /// Jira project; anything else searches for it there. `jira` is the connection as it stood when
+    /// the sheet opened — reading it is a Keychain call, too slow for every keystroke. `session` is
+    /// the tests' way to see the queries.
+    public static func jiraSearcher(for project: Project, jira: JiraConfig?,
+                                    session: URLSession = .shared) -> @MainActor (String) async throws -> [JiraTicket] {
+        let jiraProjects = project.jiraProjects
+        return { text in
             guard let config = jira else {
                 throw ActionUnavailable("Connect Jira in Settings, or continue without a ticket.")
             }
-            let client = JiraClient(config: config)
+            let client = JiraClient(config: config, session: session)
             return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ? try await client.myOpenIssues(projects: [])
-                : try await client.search(text: text, projects: [])
+                ? try await client.myOpenIssues(projects: jiraProjects)
+                : try await client.search(text: text, projects: jiraProjects)
         }
     }
 

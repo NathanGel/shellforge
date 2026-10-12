@@ -9,7 +9,7 @@ import Testing
 
     private func model(feed: FakeFeed? = nil, host: FakeTerminalHost = FakeTerminalHost()) throws -> (SidebarModel, GitRepoForUI) {
         let repo = try GitRepoForUI()
-        return (SidebarModel(host: host, document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher, feed: feed), repo)
+        return (SidebarModel(host: host, document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher, feed: feed, jiraSettings: { nil }), repo)
     }
 
     private func selected(_ rows: [SidebarRow]) -> [String] {
@@ -83,7 +83,7 @@ import Testing
     @Test func otherTabsShowEvenWithNoProject() {
         let host = FakeTerminalHost()
         host.tabs = [TabSnapshot(id: "s9", tabId: 9, title: "zsh", taskId: nil, projectId: nil)]
-        let model = SidebarModel(host: host, document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: CommandLauncher())
+        let model = SidebarModel(host: host, document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: CommandLauncher(), jiraSettings: { nil })
         #expect(titles(model.rows) == ["empty", "other tabs", "tab zsh"])
     }
 
