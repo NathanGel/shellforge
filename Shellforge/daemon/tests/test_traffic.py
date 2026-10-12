@@ -68,3 +68,9 @@ async def test_up_tunnels_get_their_bytes(ssh_env):
     assert first["state"] == "up" and first["bytesOut"] == 50
     await tunnels.stop_all()
     assert tunnels.list()[0]["bytesIn"] is None, "a stopped tunnel has no traffic to show"
+
+
+async def test_nettop_is_given_the_time_it_takes():
+    """`nettop -L 1` takes about five seconds before it prints, every time (measured 5.02 s on
+    macOS 27): a timeout under that leaves every sample unknown."""
+    assert await traffic.run_nettop(["/bin/sh", "-c", "sleep 5.2; echo ',bytes_in,bytes_out,'"]) == ",bytes_in,bytes_out,\n"
