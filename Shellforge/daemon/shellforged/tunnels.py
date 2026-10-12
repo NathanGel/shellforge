@@ -478,7 +478,8 @@ class TunnelSupervisor:
             self._sampler = asyncio.get_running_loop().create_task(self._sample_forever())
 
     async def _sample_forever(self) -> None:
-        """Every `traffic_every` seconds, the up tunnels' bytes; a change is broadcast. A sample that
+        """`traffic_every` seconds after the last sample -- which itself takes nettop about five --
+        the up tunnels' bytes; a change is broadcast. A sample that
         fails is skipped -- the counts stay as they were -- and the loop goes on."""
         while not self._closed:
             await asyncio.sleep(self.traffic_every)

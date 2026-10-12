@@ -24,7 +24,12 @@ def parse(text: str) -> dict[int, tuple[int, int]]:
     return counts
 
 
-async def run_nettop(args: list[str], timeout: float = 3.0) -> str | None:
+# `nettop -L 1` waits one sampling interval before it prints, about five seconds whatever `-s`
+# says: it is given twice that.
+NETTOP_TIMEOUT = 10.0
+
+
+async def run_nettop(args: list[str], timeout: float = NETTOP_TIMEOUT) -> str | None:
     """`args`' output, or None when it cannot start, fails, or runs past `timeout`."""
     try:
         process = await asyncio.create_subprocess_exec(*args, stdin=asyncio.subprocess.DEVNULL,
