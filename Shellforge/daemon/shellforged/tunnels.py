@@ -27,7 +27,9 @@ import json
 import logging
 import os
 import shutil
+import errno
 import signal
+import socket
 import subprocess
 import tempfile
 import time
@@ -55,23 +57,37 @@ NEEDS_INPUT = ("Host key verification failed", "Permission denied", "passphrase"
 POLL = 0.05
 
 
+class InspectionFailed(Exception):
+    """ps could not say what a pid is: it failed or timed out. Not the same as no such process."""
+
+
 def ps_command(pid: int) -> str | None:
-    """`pid`'s command line, or None when no such process runs (a zombie counts as none)."""
+    """`pid`'s command line, or None when no such process runs (a zombie counts as none). Raises
+    InspectionFailed when ps itself cannot answer."""
     try:
-        out = subprocess.run(["/bin/ps", "-o", "stat=,command=", "-p", str(pid)], capture_output=True, text=True,
-                             timeout=2, check=False).stdout.strip()
-    except (OSError, subprocess.SubprocessError):
-        return None
+        result = subprocess.run(["/bin/ps", "-o", "stat=,command=", "-p", str(pid)], capture_output=True, text=True,
+                                timeout=2, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise InspectionFailed(str(exc)) from exc
+    out = result.stdout.strip()
+    # ps exits 1 with no output for a pid that does not exist; any other failure is no answer.
     if not out:
+        if result.returncode not in (0, 1):
+            raise InspectionFailed(result.stderr.strip() or f"ps exited with status {result.returncode}")
         return None
     stat, _, command = out.partition(" ")
     return None if stat.startswith("Z") else command.strip() or None
 
 
 def is_tunnel_ssh(command: str | None, alias: str) -> bool:
-    """Whether `command` is this supervisor's ssh for `alias`: every option, the alias last."""
+    """Whether `command` is exactly this supervisor's ssh for `alias`: an executable named `ssh`
+    (first, or second after the interpreter of a script named ssh), then exactly `SSH_OPTIONS` in
+    order, then the alias, and nothing else."""
     parts = (command or "").split()
-    return bool(parts) and parts[-1] == alias and all(option in parts for option in SSH_OPTIONS)
+    tail = [*SSH_OPTIONS, alias]
+    if len(parts) not in (len(tail) + 1, len(tail) + 2) or parts[-len(tail):] != tail:
+        return False
+    return os.path.basename(parts[-len(tail) - 1]) == "ssh"
 
 
 class _Child:
@@ -80,15 +96,38 @@ class _Child:
     def __init__(self, pid: int, popen: subprocess.Popen[bytes] | None, alias: str,
                  ps: Callable[[int], str | None]):
         self.pid, self.popen, self.alias, self.ps = pid, popen, alias, ps
+        # An adopted pid's command line is checked once, off the event loop, when it is adopted;
+        # from then on it is alive while it can be signalled.
+        self.verified = False
+
+    async def verify(self) -> bool:
+        """Whether the pid is still this supervisor's ssh for the alias, leading its own process
+        group as every ssh it starts does. Raises InspectionFailed when ps cannot answer."""
+        command = await asyncio.to_thread(self.ps, self.pid)
+        try:
+            leads = os.getpgid(self.pid) == self.pid
+        except (ProcessLookupError, PermissionError):
+            leads = False
+        self.verified = leads and is_tunnel_ssh(command, self.alias)
+        return self.verified
 
     def alive(self) -> bool:
         if self.popen is not None:
             return self.popen.poll() is None
+        if not self.verified:
+            return False
         try:
             os.kill(self.pid, 0)
         except (ProcessLookupError, PermissionError):
             return False
-        return is_tunnel_ssh(self.ps(self.pid), self.alias)
+        return True
+
+    def signal(self, sig: int) -> None:
+        """`sig` to the ssh's own process group, which every ssh this supervisor starts leads (an
+        adopted one is verified to). A pid that leads no group of its own is not signalled."""
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            if os.getpgid(self.pid) == self.pid:
+                os.killpg(self.pid, sig)
 
 
 class _Tunnel:
@@ -121,6 +160,8 @@ class TunnelSupervisor:
         self.probe_every, self.hold_timeout = probe_every, hold_timeout
         self._sampler: asyncio.Task[None] | None = None
         self._tunnels: dict[str, _Tunnel] = {}
+        # Ledger entries ps could not answer for: kept as they were, for the next daemon to try.
+        self._unknown: list[dict[str, Any]] = []
         # Set by stop_all: the daemon is going, and an ssh started now would outlive it.
         self._closed = False
         # ssh's stderr files: beside the ledger, or -- with none, as in tests -- a temporary folder
@@ -143,6 +184,12 @@ class TunnelSupervisor:
         # A run that has said "failed" is over, though its task has a step left.
         if current and current.task is not None and not current.task.done() and not current.stopping \
                 and current.state != "failed":
+            # Running already -- adopted, or the checkbox changed: no second ssh, but its
+            # environment and keep-running are the app's latest.
+            if current.held_by is None:
+                current.environment = environment or current.environment
+                current.keep_running = keep_running
+                self._write_ledger()
             return
         tunnel = _Tunnel(alias, environment, keep_running)
         self._tunnels[alias] = tunnel
@@ -163,7 +210,7 @@ class TunnelSupervisor:
 
     # -- held by a tab -----------------------------------------------------------------------
 
-    async def hold(self, alias: str, port: int) -> None:
+    async def hold(self, alias: str, port: int, bind: str | None = None) -> None:
         """The app opened `alias` in a terminal tab for the user to answer ssh: any run of the
         supervisor's ends, and the tunnel is watched by its first local `port` -- up while it accepts.
         When it stops accepting after being up, or never does within `hold_timeout`, the tab's ssh
@@ -171,25 +218,36 @@ class TunnelSupervisor:
         start, or is stopped when it never had one."""
         if self._closed:
             return
-        current = self._tunnels.get(alias)
-        environment, keep_running = (current.environment, current.keep_running) if current else (None, False)
-        if current is not None:
+        environment, keep_running = None, False
+        # A start can land while a run is being ended: end whatever holds the alias until nothing
+        # does, so no run is left untracked beside the tab.
+        while (current := self._tunnels.get(alias)) is not None and not getattr(current, "_ended_for_hold", False):
+            environment = current.environment or environment
+            keep_running = current.keep_running or keep_running
             current.stopping = True
+            current._ended_for_hold = True  # type: ignore[attr-defined]
             await self._end_all([current.child], grace=2.0)
             current.child = None
             await self._finish([current], broadcast=[])
             self._write_ledger()
+            if self._tunnels.get(alias) is current:
+                break
         tunnel = _Tunnel(alias, environment, keep_running)
-        tunnel.held_by = "tab"
         self._tunnels[alias] = tunnel
+        address = self._loopback(bind)
+        if self._bound(port, address):
+            # Something else listens there: it would read as the tab's ssh, up, for as long as it lives.
+            await self._set(tunnel, "failed", f"Port {port} is already in use.")
+            return
+        tunnel.held_by = "tab"
         await self._set(tunnel, "connecting", None)
-        tunnel.task = asyncio.get_running_loop().create_task(self._watch_hold(tunnel, port))
+        tunnel.task = asyncio.get_running_loop().create_task(self._watch_hold(tunnel, port, address))
 
-    async def _watch_hold(self, tunnel: _Tunnel, port: int) -> None:
+    async def _watch_hold(self, tunnel: _Tunnel, port: int, address: str) -> None:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self.hold_timeout
         while not tunnel.stopping:
-            accepts = await self._accepts(port)
+            accepts = self._bound(port, address)
             if accepts and tunnel.state != "up":
                 await self._set(tunnel, "up", None)
             elif not accepts and (tunnel.state == "up" or loop.time() >= deadline):
@@ -207,15 +265,23 @@ class TunnelSupervisor:
         await self.start(tunnel.alias, tunnel.environment, tunnel.keep_running)
 
     @staticmethod
-    async def _accepts(port: int) -> bool:
+    def _loopback(bind: str | None) -> str:
+        """The address a forward's `bind` listens on: ssh's default, the IPv4 loopback, for none,
+        `localhost`, `*` or empty; otherwise the address itself, brackets dropped."""
+        address = (bind or "").strip("[]")
+        return "127.0.0.1" if address in ("", "localhost", "*") else address
+
+    @staticmethod
+    def _bound(port: int, address: str = "127.0.0.1") -> bool:
+        """Whether something holds `port` at `address`: binding it fails. Never a connection --
+        through the tab's forward, that would reach the remote service on every probe."""
+        family = socket.AF_INET6 if ":" in address else socket.AF_INET
         try:
-            _, writer = await asyncio.wait_for(asyncio.open_connection("127.0.0.1", port), 0.5)
-        except (OSError, TimeoutError):
-            return False
-        writer.close()
-        with contextlib.suppress(OSError):
-            await writer.wait_closed()
-        return True
+            with socket.socket(family, socket.SOCK_STREAM) as probe:
+                probe.bind((address, port))
+        except OSError as exc:
+            return exc.errno == errno.EADDRINUSE
+        return False
 
     async def stop_all(self) -> None:
         """Ends every tunnel at once, within one budget -- the app kills the daemon two seconds after
@@ -255,7 +321,13 @@ class TunnelSupervisor:
         loop = asyncio.get_running_loop()
         for entry in entries:
             child = _Child(entry["pid"], None, entry["alias"], self.ps)
-            if not child.alive():
+            try:
+                ours = await child.verify()
+            except InspectionFailed:
+                log.warning("could not inspect pid %d for tunnel %s; kept in the ledger", entry["pid"], entry["alias"])
+                self._unknown.append(entry)
+                continue
+            if not ours or not child.alive():
                 continue
             if entry["keepRunning"] and entry["alias"] not in self._tunnels:
                 tunnel = _Tunnel(entry["alias"], None, keep_running=True)
@@ -272,11 +344,16 @@ class TunnelSupervisor:
     async def _watch_adopted(self, tunnel: _Tunnel) -> None:
         """An adopted ssh is no child of this daemon: its end is seen by polling its pid."""
         while tunnel.child is not None and tunnel.child.alive():
-            await asyncio.sleep(POLL * 4)
+            await asyncio.sleep(1.0)
         if tunnel.stopping:
             return
         tunnel.child = None
         self._write_ledger()
+        if tunnel.environment:
+            # The app has handed it an environment since: a drop, restarted as any other.
+            await self._set(tunnel, "connecting", "Ended outside Shellforge.")
+            await self._run(tunnel)
+            return
         await self._set(tunnel, "stopped", "Ended outside Shellforge.")
 
     # -- the run ---------------------------------------------------------------------------
@@ -346,18 +423,21 @@ class TunnelSupervisor:
         `grace` seconds later."""
         live = [c for c in children if c is not None and c.alive()]
         for child in live:
-            with contextlib.suppress(ProcessLookupError, PermissionError):
-                os.killpg(child.pid, signal.SIGTERM)
+            child.signal(signal.SIGTERM)
         loop = asyncio.get_running_loop()
         deadline = loop.time() + grace
         while any(c.alive() for c in live) and loop.time() < deadline:
             await asyncio.sleep(POLL)
         for child in live:
             if child.alive():
-                with contextlib.suppress(ProcessLookupError, PermissionError):
-                    os.killpg(child.pid, signal.SIGKILL)
-        while any(c.alive() for c in live):
+                child.signal(signal.SIGKILL)
+        # Bounded: a process that outlives SIGKILL (stuck in the kernel) must not hang a stop.
+        deadline = loop.time() + 0.5
+        while any(c.alive() for c in live) and loop.time() < deadline:
             await asyncio.sleep(POLL)
+        for child in live:
+            if child.alive():
+                log.warning("ssh %d for %s outlived SIGKILL", child.pid, child.alias)
 
     # -- the ledger --------------------------------------------------------------------------
 
@@ -381,6 +461,7 @@ class TunnelSupervisor:
             return
         entries = [{"alias": t.alias, "pid": t.child.pid, "since": t.since, "keepRunning": t.keep_running}
                    for t in self._tunnels.values() if t.child is not None]
+        entries += [e for e in self._unknown if e["alias"] not in self._tunnels]
         try:
             self.ledger.parent.mkdir(parents=True, exist_ok=True)
             fd, temp = tempfile.mkstemp(dir=self.ledger.parent, prefix=".tunnels-")

@@ -71,6 +71,8 @@ async def test_an_adopted_tunnel_that_ends_is_said_stopped(tmp_path, ssh_env):
     second = supervisor(later, ledger)
     await second.adopt()
     os.killpg(pid, 15)
+    # Its parent here is this test's first supervisor, not a daemon long gone: reap it, as launchd would.
+    first._tunnels["kept"].child.popen.wait()
     await wait_until(lambda: second.list()[0]["state"] == "stopped", timeout=3)
     assert second.list()[0]["error"] == "Ended outside Shellforge."
     await second.stop_all()
@@ -152,3 +154,152 @@ async def test_the_daemon_adopts_at_start(make_service, tmp_path, ssh_env):
     assert alive(kept.pid), "it keeps running past this daemon too"
     os.killpg(kept.pid, 9)
     await kept.wait()
+
+
+
+async def test_an_adopted_tunnel_is_watched_without_ps(tmp_path, ssh_env):
+    """The command line is checked once, at adoption; after that a cheap signal check, not a
+    process spawned on the event loop several times a second."""
+    events, ledger = Events(), tmp_path / "tunnels.json"
+    first = supervisor(events, ledger)
+    await first.start("kept", ssh_env(), keep_running=True)
+    await wait_until(lambda: "up" in events.states("kept"))
+    pid = first.pid("kept")
+    await first.stop_all()
+    asked = []
+
+    def counting_ps(p):
+        asked.append(p)
+        return ps_command(p)
+
+    second = supervisor(Events(), ledger, ps=counting_ps)
+    await second.adopt()
+    adopted = len(asked)
+    await asyncio.sleep(1.0)
+    assert len(asked) == adopted, "no ps while watching"
+    await second.stop("kept")
+    await wait_until(lambda: not alive(pid))
+
+
+async def test_ending_a_process_outside_its_own_group_is_bounded(tmp_path):
+    """A pid that leads no process group of its own is never signalled -- it is not an ssh this
+    supervisor started -- and waiting on it never hangs the daemon past its budget."""
+    from shellforged.tunnels import TunnelSupervisor, _Child
+    child = await asyncio.create_subprocess_exec("/bin/sh", "-c", "trap '' TERM; sleep 30")  # same group as pytest
+    handle = _Child(child.pid, None, "x", lambda p: "ssh")
+    handle.verified = True
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    await TunnelSupervisor._end_all([handle], grace=0.2)
+    assert loop.time() - started < 3
+    assert child.returncode is None, "not signalled"
+    child.kill()
+    await child.wait()
+
+
+async def test_the_daemon_adopts_before_it_listens(make_service, tmp_path):
+    """A start or a snapshot from an app must see the adopted tunnels, never race them."""
+    order = []
+    svc = make_service(tunnel_ledger=tmp_path / "tunnels.json")
+    real_adopt, real_rpc_start = svc.tunnels.adopt, svc.rpc.start
+
+    async def adopt():
+        order.append("adopt")
+        await real_adopt()
+
+    async def rpc_start():
+        order.append("listen")
+        await real_rpc_start()
+
+    svc.tunnels.adopt, svc.rpc.start = adopt, rpc_start
+    await svc.start()
+    assert order[:2] == ["adopt", "listen"]
+    await svc.stop()
+
+
+@pytest.mark.parametrize("command,ours", [
+    ("/usr/bin/ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o BatchMode=yes "
+     "-o ControlMaster=no -o ControlPath=none db", True),
+    # The test's fake: a shell script named ssh.
+    ("/bin/sh /tmp/x/bin/ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 "
+     "-o BatchMode=yes -o ControlMaster=no -o ControlPath=none db", True),
+    ("vim -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o BatchMode=yes "
+     "-o ControlMaster=no -o ControlPath=none db", False),
+    ("/usr/bin/ssh -v -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o BatchMode=yes "
+     "-o ControlMaster=no -o ControlPath=none db", False),
+    ("/usr/bin/ssh -o BatchMode=yes -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 "
+     "-o ControlMaster=no -o ControlPath=none db", False),
+    ("/usr/bin/ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o BatchMode=yes "
+     "-o ControlMaster=no -o ControlPath=none web", False),
+])
+def test_only_this_supervisors_exact_ssh_is_ours(command, ours):
+    from shellforged.tunnels import is_tunnel_ssh
+    assert is_tunnel_ssh(command, "db") is ours
+
+
+async def test_a_pid_leading_no_group_of_its_own_is_never_adopted(tmp_path, ssh_env):
+    """Every ssh this supervisor starts leads its own process group; one that does not is not ours."""
+    from shellforged.tunnels import SSH_OPTIONS
+    env = ssh_env()
+    ssh = env["PATH"].split(":")[0] + "/ssh"
+    other = await asyncio.create_subprocess_exec(ssh, *SSH_OPTIONS, "kept", env=env)  # pytest's own group
+    await wait_until(lambda: ps_command(other.pid) is not None and "kept" in ps_command(other.pid))
+    ledger = tmp_path / "tunnels.json"
+    ledger.write_text(json.dumps({"tunnels": [{"alias": "kept", "pid": other.pid, "since": 1.0, "keepRunning": False}]}))
+    tunnels = supervisor(Events(), ledger)
+    await tunnels.adopt()
+    await asyncio.sleep(0.2)
+    assert other.returncode is None and alive(other.pid), "never signalled"
+    other.kill()
+    await other.wait()
+
+
+async def test_an_unanswered_ps_keeps_the_entry(tmp_path):
+    """ps failing or timing out says nothing about the pid: the entry stays for the next daemon, and
+    nothing is signalled or adopted."""
+    from shellforged.tunnels import InspectionFailed
+
+    def failing(pid):
+        raise InspectionFailed("ps timed out")
+
+    ledger = tmp_path / "tunnels.json"
+    entry = {"alias": "kept", "pid": os.getpid(), "since": 1.0, "keepRunning": True}
+    ledger.write_text(json.dumps({"tunnels": [entry]}))
+    tunnels = supervisor(Events(), ledger, ps=failing)
+    await tunnels.adopt()
+    assert tunnels.list() == []
+    assert json.loads(ledger.read_text())["tunnels"] == [entry]
+
+
+async def test_a_start_updates_a_running_tunnels_environment_and_keep_running(tmp_path, ssh_env):
+    """The app's start for a tunnel already running -- adopted, or kept after the checkbox changed --
+    starts no second ssh, but takes the environment and keep-running it carries."""
+    events, ledger = Events(), tmp_path / "tunnels.json"
+    tunnels = supervisor(events, ledger)
+    await tunnels.start("db", ssh_env())
+    await wait_until(lambda: "up" in events.states("db"))
+    pid = tunnels.pid("db")
+    await tunnels.start("db", ssh_env(), keep_running=True)
+    assert tunnels.pid("db") == pid
+    assert json.loads(ledger.read_text())["tunnels"][0]["keepRunning"] is True
+    await tunnels.stop_all()
+    assert alive(pid)
+    os.killpg(pid, 9)
+
+
+async def test_an_adopted_tunnel_given_an_environment_restarts_after_a_drop(tmp_path, ssh_env):
+    events, ledger = Events(), tmp_path / "tunnels.json"
+    first = supervisor(events, ledger)
+    await first.start("kept", ssh_env(), keep_running=True)
+    await wait_until(lambda: "up" in events.states("kept"))
+    pid = first.pid("kept")
+    await first.stop_all()
+    later = Events()
+    second = supervisor(later, ledger)
+    await second.adopt()
+    await second.start("kept", ssh_env(), keep_running=True)
+    os.killpg(pid, 15)
+    first._tunnels["kept"].child.popen.wait()  # reaped, as launchd would
+    await wait_until(lambda: second.pid("kept") not in (None, pid) and second.list()[0]["state"] == "up", timeout=5)
+    await second.stop_all()
+    os.killpg(second.pid("kept"), 9)

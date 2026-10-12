@@ -473,7 +473,7 @@ public final class DaemonClient: Sendable {
     struct SessionsParams: Encodable { var sessions: [SessionReport] }
     struct TunnelStartParams: Encodable { var alias: String, environment: [String: String], keepRunning: Bool }
     struct TunnelParams: Encodable { var alias: String }
-    struct TunnelHoldParams: Encodable { var alias: String, port: Int }
+    struct TunnelHoldParams: Encodable { var alias: String, port: Int, bind: String? }
     struct OkResult: Decodable { var ok: Bool }
 
     /// The daemon's state, which is also yielded as `.snapshot` in the event stream: the daemon
@@ -506,8 +506,8 @@ public final class DaemonClient: Sendable {
 
     /// The app opened `alias` in a tab for the user to answer ssh: the daemon watches `port`, its
     /// first local forward, and hands it back to supervision when the tab's ssh ends.
-    public func holdTunnel(alias: String, port: Int) async throws {
-        _ = try await request(.tunnelsHold, params: TunnelHoldParams(alias: alias, port: port), as: OkResult.self)
+    public func holdTunnel(alias: String, port: Int, bind: String? = nil) async throws {
+        _ = try await request(.tunnelsHold, params: TunnelHoldParams(alias: alias, port: port, bind: bind), as: OkResult.self)
     }
 
     public func stopTunnel(alias: String) async throws {

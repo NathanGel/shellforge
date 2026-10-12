@@ -257,4 +257,36 @@ import Testing
         #expect(feed.tunnelCalls == ["start db (keep)", "start web"])
         #expect(model.tunnelRows(of: project).map(\.keepRunning) == [true, false])
     }
+
+    // -- M2b final review --
+
+    @Test func changingKeepRunningOnARunningTunnelTellsTheHelper() async throws {
+        let (model, _, feed, _, project) = try await model(tunnels: [TunnelDefinition(alias: "db"), TunnelDefinition(alias: "web")])
+        say(feed, [TunnelInfo(alias: "db", state: .up, error: nil, since: 1)])
+        #expect(await eventually { model.tunnelState("db") == .up })
+        model.setTunnels([TunnelDefinition(alias: "db", keepRunning: true), TunnelDefinition(alias: "web", keepRunning: true)], on: project)
+        #expect(feed.tunnelCalls == ["start db (keep)"], "the running one learns it; the stopped one learns at its start")
+    }
+
+    @Test func eachConnectionHandsRunningTunnelsTheEnvironment() async throws {
+        let feed = FakeFeed()
+        let (model, _, _, _, _) = try await model(tunnels: [TunnelDefinition(alias: "db", keepRunning: true),
+                                                            TunnelDefinition(alias: "web")], feed: feed)
+        // A relaunch: the helper kept db running, and adopted it with no environment of its own.
+        say(feed, [TunnelInfo(alias: "db", state: .up, error: nil, since: 1),
+                   TunnelInfo(alias: "web", state: .stopped, error: nil, since: 1)])
+        #expect(await eventually { feed.tunnelCalls == ["start db (keep)"] })
+        say(feed, [TunnelInfo(alias: "db", state: .up, error: nil, since: 1)])
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(feed.tunnelCalls == ["start db (keep)"], "once per connection")
+        _ = model
+    }
+
+    @Test func theHoldWatchesTheForwardsBindAddress() async throws {
+        let config = "Host db\n  LocalForward [::1]:5432 db.internal:5432\n"
+        let (model, _, feed, _, project) = try await model(tunnels: [TunnelDefinition(alias: "db")], config: config)
+        #expect(await eventually { model.sshHosts != nil })
+        model.answerInTab("db", in: project)
+        #expect(feed.tunnelCalls == ["hold db 5432 at ::1"])
+    }
 }

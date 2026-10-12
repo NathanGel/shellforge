@@ -37,7 +37,7 @@ public protocol SessionFeed: AnyObject {
     func markSeen(task: UUID)
     func startTunnel(alias: String, keepRunning: Bool)
     func stopTunnel(alias: String)
-    func holdTunnel(alias: String, port: Int)
+    func holdTunnel(alias: String, port: Int, bind: String?)
 }
 
 /// The sidebar's state for one window: the shared workspace, this window's tabs, and which task is

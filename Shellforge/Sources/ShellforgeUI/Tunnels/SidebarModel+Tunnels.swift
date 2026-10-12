@@ -41,6 +41,14 @@ extension SidebarModel {
             lastError = String(describing: error)
             return
         }
+        // A running tunnel whose keep-running changed: the helper learns it now, not at its next start.
+        let running: Set<TunnelState> = [.connecting, .up]
+        for tunnel in once where running.contains(tunnelState(tunnel.alias)) {
+            if let before = current.tunnels.first(where: { $0.alias == tunnel.alias }), before.keepRunning != tunnel.keepRunning {
+                launchRequested.insert(tunnel.alias)
+                feed?.startTunnel(alias: tunnel.alias, keepRunning: keepsRunning(tunnel.alias))
+            }
+        }
         // A running tunnel taken off its last project would keep its port with no row to stop it.
         let kept = Set(document.workspace.projects.flatMap(\.tunnels).map(\.alias))
         for tunnel in current.tunnels where !kept.contains(tunnel.alias) && [.connecting, .up].contains(tunnelState(tunnel.alias)) {
@@ -86,12 +94,12 @@ extension SidebarModel {
     /// tab's ssh ends.
     public func answerInTab(_ alias: String, in projectId: UUID) {
         guard let project = project(projectId) else { return }
-        guard let port = sshHosts?[alias]?.forwards.first?.localPort else {
+        guard let forward = sshHosts?[alias]?.forwards.first else {
             lastError = "\(alias) isn’t in ~/.ssh/config."
             return
         }
         host.openTab(in: project.path, title: "ssh \(alias)", command: TunnelDefinition.tabCommand(alias: alias))
-        feed?.holdTunnel(alias: alias, port: port)
+        feed?.holdTunnel(alias: alias, port: forward.localPort, bind: forward.bind)
     }
 
     /// What a task's shell gets: the first local port of each tunnel that is up, connecting, or in
@@ -146,6 +154,15 @@ extension SidebarModel {
             return
         }
         guard sessions.bootstrapped, let sshHosts else { return }
+        // A keep-running tunnel this helper runs may be one it adopted from the last, with no
+        // environment to restart it with after a drop: each connection hands it the app's, once.
+        for project in document.workspace.projects {
+            for tunnel in project.tunnels where tunnel.keepRunning && !launchRequested.contains(tunnel.alias)
+                && [.connecting, .up].contains(sessions.tunnels[tunnel.alias]?.state) && sessions.tunnels[tunnel.alias]?.heldBy == nil {
+                launchRequested.insert(tunnel.alias)
+                feed?.startTunnel(alias: tunnel.alias, keepRunning: true)
+            }
+        }
         for project in document.workspace.projects {
             for tunnel in project.tunnels where tunnel.autoStart == .onLaunch
                 && sessions.tunnels[tunnel.alias] == nil && sshHosts[tunnel.alias] != nil

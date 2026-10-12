@@ -116,9 +116,9 @@ class Service:
         self.iterm.on_new_session(self.windows.on_new_session)
         self.iterm.on_session_closed(self._on_session_closed)
         self.iterm.on_window_activated(self._on_window_activated)
-        await self.rpc.start()
         # Before any app can ask: the tunnels the last daemon left keep their state, the rest end.
         await self.tunnels.adopt()
+        await self.rpc.start()
         try:
             await self.hooks.start()
         except BaseException:
@@ -226,7 +226,8 @@ class Service:
         port = param(p, "port", int)
         if isinstance(port, bool) or not 1 <= port <= 65535:
             raise RpcError(protocol.BAD_PARAMS, "port must be a TCP port")
-        await self.tunnels.hold(alias, port)
+        bind = optional_param(p, "bind", str)
+        await self.tunnels.hold(alias, port, bind)
         return {"ok": True}
 
     async def _h_tunnels_list(self, _p: Any) -> list[dict[str, Any]]:

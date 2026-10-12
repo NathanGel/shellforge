@@ -17,10 +17,17 @@ def held(events, **overrides):
                                                   "probe_every": 0.05, "hold_timeout": 2.0, **overrides})
 
 
-async def listener():
-    """A local port that accepts, as the tab's ssh's forward would."""
-    server = await asyncio.start_server(lambda r, w: w.close(), "127.0.0.1", 0)
+async def listener(port=0):
+    """A local port that is bound, as the tab's ssh's forward would be."""
+    server = await asyncio.start_server(lambda r, w: w.close(), "127.0.0.1", port)
     return server, server.sockets[0].getsockname()[1]
+
+
+def free_port():
+    import socket
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
 
 
 async def test_a_prompt_failure_says_it_needs_input(ssh_env):
@@ -40,8 +47,9 @@ async def test_a_held_tunnel_is_up_while_its_port_accepts(ssh_env):
     tunnels = held(events)
     await tunnels.start("db", ssh_env("fail", FAKE_SSH_LINE="Permission denied (keyboard-interactive)."))
     await wait_until(lambda: "failed" in events.states("db"))
-    server, port = await listener()
+    port = free_port()
     await tunnels.hold("db", port)
+    server, _ = await listener(port)
     await wait_until(lambda: tunnels.list()[0]["state"] == "up")
     info = tunnels.list()[0]
     assert info["heldBy"] == "tab" and info["error"] is None and info["needsInput"] is None
@@ -55,8 +63,9 @@ async def test_a_held_tunnel_is_handed_back_when_its_port_closes(ssh_env):
     tunnels = held(events)
     await tunnels.start("db", ssh_env("fail", FAKE_SSH_LINE="Host key verification failed."))
     await wait_until(lambda: "failed" in events.states("db"))
-    server, port = await listener()
+    port = free_port()
     await tunnels.hold("db", port)
+    server, _ = await listener(port)
     await wait_until(lambda: tunnels.list()[0]["state"] == "up")
     server.close()
     await server.wait_closed()
@@ -70,10 +79,7 @@ async def test_a_held_tunnel_is_handed_back_when_its_port_closes(ssh_env):
 async def test_a_hold_that_never_comes_up_ends(ssh_env):
     events = Events()
     tunnels = held(events, hold_timeout=0.3)
-    server, port = await listener()
-    server.close()
-    await server.wait_closed()
-    await tunnels.hold("db", port)
+    await tunnels.hold("db", free_port())
     assert tunnels.list()[0]["state"] == "connecting" and tunnels.list()[0]["heldBy"] == "tab"
     await wait_until(lambda: tunnels.list()[0]["state"] == "stopped", timeout=3)
     assert tunnels.list()[0]["heldBy"] is None, "no start ever sent: nothing to hand back to"
@@ -83,20 +89,24 @@ async def test_a_hold_that_never_comes_up_ends(ssh_env):
 async def test_stopping_a_held_tunnel_stops_watching_it(ssh_env):
     events = Events()
     tunnels = held(events)
-    server, port = await listener()
+    port = free_port()
     await tunnels.hold("db", port)
+    server, _ = await listener(port)
     await wait_until(lambda: tunnels.list()[0]["state"] == "up")
     await tunnels.stop("db")
     assert tunnels.list()[0]["state"] == "stopped" and tunnels.list()[0]["heldBy"] is None
     server.close()
+    await server.wait_closed()
 
 
 async def test_tunnels_hold_through_the_daemon(tunnel_stack):
     svc, r, w = tunnel_stack
-    server, port = await listener()
+    port = free_port()
     assert (await call(r, w, "tunnels.hold", {"alias": "db", "port": port}))["result"] == {"ok": True}
+    server, _ = await listener(port)
     await wait_until(lambda: svc.tunnels.list()[0]["state"] == "up")
     server.close()
+    await server.wait_closed()
     await svc.tunnels.stop("db")
 
 
@@ -105,3 +115,74 @@ async def test_tunnels_hold_through_the_daemon(tunnel_stack):
 async def test_malformed_hold_params_are_bad_params(tunnel_stack, params):
     svc, r, w = tunnel_stack
     assert (await call(r, w, "tunnels.hold", params))["error"]["code"] == "bad_params"
+
+
+
+async def test_the_hold_never_connects_to_the_forward(ssh_env):
+    """Each probe through the tab's forward would reach the remote service: one connection a second
+    to a database behind a bastion. Being bound is enough."""
+    accepted = []
+    port = free_port()
+    events = Events()
+    tunnels = held(events)
+    await tunnels.hold("db", port)
+    server = await asyncio.start_server(lambda r, w: (accepted.append(1), w.close()), "127.0.0.1", port)
+    await wait_until(lambda: tunnels.list()[0]["state"] == "up")
+    await asyncio.sleep(0.3)
+    assert accepted == []
+    server.close()
+    await server.wait_closed()
+    await tunnels.stop_all()
+
+
+async def test_a_port_already_held_is_refused(ssh_env):
+    """Another listener on the port would read as the tab's ssh up, for as long as it lives."""
+    server, port = await listener()
+    events = Events()
+    tunnels = held(events)
+    await tunnels.hold("db", port)
+    info = tunnels.list()[0]
+    assert info["state"] == "failed" and info["heldBy"] is None
+    assert info["error"] == f"Port {port} is already in use."
+    server.close()
+    await server.wait_closed()
+
+
+async def test_a_start_during_a_hold_is_not_orphaned(ssh_env):
+    """An auto-start that lands while the hold ends the last run is ended too, not left untracked."""
+    events = Events()
+    tunnels = held(events)
+    await tunnels.start("db", ssh_env())
+    await wait_until(lambda: "up" in events.states("db"))
+    hold = asyncio.ensure_future(tunnels.hold("db", free_port()))
+    await asyncio.sleep(0)
+    await tunnels.start("db", ssh_env())
+    racer = tunnels._tunnels["db"]
+    await asyncio.sleep(0.1)  # its ssh is running by now
+    await hold
+    assert tunnels.pid("db") is None and tunnels.list()[0]["heldBy"] == "tab"
+    assert racer.child is None and racer.task.done(), "the run that raced the hold is ended, not orphaned"
+    await tunnels.stop_all()
+
+
+async def test_the_hold_watches_the_forwards_own_address(ssh_env):
+    """`LocalForward [::1]:5432 …` binds the IPv6 loopback only: that is where the hold looks."""
+    import socket
+    with socket.socket(socket.AF_INET6) as s:
+        s.bind(("::1", 0))
+        port = s.getsockname()[1]
+    events = Events()
+    tunnels = held(events)
+    await tunnels.hold("db", port, bind="::1")
+    server = await asyncio.start_server(lambda r, w: w.close(), "::1", port)
+    await wait_until(lambda: tunnels.list()[0]["state"] == "up")
+    server.close()
+    await server.wait_closed()
+    await tunnels.stop_all()
+
+
+async def test_hold_takes_a_bind_through_the_daemon(tunnel_stack):
+    svc, r, w = tunnel_stack
+    assert (await call(r, w, "tunnels.hold", {"alias": "db", "port": free_port(), "bind": "localhost"}))["result"] == {"ok": True}
+    assert (await call(r, w, "tunnels.hold", {"alias": "db", "port": 22, "bind": 3}, id_=2))["error"]["code"] == "bad_params"
+    await svc.tunnels.stop("db")

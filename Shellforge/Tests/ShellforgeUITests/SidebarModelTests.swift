@@ -71,7 +71,9 @@ import Testing
     var tunnelCalls: [String] = []
     func startTunnel(alias: String, keepRunning: Bool) { tunnelCalls.append("start \(alias)" + (keepRunning ? " (keep)" : "")) }
     func stopTunnel(alias: String) { tunnelCalls.append("stop \(alias)") }
-    func holdTunnel(alias: String, port: Int) { tunnelCalls.append("hold \(alias) \(port)") }
+    func holdTunnel(alias: String, port: Int, bind: String?) {
+        tunnelCalls.append("hold \(alias) \(port)" + (bind.map { " at \($0)" } ?? ""))
+    }
 
     /// The daemon saying, at once, each session's state and agent, each in a tab of its own.
     func sayAll(_ sessions: [(state: SessionState, session: String, task: UUID, agent: SessionAgent)]) {
