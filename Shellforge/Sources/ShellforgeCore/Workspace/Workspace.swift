@@ -44,11 +44,14 @@ public struct TaskItem: Codable, Equatable, Sendable, Identifiable {
     public var agent: String?
     public var model: String?
     public var reasoning: String?
+    /// The Jira ticket the task was made from.
+    public var jira: JiraRef?
     public var createdAt: Date
 
     public init(id: UUID = UUID(), projectId: UUID, title: String, branch: String, worktreePath: String,
                 baseBranch: String, agent: String? = nil, model: String? = nil, reasoning: String? = nil,
-                createdAt: Date = Date()) {
+                jira: JiraRef? = nil, createdAt: Date = Date()) {
+        self.jira = jira
         self.id = id
         self.projectId = projectId
         self.title = title
@@ -118,4 +121,11 @@ extension JSONDecoder {
         decoder.dateDecodingStrategy = .iso8601
         return decoder
     }
+}
+
+// Ported from AiTerm (app/Sources/AiTermCore/Models.swift `JiraRef`), GPLv3, Laurens D'Hondt.
+/// The Jira ticket a task was made from: its key, summary and page.
+public struct JiraRef: Codable, Equatable, Sendable {
+    public var key: String, summary: String, url: String
+    public init(key: String, summary: String, url: String) { self.key = key; self.summary = summary; self.url = url }
 }

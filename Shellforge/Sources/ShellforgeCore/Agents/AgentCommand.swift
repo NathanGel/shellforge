@@ -88,11 +88,17 @@ public enum AgentCommand {
         try? TaskWorktrees.exclude(".shellforge/", inGitDir: gitDir.hasPrefix("/") ? gitDir : worktreePath + "/" + gitDir)
     }
 
-    /// The person's text, trimmed; nothing when there is none. (AiTerm appends the Jira ticket here;
-    /// that returns with M1d.)
-    public static func composePrompt(userText: String?) -> String? {
-        guard let t = userText?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty else { return nil }
-        return t
+    /// The person's text, then — when they kept "Include Jira ticket details" — the ticket: its key,
+    /// summary and description. Nothing when there is neither.
+    public static func composePrompt(userText: String?, ticket: JiraTicket?, appendTicket: Bool) -> String? {
+        var blocks: [String] = []
+        if let t = userText?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty { blocks.append(t) }
+        if appendTicket, let ticket {
+            var block = "\(ticket.key): \(ticket.summary)"
+            if let d = ticket.description?.trimmingCharacters(in: .whitespacesAndNewlines), !d.isEmpty { block += "\n\n" + d }
+            blocks.append(block)
+        }
+        return blocks.isEmpty ? nil : blocks.joined(separator: "\n\n")
     }
 }
 

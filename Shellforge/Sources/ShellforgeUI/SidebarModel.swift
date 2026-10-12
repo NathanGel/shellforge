@@ -138,7 +138,8 @@ public final class SidebarModel: ObservableObject {
             guard launcher.locate(agent.command) != nil else { throw AgentNotInstalled(agent: agent.name) }
             let task = try TaskWorktrees.create(draft: draft, in: project, launcher: launcher)
             let command = try AgentCommand.build(agent: agent, model: draft.model, reasoning: draft.reasoning,
-                                                 prompt: AgentCommand.composePrompt(userText: draft.promptText),
+                                                 prompt: AgentCommand.composePrompt(userText: draft.promptText, ticket: draft.ticket,
+                                                                                    appendTicket: draft.appendTicket),
                                                  worktreePath: task.worktreePath, launcher: launcher)
             return (task, command)
         }

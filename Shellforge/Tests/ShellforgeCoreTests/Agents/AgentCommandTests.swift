@@ -128,9 +128,21 @@ import Foundation
     }
 
     @Test func testComposePrompt() {
-        #expect(AgentCommand.composePrompt(userText: "/plan first") == "/plan first")
-        #expect(AgentCommand.composePrompt(userText: nil) == nil)
-        #expect(AgentCommand.composePrompt(userText: "  ") == nil)
+        let t = JiraTicket(key: "WEB-5447", summary: "Add graceful SIGTERM", description: "Drain in-flight tasks.", issueType: "Task", status: "In Progress", url: "https://x/browse/WEB-5447")
+        #expect(AgentCommand.composePrompt(userText: "/plan first", ticket: t, appendTicket: true) ==
+                       "/plan first\n\nWEB-5447: Add graceful SIGTERM\n\nDrain in-flight tasks.")
+        #expect(AgentCommand.composePrompt(userText: nil, ticket: t, appendTicket: false) == nil)
+        #expect(AgentCommand.composePrompt(userText: "  ", ticket: nil, appendTicket: true) == nil)
+    }
+
+    @Test func aTicketPromptOverTheLimitGoesThroughTheFile() throws {
+        let worktree = try GitRepoFixture().path
+        let ticket = JiraTicket(key: "WEB-1", summary: "Thing", description: String(repeating: "d", count: 1500),
+                                issueType: "Task", status: nil, url: "https://x/browse/WEB-1")
+        let prompt = AgentCommand.composePrompt(userText: "do it", ticket: ticket, appendTicket: true)
+        let command = try AgentCommand.build(agent: AgentPresets.claude, model: "opus", reasoning: nil, prompt: prompt,
+                                             worktreePath: worktree, launcher: launcher)
+        #expect(command.hasSuffix("\"$(cat .shellforge/first-prompt.md)\""))
     }
 
     @Test func aPromptWithEveryHazardIsTypedVerbatim() throws {

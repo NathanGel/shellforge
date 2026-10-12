@@ -125,4 +125,47 @@ import Testing
         #expect(throws: TaskWorktrees.Refusal.emptyModel) { try TaskWorktrees.create(draft: d, in: repo.project, launcher: repo.launcher) }
         #expect(!FileManager.default.fileExists(atPath: repo.path + "/.worktrees/no-model"))
     }
+
+    // -- the Jira ticket (AiTerm's TaskCreatorTests ticket cases) ---------------------------
+
+    @Test func testDraftFollowsTicketUntilEdited() {
+        var d = draft()
+        d.apply(ticket: JiraTicket(key: "WEB-5447", summary: "Add graceful SIGTERM", description: nil, issueType: "Task", status: nil, url: "u"))
+        #expect(d.title == "Add graceful SIGTERM"); #expect(d.branch == "feat/web-5447-add-graceful-sigterm")
+        d.setBranch("feat/custom")
+        d.apply(ticket: JiraTicket(key: "SHOP-1", summary: "Other", description: nil, issueType: "Bug", status: nil, url: "u"))
+        #expect(d.title == "Other", "title still follows"); #expect(d.branch == "feat/custom", "edited branch is kept")
+    }
+
+    @Test func testTheBranchTypeFollowsTheTicketUntilPicked() {
+        var d = draft()
+        #expect(d.branchType == .feat)
+        d.apply(ticket: JiraTicket(key: "SHOP-12", summary: "Broken link", description: nil, issueType: "Bug", status: nil, url: "u"))
+        #expect(d.branchType == .fix); #expect(d.branch == "fix/shop-12-broken-link")
+        d.apply(ticket: JiraTicket(key: "SHOP-13", summary: "Tidy", description: nil, issueType: "Task", status: nil, url: "u"))
+        #expect(d.branchType == .feat, "still following")
+        d.setBranchType(.chore)
+        d.apply(ticket: JiraTicket(key: "SHOP-14", summary: "Crash", description: nil, issueType: "Bug", status: nil, url: "u"))
+        #expect(d.branch == "chore/shop-14-crash", "a picked type survives a new ticket")
+        d.apply(ticket: nil)
+        #expect(d.branchType == .chore)
+    }
+
+    /// A typed type counts as picked: a new ticket leaves it.
+    @Test func aTypedPrefixCountsAsAPickedType() {
+        var d = draft()
+        d.setBranch("fix/shop-12-broken-link")
+        d.apply(ticket: JiraTicket(key: "SHOP-1", summary: "Story", description: nil, issueType: "Story", status: nil, url: "u"))
+        #expect(d.branch == "fix/shop-12-broken-link", "a typed type counts as picked")
+    }
+
+    /// A task made from a ticket is stamped with it.
+    @Test func aTaskFromATicketCarriesIt() throws {
+        let repo = try GitRepoFixture()
+        var d = draft()
+        d.apply(ticket: JiraTicket(key: "WEB-1", summary: "Thing", description: "Do it", issueType: "Task", status: nil, url: "https://x/browse/WEB-1"))
+        let task = try TaskWorktrees.create(draft: d, in: repo.project, launcher: repo.launcher)
+        #expect(task.worktreePath == repo.path + "/.worktrees/web-1-thing")
+        #expect(task.jira == JiraRef(key: "WEB-1", summary: "Thing", url: "https://x/browse/WEB-1"))
+    }
 }

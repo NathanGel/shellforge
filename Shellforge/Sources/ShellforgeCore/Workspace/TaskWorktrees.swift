@@ -84,7 +84,8 @@ public enum TaskWorktrees {
         }
         _ = try git(["worktree", "add", "-q", "-b", draft.branch, path, start])
         return TaskItem(projectId: project.id, title: draft.title, branch: draft.branch, worktreePath: path,
-                        baseBranch: draft.baseBranch, agent: draft.agentId, model: draft.model, reasoning: draft.reasoning)
+                        baseBranch: draft.baseBranch, agent: draft.agentId, model: draft.model, reasoning: draft.reasoning,
+                    jira: draft.ticket.map { JiraRef(key: $0.key, summary: $0.summary, url: $0.url) })
     }
 
     /// Adds `pattern` to the repository's `info/exclude` once, so the worktrees never show as untracked.

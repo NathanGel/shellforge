@@ -3,14 +3,15 @@ import Foundation
 
 /// What the New Task sheet is filling in: the task's name and branch, the branch it starts from,
 /// and the agent its first tab runs, with which model, reasoning level and first prompt. AiTerm's
-/// `TaskDraft` without its Jira ticket, which arrives with M1d.
+/// `TaskDraft`, its Jira ticket included.
 public struct TaskDraft: Equatable, Sendable {
     /// The branch is kept as its two halves — the type the select shows and the name the field
     /// shows — so each can be changed without the other.
+    public var ticket: JiraTicket?
     public private(set) var title = "", branchType = BranchType.feat, branchName = ""
     public var baseBranch: String, agentId: String, model: String, reasoning: String?
-    public var promptText = ""
-    private var branchEdited = false
+    public var promptText = "", appendTicket = true
+    private var titleEdited = false, branchEdited = false, typeEdited = false
 
     public var branch: String { "\(branchType.rawValue)/\(branchName)" }
 
@@ -31,22 +32,30 @@ public struct TaskDraft: Equatable, Sendable {
     /// the task name.
     public mutating func setTitle(_ t: String) {
         guard t != title else { return }
-        title = t
-        if !branchEdited { branchName = BranchNaming.branchSlug(key: nil, summary: t) }
+        title = t; titleEdited = true
+        if !branchEdited { branchName = BranchNaming.branchSlug(key: ticket?.key, summary: t) }
+    }
+
+    /// Clearing the ticket keeps the type it chose: nothing else has a better idea of the work.
+    public mutating func apply(ticket: JiraTicket?) {
+        self.ticket = ticket
+        if !titleEdited { title = ticket?.summary ?? title }
+        if !typeEdited, let ticket { branchType = BranchType(issueType: ticket.issueType) }
+        if !branchEdited { branchName = BranchNaming.branchSlug(key: ticket?.key, summary: ticket?.summary ?? title) }
     }
 
     /// The branch field's text: a name, or a whole branch whose known type prefix moves into the
     /// select — typing `fix/` is picking the type.
     public mutating func setBranch(_ b: String) {
         let split = BranchType.split(b)
-        if let split { branchType = split.type }
+        if let split { branchType = split.type; typeEdited = true }
         guard (split?.name ?? b) != branchName else { return }
         branchName = split?.name ?? b; branchEdited = true
     }
 
     public mutating func setBranchType(_ type: BranchType) {
         guard type != branchType else { return }
-        branchType = type
+        branchType = type; typeEdited = true
     }
 
     /// Switching model can change which reasoning levels exist, so a level the new model does not

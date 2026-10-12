@@ -93,7 +93,7 @@ public final class NewTaskModel: ObservableObject, Identifiable {
     /// The exact command the task will run, built without touching the disk.
     public var previewCommand: String {
         AgentCommand.previewCommand(agent: agent, model: draft.model, reasoning: draft.reasoning,
-                                    prompt: AgentCommand.composePrompt(userText: draft.promptText))
+                                    prompt: AgentCommand.composePrompt(userText: draft.promptText, ticket: draft.ticket, appendTicket: draft.appendTicket))
     }
 
     public var selectedModelIsCurrent: Bool { catalogueLoaded && models.contains { $0.id == draft.model } }
