@@ -44,14 +44,18 @@ import Testing
         let sheets = BackpackSheets()
         final class Opened { var names: [String] = [] }
         let opened = Opened()
-        var a: NSObject? = NSObject()
         let b = NSObject()
-        sheets.register(a!) { opened.names.append("a") }
-        sheets.register(b) { opened.names.append("b") }
-        #expect(sheets.present(for: b))
-        #expect(opened.names == ["b"])
-        #expect(!sheets.present(for: nil), "no window of ours is key: nothing opens somewhere arbitrary")
-        a = nil
+        // Window `a` lives and closes inside a pool of its own: left to the test's, an autoreleased
+        // reference could keep it alive past its close under a busy parallel run.
+        autoreleasepool {
+            let a = NSObject()
+            sheets.register(a) { opened.names.append("a") }
+            sheets.register(b) { opened.names.append("b") }
+            #expect(sheets.present(for: b))
+            #expect(opened.names == ["b"])
+            #expect(!sheets.present(for: nil), "no window of ours is key: nothing opens somewhere arbitrary")
+            #expect(sheets.count == 2)
+        }
         #expect(sheets.count == 1, "a closed window's sidebar is not kept")
         #expect(opened.names == ["b"])
     }
