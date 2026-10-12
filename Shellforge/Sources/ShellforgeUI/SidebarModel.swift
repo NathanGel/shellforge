@@ -86,7 +86,6 @@ public final class SidebarModel: ObservableObject {
     let sshConfig: SSHConfigSource
     /// The config's hosts by alias, as last read; nil until a project with tunnels asks for them.
     @Published public internal(set) var sshHosts: [String: SSHHost]?
-    var sshStamp: Date?
     var readingSSH = false
     /// The `.onLaunch` tunnels asked of the helper now connected; emptied when it goes.
     var launchRequested: Set<String> = []
@@ -99,7 +98,7 @@ public final class SidebarModel: ObservableObject {
                 jiraSettings: @escaping @Sendable () -> JiraConfig? = { JiraSettings.load() },
                 gitLabSettings: @escaping @Sendable () -> GitLabConfig? = { GitLabSettings.load() },
                 gitHubSettings: @escaping @Sendable () -> GitHubConfig? = { GitHubSettings.load() },
-                sshConfig: SSHConfigSource = .user) {
+                sshConfig: SSHConfigSource = .none) {
         self.host = host
         self.sshConfig = sshConfig
         self.jiraSettings = jiraSettings
@@ -198,8 +197,7 @@ public final class SidebarModel: ObservableObject {
         }
         selectedTaskId = made.0.id
         host.openTab(in: made.0.worktreePath, taskId: made.0.id, projectId: projectId, title: made.0.title, command: made.1,
-                     environment: portEnvironment(for: projectId))
-        startTunnelsOnTaskOpen(in: projectId)
+                     environment: openingTaskTab(in: projectId))
     }
 
     // -- New Review ----------------------------------------------------------------------
@@ -251,19 +249,17 @@ public final class SidebarModel: ObservableObject {
         }
         selectedTaskId = made.0.id
         host.openTab(in: made.0.worktreePath, taskId: made.0.id, projectId: projectId, title: made.0.title, command: made.1,
-                     environment: portEnvironment(for: projectId))
-        startTunnelsOnTaskOpen(in: projectId)
+                     environment: openingTaskTab(in: projectId))
     }
 
     /// Shows the task: its first open tab, or a new one in its worktree when none is open.
     public func select(task id: UUID) {
         guard let node = tree.projects.lazy.flatMap(\.tasks).first(where: { $0.id == id }) else { return }
-        startTunnelsOnTaskOpen(in: node.task.projectId)
         guard let tab = node.tabs.first else {
             selectedTaskId = id
             // A shell, as AiTerm's New Terminal: the agent ran once, in the task's first tab.
             host.openTab(in: node.task.worktreePath, taskId: id, projectId: node.task.projectId, title: node.task.title, command: nil,
-                         environment: portEnvironment(for: node.task.projectId))
+                         environment: openingTaskTab(in: node.task.projectId))
             return
         }
         if tab.id == host.selectedTabId {

@@ -32,6 +32,12 @@ extension SidebarModel {
             lastError = nil
         } catch {
             lastError = String(describing: error)
+            return
+        }
+        // A running tunnel taken off its last project would keep its port with no row to stop it.
+        let kept = Set(document.workspace.projects.flatMap(\.tunnels).map(\.alias))
+        for tunnel in current.tunnels where !kept.contains(tunnel.alias) && [.connecting, .up].contains(tunnelState(tunnel.alias)) {
+            feed?.stopTunnel(alias: tunnel.alias)
         }
     }
 
@@ -61,12 +67,13 @@ extension SidebarModel {
 
     public func stopTunnel(_ alias: String) { feed?.stopTunnel(alias: alias) }
 
-    /// What a task's shell gets: each up tunnel's first local port, as
-    /// `SHELLFORGE_TUNNEL_<NAME>_PORT`. A tunnel still connecting is not there yet.
-    public func portEnvironment(for projectId: UUID) -> [String: String] {
+    /// What a task's shell gets: the first local port of each tunnel that is up, connecting, or in
+    /// `starting`, as `SHELLFORGE_TUNNEL_<NAME>_PORT`. The port is the config's, known before ssh
+    /// has bound it, so a tab opened as its tunnel starts gets it too.
+    public func portEnvironment(for projectId: UUID, starting: Set<String> = []) -> [String: String] {
         guard let project = project(projectId) else { return [:] }
         var environment: [String: String] = [:]
-        for tunnel in project.tunnels where tunnelState(tunnel.alias) == .up {
+        for tunnel in project.tunnels where starting.contains(tunnel.alias) || [.connecting, .up].contains(tunnelState(tunnel.alias)) {
             if let port = sshHosts?[tunnel.alias]?.forwards.first?.localPort {
                 environment[TunnelDefinition.environmentName(alias: tunnel.alias)] = String(port)
             }
@@ -77,30 +84,27 @@ extension SidebarModel {
     /// Reads the config again, off the main actor, for the Tunnels sheet; kept for the rows.
     public func loadSSHHosts() async -> [SSHHost] {
         let source = sshConfig
-        let (stamp, hosts) = await BackgroundWork.run { (source.stamp(), source.read()) }
-        take(hosts, stamp: stamp)
+        let hosts = await BackgroundWork.run { source.read() }
+        take(hosts)
         return hosts
     }
 
-    /// Reads the config off the main actor when a project has tunnels and the file changed since it
-    /// was last read. A refresh comes on every tab change; this costs one `stat` then.
+    /// Reads the config off the main actor when a project has tunnels, one read at a time. Every
+    /// refresh reads it whole — the files it includes as well as itself — since a port changed in
+    /// an included file is a port a new tab would otherwise get wrong; the rows redraw only when
+    /// the hosts changed.
     func refreshSSHHosts(_ projects: [Project]) {
         guard !readingSSH, projects.contains(where: { !$0.tunnels.isEmpty }) else { return }
         readingSSH = true
-        let source = sshConfig, known = sshHosts == nil ? nil : sshStamp
+        let source = sshConfig
         Task {
-            let read = await BackgroundWork.run { () -> (Date?, [SSHHost])? in
-                let stamp = source.stamp()
-                if let known, stamp == known { return nil }
-                return (stamp, source.read())
-            }
+            let hosts = await BackgroundWork.run { source.read() }
             readingSSH = false
-            if let read { take(read.1, stamp: read.0) }
+            take(hosts)
         }
     }
 
-    private func take(_ hosts: [SSHHost], stamp: Date?) {
-        sshStamp = stamp
+    private func take(_ hosts: [SSHHost]) {
         let byAlias = Dictionary(hosts.map { ($0.alias, $0) }, uniquingKeysWith: { first, _ in first })
         if byAlias != sshHosts { sshHosts = byAlias }
         autoStartOnLaunch()
@@ -125,16 +129,31 @@ extension SidebarModel {
         }
     }
 
-    /// Starts the project's `.onTaskOpen` tunnels that are not running: a task of it was opened.
-    /// The config is read first when it has not been yet.
-    func startTunnelsOnTaskOpen(in projectId: UUID) {
-        guard let project = project(projectId), project.tunnels.contains(where: { $0.autoStart == .onTaskOpen }) else { return }
+    /// A task's tab is opening: starts the project's `.onTaskOpen` tunnels and gives the
+    /// environment the tab opens with.
+    func openingTaskTab(in projectId: UUID) -> [String: String] {
+        portEnvironment(for: projectId, starting: startTunnelsOnTaskOpen(in: projectId))
+    }
+
+    /// Starts the project's `.onTaskOpen` tunnels that are not running, and says which it started.
+    /// Before the config has been read it is read first, and the tab opening now goes without them.
+    func startTunnelsOnTaskOpen(in projectId: UUID) -> Set<String> {
+        guard let project = project(projectId), project.tunnels.contains(where: { $0.autoStart == .onTaskOpen }) else { return [] }
+        if sshHosts != nil { return startNow(project) }
         Task {
-            if sshHosts == nil { _ = await loadSSHHosts() }
-            for tunnel in project.tunnels where tunnel.autoStart == .onTaskOpen {
-                guard sshHosts?[tunnel.alias] != nil, ![.connecting, .up].contains(tunnelState(tunnel.alias)) else { continue }
-                feed?.startTunnel(alias: tunnel.alias)
-            }
+            _ = await loadSSHHosts()
+            _ = startNow(project)
         }
+        return []
+    }
+
+    private func startNow(_ project: Project) -> Set<String> {
+        var started = Set<String>()
+        for tunnel in project.tunnels where tunnel.autoStart == .onTaskOpen {
+            guard sshHosts?[tunnel.alias] != nil, ![.connecting, .up].contains(tunnelState(tunnel.alias)) else { continue }
+            feed?.startTunnel(alias: tunnel.alias)
+            started.insert(tunnel.alias)
+        }
+        return started
     }
 }

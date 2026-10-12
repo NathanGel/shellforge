@@ -37,13 +37,10 @@ public struct SSHConfigSource: Sendable {
         return SSHConfigSource(file: home.appendingPathComponent(".ssh/config"), home: home)
     }
 
-    public func read() -> [SSHHost] { SSHConfig.hosts(in: file, home: home) }
+    /// No config: a model not told where the user's is reads nothing, so no test reads `~/.ssh`.
+    public static let none = SSHConfigSource(file: URL(fileURLWithPath: "/dev/null"), home: URL(fileURLWithPath: "/var/empty"))
 
-    /// When the file last changed, to read it again only then; nil when there is none. A file it
-    /// includes changing alone is seen at the next read the sheet makes.
-    public func stamp() -> Date? {
-        (try? FileManager.default.attributesOfItem(atPath: file.path))?[.modificationDate] as? Date
-    }
+    public func read() -> [SSHHost] { SSHConfig.hosts(in: file, home: home) }
 }
 
 public enum SSHConfig {

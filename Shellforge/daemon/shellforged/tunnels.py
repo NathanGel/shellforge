@@ -24,7 +24,13 @@ from . import protocol
 log = logging.getLogger(__name__)
 
 SSH_OPTIONS = ["-N", "-o", "ExitOnForwardFailure=yes", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=3",
-               "-o", "BatchMode=yes"]
+               "-o", "BatchMode=yes", "-o", "ControlMaster=no", "-o", "ControlPath=none"]
+
+# ssh's lines for a tunnel that cannot work as configured. ssh binds its forwards only after it has
+# authenticated, which through a bastion can take longer than `up_after`: one of these is a failure
+# whenever it comes, never a drop to restart.
+FATAL = ("Address already in use", "forwarding failed", "cannot listen to port", "Permission denied",
+         "Host key verification failed", "Could not resolve hostname", "Bad configuration option")
 
 
 class _Tunnel:
@@ -45,6 +51,8 @@ class TunnelSupervisor:
         self.broadcast, self.clock = broadcast, clock
         self.up_after, self.backoff_start, self.backoff_cap, self.steady_after = up_after, backoff_start, backoff_cap, steady_after
         self._tunnels: dict[str, _Tunnel] = {}
+        # Set by stop_all: the daemon is going, and an ssh started now would outlive it.
+        self._closed = False
 
     def list(self) -> list[dict[str, Any]]:
         return [t.to_json() for t in self._tunnels.values()]
@@ -56,8 +64,12 @@ class TunnelSupervisor:
     async def start(self, alias: str, environment: dict[str, str]) -> None:
         """Starts `alias`'s tunnel; nothing while its run is going -- connecting, up, or a start
         just made whose run has not said so yet."""
+        if self._closed:
+            return
         current = self._tunnels.get(alias)
-        if current and current.task is not None and not current.task.done() and not current.stopping:
+        # A run that has said "failed" is over, though its task has a step left.
+        if current and current.task is not None and not current.task.done() and not current.stopping \
+                and current.state != "failed":
             return
         tunnel = _Tunnel(alias, environment)
         self._tunnels[alias] = tunnel
@@ -76,8 +88,20 @@ class TunnelSupervisor:
         await self._set(tunnel, "stopped", tunnel.error if tunnel.state == "failed" else None)
 
     async def stop_all(self) -> None:
-        for alias in list(self._tunnels):
-            await self.stop(alias)
+        """Ends every tunnel at once, within one budget: the app kills the daemon two seconds after
+        asking it to stop, and an ssh still running then holds its port for good."""
+        self._closed = True
+        tunnels = list(self._tunnels.values())
+        for tunnel in tunnels:
+            tunnel.stopping = True
+        await self._end_all([t.process for t in tunnels], grace=1.0)
+        for tunnel in tunnels:
+            if tunnel.task is not None and tunnel.task is not asyncio.current_task():
+                tunnel.task.cancel()
+        await asyncio.gather(*(t.task for t in tunnels if t.task is not None and t.task is not asyncio.current_task()),
+                             return_exceptions=True)
+        for tunnel in tunnels:
+            await self._set(tunnel, "stopped", tunnel.error if tunnel.state == "failed" else None)
 
     # -- the run ---------------------------------------------------------------------------
 
@@ -111,7 +135,7 @@ class TunnelSupervisor:
             if tunnel.stopping:
                 return
             why = last_line[0] if last_line else f"ssh exited with status {process.returncode}."
-            if tunnel.state != "up":
+            if tunnel.state != "up" or any(text in why for text in FATAL):
                 await self._set(tunnel, "failed", why)
                 return
             if loop.time() - started >= self.steady_after:
@@ -128,19 +152,28 @@ class TunnelSupervisor:
             if text := line.decode(errors="replace").strip():
                 last_line[:] = [text]
 
-    @staticmethod
-    async def _end(process: asyncio.subprocess.Process | None) -> None:
+    @classmethod
+    async def _end(cls, process: asyncio.subprocess.Process | None) -> None:
         """SIGTERM to ssh's own process group, then SIGKILL two seconds later."""
-        if process is None or process.returncode is not None:
-            return
-        with contextlib.suppress(ProcessLookupError):
-            os.killpg(process.pid, signal.SIGTERM)
-        try:
-            await asyncio.wait_for(process.wait(), 2)
-        except TimeoutError:
+        await cls._end_all([process], grace=2.0)
+
+    @staticmethod
+    async def _end_all(processes: list[asyncio.subprocess.Process | None], grace: float) -> None:
+        """SIGTERM to every live ssh's process group at once, then SIGKILL to those still running
+        `grace` seconds later."""
+        live = [p for p in processes if p is not None and p.returncode is None]
+        for process in live:
             with contextlib.suppress(ProcessLookupError):
-                os.killpg(process.pid, signal.SIGKILL)
-            await process.wait()
+                os.killpg(process.pid, signal.SIGTERM)
+        if not live:
+            return
+        _, pending = await asyncio.wait([asyncio.ensure_future(p.wait()) for p in live], timeout=grace)
+        if pending:
+            for process in live:
+                if process.returncode is None:
+                    with contextlib.suppress(ProcessLookupError):
+                        os.killpg(process.pid, signal.SIGKILL)
+            await asyncio.gather(*pending, return_exceptions=True)
 
     async def _set(self, tunnel: _Tunnel, state: str, error: str | None) -> None:
         if (tunnel.state, tunnel.error) == (state, error) and state != "connecting":

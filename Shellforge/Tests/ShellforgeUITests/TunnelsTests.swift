@@ -142,4 +142,58 @@ import Testing
         #expect(TunnelsSheet.statusLine(loading: false, hosts: try sshConfig("Host plain\n  HostName p\n").read(), linked: [])
                 == "No hosts in ~/.ssh/config forward ports.")
     }
+
+    // -- the final review's fixes --
+
+    @Test func aTaskOpenTunnelsPortReachesTheTasksFirstTab() async throws {
+        let (model, host, feed, _, project) = try await model(tunnels: [TunnelDefinition(alias: "db", autoStart: .onTaskOpen)])
+        #expect(await eventually { model.sshHosts != nil })
+        var draft = TaskDraft(baseBranch: "main", agentId: "claude", model: "opus", reasoning: nil)
+        draft.setTitle("Login")
+        try await model.newTask(draft: draft, in: project)
+        #expect(host.opened.last?.environment == ["SHELLFORGE_TUNNEL_DB_PORT": "5432"], "the port is the config's, set as it starts")
+        #expect(await eventually { feed.tunnelCalls == ["start db"] })
+    }
+
+    @Test func removingARunningTunnelStopsIt() async throws {
+        let (model, _, feed, _, project) = try await model(tunnels: [TunnelDefinition(alias: "db"), TunnelDefinition(alias: "web")])
+        say(feed, [TunnelInfo(alias: "db", state: .up, error: nil, since: 1),
+                   TunnelInfo(alias: "web", state: .stopped, error: nil, since: 1)])
+        #expect(await eventually { model.tunnelState("db") == .up })
+        model.setTunnels([], on: project)
+        #expect(feed.tunnelCalls == ["stop db"], "its row, its only stop, is gone; a stopped one needs nothing")
+    }
+
+    @Test func clickingATaskWhoseTabIsOpenStartsNothing() async throws {
+        let (model, _, feed, _, project) = try await model(tunnels: [TunnelDefinition(alias: "db", autoStart: .onTaskOpen)])
+        #expect(await eventually { model.sshHosts != nil })
+        var draft = TaskDraft(baseBranch: "main", agentId: "claude", model: "opus", reasoning: nil)
+        draft.setTitle("Login")
+        try await model.newTask(draft: draft, in: project)
+        #expect(await eventually { feed.tunnelCalls == ["start db"] })
+        say(feed, [TunnelInfo(alias: "db", state: .stopped, error: nil, since: 2)])
+        #expect(await eventually { model.tunnelState("db") == .stopped })
+        model.select(task: try #require(model.tree.projects.first?.tasks.first).id)
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(feed.tunnelCalls == ["start db"], "the user stopped it; picking the open task does not open it again")
+    }
+
+    @Test func anIncludedFileChangingIsSeenAtTheNextRefresh() async throws {
+        try FileManager.default.createDirectory(at: folder.appendingPathComponent(".ssh"), withIntermediateDirectories: true)
+        let included = folder.appendingPathComponent(".ssh/db.conf")
+        try "Host db\n  LocalForward 5432 db.internal:5432\n".write(to: included, atomically: true, encoding: .utf8)
+        let (model, _, _, _, project) = try await model(tunnels: [TunnelDefinition(alias: "db")], config: "Include db.conf\n")
+        #expect(await eventually { model.tunnelRows(of: project).first?.ports == "5432" })
+        try "Host db\n  LocalForward 6432 db.internal:5432\n".write(to: included, atomically: true, encoding: .utf8)
+        model.toggleCollapsed(project)
+        model.toggleCollapsed(project)
+        #expect(await eventually { model.tunnelRows(of: project).first?.ports == "6432" })
+    }
+
+    @Test func aModelNotToldWhereTheConfigIsReadsNone() throws {
+        let model = SidebarModel(host: FakeTerminalHost(), document: WorkspaceDocument(store: WorkspaceStore(folder: folder)),
+                                 launcher: CommandLauncher(resolve: { ResolvedEnvironment(variables: [:], source: .fallback("test")) }),
+                                 jiraSettings: { nil })
+        #expect(!model.sshConfig.file.path.hasPrefix(FileManager.default.homeDirectoryForCurrentUser.path))
+    }
 }

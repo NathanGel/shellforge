@@ -20,6 +20,8 @@ FAKE_SSH = textwrap.dedent("""\
     printf '%s\\n' "$FAKE_SSH_MARK" > "$FAKE_SSH_LOG.env"
     case "$FAKE_SSH_MODE" in
       fail) echo "bind [127.0.0.1]:5432: Address already in use" >&2; exit 255 ;;
+      slow-bind) sleep 0.5; echo "bind [127.0.0.1]:5432: Address already in use" >&2; exit 255 ;;
+      ignore-term) trap '' TERM; while :; do sleep 0.05; done ;;
       drop-after:*) sleep "${FAKE_SSH_MODE#drop-after:}"; echo "Connection to bastion closed by remote host." >&2; exit 255 ;;
       *) exec sleep 600 ;;
     esac
@@ -141,7 +143,7 @@ async def test_the_ssh_arguments_and_environment_are_the_tunnels_own(ssh_env):
     await wait_until(lambda: os.path.exists(str(ssh_env.log) + ".args"))
     args = open(str(ssh_env.log) + ".args").read().split()
     assert args == ["-N", "-o", "ExitOnForwardFailure=yes", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=3",
-                    "-o", "BatchMode=yes", "db-staging"]
+                    "-o", "BatchMode=yes", "-o", "ControlMaster=no", "-o", "ControlPath=none", "db-staging"]
     assert open(str(ssh_env.log) + ".env").read().strip() == "handed-in"
     await tunnels.stop_all()
 
@@ -217,3 +219,64 @@ async def test_stopping_the_daemon_ends_every_tunnel(make_service, ssh_env):
 async def test_malformed_tunnel_params_are_bad_params(tunnel_stack, method, params):
     svc, r, w = tunnel_stack
     assert (await call(r, w, method, params))["error"]["code"] == "bad_params"
+
+
+async def test_a_fatal_error_after_up_is_failed_not_a_drop(ssh_env):
+    """A slow bastion: ssh binds its forwards only after authenticating, past `up_after`. A taken
+    port then is still a failure, not a drop to restart forever."""
+    events = Events()
+    tunnels = fast(events)
+    await tunnels.start("db", ssh_env("slow-bind"))
+    await wait_until(lambda: "failed" in events.states("db"), timeout=3)
+    await asyncio.sleep(0.6)
+    assert events.states("db") == ["connecting", "up", "failed"]
+    assert tunnels.list()[0]["error"] == "bind [127.0.0.1]:5432: Address already in use"
+    await tunnels.stop_all()
+
+
+async def test_stop_all_ends_every_tunnel_within_one_budget(ssh_env):
+    """The app kills the daemon two seconds after asking it to stop: every ssh is signalled at
+    once, and the stubborn ones killed together, well inside that."""
+    events = Events()
+    tunnels = fast(events)
+    for alias in ("a", "b", "c"):
+        await tunnels.start(alias, ssh_env("ignore-term"))
+    await wait_until(lambda: all("up" in events.states(a) for a in ("a", "b", "c")))
+    pids = [tunnels.pid(a) for a in ("a", "b", "c")]
+    started = asyncio.get_running_loop().time()
+    await tunnels.stop_all()
+    assert asyncio.get_running_loop().time() - started < 1.6
+    for pid in pids:
+        with pytest.raises(ProcessLookupError):
+            os.kill(pid, 0)
+
+
+async def test_no_tunnel_starts_once_stopping_all_began(ssh_env):
+    """A start that reaches the daemon while it shuts down would run an ssh nothing ever stops."""
+    events = Events()
+    tunnels = fast(events)
+    await tunnels.stop_all()
+    await tunnels.start("db", ssh_env())
+    await asyncio.sleep(0.3)
+    assert tunnels.list() == [] and tunnels.pid("db") is None
+
+
+async def test_a_start_right_after_a_failure_starts_again(ssh_env):
+    """The user clicks Start as the failure arrives, before its run has quite ended: the click
+    is not swallowed."""
+    tunnels: TunnelSupervisor
+    seen: list[str] = []
+    retried = False
+
+    async def broadcast(name, payload):
+        nonlocal retried
+        seen.append(payload["state"])
+        if payload["state"] == "failed" and not retried:
+            retried = True
+            await tunnels.start("db", ssh_env())
+
+    tunnels = TunnelSupervisor(broadcast, up_after=0.2, backoff_start=0.1, backoff_cap=0.4)
+    await tunnels.start("db", ssh_env("fail"))
+    await wait_until(lambda: "up" in seen, timeout=3)
+    assert seen[:2] == ["connecting", "failed"]
+    await tunnels.stop_all()
