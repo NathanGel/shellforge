@@ -18,11 +18,11 @@ struct ProjectJiraBadgeView: View {
     var body: some View {
         HStack(spacing: scale(Space.snug)) {
             Badge(badge.label, icon: .brand(Palette.jira), help: badge.help, style: .quiet,
-                  action: { NSWorkspace.shared.open(badge.url) })
+                  action: { ExternalLink.open(badge.url.absoluteString) })
             if let overflow = badge.overflow {
                 Badge(overflow.label, help: overflow.help, accessibilityLabel: overflow.accessibilityLabel) {
                     ForEach(overflow.items, id: \.url) { item in
-                        Button(item.title) { NSWorkspace.shared.open(item.url) }
+                        Button(item.title) { ExternalLink.open(item.url.absoluteString) }
                     }
                     Divider()
                     Button("Jira Projects…", action: editProjects).disabled(!canChangeWorkspace)

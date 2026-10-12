@@ -114,7 +114,7 @@ struct TaskRowView: View {
                     HStack(spacing: scale(Space.gap)) {
                         if let ticket = TaskTicketBadge(jira: node.task.jira) {
                             Badge(ticket.label, icon: .brand(Palette.jira), help: ticket.help, style: .quiet,
-                                  action: ticket.url.flatMap(URL.init(string:)).map { url in { NSWorkspace.shared.open(url) } })
+                                  action: ticket.url.map { url in { ExternalLink.open(url) } })
                         }
                         BranchLabelView(label: BranchLabel(name: node.task.branch, extra: 0, drifted: false, detail: ""))
                             .layoutPriority(1)
