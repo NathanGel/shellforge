@@ -57,7 +57,11 @@ extension SidebarModel {
     }
 
     /// Settings › Core's environment card, over this sidebar's launcher and agents.
-    public func environmentModel() -> EnvironmentModel { EnvironmentModel(launcher: launcher, agents: agents) }
+    public func environmentModel() -> EnvironmentModel {
+        let model = EnvironmentModel(launcher: launcher, agents: agents)
+        model.onReloaded = { [weak self] in self?.onEnvironmentReloaded?() }
+        return model
+    }
 
     /// Names the project's SSH host, or none.
     public func setSSHHost(_ alias: String?, on projectId: UUID) {
