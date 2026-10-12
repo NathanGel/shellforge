@@ -62,22 +62,3 @@ struct MacSettingsCard: View {
         Badge(label, icon: .symbol(passed ? "checkmark" : "exclamationmark"), iconTint: passed ? Palette.green : Palette.amber)
     }
 }
-
-/// The Mac card on its own, with Done: Shellforge's "Mac Settings…" until it has AiTerm's Settings
-/// window to hold the card (Settings › Integrations › Mac there). Setup is read again as it opens,
-/// as AiTerm's Settings reads it.
-struct MacSettingsPanel: View {
-    @ObservedObject var backpack: BackpackController
-    let done: @MainActor () -> Void
-
-    var body: some View {
-        SheetLayout(title: "Mac Settings", height: Sheet.height) {
-            SheetSubtitle("What Backpack Mode needs from this Mac.")
-        } content: {
-            MacSettingsCard(backpack: backpack)
-        } footer: {
-            SheetFooter(secondary: nil, primary: "Done", cancel: {}, submit: { Task { @MainActor in done() } })
-        }
-        .task { await backpack.refreshSetup() }
-    }
-}

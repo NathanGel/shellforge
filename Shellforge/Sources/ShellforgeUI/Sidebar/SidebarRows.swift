@@ -26,12 +26,12 @@ struct SidebarHeader: View {
             .help("Agent hooks")
             .accessibilityLabel("Agent hooks")
             Button(action: showMacSettings) {
-                Image(systemName: "macbook").font(Typography.label).foregroundStyle(surface.secondaryInk)
+                Image(systemName: "gearshape").font(Typography.label).foregroundStyle(surface.secondaryInk)
             }
             .buttonStyle(.plain)
             .frame(width: SidebarRowLayout.trailingSlot(scale), height: SidebarRowLayout.trailingSlot(scale))
-            .help("Mac Settings…")
-            .accessibilityLabel("Mac Settings")
+            .help("Settings…")
+            .accessibilityLabel("Settings")
             AddMenu(help: "Add project", enabled: true) {
                 Button("Add Project…", action: addProject)
             }
