@@ -7,6 +7,7 @@
 //
 
 import AppKit
+import Combine
 import ShellforgeCore
 import ShellforgeUI
 
@@ -240,5 +241,61 @@ extension iTermShellforgeSidebar {
                 }
             }
         }
+    }
+}
+
+
+/// View › Tunnels: Start or Stop per linked tunnel, kept current as the workspace and the tunnels'
+/// states change. iTerm2's Open Quickly searches the main menu, so this is the palette's way in.
+extension iTermShellforgeSidebar {
+    private static let tunnelMenu = TunnelMenuController()
+
+    @objc static func tunnelsMenu() -> NSMenu { tunnelMenu.menu }
+
+    /// The first window's sidebar: where a tunnel's start is checked and its keep-running read.
+    fileprivate static var anySidebar: SidebarModel? { sidebars.allObjects.first }
+}
+
+@MainActor
+private final class TunnelMenuController: NSObject, NSMenuItemValidation {
+    let menu = NSMenu(title: "Tunnels")
+    private var subscriptions: [AnyCancellable] = []
+
+    override init() {
+        super.init()
+        let document = iTermShellforgeSidebar.document, link = iTermShellforgeSidebar.link
+        subscriptions = [
+            document.$workspace.sink { [weak self] workspace in
+                MainActor.assumeIsolated { self?.rebuild(projects: workspace.projects, store: link.store) }
+            },
+            link.$store.sink { [weak self] store in
+                MainActor.assumeIsolated { self?.rebuild(projects: document.workspace.projects, store: store) }
+            },
+        ]
+    }
+
+    private func rebuild(projects: [Project], store: SessionStore) {
+        menu.removeAllItems()
+        let items = TunnelMenu.items(projects: projects, store: store)
+        guard !items.isEmpty else {
+            menu.addItem(NSMenuItem(title: TunnelMenu.emptyTitle, action: nil, keyEquivalent: ""))
+            return
+        }
+        for item in items {
+            let menuItem = NSMenuItem(title: item.title, action: #selector(choose(_:)), keyEquivalent: "")
+            menuItem.target = self
+            menuItem.representedObject = item.alias
+            menuItem.tag = item.starts ? 1 : 0
+            menu.addItem(menuItem)
+        }
+    }
+
+    @objc func choose(_ sender: NSMenuItem) {
+        guard let alias = sender.representedObject as? String, let sidebar = iTermShellforgeSidebar.anySidebar else { return }
+        if sender.tag == 1 { sidebar.startTunnel(alias) } else { sidebar.stopTunnel(alias) }
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        TunnelMenu.isEnabled(haveSidebar: iTermShellforgeSidebar.anySidebar != nil)
     }
 }

@@ -381,6 +381,11 @@ static NSModalResponse iTermCompareRenderingRunModal(id self, SEL _cmd) {
     backpackItem.target = self;
     [viewMenu addItem:backpackItem];
 
+    // Shellforge: Tunnels, one item per linked tunnel; Open Quickly finds them by their titles.
+    NSMenuItem *tunnelsItem = [[[NSMenuItem alloc] initWithTitle:@"Tunnels" action:nil keyEquivalent:@""] autorelease];
+    tunnelsItem.submenu = [iTermShellforgeSidebar tunnelsMenu];
+    [viewMenu addItem:tunnelsItem];
+
     NSSize tabColorViewSize = [ColorsMenuItemView preferredSize];
     ColorsMenuItemView *labelTrackView = [[[ColorsMenuItemView alloc]
                                            initWithFrame:NSMakeRect(0, 0, tabColorViewSize.width, tabColorViewSize.height)] autorelease];
