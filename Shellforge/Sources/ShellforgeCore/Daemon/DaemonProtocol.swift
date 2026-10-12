@@ -30,6 +30,7 @@ public enum DaemonMethod: String, CaseIterable, Sendable {
     case tunnelsStop = "tunnels.stop"
     /// Not sent by the app, which has every tunnel from the snapshot and `tunnel.changed`.
     case tunnelsList = "tunnels.list"
+    case tunnelsHold = "tunnels.hold"
 }
 
 /// An event the daemon broadcasts that Shellforge reads. Any other name — the iTerm2 bridge's, or a

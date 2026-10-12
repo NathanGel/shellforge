@@ -67,6 +67,9 @@
       "tab.create": [
         "reply.tab.create.json"
       ],
+      "tunnels.hold": [
+        "reply.tunnels.hold.json"
+      ],
       "tunnels.list": [
         "reply.tunnels.list.json"
       ],
@@ -110,6 +113,7 @@
     "sessions.setTitles",
     "sessions.update",
     "tab.create",
+    "tunnels.hold",
     "tunnels.list",
     "tunnels.start",
     "tunnels.stop",

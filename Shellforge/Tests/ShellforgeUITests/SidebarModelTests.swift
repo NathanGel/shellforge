@@ -28,6 +28,13 @@ import Testing
         onChange?()
     }
 
+    /// The tabs of no task opened: a tunnel answered in a tab.
+    var openedPlain: [(directory: String, title: String, command: String)] = []
+
+    func openTab(in directory: String, title: String, command: String) {
+        openedPlain.append((directory, title, command))
+    }
+
     /// The tasks whose tabs were asked to close, and whether they then did.
     var closedTasks: [UUID] = []
     var closesTabs = true
@@ -64,6 +71,7 @@ import Testing
     var tunnelCalls: [String] = []
     func startTunnel(alias: String) { tunnelCalls.append("start \(alias)") }
     func stopTunnel(alias: String) { tunnelCalls.append("stop \(alias)") }
+    func holdTunnel(alias: String, port: Int) { tunnelCalls.append("hold \(alias) \(port)") }
 
     /// The daemon saying, at once, each session's state and agent, each in a tab of its own.
     func sayAll(_ sessions: [(state: SessionState, session: String, task: UUID, agent: SessionAgent)]) {

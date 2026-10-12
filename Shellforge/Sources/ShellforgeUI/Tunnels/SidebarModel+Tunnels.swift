@@ -67,6 +67,19 @@ extension SidebarModel {
 
     public func stopTunnel(_ alias: String) { feed?.stopTunnel(alias: alias) }
 
+    /// ssh needed an answer the supervisor cannot give: the tunnel runs in a tab of its own in the
+    /// project's folder, where the user answers, and the helper watches its first port until that
+    /// tab's ssh ends.
+    public func answerInTab(_ alias: String, in projectId: UUID) {
+        guard let project = project(projectId) else { return }
+        guard let port = sshHosts?[alias]?.forwards.first?.localPort else {
+            lastError = "\(alias) isn’t in ~/.ssh/config."
+            return
+        }
+        host.openTab(in: project.path, title: "ssh \(alias)", command: TunnelDefinition.tabCommand(alias: alias))
+        feed?.holdTunnel(alias: alias, port: port)
+    }
+
     /// What a task's shell gets: the first local port of each tunnel that is up, connecting, or in
     /// `starting`, as `SHELLFORGE_TUNNEL_<NAME>_PORT`. The port is the config's, known before ssh
     /// has bound it, so a tab opened as its tunnel starts gets it too.

@@ -196,4 +196,15 @@ import Testing
                                  jiraSettings: { nil })
         #expect(!model.sshConfig.file.path.hasPrefix(FileManager.default.homeDirectoryForCurrentUser.path))
     }
+
+    @Test func answeringInATabOpensItAndHolds() async throws {
+        let (model, host, feed, _, project) = try await model(tunnels: [TunnelDefinition(alias: "db")])
+        #expect(await eventually { model.sshHosts != nil })
+        model.answerInTab("db", in: project)
+        let tab = try #require(host.openedPlain.last)
+        #expect(tab.title == "ssh db")
+        #expect(tab.command == TunnelDefinition.tabCommand(alias: "db"))
+        #expect(tab.directory == model.project(project)?.path)
+        #expect(feed.tunnelCalls == ["hold db 5432"])
+    }
 }

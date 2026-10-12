@@ -39,4 +39,11 @@ import Testing
         let kept = TunnelDefinition(alias: "db", autoStart: .onLaunch, keepRunning: true)
         #expect(try JSONDecoder().decode(TunnelDefinition.self, from: JSONEncoder().encode(kept)) == kept)
     }
+
+    /// The tab a tunnel is answered in runs ssh as the supervisor does, but able to ask: no BatchMode.
+    @Test func theTabCommandRunsTheTunnelAskingForAnswers() {
+        #expect(TunnelDefinition.tabCommand(alias: "db-staging")
+                == "ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ControlMaster=no -o ControlPath=none db-staging")
+        #expect(TunnelDefinition.tabCommand(alias: "odd*name").hasSuffix(" 'odd*name'"), "a glob is quoted")
+    }
 }

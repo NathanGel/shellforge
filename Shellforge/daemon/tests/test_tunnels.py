@@ -19,7 +19,7 @@ FAKE_SSH = textwrap.dedent("""\
     printf '%s\\n' "$*" > "$FAKE_SSH_LOG.args"
     printf '%s\\n' "$FAKE_SSH_MARK" > "$FAKE_SSH_LOG.env"
     case "$FAKE_SSH_MODE" in
-      fail) echo "bind [127.0.0.1]:5432: Address already in use" >&2; exit 255 ;;
+      fail) echo "${FAKE_SSH_LINE:-bind [127.0.0.1]:5432: Address already in use}" >&2; exit 255 ;;
       slow-bind) sleep 0.5; echo "bind [127.0.0.1]:5432: Address already in use" >&2; exit 255 ;;
       ignore-term) trap '' TERM; while :; do sleep 0.05; done ;;
       drop-after:*) sleep "${FAKE_SSH_MODE#drop-after:}"; echo "Connection to bastion closed by remote host." >&2; exit 255 ;;

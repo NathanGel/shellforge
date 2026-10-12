@@ -111,6 +111,11 @@ public final class DaemonLink: ObservableObject {
         }
     }
 
+    public func holdTunnel(alias: String, port: Int) {
+        guard let client else { return }
+        Task { _ = try? await client.holdTunnel(alias: alias, port: port) }
+    }
+
     public func stopTunnel(alias: String) {
         guard let client else { return }
         Task { _ = try? await client.stopTunnel(alias: alias) }

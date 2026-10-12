@@ -48,6 +48,10 @@ SSH_OPTIONS = ["-N", "-o", "ExitOnForwardFailure=yes", "-o", "ServerAliveInterva
 FATAL = ("Address already in use", "forwarding failed", "cannot listen to port", "Permission denied",
          "Host key verification failed", "Could not resolve hostname", "Bad configuration option")
 
+# ssh's lines for a prompt BatchMode refused: the tunnel can be opened in a tab to answer it.
+NEEDS_INPUT = ("Host key verification failed", "Permission denied", "passphrase", "verification code",
+               "keyboard-interactive")
+
 POLL = 0.05
 
 
@@ -108,11 +112,13 @@ class TunnelSupervisor:
     def __init__(self, broadcast: Callable[[str, Any], Awaitable[None]], clock: Callable[[], float] = time.time,
                  up_after: float = 2.0, backoff_start: float = 1.0, backoff_cap: float = 30.0, steady_after: float = 60.0,
                  ledger: Path | None = None, ps: Callable[[int], str | None] = ps_command, traffic_every: float = 5.0,
-                 sample: Callable[[list[int]], Awaitable[dict[int, tuple[int, int]]]] = traffic.sample):
+                 sample: Callable[[list[int]], Awaitable[dict[int, tuple[int, int]]]] = traffic.sample,
+                 probe_every: float = 1.0, hold_timeout: float = 120.0):
         self.broadcast, self.clock = broadcast, clock
         self.up_after, self.backoff_start, self.backoff_cap, self.steady_after = up_after, backoff_start, backoff_cap, steady_after
         self.ledger, self.ps = ledger, ps
         self.traffic_every, self.sample = traffic_every, sample
+        self.probe_every, self.hold_timeout = probe_every, hold_timeout
         self._sampler: asyncio.Task[None] | None = None
         self._tunnels: dict[str, _Tunnel] = {}
         # Set by stop_all: the daemon is going, and an ssh started now would outlive it.
@@ -151,8 +157,65 @@ class TunnelSupervisor:
         tunnel.stopping = True
         await self._end_all([tunnel.child], grace=2.0)
         tunnel.child = None
+        tunnel.held_by = None
         await self._finish([tunnel])
         self._write_ledger()
+
+    # -- held by a tab -----------------------------------------------------------------------
+
+    async def hold(self, alias: str, port: int) -> None:
+        """The app opened `alias` in a terminal tab for the user to answer ssh: any run of the
+        supervisor's ends, and the tunnel is watched by its first local `port` -- up while it accepts.
+        When it stops accepting after being up, or never does within `hold_timeout`, the tab's ssh
+        is over: the tunnel is started once more in batch mode with the environment of its last
+        start, or is stopped when it never had one."""
+        if self._closed:
+            return
+        current = self._tunnels.get(alias)
+        environment, keep_running = (current.environment, current.keep_running) if current else (None, False)
+        if current is not None:
+            current.stopping = True
+            await self._end_all([current.child], grace=2.0)
+            current.child = None
+            await self._finish([current], broadcast=[])
+            self._write_ledger()
+        tunnel = _Tunnel(alias, environment, keep_running)
+        tunnel.held_by = "tab"
+        self._tunnels[alias] = tunnel
+        await self._set(tunnel, "connecting", None)
+        tunnel.task = asyncio.get_running_loop().create_task(self._watch_hold(tunnel, port))
+
+    async def _watch_hold(self, tunnel: _Tunnel, port: int) -> None:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.hold_timeout
+        while not tunnel.stopping:
+            accepts = await self._accepts(port)
+            if accepts and tunnel.state != "up":
+                await self._set(tunnel, "up", None)
+            elif not accepts and (tunnel.state == "up" or loop.time() >= deadline):
+                break
+            await asyncio.sleep(self.probe_every)
+        if tunnel.stopping:
+            return
+        tunnel.held_by = None
+        if tunnel.environment is None:
+            await self._set(tunnel, "stopped", None)
+            return
+        # Handed back: a fresh run, as a start from the app would make.
+        tunnel.stopping = True
+        self._tunnels.pop(tunnel.alias, None)
+        await self.start(tunnel.alias, tunnel.environment, tunnel.keep_running)
+
+    @staticmethod
+    async def _accepts(port: int) -> bool:
+        try:
+            _, writer = await asyncio.wait_for(asyncio.open_connection("127.0.0.1", port), 0.5)
+        except (OSError, TimeoutError):
+            return False
+        writer.close()
+        with contextlib.suppress(OSError):
+            await writer.wait_closed()
+        return True
 
     async def stop_all(self) -> None:
         """Ends every tunnel at once, within one budget -- the app kills the daemon two seconds after
@@ -252,6 +315,7 @@ class TunnelSupervisor:
                 return
             why = self._last_line(errors) or f"ssh exited with status {popen.returncode}."
             if tunnel.state != "up" or any(text in why for text in FATAL):
+                tunnel.needs_input = True if any(text in why for text in NEEDS_INPUT) else None
                 await self._set(tunnel, "failed", why)
                 return
             if loop.time() - started >= self.steady_after:
@@ -359,6 +423,8 @@ class TunnelSupervisor:
         tunnel.state, tunnel.error, tunnel.since = state, error, self.clock()
         if state != "up":
             tunnel.bytes_in = tunnel.bytes_out = None
+        if state != "failed":
+            tunnel.needs_input = None
         if state == "up":
             # The ledger keeps when it came up, for an adopting daemon's uptime.
             self._write_ledger()

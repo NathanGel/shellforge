@@ -109,6 +109,18 @@ final class DaemonClientTests {
         #expect(old.bytesIn == nil && old.heldBy == nil && old.needsInput == nil)
     }
 
+    @Test func holdingATunnelSendsItsAliasAndPort() async throws {
+        server.handler = { req in
+            #expect(req["method"] as? String == "tunnels.hold")
+            let params = req["params"] as? [String: Any]
+            #expect(params?["alias"] as? String == "db" && params?["port"] as? Int == 5432)
+            return ["id": req["id"]!, "result": ["ok": true]]
+        }
+        try client.connect()
+        #expect(server.waitForClient(timeout: 2))
+        try await client.holdTunnel(alias: "db", port: 5432)
+    }
+
     @Test func stoppingATunnelSendsItsAlias() async throws {
         server.handler = { req in
             #expect(req["method"] as? String == "tunnels.stop")

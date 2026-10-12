@@ -166,6 +166,7 @@ class Service:
         r("tunnels.start", self._h_tunnels_start)
         r("tunnels.stop", self._h_tunnels_stop)
         r("tunnels.list", self._h_tunnels_list)
+        r("tunnels.hold", self._h_tunnels_hold)
 
     async def _h_snapshot(self, _p: Any) -> dict[str, Any]:
         try:
@@ -216,6 +217,16 @@ class Service:
 
     async def _h_tunnels_stop(self, p: Any) -> dict[str, Any]:
         await self.tunnels.stop(tunnel_alias(p))
+        return {"ok": True}
+
+    async def _h_tunnels_hold(self, p: Any) -> dict[str, Any]:
+        """`{alias, port}`: the app opened the tunnel in a tab for the user to answer ssh; `port` is
+        its first local forward, which the daemon watches."""
+        alias = tunnel_alias(p)
+        port = param(p, "port", int)
+        if isinstance(port, bool) or not 1 <= port <= 65535:
+            raise RpcError(protocol.BAD_PARAMS, "port must be a TCP port")
+        await self.tunnels.hold(alias, port)
         return {"ok": True}
 
     async def _h_tunnels_list(self, _p: Any) -> list[dict[str, Any]]:
