@@ -1,7 +1,7 @@
 // Ported from AiTerm (app/Sources/AiTerm/Views/SidebarRows.swift: SidebarHeader, ProjectHeaderRow,
 // TaskRowView, TerminalRowView, and SidebarView.swift: SidebarBanners, SidebarBanner),
 // GPLv3, Laurens D'Hondt. Each reads Shellforge's model where AiTerm's read its AppController; what Shellforge
-// does not have yet — Jira, reviews, terminals, VS Code badges, removal — is left out, not stubbed.
+// does not have yet — reviews, terminals, VS Code badges, removal — is left out, not stubbed.
 import ShellforgeCore
 import ShellforgeDesign
 import SwiftUI
@@ -41,7 +41,8 @@ struct SidebarHeader: View {
     }
 }
 
-/// A project: its chevron, its provider's mark, its name, and the "+" that starts a task.
+/// A project: its chevron, its provider's mark, its name and Jira badge, and the "+" that starts a
+/// task; right-clicked, New Task… and Jira Projects….
 struct ProjectHeaderRow: View {
     let node: ProjectNode
     let collapsed: Bool
@@ -50,6 +51,7 @@ struct ProjectHeaderRow: View {
     let statuses: [SessionState]
     let toggle: () -> Void
     let newTask: () -> Void
+    let editJiraProjects: () -> Void
     @Environment(\.interfaceScale) private var scale
 
     /// An empty project has nothing to fold.
@@ -62,7 +64,14 @@ struct ProjectHeaderRow: View {
                 HeaderChevron(collapsed: collapsed).frame(width: SidebarRowLayout.chevronWidth(scale))
                     .opacity(collapses ? 1 : 0)
                 ProviderIcon(provider: provider)
-                HeaderTitle(text: node.project.name)
+                // The name, then its Jira badge and any `+n`, `Space.gap` apart as a task row's quiet
+                // badges and branch are. They keep their width; the name is what truncates.
+                HStack(spacing: scale(Space.gap)) {
+                    HeaderTitle(text: node.project.name)
+                    if let badge = ProjectJiraBadge.badge(for: node.project) {
+                        ProjectJiraBadgeView(badge: badge, canChangeWorkspace: true, editProjects: editJiraProjects)
+                    }
+                }
                 Spacer(minLength: scale(Space.tight))
                 // Only when folded: unfolded, the task rows say all of this and more.
                 if collapsed { StatusCountChips(counts: StatusCount.of(statuses)) }
@@ -77,6 +86,11 @@ struct ProjectHeaderRow: View {
         }
         .frame(height: scale(Size.projectRow)).padding(.leading, scale(Space.base)).padding(.trailing, SidebarRowLayout.trailingInset(scale))
         .modifier(RowPill(selected: false))
+        .contextMenu {
+            Button("New Task…", action: newTask)
+            Divider()
+            Button("Jira Projects…", action: editJiraProjects)
+        }
     }
 }
 
@@ -95,7 +109,13 @@ struct TaskRowView: View {
                 AvatarGroupView(group: Self.marks(agents))
                 VStack(alignment: .leading, spacing: scale(Space.tight)) {
                     RowTitle(node.task.title)
+                    // The ticket, then the branch — the branch last because it is the one thing that
+                    // truncates. Quiet badges carry no box, so `Space.gap` is what keeps them apart.
                     HStack(spacing: scale(Space.gap)) {
+                        if let ticket = TaskTicketBadge(jira: node.task.jira) {
+                            Badge(ticket.label, icon: .brand(Palette.jira), help: ticket.help, style: .quiet,
+                                  action: ticket.url.flatMap(URL.init(string:)).map { url in { NSWorkspace.shared.open(url) } })
+                        }
                         BranchLabelView(label: BranchLabel(name: node.task.branch, extra: 0, drifted: false, detail: ""))
                             .layoutPriority(1)
                     }

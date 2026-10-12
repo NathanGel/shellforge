@@ -121,7 +121,8 @@ struct SidebarView: View {
             ProjectHeaderRow(node: node, collapsed: collapsed, provider: model.providers[node.id] ?? .git,
                              statuses: node.tasks.map { model.status(ofTask: $0.id) },
                              toggle: { model.toggleCollapsed(node.id) },
-                             newTask: { showNewTask(in: node.id) })
+                             newTask: { showNewTask(in: node.id) },
+                             editJiraProjects: { showJiraProjects(for: node.id) })
                 .listRowSeparator(.hidden)
         case .task(let node, let selected):
             TaskRowView(node: node, selected: selected, agents: model.avatars(forTask: node.id),
