@@ -45,7 +45,8 @@ import Testing
         model.onReloaded = { reloaded += 1 }
         await model.load()
         let first = Task { await model.reload() }
-        #expect(await eventually { model.reading })
+        // The first Reload's read under way, held at the gate.
+        #expect(await eventually { model.reading && resolver.reads.withLock { $0 } == 2 })
         await model.reload()
         #expect(resolver.reads.withLock { $0 } == 2, "the second press while reading reads nothing")
         resolver.gate.signal()
