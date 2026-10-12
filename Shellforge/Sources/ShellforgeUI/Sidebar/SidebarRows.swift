@@ -203,6 +203,9 @@ struct SidebarBanners: View {
     @ObservedObject var model: SidebarModel
 
     var body: some View {
+        if let warning = model.environmentWarning {
+            SidebarBanner(text: warning, tone: .warning)
+        }
         if model.helper.isProblem {
             SidebarBanner(text: model.helper.text, tone: model.helper == .helperUnreachable ? .info : .warning, trailing: Space.block)
         }

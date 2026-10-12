@@ -73,6 +73,7 @@ final class iTermShellforgeSidebar: NSObject {
                                  agents: loaded.agents, catalogue: { try catalogue.models(for: $0) }, sshConfig: .user)
         if let problem = loaded.problem { model.lastError = problem }
         model.prompter = ModalPrompter()
+        model.onEnvironmentReloaded = { environmentChanged() }
         sidebars.add(model)
         return ShellforgeSidebar.makeView(model: model, chooseFolder: FolderChooser.choose, hooks: hooks, machine: machine,
                                           backpack: backpack, showBackpack: { [weak windowController] present in
@@ -236,6 +237,32 @@ extension iTermShellforgeSidebar {
                                  reports: { allReports() },
                                  environment: { launcher.environment.variables })
     private static var tick: Timer?
+    private static var rcCheck: Timer?
+    /// The login shell's rc files, as last seen: a change reads the environment again (PRD E9).
+    nonisolated(unsafe) private static var rcFiles = RCFiles(home: FileManager.default.homeDirectoryForCurrentUser)
+
+    /// One rc check at a time: `rcFiles` is touched only by the check in flight.
+    private static var checkingRC = false
+
+    /// Reads the environment again, off the main thread, when an rc file changed.
+    private static func checkRCFiles() {
+        guard !checkingRC else { return }
+        checkingRC = true
+        Task {
+            defer { checkingRC = false }
+            let reread = await BackgroundWork.run { () -> Bool in
+                guard rcFiles.changed() else { return false }
+                launcher.reload()
+                return true
+            }
+            if reread { environmentChanged() }
+        }
+    }
+
+    /// Every window's sidebar re-reads whether the environment is a fallback.
+    static func environmentChanged() {
+        for model in sidebars.allObjects { model.environmentChanged() }
+    }
 
     /// Starts the helper and the report tick; both stop at iTermApplicationWillTerminate.
     @objc static func startHelper() {
@@ -253,9 +280,15 @@ extension iTermShellforgeSidebar {
         tick = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
             MainActor.assumeIsolated { link.reportsMayHaveChanged() }
         }
+        // A tool installed and put on PATH in an rc file is found without a relaunch.
+        _ = rcFiles.changed()
+        rcCheck = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { _ in
+            MainActor.assumeIsolated { checkRCFiles() }
+        }
         NotificationCenter.default.addObserver(forName: NSNotification.Name(iTermApplicationWillTerminate), object: nil, queue: .main) { _ in
             MainActor.assumeIsolated {
                 tick?.invalidate()
+                rcCheck?.invalidate()
                 // Before anything else goes: the Mac must never be left unable to sleep.
                 backpack.shutdown()
                 machine.stop()

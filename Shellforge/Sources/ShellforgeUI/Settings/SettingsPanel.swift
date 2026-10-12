@@ -8,6 +8,7 @@ import SwiftUI
 struct SettingsPanel: View {
     @ObservedObject var backpack: BackpackController
     let integrations: IntegrationSettingsModel
+    var environment: EnvironmentModel?
     let close: @MainActor () -> Void
     @State private var failure: String?
 
@@ -16,7 +17,10 @@ struct SettingsPanel: View {
             SheetSubtitle("Jira for New Task's tickets, GitLab and GitHub for reviews, and what Backpack Mode needs from this Mac.")
         } content: {
             VStack(alignment: .leading, spacing: Space.section) {
-                SettingsSection("Core") { MacSettingsCard(backpack: backpack) }
+                SettingsSection("Core") {
+                    MacSettingsCard(backpack: backpack)
+                    if let environment { EnvironmentCard(model: environment) }
+                }
                 SettingsSection("Services") {
                     JiraCard(connection: integrations.jira)
                     GitLabCard(connection: integrations.gitLab)

@@ -35,6 +35,16 @@ import Testing
         #expect(offenders.isEmpty, "Stub the transport instead: \(offenders.map(\.lastPathComponent))")
     }
 
+    /// No test reads the user's environment: a launcher built without its own `resolve` runs the
+    /// user's login shell, with their rc files. Every sidebar reads the environment as it starts.
+    @Test func noTestRunsARealLoginShell() throws {
+        let tests = sources.deletingLastPathComponent().appendingPathComponent("Tests")
+        let files = try #require(FileManager.default.enumerator(at: tests, includingPropertiesForKeys: nil))
+            .compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" && $0.lastPathComponent != "SourceRulesTests.swift" }
+        let offenders = try files.filter { try String(contentsOf: $0, encoding: .utf8).contains("CommandLauncher()") }
+        #expect(offenders.isEmpty, "Give the launcher a scripted resolve: \(offenders.map(\.lastPathComponent))")
+    }
+
     /// Code taken from AiTerm is GPLv3 and keeps its author: every file that says it was ported
     /// names AiTerm and the file it came from, the licence and Laurens D'Hondt.
     @Test func everyPortedFileCreditsAiTerm() throws {

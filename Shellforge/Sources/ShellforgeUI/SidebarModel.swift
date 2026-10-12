@@ -65,6 +65,8 @@ public final class SidebarModel: ObservableObject {
     @Published public private(set) var sessions = SessionStore()
     /// How far the chain to the helper reaches; the sidebar says it while it is a problem.
     @Published public private(set) var helper: HelperStatus = .starting
+    /// Said while the login shell's environment could not be read and a fallback PATH is used (PRD E6).
+    @Published public private(set) var environmentWarning: String?
     /// Where each project's code lives, for its row's mark; read from git off the main thread.
     @Published public private(set) var providers: [UUID: Provider] = [:]
     /// Each task row's removal: running, or why the last one stopped — in every window, from the
@@ -72,6 +74,8 @@ public final class SidebarModel: ObservableObject {
     public var removals: [UUID: RowRemoval] { removalBoard.removals }
     /// Where Remove asks its questions; the app hands in `ModalPrompter`, tests a script.
     public var prompter: Prompter = NullPrompter()
+    /// After Settings' Reload: the app tells every window's sidebar, as the launcher is shared.
+    public var onEnvironmentReloaded: (@MainActor () -> Void)?
     let removalBoard: RemovalBoard
     private var boardSubscription: AnyCancellable?
     /// How many projects' providers have been looked up, for the test that holds it to one each.
@@ -146,6 +150,23 @@ public final class SidebarModel: ObservableObject {
             ]
         }
         refresh()
+        // The first read runs a login shell: off the main actor, and said if it fell back.
+        environmentChanged()
+    }
+
+    /// Reads the environment as the launcher now has it — reading it first if it has not been — and
+    /// says whether it is a fallback. The app calls it after a Reload or a changed rc file.
+    public func environmentChanged() {
+        let launcher = self.launcher
+        Task {
+            let source = await BackgroundWork.run { launcher.environment.source }
+            environmentWarning = Self.warning(source)
+        }
+    }
+
+    static func warning(_ source: ResolvedEnvironment.Source) -> String? {
+        guard case .fallback(let reason) = source else { return nil }
+        return "Your login shell’s environment couldn’t be read (\(reason)); Shellforge is using a fallback PATH. Settings › Core shows it."
     }
 
     public func addProject(folder: String) async {
@@ -168,6 +189,10 @@ public final class SidebarModel: ObservableObject {
     /// The New Task sheet for `projectId`, the SSH config read first when the project names a host:
     /// the pane it offers is the config's now, not the last refresh's.
     public func prepareNewTask(for projectId: UUID) async -> NewTaskModel? {
+        // The sheet looks for each agent's CLI on PATH: read the environment here first, off the
+        // main actor, so a New Task opened right after launch runs no login shell on it.
+        let launcher = self.launcher
+        _ = await BackgroundWork.run { launcher.environment }
         if project(projectId)?.sshHost != nil { _ = await loadSSHHosts() }
         return makeNewTaskModel(for: projectId)
     }

@@ -10,11 +10,21 @@ public final class CommandLauncher: @unchecked Sendable {
     private let resolve: @Sendable () -> ResolvedEnvironment
     private let lock = NSLock()
     private var cached: ResolvedEnvironment?
+    private let clock: @Sendable () -> Date
+    private var read: Date?
+    /// Counts the reloads begun, so an older one finishing last never replaces a newer one's read.
+    private var started = 0, published = 0
 
-    /// `resolve` reads the environment; the default asks the user's login shell.
-    public init(resolve: @escaping @Sendable () -> ResolvedEnvironment = CommandLauncher.loginShell) {
+    /// `resolve` reads the environment; the default asks the user's login shell. `clock` stamps
+    /// each read, for Settings › Core.
+    public init(resolve: @escaping @Sendable () -> ResolvedEnvironment = CommandLauncher.loginShell,
+                clock: @escaping @Sendable () -> Date = { Date() }) {
         self.resolve = resolve
+        self.clock = clock
     }
+
+    /// When the environment was last read; nil before the first use.
+    public var readAt: Date? { lock.withLock { read } }
 
     /// The user's `$SHELL`, or zsh, macOS's default, asked with what this process inherited.
     public static let loginShell: @Sendable () -> ResolvedEnvironment = {
@@ -28,6 +38,7 @@ public final class CommandLauncher: @unchecked Sendable {
             if let cached { return cached }
             let fresh = resolve()
             cached = fresh
+            read = clock()
             return fresh
         }
     }
@@ -35,9 +46,17 @@ public final class CommandLauncher: @unchecked Sendable {
     /// Reads the environment again, for Settings' Reload or after an rc file changed.
     @discardableResult
     public func reload() -> ResolvedEnvironment {
+        let generation = lock.withLock { started += 1; return started }
         let fresh = resolve()
-        lock.withLock { cached = fresh }
-        return fresh
+        let now = clock()
+        return lock.withLock {
+            // A reload begun after this one has published already: its read is the newer.
+            guard generation > published else { return cached ?? fresh }
+            published = generation
+            cached = fresh
+            read = now
+            return fresh
+        }
     }
 
     /// The executable `command` runs: itself when it is a path, else the first executable file of
@@ -91,6 +110,6 @@ public struct CommandNotFound: Error, CustomStringConvertible, Sendable {
         case .loginShell(let shell): origin = "the environment of your login shell, \(shell)"
         case .fallback(let reason): origin = "a fallback environment, because \(reason)"
         }
-        return "\(name) was not found. Searched PATH: \(searchedPath) (from \(origin))."
+        return "\(name) was not found. Searched PATH: \(searchedPath) (from \(origin)). Settings › Core shows the environment Shellforge uses."
     }
 }

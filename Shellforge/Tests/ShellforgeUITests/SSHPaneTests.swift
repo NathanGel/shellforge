@@ -107,4 +107,21 @@ import Testing
         #expect(await eventually { model.sshHosts != nil })
         #expect(model.makeNewTaskModel(for: project)?.draft.paneHost == "box")
     }
+
+    /// New Task opened right after launch reads the environment first off the main actor: its agent
+    /// check must not run a login shell on the main thread.
+    @Test func newTaskReadsTheEnvironmentOffTheMainThread() async throws {
+        let onMain = Locked<[Bool]>([])
+        let repo = try GitRepoForUI(installed: ["claude"])
+        let launcher = CommandLauncher(resolve: {
+            onMain.withLock { $0.append(Thread.isMainThread) }
+            return repo.launcher.environment
+        })
+        let document = WorkspaceDocument(store: WorkspaceStore(folder: folder))
+        try document.update { $0.projects.append(Project(name: "r", path: repo.path)) }
+        let model = SidebarModel(host: FakeTerminalHost(), document: document, launcher: launcher, catalogue: { _ in [] },
+                                 jiraSettings: { nil })
+        _ = await model.prepareNewTask(for: try #require(document.workspace.projects.first).id)
+        #expect(!onMain.withLock { $0 }.isEmpty && !onMain.withLock { $0 }.contains(true))
+    }
 }

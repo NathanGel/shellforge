@@ -84,7 +84,7 @@ import Testing
     @Test func otherTabsShowEvenWithNoProject() {
         let host = FakeTerminalHost()
         host.tabs = [TabSnapshot(id: "s9", tabId: 9, title: "zsh", taskId: nil, projectId: nil)]
-        let model = SidebarModel(host: host, document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: CommandLauncher(), jiraSettings: { nil })
+        let model = SidebarModel(host: host, document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: CommandLauncher(resolve: { ResolvedEnvironment(variables: ["PATH": "/usr/bin:/bin"], source: .loginShell("/bin/zsh")) }), jiraSettings: { nil })
         #expect(titles(model.rows) == ["empty", "other tabs", "tab zsh"])
     }
 
