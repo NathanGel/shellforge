@@ -43,6 +43,9 @@ public final class NewTaskModel: ObservableObject, Identifiable {
     /// The ticket field: what is typed, what the last search found, and why it found nothing.
     @Published public var query = ""
     @Published public private(set) var results: [JiraTicket] = []
+    /// Whether the ticket list hangs open under its field. AiTerm keeps this in the sheet; here the
+    /// model holds it, so the ways it closes — ⎋, a click past it, leaving the step — are testable.
+    @Published public var ticketsOpen = false
     @Published public private(set) var searchError: String?
     private let searchIssues: @MainActor (String) async throws -> [JiraTicket]
     private var searchTask: Task<Void, Never>?

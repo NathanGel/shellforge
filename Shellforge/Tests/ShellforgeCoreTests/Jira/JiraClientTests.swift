@@ -335,11 +335,10 @@ import Foundation
         await #expect(throws: error) { _ = try await JiraClient(config: config, session: stub.session).testConnection() }
     }
 
-    /// Nothing listens on port 1, so the connection is refused.
+    /// A refused connection, stubbed: no test dials a real host.
     @Test func aTransportFailureIsANetworkError() async {
-        let refused = JiraConfig(siteURL: URL(string: "http://127.0.0.1:1")!, email: "a", token: "b")
         await #expect {
-            _ = try await JiraClient(config: refused, session: URLSession(configuration: .ephemeral)).testConnection()
+            _ = try await JiraClient(config: config, session: RefusedURLProtocol.session).testConnection()
         } throws: { error in
             if case JiraError.network = error { return true } else { return false }
         }

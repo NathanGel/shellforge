@@ -87,3 +87,17 @@ final class StubSession {
     /// Every request received, in arrival order — which is not send order for requests in flight together.
     var requests: [URLRequest] { StubURLProtocol.requests(for: token) }
 }
+
+/// A session whose every request fails as a refused connection does, without dialling anything.
+final class RefusedURLProtocol: URLProtocol {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() { client?.urlProtocol(self, didFailWithError: URLError(.cannotConnectToHost)) }
+    override func stopLoading() {}
+
+    static var session: URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [RefusedURLProtocol.self]
+        return URLSession(configuration: configuration)
+    }
+}

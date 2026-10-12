@@ -22,6 +22,19 @@ import Testing
         #expect(offenders.isEmpty, "Start children through CommandLauncher: \(offenders.map(\.lastPathComponent))")
     }
 
+    /// No test reaches the network, loopback included: a refused port behaves differently behind a
+    /// sandbox, a proxy or a service that happens to listen there. Every session a test makes goes
+    /// through a stub protocol; a plain one would dial. (Hook URLs written into config text are
+    /// not dialled, and stay.)
+    @Test func noTestDialsARealHost() throws {
+        let tests = sources.deletingLastPathComponent().appendingPathComponent("Tests")
+        let files = try #require(FileManager.default.enumerator(at: tests, includingPropertiesForKeys: nil))
+            .compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" && $0.lastPathComponent != "SourceRulesTests.swift" }
+        let dial = try Regex(#"URLSession\.shared|URLSession\(configuration: \.(ephemeral|default)\)"#)
+        let offenders = try files.filter { try String(contentsOf: $0, encoding: .utf8).contains(dial) }
+        #expect(offenders.isEmpty, "Stub the transport instead: \(offenders.map(\.lastPathComponent))")
+    }
+
     /// Code taken from AiTerm is GPLv3 and keeps its author: every file that says it was ported
     /// names AiTerm and the file it came from, the licence and Laurens D'Hondt.
     @Test func everyPortedFileCreditsAiTerm() throws {

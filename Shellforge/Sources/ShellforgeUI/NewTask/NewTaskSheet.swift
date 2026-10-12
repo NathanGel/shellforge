@@ -10,7 +10,6 @@ struct NewTaskSheet: View {
     @ObservedObject var model: NewTaskModel
     let dismiss: @MainActor () -> Void
     @State private var step = 1
-    @State private var ticketsOpen = false
     /// A result row's key column: a Jira key of up to eight characters in the mono code face, so
     /// the summaries after it start on one line.
     private static let ticketKeyWidth: CGFloat = 74
@@ -29,7 +28,9 @@ struct NewTaskSheet: View {
     }
 
     var body: some View {
-        SheetLayout(title: "New task in \(model.project.name)", height: Sheet.height) {
+        // A click past the ticket list closes it, as AiTerm's CreationSheet closes its pickers.
+        SheetLayout(title: "New task in \(model.project.name)", height: Sheet.height,
+                    onBackgroundTap: { model.ticketsOpen = false }) {
             StepBar(step: step, names: ["Task", "Agent", "Prompt"])
         } content: {
             VStack(alignment: .leading, spacing: Space.block) {
@@ -59,7 +60,7 @@ struct NewTaskSheet: View {
                            createLabel: "Create Task", creating: model.creating,
                            canAdvance: model.canAdvance(step: step),
                            closeList: {
-                               if step == 1, ticketsOpen { ticketsOpen = false; return true }
+                               if step == 1, model.ticketsOpen { model.ticketsOpen = false; return true }
                                return Self.closeList(step: step, completions: model.completions)
                            },
                            back: back, advance: advance)
@@ -83,7 +84,7 @@ struct NewTaskSheet: View {
             FormField("Jira ticket (optional)") {
                 SearchPicker(placeholder: model.ticketPlaceholder,
                              query: Binding(get: { model.query }, set: { model.setQuery($0) }),
-                             open: $ticketsOpen,
+                             open: $model.ticketsOpen,
                              items: model.results, selection: model.draft.ticket,
                              row: { ticket in
                                  // The lane column stays for a ticket without one, so every summary
@@ -97,6 +98,8 @@ struct NewTaskSheet: View {
                                  model.draft.apply(ticket: ticket)
                              },
                              toggleHelp: { $0 ? "Hide tickets" : "Show my open tickets" })
+                // Over the help text after it, as AiTerm's FormField orders its content front to back.
+                .zIndex(1)
                 if model.draft.ticket == nil {
                     if let message = model.searchError {
                         HelpText(message, tone: .warning)
@@ -131,7 +134,7 @@ struct NewTaskSheet: View {
         PickedItemField(mark: .brand(Palette.jira), key: ticket.key, title: ticket.summary, trailing: {
             if let status = ticket.status { LaneChip(lane: status, brand: Palette.jira, ink: Palette.link) }
         }, clearHelp: "Clear ticket") {
-            model.draft.apply(ticket: nil); model.reopenSearch(); ticketsOpen = true
+            model.draft.apply(ticket: nil); model.reopenSearch(); model.ticketsOpen = true
         }
     }
 
@@ -164,6 +167,12 @@ struct NewTaskSheet: View {
         if step == 3 { completions.close() }
     }
 
+    /// Leaving `step`, every list hanging in it closes.
+    static func leave(step: Int, model: NewTaskModel) {
+        if step == 1 { model.ticketsOpen = false }
+        leave(step: step, completions: model.completions)
+    }
+
     enum BackMove: Equatable { case step(Int), dismiss, stay }
 
     /// ⎋ and Back are one move: a step back, or the sheet closed from the first step — never while
@@ -175,7 +184,7 @@ struct NewTaskSheet: View {
 
     private func back() {
         switch Self.back(from: step, creating: model.creating) {
-        case .step(let previous): Self.leave(step: step, completions: model.completions); step = previous
+        case .step(let previous): Self.leave(step: step, model: model); step = previous
         // A turn later, as AiTerm's `afterThisEvent`: the panel is not closed under the event.
         case .dismiss: Task { @MainActor in dismiss() }
         case .stay: break
@@ -186,7 +195,7 @@ struct NewTaskSheet: View {
     /// `canAdvance` gates both.
     private func advance() {
         if step == 3 { create(); return }
-        Self.leave(step: step, completions: model.completions)
+        Self.leave(step: step, model: model)
         step += 1
     }
 
