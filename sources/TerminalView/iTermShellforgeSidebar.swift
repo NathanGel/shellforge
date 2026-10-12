@@ -14,8 +14,6 @@ import ShellforgeUI
 @objc(iTermShellforgeSidebar)
 @MainActor
 final class iTermShellforgeSidebar: NSObject {
-    /// The sidebar column's width in points.
-    @objc static var width: CGFloat { ShellforgeSidebar.width }
 
     /// One shared launcher, so the login shell's environment is read once per app run.
     nonisolated static let launcher = CommandLauncher()
@@ -425,4 +423,21 @@ private final class TasksMenuController: NSObject, NSMenuItemValidation {
         guard let command = SidebarCommand(rawValue: menuItem.tag), let sidebar = iTermShellforgeSidebar.keySidebar else { return false }
         return sidebar.can(command)
     }
+}
+
+
+/// The sidebar's width, as dragged, and whether new windows start with it hidden (⌃⌘S).
+extension iTermShellforgeSidebar {
+    private static var layout: SidebarLayoutSettings { SidebarLayoutSettings(defaults: .standard) }
+
+    /// The width a window of `windowWidth` gives the sidebar.
+    @objc static func width(forWindowWidth windowWidth: CGFloat) -> CGFloat {
+        SidebarLayoutSettings.width(layout.width, windowWidth: windowWidth)
+    }
+
+    @objc static func setPreferredWidth(_ width: CGFloat) { layout.width = width }
+
+    @objc static func startsHidden() -> Bool { layout.hidden }
+
+    @objc static func setStartsHidden(_ hidden: Bool) { layout.hidden = hidden }
 }

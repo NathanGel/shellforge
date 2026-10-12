@@ -26,6 +26,8 @@
  */
 
 #import "iTermApplicationDelegate.h"
+#import "PseudoTerminal+Private.h"
+#import "iTermRootTerminalView.h"
 
 #import "AppearancePreferencesViewController.h"
 #import "ColorsMenuItemView.h"
@@ -381,6 +383,14 @@ static NSModalResponse iTermCompareRenderingRunModal(id self, SEL _cmd) {
     backpackItem.target = self;
     [viewMenu addItem:backpackItem];
 
+    // Shellforge: Hide Sidebar, ⌃⌘S as in Finder and Mail.
+    NSMenuItem *sidebarItem = [[[NSMenuItem alloc] initWithTitle:@"Hide Sidebar"
+                                                          action:@selector(shellforgeToggleSidebar:)
+                                                   keyEquivalent:@"s"] autorelease];
+    sidebarItem.keyEquivalentModifierMask = NSEventModifierFlagControl | NSEventModifierFlagCommand;
+    sidebarItem.target = self;
+    [viewMenu addItem:sidebarItem];
+
     // Shellforge: the Tasks menu after View, its keys all ⌃⌘ ones iTerm2 leaves free.
     NSMenuItem *tasksItem = [[[NSMenuItem alloc] initWithTitle:@"Tasks" action:nil keyEquivalent:@""] autorelease];
     tasksItem.submenu = [iTermShellforgeSidebar tasksMenu];
@@ -443,11 +453,20 @@ static NSModalResponse iTermCompareRenderingRunModal(id self, SEL _cmd) {
     }
 }
 
+- (IBAction)shellforgeToggleSidebar:(id)sender {
+    [[[[iTermController sharedInstance] currentTerminal] contentView] toggleShellforgeSidebar];
+}
+
 - (IBAction)shellforgeToggleBackpack:(id)sender {
     [iTermShellforgeSidebar toggleBackpack:sender];
 }
 
 - (BOOL)validateMenuItem:(NSMenuItem *)menuItem {
+    if (menuItem.action == @selector(shellforgeToggleSidebar:)) {
+        iTermRootTerminalView *root = [[[iTermController sharedInstance] currentTerminal] contentView];
+        menuItem.title = root.shellforgeSidebarHidden ? @"Show Sidebar" : @"Hide Sidebar";
+        return root.hasShellforgeSidebar;
+    }
     if (menuItem.action == @selector(shellforgeToggleBackpack:)) {
         menuItem.state = [iTermShellforgeSidebar backpackIsOn] ? NSControlStateValueOn : NSControlStateValueOff;
         return YES;
