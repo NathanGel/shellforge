@@ -83,7 +83,7 @@ import Testing
             // ctl's, and usage.get also the liveness check: read as the models the app shares with it.
             case .sessionsList: try Self.expectSame(read([SessionInfo].self), #require(result["result"]))
             case .usageGet: try Self.expectSame(read(UsageSnapshot.self), #require(result["result"]))
-            case .tunnelsStart, .tunnelsStop: #expect(try read(DaemonClient.OkResult.self).ok == field("ok") as? Bool)
+            case .tunnelsStart, .tunnelsStop, .tunnelsHold: #expect(try read(DaemonClient.OkResult.self).ok == field("ok") as? Bool)
             // ctl's: read as the model the app keeps each tunnel in.
             case .tunnelsList: try Self.expectSame(read([TunnelInfo].self), #require(result["result"]))
             }

@@ -134,6 +134,16 @@ struct TunnelsSheet: View {
     }
 
     private func linkedTunnel(_ tunnel: TunnelDefinition) -> some View {
+        VStack(alignment: .leading, spacing: Space.snug) {
+            linkedTunnelLine(tunnel)
+            Toggle("Keep running after Shellforge quits", isOn: Binding(get: { tunnel.keepRunning }, set: { kept in
+                if let i = linked.firstIndex(where: { $0.alias == tunnel.alias }) { linked[i].keepRunning = kept }
+            }))
+            .toggleStyle(.checkbox).font(Typography.body)
+        }
+    }
+
+    private func linkedTunnelLine(_ tunnel: TunnelDefinition) -> some View {
         HStack(spacing: Space.base) {
             PickedItemField(mark: .symbol("network"), key: tunnel.alias, title: forwards(of: tunnel.alias),
                             clearHelp: "Remove \(tunnel.alias)") {

@@ -159,7 +159,7 @@ import Testing
         defer { link.shutdown(); server.stop() }
         link.supervisorChanged(.listening(pid: 1))
         #expect(await eventually { link.status == .connected })
-        link.startTunnel(alias: "db")
+        link.startTunnel(alias: "db", keepRunning: false)
         link.stopTunnel(alias: "db")
         func sent(_ method: String) -> [String: Any]? {
             server.received.first { $0["method"] as? String == method }?["params"] as? [String: Any]

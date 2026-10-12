@@ -173,6 +173,9 @@ async def emitted(make_service, monkeypatch) -> dict[str, str]:
         replies["tunnels.list"] = await app.call("tunnels.list")
         replies["workspace.snapshot"] = await app.call("workspace.snapshot")
         replies["tunnels.stop"] = await app.call("tunnels.stop", {"alias": "db-staging"})
+        # Held by a tab whose port nothing listens on yet: watched, then stopped.
+        replies["tunnels.hold"] = await app.call("tunnels.hold", {"alias": "db-staging", "port": 1})
+        await app.call("tunnels.stop", {"alias": "db-staging"})
 
         mark = app.mark()
         replies["window.close"] = await app.call("window.close", {"windowId": terminal_window})

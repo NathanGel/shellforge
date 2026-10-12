@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from pathlib import Path
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Any, TypeVar
@@ -19,7 +20,7 @@ from .iterm_port import ItermPort
 from .offload import run_detached
 from .publisher import Publisher
 from .resolver import SessionResolver
-from .rpc_params import frame_param, guard, param, require_iterm
+from .rpc_params import frame_param, guard, optional_param, param, require_iterm
 from .rpc_server import RpcError, RpcServer
 from .models import HARNESS_BY_AGENT, SessionInfo, TokenTally
 from .sessions import SessionRegistry, SnapshotDiff
@@ -67,7 +68,7 @@ class Service:
     def __init__(self, iterm: ItermPort, rpc: RpcServer, hooks: HookServer, claude_files: ClaudeSessionFiles,
                  clock: Callable[[], float], codex_files: CodexSessionFiles | None = None,
                  supervisor: ItermSupervisor | None = None, path_missing: Callable[[str], bool] = path_is_missing,
-                 monotonic: Callable[[], float] = time.monotonic):
+                 monotonic: Callable[[], float] = time.monotonic, tunnel_ledger: Path | None = None):
         self.iterm, self.rpc, self.hooks = iterm, rpc, hooks
         # `clock` is the wall clock, in seconds. Fractional: the status engine stamps each hook with
         # it and compares the stamp with a session file's mtime, which a whole second would blur.
@@ -86,7 +87,7 @@ class Service:
         self.windows = WindowManager(iterm, self.registry, self.tick)
         self.supervisor.on_connected = self.windows.forget_titles
         from .tunnels import TunnelSupervisor
-        self.tunnels = TunnelSupervisor(rpc.broadcast, clock=clock)
+        self.tunnels = TunnelSupervisor(rpc.broadcast, clock=clock, ledger=tunnel_ledger)
         self._poll_task: asyncio.Task[None] | None = None
         # window.setFrame and window.activate each leave a state the next one replaces, and the app
         # sends them from separate tasks; requests are answered concurrently, so they take this in
@@ -115,6 +116,8 @@ class Service:
         self.iterm.on_new_session(self.windows.on_new_session)
         self.iterm.on_session_closed(self._on_session_closed)
         self.iterm.on_window_activated(self._on_window_activated)
+        # Before any app can ask: the tunnels the last daemon left keep their state, the rest end.
+        await self.tunnels.adopt()
         await self.rpc.start()
         try:
             await self.hooks.start()
@@ -163,6 +166,7 @@ class Service:
         r("tunnels.start", self._h_tunnels_start)
         r("tunnels.stop", self._h_tunnels_stop)
         r("tunnels.list", self._h_tunnels_list)
+        r("tunnels.hold", self._h_tunnels_hold)
 
     async def _h_snapshot(self, _p: Any) -> dict[str, Any]:
         try:
@@ -207,11 +211,23 @@ class Service:
         environment = param(p, "environment", dict)
         if not all(isinstance(k, str) and isinstance(v, str) for k, v in environment.items()):
             raise RpcError(protocol.BAD_PARAMS, "environment must map strings to strings")
-        await self.tunnels.start(alias, environment)
+        keep_running = optional_param(p, "keepRunning", bool) or False
+        await self.tunnels.start(alias, environment, keep_running)
         return {"ok": True}
 
     async def _h_tunnels_stop(self, p: Any) -> dict[str, Any]:
         await self.tunnels.stop(tunnel_alias(p))
+        return {"ok": True}
+
+    async def _h_tunnels_hold(self, p: Any) -> dict[str, Any]:
+        """`{alias, port}`: the app opened the tunnel in a tab for the user to answer ssh; `port` is
+        its first local forward, which the daemon watches."""
+        alias = tunnel_alias(p)
+        port = param(p, "port", int)
+        if isinstance(port, bool) or not 1 <= port <= 65535:
+            raise RpcError(protocol.BAD_PARAMS, "port must be a TCP port")
+        bind = optional_param(p, "bind", str)
+        await self.tunnels.hold(alias, port, bind)
         return {"ok": True}
 
     async def _h_tunnels_list(self, _p: Any) -> list[dict[str, Any]]:

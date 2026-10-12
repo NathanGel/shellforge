@@ -18,6 +18,8 @@ public protocol TerminalHost: AnyObject {
     /// Closes every tab tagged with the task, in every window — what removing it starts with. True
     /// once none is left open.
     func closeTabs(ofTask id: UUID) -> Bool
+    /// Opens a tab of no task in `directory`, typing `command` into its shell, and selects it.
+    func openTab(in directory: String, title: String, command: String)
 }
 
 /// The draft's agent's CLI was not on the login shell's `PATH` when Create ran.
@@ -33,8 +35,9 @@ public protocol SessionFeed: AnyObject {
     var statusPublisher: AnyPublisher<HelperStatus, Never> { get }
     var storePublisher: AnyPublisher<SessionStore, Never> { get }
     func markSeen(task: UUID)
-    func startTunnel(alias: String)
+    func startTunnel(alias: String, keepRunning: Bool)
     func stopTunnel(alias: String)
+    func holdTunnel(alias: String, port: Int, bind: String?)
 }
 
 /// The sidebar's state for one window: the shared workspace, this window's tabs, and which task is

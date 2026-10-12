@@ -2,7 +2,11 @@
   "event": "tunnel.changed",
   "payload": {
     "alias": "db-staging",
+    "bytesIn": null,
+    "bytesOut": null,
     "error": null,
+    "heldBy": null,
+    "needsInput": null,
     "since": 1000,
     "state": "connecting"
   }

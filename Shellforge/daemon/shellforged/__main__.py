@@ -122,7 +122,7 @@ async def run_daemon(ns: argparse.Namespace) -> None:
                                  cookies_from_app=ns.cookies_from_app and ns.session_source == "iterm")
     svc = Service(iterm=iterm, rpc=rpc, hooks=HookServer(port=ns.hook_port),
                   claude_files=ClaudeSessionFiles(), codex_files=CodexSessionFiles(),
-                  clock=time.time, supervisor=supervisor)
+                  clock=time.time, supervisor=supervisor, tunnel_ledger=Path(ns.socket).parent / "tunnels.json")
     await svc.start()
     watchdog = asyncio.get_running_loop().create_task(
         IdleWatchdog(lambda: rpc.client_count, ns.idle_exit_seconds, stop.set, check_seconds=IDLE_CHECK_SECONDS).run())

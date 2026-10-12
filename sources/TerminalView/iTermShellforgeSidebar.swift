@@ -157,6 +157,20 @@ final class iTermShellforgeHost: TerminalHost {
         return closed
     }
 
+    /// A tab of no task — a tunnel answered in a tab — running `command` in `directory`.
+    func openTab(in directory: String, title: String, command: String) {
+        guard let windowController, let base = ProfileModel.sharedInstance()?.defaultBookmark() else { return }
+        var profile = iTermShellforgeSidebar.taskTabProfile(base: base, directory: directory,
+                                                            initialText: TabCommand.initialText(command))
+        profile[KEY_NAME] = title
+        iTermSessionLauncher.launchBookmark(profile, in: windowController, style: .tab, withURL: nil,
+                                            hotkeyWindowType: .none, makeKey: true, canActivate: true,
+                                            respectTabbingMode: false, index: nil, command: nil,
+                                            makeSession: nil, didMakeSession: nil, completion: { [weak self] _, _ in
+            MainActor.assumeIsolated { self?.onChange?() }
+        })
+    }
+
     /// The tunnels' ports are exported before the command, in the line typed into the shell: an
     /// iTerm2 profile has no environment of its own to carry them.
     func openTab(in directory: String, taskId: UUID, projectId: UUID, title: String, command: String?, environment: [String: String]) {

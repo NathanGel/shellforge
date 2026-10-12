@@ -102,13 +102,18 @@ public final class DaemonLink: ObservableObject {
 
     /// Starts `alias`'s tunnel with the login environment, read off the main thread — the first
     /// read asks a login shell. Its state comes back as `tunnel.changed`.
-    public func startTunnel(alias: String) {
+    public func startTunnel(alias: String, keepRunning: Bool) {
         guard let client else { return }
         let environment = self.environment
         Task {
             let variables = await BackgroundWork.run { environment() }
-            _ = try? await client.startTunnel(alias: alias, environment: variables)
+            _ = try? await client.startTunnel(alias: alias, environment: variables, keepRunning: keepRunning)
         }
+    }
+
+    public func holdTunnel(alias: String, port: Int, bind: String?) {
+        guard let client else { return }
+        Task { _ = try? await client.holdTunnel(alias: alias, port: port, bind: bind) }
     }
 
     public func stopTunnel(alias: String) {

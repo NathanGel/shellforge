@@ -205,10 +205,24 @@ public struct TunnelInfo: Codable, Equatable, Sendable {
     public var error: String?
     /// When it came to this state, in the daemon's clock's seconds.
     public var since: Double
+    /// ssh's traffic since it started, as `nettop` counts it; nil until sampled, or from an older daemon.
+    public var bytesIn: Int?
+    public var bytesOut: Int?
+    /// Who holds its ports when not the supervisor: a terminal tab the user answers ssh in.
+    public var heldBy: TunnelHolder?
+    /// It failed because ssh needed an answer: a host key, a passphrase, a code.
+    public var needsInput: Bool?
 
-    public init(alias: String, state: TunnelState, error: String?, since: Double) {
+    public init(alias: String, state: TunnelState, error: String?, since: Double, bytesIn: Int? = nil, bytesOut: Int? = nil,
+                heldBy: TunnelHolder? = nil, needsInput: Bool? = nil) {
         self.alias = alias; self.state = state; self.error = error; self.since = since
+        self.bytesIn = bytesIn; self.bytesOut = bytesOut; self.heldBy = heldBy; self.needsInput = needsInput
     }
+}
+
+/// Who holds a tunnel's ports other than the supervisor.
+public enum TunnelHolder: String, Codable, Equatable, Sendable {
+    case tab
 }
 
 /// What routes a line from the daemon: a reply's `id` and `error`, or an event's name. The rest of

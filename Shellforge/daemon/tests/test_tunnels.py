@@ -19,11 +19,11 @@ FAKE_SSH = textwrap.dedent("""\
     printf '%s\\n' "$*" > "$FAKE_SSH_LOG.args"
     printf '%s\\n' "$FAKE_SSH_MARK" > "$FAKE_SSH_LOG.env"
     case "$FAKE_SSH_MODE" in
-      fail) echo "bind [127.0.0.1]:5432: Address already in use" >&2; exit 255 ;;
+      fail) echo "${FAKE_SSH_LINE:-bind [127.0.0.1]:5432: Address already in use}" >&2; exit 255 ;;
       slow-bind) sleep 0.5; echo "bind [127.0.0.1]:5432: Address already in use" >&2; exit 255 ;;
       ignore-term) trap '' TERM; while :; do sleep 0.05; done ;;
       drop-after:*) sleep "${FAKE_SSH_MODE#drop-after:}"; echo "Connection to bastion closed by remote host." >&2; exit 255 ;;
-      *) exec sleep 600 ;;
+      *) sleep 600 & wait $! ;;
     esac
     """)
 
@@ -70,7 +70,8 @@ async def test_a_tunnel_comes_up_and_is_broadcast(ssh_env):
     await tunnels.start("db", ssh_env())
     await wait_until(lambda: "up" in events.states("db"))
     assert events.states("db")[:2] == ["connecting", "up"]
-    assert tunnels.list() == [{"alias": "db", "state": "up", "error": None, "since": pytest.approx(tunnels.list()[0]["since"])}]
+    assert tunnels.list() == [{"alias": "db", "state": "up", "error": None, "since": pytest.approx(tunnels.list()[0]["since"]),
+                               "bytesIn": None, "bytesOut": None, "heldBy": None, "needsInput": None}]
     await tunnels.stop_all()
     assert events.states("db")[-1] == "stopped"
 
@@ -214,6 +215,7 @@ async def test_stopping_the_daemon_ends_every_tunnel(make_service, ssh_env):
     ("tunnels.start", {"alias": "db", "environment": {"PATH": 3}}),
     ("tunnels.start", {"alias": "", "environment": {}}),
     ("tunnels.start", {"alias": "-oProxyCommand=evil", "environment": {}}),
+    ("tunnels.start", {"alias": "db", "environment": {}, "keepRunning": "yes"}),
     ("tunnels.stop", {}),
 ])
 async def test_malformed_tunnel_params_are_bad_params(tunnel_stack, method, params):
@@ -280,3 +282,11 @@ async def test_a_start_right_after_a_failure_starts_again(ssh_env):
     await wait_until(lambda: "up" in seen, timeout=3)
     assert seen[:2] == ["connecting", "failed"]
     await tunnels.stop_all()
+
+
+async def test_keep_running_is_taken_with_the_start(tunnel_stack, ssh_env):
+    svc, r, w = tunnel_stack
+    reply = await call(r, w, "tunnels.start", {"alias": "db", "environment": ssh_env(), "keepRunning": True})
+    assert reply["result"] == {"ok": True}
+    assert svc.tunnels._tunnels["db"].keep_running is True
+    await svc.tunnels.stop("db")
