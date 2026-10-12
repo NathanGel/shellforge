@@ -213,3 +213,19 @@ async def test_with_sessions_from_the_app_no_iterm2_cookie_is_asked_for(monkeypa
         await asyncio.gather(daemon, return_exceptions=True)
         for sig in (signal.SIGINT, signal.SIGTERM):
             asyncio.get_running_loop().remove_signal_handler(sig)
+
+
+def test_the_tunnel_ledger_lives_beside_the_socket(sock_dir, tmp_path, monkeypatch):
+    """A daemon run on a socket of its own keeps its tunnels beside it, never in the user's support
+    folder: the app's socket is in that folder, a test's is not."""
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    blocker = socket.socket()
+    blocker.bind(("127.0.0.1", 0))
+    blocker.listen(1)
+    try:
+        main(["run", "--socket", os.path.join(sock_dir, "s.sock"), "--hook-port", str(blocker.getsockname()[1])])
+    finally:
+        blocker.close()
+    assert os.path.exists(os.path.join(sock_dir, "tunnels.json"))
+    assert not (home / "Library/Application Support/Shellforge/tunnels.json").exists()

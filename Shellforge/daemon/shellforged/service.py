@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from pathlib import Path
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Any, TypeVar
@@ -67,7 +68,7 @@ class Service:
     def __init__(self, iterm: ItermPort, rpc: RpcServer, hooks: HookServer, claude_files: ClaudeSessionFiles,
                  clock: Callable[[], float], codex_files: CodexSessionFiles | None = None,
                  supervisor: ItermSupervisor | None = None, path_missing: Callable[[str], bool] = path_is_missing,
-                 monotonic: Callable[[], float] = time.monotonic):
+                 monotonic: Callable[[], float] = time.monotonic, tunnel_ledger: Path | None = None):
         self.iterm, self.rpc, self.hooks = iterm, rpc, hooks
         # `clock` is the wall clock, in seconds. Fractional: the status engine stamps each hook with
         # it and compares the stamp with a session file's mtime, which a whole second would blur.
@@ -86,7 +87,7 @@ class Service:
         self.windows = WindowManager(iterm, self.registry, self.tick)
         self.supervisor.on_connected = self.windows.forget_titles
         from .tunnels import TunnelSupervisor
-        self.tunnels = TunnelSupervisor(rpc.broadcast, clock=clock)
+        self.tunnels = TunnelSupervisor(rpc.broadcast, clock=clock, ledger=tunnel_ledger)
         self._poll_task: asyncio.Task[None] | None = None
         # window.setFrame and window.activate each leave a state the next one replaces, and the app
         # sends them from separate tasks; requests are answered concurrently, so they take this in
@@ -116,6 +117,8 @@ class Service:
         self.iterm.on_session_closed(self._on_session_closed)
         self.iterm.on_window_activated(self._on_window_activated)
         await self.rpc.start()
+        # Before any app can ask: the tunnels the last daemon left keep their state, the rest end.
+        await self.tunnels.adopt()
         try:
             await self.hooks.start()
         except BaseException:

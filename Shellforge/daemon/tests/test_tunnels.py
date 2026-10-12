@@ -23,7 +23,7 @@ FAKE_SSH = textwrap.dedent("""\
       slow-bind) sleep 0.5; echo "bind [127.0.0.1]:5432: Address already in use" >&2; exit 255 ;;
       ignore-term) trap '' TERM; while :; do sleep 0.05; done ;;
       drop-after:*) sleep "${FAKE_SSH_MODE#drop-after:}"; echo "Connection to bastion closed by remote host." >&2; exit 255 ;;
-      *) exec sleep 600 ;;
+      *) sleep 600 & wait $! ;;
     esac
     """)
 
