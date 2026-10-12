@@ -24,6 +24,7 @@ from typing import Any, get_args
 
 from shellforged import protocol, service
 from shellforged.models import AgentKind, State
+from tests.conftest import wait_until
 from tests.fake_iterm import FakeIterm
 from shellforged.app_sessions import AppSessions
 
@@ -165,7 +166,13 @@ async def emitted(make_service, monkeypatch) -> dict[str, str]:
         replies["interface.setMatchItermBackground"] = await app.call("interface.setMatchItermBackground", {"matchItermBackground": True})
         replies["sessions.list"] = await app.call("sessions.list")
         replies["usage.get"] = await app.call("usage.get")
+        # A tunnel whose ssh is not on the handed-in PATH: it fails at once, the same way every run.
+        replies["tunnels.start"] = await app.call("tunnels.start", {"alias": "db-staging", "environment": {"PATH": "/nonexistent"}})
+        events[protocol.TUNNEL_CHANGED] = await app.event(protocol.TUNNEL_CHANGED, mark)
+        await wait_until(lambda: svc.tunnels.list()[0]["state"] == "failed")
+        replies["tunnels.list"] = await app.call("tunnels.list")
         replies["workspace.snapshot"] = await app.call("workspace.snapshot")
+        replies["tunnels.stop"] = await app.call("tunnels.stop", {"alias": "db-staging"})
 
         mark = app.mark()
         replies["window.close"] = await app.call("window.close", {"windowId": terminal_window})

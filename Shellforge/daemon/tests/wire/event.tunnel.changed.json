@@ -1,0 +1,9 @@
+{
+  "event": "tunnel.changed",
+  "payload": {
+    "alias": "db-staging",
+    "error": null,
+    "since": 1000,
+    "state": "connecting"
+  }
+}

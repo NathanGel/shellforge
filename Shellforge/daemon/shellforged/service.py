@@ -85,6 +85,8 @@ class Service:
         self.hooks.on_post = self.hook_router.handle_hook
         self.windows = WindowManager(iterm, self.registry, self.tick)
         self.supervisor.on_connected = self.windows.forget_titles
+        from .tunnels import TunnelSupervisor
+        self.tunnels = TunnelSupervisor(rpc.broadcast, clock=clock)
         self._poll_task: asyncio.Task[None] | None = None
         # window.setFrame and window.activate each leave a state the next one replaces, and the app
         # sends them from separate tasks; requests are answered concurrently, so they take this in
@@ -123,6 +125,8 @@ class Service:
         self._poll_task = asyncio.get_running_loop().create_task(self._poll_forever())
 
     async def stop(self) -> None:
+        # Before anything else: no ssh the app started may outlive it holding its ports.
+        await self.tunnels.stop_all()
         if (task := self._poll_task) is not None and task is not asyncio.current_task():
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
@@ -156,6 +160,9 @@ class Service:
         r("sessions.markSeen", self._h_mark_seen)
         r("usage.get", self._h_usage_get)
         r("interface.setMatchItermBackground", self.windows.set_match_iterm_background)
+        r("tunnels.start", self._h_tunnels_start)
+        r("tunnels.stop", self._h_tunnels_stop)
+        r("tunnels.list", self._h_tunnels_list)
 
     async def _h_snapshot(self, _p: Any) -> dict[str, Any]:
         try:
@@ -166,6 +173,7 @@ class Service:
         # before yielding, making it a barrier between earlier and later events.
         return {"protocolVersion": protocol.VERSION, **self.supervisor.snapshot_fields(),
                 "sessions": [s.to_json() for s in self.registry.all()],
+                "tunnels": self.tunnels.list(),
                 "usage": self.usage.snapshot()}
 
     async def _h_activate(self, p: Any) -> dict[str, Any]:
@@ -191,6 +199,23 @@ class Service:
         except Exception:  # noqa: BLE001 - the window is closed either way; the next tick sees it
             log.exception("tick after closing a window failed")
         return {}
+
+    async def _h_tunnels_start(self, p: Any) -> dict[str, Any]:
+        """`{alias, environment}`: the `~/.ssh/config` host to run, and the app's login environment to
+        run it in. An alias that ssh would read as an option is refused."""
+        alias = tunnel_alias(p)
+        environment = param(p, "environment", dict)
+        if not all(isinstance(k, str) and isinstance(v, str) for k, v in environment.items()):
+            raise RpcError(protocol.BAD_PARAMS, "environment must map strings to strings")
+        await self.tunnels.start(alias, environment)
+        return {"ok": True}
+
+    async def _h_tunnels_stop(self, p: Any) -> dict[str, Any]:
+        await self.tunnels.stop(tunnel_alias(p))
+        return {"ok": True}
+
+    async def _h_tunnels_list(self, _p: Any) -> list[dict[str, Any]]:
+        return self.tunnels.list()
 
     async def _h_sessions_list(self, _p: Any) -> list[dict[str, Any]]:
         return [s.to_json() for s in self.registry.all()]
@@ -483,4 +508,13 @@ class Service:
         usage = parse_codex_rate_limits(limits, written_at if written_at is not None else int(self.clock()))
         if self.usage.set("codex", usage):
             await self.publisher.usage_changed()
+
+
+def tunnel_alias(p: Any) -> str:
+    """A `Host` alias as ssh takes it as its destination: not empty, no whitespace, and not
+    starting with `-`, which ssh would read as an option."""
+    alias = param(p, "alias", str)
+    if not alias or alias.startswith("-") or any(c.isspace() or not c.isprintable() for c in alias):
+        raise RpcError(protocol.BAD_PARAMS, "alias must be a Host alias from ~/.ssh/config")
+    return alias
 

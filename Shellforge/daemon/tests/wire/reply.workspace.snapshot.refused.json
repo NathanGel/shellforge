@@ -7,6 +7,7 @@
     "itermVersion": null,
     "protocolVersion": 1,
     "sessions": [],
+    "tunnels": [],
     "usage": {
       "claude": null,
       "codex": null

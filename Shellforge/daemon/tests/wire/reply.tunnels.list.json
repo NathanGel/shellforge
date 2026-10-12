@@ -1,0 +1,11 @@
+{
+  "id": 18,
+  "result": [
+    {
+      "alias": "db-staging",
+      "error": "ssh isn’t on the login shell’s PATH.",
+      "since": 1000,
+      "state": "failed"
+    }
+  ]
+}
