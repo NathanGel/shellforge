@@ -14,7 +14,11 @@ public enum TaskRemoval {
 
     public struct Removed: Equatable, Sendable {
         public var branchRefusal: BranchRefusal?
-        public init(branchRefusal: BranchRefusal?) { self.branchRefusal = branchRefusal }
+        /// A review's local branch kept, and why: a note, not a refusal — the review is gone either way.
+        public var keptBranch: ReviewBranchRelease.Kept?
+        public init(branchRefusal: BranchRefusal?, keptBranch: ReviewBranchRelease.Kept? = nil) {
+            self.branchRefusal = branchRefusal; self.keptBranch = keptBranch
+        }
     }
 
     /// Whether `git worktree remove` would refuse the task's worktree without `--force`: git's own
@@ -39,6 +43,13 @@ public enum TaskRemoval {
             // not locked, which is no reason to stop.
             _ = try? git(["worktree", "unlock", task.worktreePath], in: project.path, launcher)
             try git(["worktree", "prune"], in: project.path, launcher)
+        }
+        // A review's branch is the merge request's: never deleted on request — a caller may ask and
+        // simply not get it — but released, which deletes only a local copy with nothing origin lacks.
+        if task.kind == .review {
+            guard case .kept(let why) = GitRepository(project.path, launcher: launcher)
+                .releaseReviewBranch(task.branch, target: task.baseBranch) else { return Removed(branchRefusal: nil) }
+            return Removed(branchRefusal: nil, keptBranch: why)
         }
         guard deleteBranch else { return Removed(branchRefusal: nil) }
         if let refusal = refusal(toDelete: task) { return Removed(branchRefusal: .other(reason: refusal)) }

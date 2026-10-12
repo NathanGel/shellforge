@@ -214,4 +214,58 @@ import Testing
         try FileManager.default.createDirectory(atPath: task.worktreePath + "/app", withIntermediateDirectories: true)
         #expect(try !TaskRemoval.hasUnsavedWork(task: task, project: repo.project, launcher: repo.launcher))
     }
+
+    // -- reviews (AiTerm TaskWorkflowTests) ----------------------------------------------------
+
+    /// A merge request's branch checked out as a review, with or without an origin holding it.
+    private func review(withOrigin: Bool) throws -> (GitRepoFixture, TaskItem) {
+        let repo = try GitRepoFixture()
+        try repo.git("branch", "feat/mr-branch")
+        if withOrigin {
+            let remote = (repo.path as NSString).deletingLastPathComponent + "/remote.git"
+            try repo.git("init", "-q", "--bare", remote)
+            try repo.git("remote", "add", "origin", remote)
+            try repo.git("push", "-q", "origin", "main", "feat/mr-branch")
+            try repo.git("branch", "-q", "-D", "feat/mr-branch")
+        }
+        let path = try GitRepository(repo.path, launcher: repo.launcher).addReviewWorktree(slug: "review-mr-branch", branch: "feat/mr-branch")
+        return (repo, TaskItem(projectId: repo.project.id, title: "Add gift card", branch: "feat/mr-branch", worktreePath: path,
+                               baseBranch: "main", agent: "claude", model: "sonnet", kind: .review))
+    }
+
+    /// A review's branch goes only when that loses nothing, whatever the caller asks: without an
+    /// origin there is nothing to judge by, so it stays.
+    @Test func removingAReviewWithoutOriginKeepsItsBranch() throws {
+        let (repo, review) = try review(withOrigin: false)
+        let result = try TaskRemoval.remove(task: review, project: repo.project, deleteBranch: true, force: true, launcher: repo.launcher)
+        #expect(try branchExists(repo, "feat/mr-branch"))
+        #expect(!FileManager.default.fileExists(atPath: review.worktreePath))
+        #expect(result.branchRefusal == nil && result.keptBranch == nil)
+    }
+
+    /// Pushed, the local copy is deleted; unpushed fixes keep it, and the removal says so.
+    @Test func removingAReviewReleasesItsBranchOnlyWhenPushed() throws {
+        let (pushed, clean) = try review(withOrigin: true)
+        let released = try TaskRemoval.remove(task: clean, project: pushed.project, deleteBranch: false, force: false, launcher: pushed.launcher)
+        #expect(try !branchExists(pushed, "feat/mr-branch"))
+        #expect(released.branchRefusal == nil && released.keptBranch == nil)
+
+        let (unpushed, fixed) = try review(withOrigin: true)
+        try unpushed.git(["commit", "-q", "--allow-empty", "-m", "fix"], in: fixed.worktreePath)
+        let kept = try TaskRemoval.remove(task: fixed, project: unpushed.project, deleteBranch: true, force: false, launcher: unpushed.launcher)
+        #expect(try branchExists(unpushed, "feat/mr-branch"))
+        #expect(kept.branchRefusal == nil)
+        #expect(kept.keptBranch == .unpushed(commits: 1))
+    }
+
+    /// A refused removal relocks a review as a review, not as something else.
+    @Test func aRefusedRemovalRestoresAReviewsOwnLockReason() throws {
+        let (repo, review) = try review(withOrigin: false)
+        try "scratch".write(toFile: review.worktreePath + "/untracked.txt", atomically: true, encoding: .utf8)
+        #expect(throws: (any Error).self) {
+            _ = try TaskRemoval.remove(task: review, project: repo.project, deleteBranch: false, force: false, launcher: repo.launcher)
+        }
+        #expect(try GitRepository(repo.path, launcher: repo.launcher).worktrees().first { $0.path.hasSuffix("review-mr-branch") }?.lockReason
+                == GitRepository.reviewLockReason)
+    }
 }
