@@ -134,6 +134,58 @@ import Testing
         #expect(try String(contentsOfFile: file, encoding: .utf8) == "work in progress")
     }
 
+    /// A row left behind by a worktree deleted outside Shellforge shares its path with a newer task
+    /// of the same title: removing the old row must not take the new task's worktree.
+    @Test func aWorktreeOfAnotherBranchAtTheTasksPathIsNeverRemoved() throws {
+        let repo = try GitRepoFixture()
+        let old = try task(repo)
+        try repo.git("worktree", "remove", old.worktreePath)
+        try repo.git("worktree", "add", "-q", "-b", "fix-login-2", old.worktreePath, "main")
+        let file = old.worktreePath + "/new.txt"
+        try "the new task's".write(toFile: file, atomically: true, encoding: .utf8)
+
+        #expect(throws: (any Error).self) {
+            _ = try TaskRemoval.remove(task: old, project: repo.project, deleteBranch: false, force: true, launcher: repo.launcher)
+        }
+        #expect(FileManager.default.fileExists(atPath: file))
+    }
+
+    /// A damaged row naming its own base, or an option, as its branch never deletes it.
+    @Test func theBaseBranchAndOptionLikeNamesAreNeverDeleted() throws {
+        let repo = try GitRepoFixture()
+        let made = try task(repo)
+        // Its worktree already gone, so removal goes straight to the branch.
+        try repo.git("worktree", "remove", made.worktreePath)
+        try repo.git("checkout", "-q", "-b", "elsewhere")
+        for branch in ["main", "-D"] {
+            var damaged = made
+            damaged.branch = branch
+            let result = try TaskRemoval.remove(task: damaged, project: repo.project, deleteBranch: true, force: false, launcher: repo.launcher)
+            #expect(result.branchRefusal != nil, "\(branch)")
+        }
+        #expect(try branchExists(repo, "main"))
+        #expect(throws: (any Error).self) {
+            var damaged = made
+            damaged.branch = "main"
+            try TaskRemoval.deleteUnmergedBranch(of: damaged, in: repo.project, launcher: repo.launcher)
+        }
+        #expect(try branchExists(repo, "main"))
+    }
+
+    /// `.worktrees` a symlink to somewhere else: nothing there is Shellforge's leftover to delete.
+    @Test func aSymlinkedWorktreesFolderIsNeverDeletedThrough() throws {
+        let repo = try GitRepoFixture()
+        let elsewhere = FileManager.default.temporaryDirectory.appendingPathComponent("elsewhere-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: elsewhere + "/keep", withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(atPath: repo.path + "/.worktrees", withDestinationPath: elsewhere)
+        let stray = TaskItem(projectId: repo.project.id, title: "Keep", branch: "keep", worktreePath: repo.path + "/.worktrees/keep", baseBranch: "main")
+
+        #expect(throws: (any Error).self) {
+            _ = try TaskRemoval.remove(task: stray, project: repo.project, deleteBranch: false, force: true, launcher: repo.launcher)
+        }
+        #expect(FileManager.default.fileExists(atPath: elsewhere + "/keep"))
+    }
+
     /// Only a leftover of Shellforge's own is deleted: a folder outside `.worktrees/` that git does
     /// not know as a worktree is refused and kept, whatever is in it.
     @Test func aFolderOutsideTheWorktreesIsNeverDeleted() throws {

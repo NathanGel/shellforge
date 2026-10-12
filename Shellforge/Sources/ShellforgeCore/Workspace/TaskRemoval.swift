@@ -33,7 +33,7 @@ public enum TaskRemoval {
     public static func remove(task: TaskItem, project: Project, deleteBranch: Bool, force: Bool,
                               launcher: CommandLauncher) throws -> Removed {
         if FileManager.default.fileExists(atPath: task.worktreePath) {
-            try removeWorktree(at: task.worktreePath, in: project.path, force: force, launcher: launcher)
+            try removeWorktree(at: task.worktreePath, branch: task.branch, in: project.path, force: force, launcher: launcher)
         } else {
             // Locked worktrees cannot be pruned until their lock is released. Refused for one that is
             // not locked, which is no reason to stop.
@@ -41,6 +41,7 @@ public enum TaskRemoval {
             try git(["worktree", "prune"], in: project.path, launcher)
         }
         guard deleteBranch else { return Removed(branchRefusal: nil) }
+        if let refusal = refusal(toDelete: task) { return Removed(branchRefusal: .other(reason: refusal)) }
         do {
             // Already-deleted branches are a successful retry.
             let refs = try git(["for-each-ref", "--format=%(refname)", "refs/heads/" + task.branch], in: project.path, launcher)
@@ -63,15 +64,30 @@ public enum TaskRemoval {
     /// `git branch -D`: the branch goes with the commits only it has. Only once someone has agreed
     /// to lose them, after `remove` refused with `.notMerged`.
     public static func deleteUnmergedBranch(of task: TaskItem, in project: Project, launcher: CommandLauncher) throws {
+        if let refusal = refusal(toDelete: task) { throw GitFailure(command: "git branch -D", message: refusal) }
         try git(["branch", "-D", task.branch], in: project.path, launcher)
+    }
+
+    /// Why the task's branch is not one to delete: a damaged row naming its own base, or a name git
+    /// would read as an option. nil for an ordinary task branch.
+    private static func refusal(toDelete task: TaskItem) -> String? {
+        if task.branch.isEmpty || task.branch.hasPrefix("-") { return "“\(task.branch)” isn’t a branch name." }
+        if task.branch == task.baseBranch { return "\(task.branch) is the task’s base branch." }
+        return nil
     }
 
     // -- the worktree ----------------------------------------------------------------------
 
     /// The worktree removed: registered, through git; else a leftover git no longer knows.
-    private static func removeWorktree(at worktreePath: String, in projectPath: String, force: Bool,
+    private static func removeWorktree(at worktreePath: String, branch: String, in projectPath: String, force: Bool,
                                        launcher: CommandLauncher) throws {
         if let worktree = try registered(worktreePath, in: projectPath, launcher: launcher) {
+            // The path is the task's, the checkout someone else's: a row left by a worktree deleted
+            // outside Shellforge shares its path with a newer task's. Only the task's own branch goes.
+            if let checkedOut = worktree.branch, checkedOut != "refs/heads/" + branch {
+                throw GitFailure(command: "git worktree remove \(worktreePath)",
+                                 message: "\(worktreePath) has \(checkedOut.replacingOccurrences(of: "refs/heads/", with: "")) checked out, not \(branch).")
+            }
             try removeRegistered(worktreePath, lockedWith: worktree.lockReason, in: projectPath, force: force, launcher: launcher)
         } else {
             // A removal git gave up on halfway, retried: there is nothing left to unlock or refuse.
@@ -110,13 +126,18 @@ public enum TaskRemoval {
         guard FileManager.default.fileExists(atPath: worktreePath) else { return }
         let parent = URL(fileURLWithPath: worktreePath).deletingLastPathComponent().path
         guard resolved(parent) == resolved(projectPath + "/.worktrees"),
+              (try? FileManager.default.destinationOfSymbolicLink(atPath: projectPath + "/.worktrees")) == nil,
               (try? FileManager.default.destinationOfSymbolicLink(atPath: worktreePath)) == nil else {
             throw GitFailure(command: "remove \(worktreePath)", message: "\(worktreePath) is not a worktree of this project.")
         }
         try FileManager.default.removeItem(atPath: worktreePath)
     }
 
-    struct Registered: Equatable { var lockReason: String? }
+    struct Registered: Equatable {
+        var lockReason: String?
+        /// The ref checked out there, `refs/heads/<name>`; nil when detached.
+        var branch: String? = nil
+    }
 
     /// git's record of the worktree at `worktreePath`, with the reason it is locked for, if it is;
     /// nil when git does not know it.
@@ -128,9 +149,11 @@ public enum TaskRemoval {
                 current = resolved(String(line.dropFirst("worktree ".count)))
                 if current == wanted { found = Registered(lockReason: nil) }
             } else if current == wanted, line == "locked" {
-                found = Registered(lockReason: "")
+                found?.lockReason = ""
             } else if current == wanted, line.hasPrefix("locked ") {
-                found = Registered(lockReason: String(line.dropFirst("locked ".count)))
+                found?.lockReason = String(line.dropFirst("locked ".count))
+            } else if current == wanted, line.hasPrefix("branch ") {
+                found?.branch = String(line.dropFirst("branch ".count))
             }
         }
         return found
