@@ -71,4 +71,25 @@ import Testing
         sheet.draft.promptText = "fix it"
         #expect(sheet.previewCommand == "claude --model opus --effort high 'fix it'")
     }
+
+    /// Switching agent swaps the popup's list for the new agent's, and closes an open popup.
+    @Test func switchingAgentReloadsAndClosesTheCompletions() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("nt-skills-\(UUID().uuidString)")
+        for (path, name) in [(".claude/skills/brainstorming", "brainstorming"), (".codex/skills/imagegen", "imagegen")] {
+            let folder = home.appendingPathComponent(path)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try "---\nname: \(name)\n---\n".write(to: folder.appendingPathComponent("SKILL.md"), atomically: true, encoding: .utf8)
+        }
+        let sheet = NewTaskModel(project: project, agents: AgentPresets.all, available: ["claude", "codex"],
+                                 draft: TaskDraft(baseBranch: "main", agentId: "claude", model: "", reasoning: nil),
+                                 rememberedModels: [:], catalogue: { [opus] _ in [opus] }, branches: { ["main"] },
+                                 submit: { _ in }, home: home)
+        await sheet.loadCatalogue()
+        #expect(sheet.completions.all.map(\.name) == ["brainstorming"])
+        sheet.completions.visible = sheet.completions.all
+        sheet.selectAgent("codex")
+        await sheet.loadCatalogue()
+        #expect(sheet.completions.all.map(\.name) == ["imagegen"])
+        #expect(!sheet.completions.isOpen)
+    }
 }

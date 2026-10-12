@@ -40,6 +40,10 @@ public final class NewTaskModel: ObservableObject, Identifiable {
     @Published public private(set) var catalogueFailure: String?
     @Published public private(set) var creating = false
     @Published public private(set) var error: CreationFailure?
+    /// The agent's commands and skills for the prompt's `/` popup, read with its models.
+    public let completions = PromptCompletions()
+    /// Whose skills and commands the prompt completes.
+    private let home: URL
     /// The agents whose CLIs the login shell finds, read when the sheet opens.
     public let availableAgents: Set<String>
 
@@ -59,7 +63,9 @@ public final class NewTaskModel: ObservableObject, Identifiable {
                 rememberedModels: [String: String],
                 catalogue: @escaping @Sendable (AgentDefinition) throws -> [AgentModel],
                 branches: @escaping @Sendable () -> [String],
-                submit: @escaping @MainActor (TaskDraft) async throws -> Void) {
+                submit: @escaping @MainActor (TaskDraft) async throws -> Void,
+                home: URL = FileManager.default.homeDirectoryForCurrentUser) {
+        self.home = home
         self.project = project
         self.agents = agents
         self.availableAgents = available
@@ -122,13 +128,17 @@ public final class NewTaskModel: ObservableObject, Identifiable {
     public func loadCatalogue() async {
         catalogueGeneration += 1
         let generation = catalogueGeneration, agent = self.agent, remembered = rememberedModels[agent.id], read = catalogue
-        let result = await BackgroundWork.run { () -> (models: [AgentModel], failure: String?) in
-            do { return (try read(agent), nil) } catch { return ([], error.localizedDescription) }
+        let home = self.home, path = project.path
+        let result = await BackgroundWork.run { () -> (models: [AgentModel], failure: String?, completions: [AgentCompletion]) in
+            let skills = SkillCatalog.discover(agentId: agent.id, projectPath: path, home: home)
+            do { return (try read(agent), nil, skills) } catch { return ([], error.localizedDescription, skills) }
         }
         guard !Task.isCancelled, generation == catalogueGeneration, agent.id == draft.agentId else { return }
         models = result.models
         catalogueFailure = result.failure
         catalogueLoaded = true
+        completions.all = result.completions
+        completions.close()
         if resetModel || !models.contains(where: { $0.id == draft.model }) {
             let preference = ModelPreference.resolve(catalog: models, remembered: remembered)
             draft.model = preference.model

@@ -29,11 +29,15 @@ struct NewTaskSheet: View {
             StepBar(step: step, names: ["Task", "Agent", "Prompt"])
         } content: {
             VStack(alignment: .leading, spacing: Space.block) {
-                switch step {
-                case 1: taskStep
-                case 2: AgentStep(model: model)
-                default: PromptStep(text: $model.draft.promptText)
+                Group {
+                    switch step {
+                    case 1: taskStep
+                    case 2: AgentStep(model: model)
+                    default: PromptStep(text: $model.draft.promptText, agentId: model.draft.agentId, completions: model.completions)
+                    }
                 }
+                // The prompt's popup hangs over the command preview: AiTerm's FrontToBackStack.
+                .zIndex(1)
                 if step > 1 { CommandBlock(caption: "Command", command: model.previewCommand) }
                 if Destination.isShown(onStep: step), let destination { DestinationLine(destination) }
             }
@@ -41,7 +45,8 @@ struct NewTaskSheet: View {
             CreationFooter(step: step, error: model.error,
                            missingAgentNote: Self.footerNote(agents: model.agents, available: model.availableAgents),
                            createLabel: "Create Task", creating: model.creating,
-                           canAdvance: model.canAdvance(step: step), closeList: { false },
+                           canAdvance: model.canAdvance(step: step),
+                           closeList: { Self.closeList(step: step, completions: model.completions) },
                            back: back, advance: advance)
         }
         .task { await model.loadBranches() }
@@ -94,6 +99,13 @@ struct NewTaskSheet: View {
 
     // -- moving between steps -------------------------------------------------------
 
+    /// ⎋ belongs to an open popup first, as AiTerm's `closeOpenList`: only the prompt step has one.
+    static func closeList(step: Int, completions: PromptCompletions) -> Bool {
+        guard step == 3, completions.isOpen else { return false }
+        completions.close()
+        return true
+    }
+
     enum BackMove: Equatable { case step(Int), dismiss, stay }
 
     /// ⎋ and Back are one move: a step back, or the sheet closed from the first step — never while
@@ -122,3 +134,14 @@ struct NewTaskSheet: View {
     /// Already past the button's event by the time it dismisses: the create is awaited first.
     private func create() { Task { @MainActor in if await model.create() { dismiss() } } }
 }
+
+#if DEBUG
+extension NewTaskSheet {
+    /// The sheet already on `step`: what only clicks reach in the app, for the tests that host it.
+    func seeded(step: Int) -> Self {
+        var sheet = self
+        sheet._step = State(initialValue: step)
+        return sheet
+    }
+}
+#endif

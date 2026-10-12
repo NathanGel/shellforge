@@ -2,10 +2,12 @@
 import ShellforgeDesign
 import SwiftUI
 
-/// Step 3: the first prompt. AiTerm's completion popup and its hint (M1c-3d) and New Task's Jira
-/// checkbox (M1d) are not here yet.
+/// Step 3: the first prompt, with AiTerm's `/` popup of the agent's commands and skills and its
+/// hint. New Task's Jira checkbox arrives with M1d.
 struct PromptStep: View {
     @Binding var text: String
+    let agentId: String
+    let completions: PromptCompletions
     @State private var editorFocused = false
 
     /// The empty-prompt placeholder sits where `PromptEditor`'s first glyph would: across, its text
@@ -16,6 +18,9 @@ struct PromptStep: View {
     /// A point further down, fitted to where the text view draws its first line rather than derived
     /// from it; bespoke to this one overlay.
     private static var placeholderDrop: CGFloat { 1 }
+    /// Trimmed further than the sheet's own gutters (`Space.margin` on each side) so the completion
+    /// popup doesn't run to the prompt field's own edge. Tuned by eye, not derived from a scale.
+    private static var completionPopupTrim: CGFloat { 40 }
     /// The prompt editor's height. Moved with the step; it was a literal here before.
     private static var editorHeight: CGFloat { 150 }
 
@@ -23,7 +28,8 @@ struct PromptStep: View {
         VStack(alignment: .leading, spacing: Space.block) {
             FormField("First prompt (optional)") {
                 ZStack(alignment: .topLeading) {
-                    PromptEditor(text: $text, onFocusChange: { if editorFocused != $0 { editorFocused = $0 } }, focusOnAppear: true)
+                    PromptEditor(text: $text, agentId: agentId, completions: completions,
+                                 onFocusChange: { if editorFocused != $0 { editorFocused = $0 } }, focusOnAppear: true)
                         .frame(height: Self.editorHeight)
                         .fieldBox(focused: editorFocused)
                     if text.isEmpty {
@@ -31,6 +37,13 @@ struct PromptStep: View {
                             .padding(.horizontal, Self.placeholderInsetX).padding(.top, Self.placeholderInsetY).allowsHitTesting(false)
                     }
                 }
+                .overlay(alignment: .topLeading) {
+                    CompletionPopup(completions: completions,
+                                    width: Sheet.width - 2 * Space.margin - Self.completionPopupTrim)
+                }
+                // Over the hint below it: AiTerm's FrontToBackStack, which needs macOS 15.
+                .zIndex(1)
+                CompletionHint()
             }
         }
     }
