@@ -287,6 +287,7 @@ public final class DaemonClient: Sendable {
         case .sessionChanged: return .sessionChanged(try payload(SessionInfo.self))
         case .sessionClosed: return .sessionClosed(try payload(SessionId.self).sessionId)
         case .usageChanged: return .usageChanged(try payload(UsageSnapshot.self))
+        case .tunnelChanged: return .tunnelChanged(try payload(TunnelInfo.self))
         }
     }
 
@@ -470,6 +471,9 @@ public final class DaemonClient: Sendable {
     struct ChangedResult: Decodable { var changed: Int }
     struct TaskParams: Encodable { var taskId: String }
     struct SessionsParams: Encodable { var sessions: [SessionReport] }
+    struct TunnelStartParams: Encodable { var alias: String, environment: [String: String] }
+    struct TunnelParams: Encodable { var alias: String }
+    struct OkResult: Decodable { var ok: Bool }
 
     /// The daemon's state, which is also yielded as `.snapshot` in the event stream: the daemon
     /// writes it with no pause after reading its state, so it is a barrier between the events
@@ -490,5 +494,15 @@ public final class DaemonClient: Sendable {
     /// The app's tabs, replacing the daemon's last list; returns once the daemon has read them.
     public func updateSessions(_ reports: [SessionReport]) async throws {
         _ = try await request(.sessionsUpdate, params: SessionsParams(sessions: reports), as: Empty.self)
+    }
+
+    /// Starts the `~/.ssh/config` host `alias` as a tunnel, run with `environment` — the app's login
+    /// shell's, which the daemon, started from launchd's, does not have.
+    public func startTunnel(alias: String, environment: [String: String]) async throws {
+        _ = try await request(.tunnelsStart, params: TunnelStartParams(alias: alias, environment: environment), as: OkResult.self)
+    }
+
+    public func stopTunnel(alias: String) async throws {
+        _ = try await request(.tunnelsStop, params: TunnelParams(alias: alias), as: OkResult.self)
     }
 }

@@ -32,6 +32,8 @@ public protocol SessionFeed: AnyObject {
     var statusPublisher: AnyPublisher<HelperStatus, Never> { get }
     var storePublisher: AnyPublisher<SessionStore, Never> { get }
     func markSeen(task: UUID)
+    func startTunnel(alias: String)
+    func stopTunnel(alias: String)
 }
 
 /// The sidebar's state for one window: the shared workspace, this window's tabs, and which task is

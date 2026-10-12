@@ -60,6 +60,7 @@ import Testing
         case (.sessionOpened, .sessionOpened(let session)), (.sessionChanged, .sessionChanged(let session)):
             try Self.expectSame(session, payload)
         case (.usageChanged, .usageChanged(let usage)): try Self.expectSame(usage, payload)
+        case (.tunnelChanged, .tunnelChanged(let tunnel)): try Self.expectSame(tunnel, payload)
         case (_, let event): Issue.record("\(name.rawValue) read as \(event)")
         }
     }
@@ -82,6 +83,9 @@ import Testing
             // ctl's, and usage.get also the liveness check: read as the models the app shares with it.
             case .sessionsList: try Self.expectSame(read([SessionInfo].self), #require(result["result"]))
             case .usageGet: try Self.expectSame(read(UsageSnapshot.self), #require(result["result"]))
+            case .tunnelsStart, .tunnelsStop: #expect(try read(DaemonClient.OkResult.self).ok == field("ok") as? Bool)
+            // ctl's: read as the model the app keeps each tunnel in.
+            case .tunnelsList: try Self.expectSame(read([TunnelInfo].self), #require(result["result"]))
             }
         }
     }

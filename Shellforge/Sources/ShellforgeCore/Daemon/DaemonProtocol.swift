@@ -25,6 +25,11 @@ public enum DaemonMethod: String, CaseIterable, Sendable {
     case sessionsUpdate = "sessions.update"
     /// Also this client's liveness check (`DaemonClient.livenessCheck`): it exists in app mode and costs nothing.
     case usageGet = "usage.get"
+    /// A project's SSH tunnel, started with the app's login environment, or stopped.
+    case tunnelsStart = "tunnels.start"
+    case tunnelsStop = "tunnels.stop"
+    /// Not sent by the app, which has every tunnel from the snapshot and `tunnel.changed`.
+    case tunnelsList = "tunnels.list"
 }
 
 /// An event the daemon broadcasts that Shellforge reads. Any other name — the iTerm2 bridge's, or a
@@ -35,6 +40,7 @@ public enum DaemonEventName: String, CaseIterable, Sendable {
     case sessionChanged = "session.changed"
     case sessionClosed = "session.closed"
     case usageChanged = "usage.changed"
+    case tunnelChanged = "tunnel.changed"
 }
 
 extension DaemonError {

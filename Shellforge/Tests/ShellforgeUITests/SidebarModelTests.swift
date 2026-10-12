@@ -61,6 +61,9 @@ import Testing
     var statusPublisher: AnyPublisher<HelperStatus, Never> { $status.eraseToAnyPublisher() }
     var storePublisher: AnyPublisher<SessionStore, Never> { $store.eraseToAnyPublisher() }
     func markSeen(task: UUID) { seen.append(task) }
+    var tunnelCalls: [String] = []
+    func startTunnel(alias: String) { tunnelCalls.append("start \(alias)") }
+    func stopTunnel(alias: String) { tunnelCalls.append("stop \(alias)") }
 
     /// The daemon saying, at once, each session's state and agent, each in a tab of its own.
     func sayAll(_ sessions: [(state: SessionState, session: String, task: UUID, agent: SessionAgent)]) {

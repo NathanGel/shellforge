@@ -179,7 +179,8 @@ extension iTermShellforgeSidebar {
     /// that folder is the daemon's PYTHONPATH, and iTerm2's own scripts sit at the top of Resources.
     static let link = DaemonLink(daemonDir: Bundle.main.resourceURL?.appendingPathComponent("daemon"),
                                  findPython: { PythonFinder.find(launcher: launcher).map(URL.init(fileURLWithPath:)) },
-                                 reports: { allReports() })
+                                 reports: { allReports() },
+                                 environment: { launcher.environment.variables })
     private static var tick: Timer?
 
     /// Starts the helper and the report tick; both stop at iTermApplicationWillTerminate.

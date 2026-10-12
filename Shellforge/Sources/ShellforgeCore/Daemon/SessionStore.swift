@@ -6,6 +6,8 @@ import Foundation
 public struct SessionStore: Equatable, Sendable {
     public private(set) var sessions: [String: SessionInfo] = [:]
     public private(set) var usage: UsageSnapshot = .empty
+    /// Every tunnel the daemon runs or ran, by alias.
+    public private(set) var tunnels: [String: TunnelInfo] = [:]
     /// Whether the first snapshot has arrived; until it has, nothing is known.
     public private(set) var bootstrapped = false
 
@@ -15,6 +17,7 @@ public struct SessionStore: Equatable, Sendable {
         if case .snapshot(let snapshot) = event {
             sessions = Dictionary(snapshot.sessions.map { ($0.sessionId, $0) }, uniquingKeysWith: { _, last in last })
             usage = snapshot.usage
+            tunnels = Dictionary((snapshot.tunnels ?? []).map { ($0.alias, $0) }, uniquingKeysWith: { _, last in last })
             bootstrapped = true
             return
         }
@@ -23,6 +26,7 @@ public struct SessionStore: Equatable, Sendable {
         case .sessionOpened(let session), .sessionChanged(let session): sessions[session.sessionId] = session
         case .sessionClosed(let id): sessions[id] = nil
         case .usageChanged(let usage): self.usage = usage
+        case .tunnelChanged(let tunnel): tunnels[tunnel.alias] = tunnel
         case .snapshot, .unknown: break
         }
     }

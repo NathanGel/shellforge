@@ -75,6 +75,31 @@ final class DaemonClientTests {
         #expect(try await client.markSeen(task: Self.task) == 2)
     }
 
+    /// A tunnel is started with the app's login environment: the daemon has none of its own.
+    @Test func startingATunnelSendsItsAliasAndTheEnvironment() async throws {
+        server.handler = { req in
+            #expect(req["method"] as? String == "tunnels.start")
+            let params = req["params"] as? [String: Any]
+            #expect(params?["alias"] as? String == "db-staging")
+            #expect((params?["environment"] as? [String: String])?["SSH_AUTH_SOCK"] == "/tmp/agent.sock")
+            return ["id": req["id"]!, "result": ["ok": true]]
+        }
+        try client.connect()
+        #expect(server.waitForClient(timeout: 2))
+        try await client.startTunnel(alias: "db-staging", environment: ["SSH_AUTH_SOCK": "/tmp/agent.sock", "PATH": "/usr/bin"])
+    }
+
+    @Test func stoppingATunnelSendsItsAlias() async throws {
+        server.handler = { req in
+            #expect(req["method"] as? String == "tunnels.stop")
+            #expect((req["params"] as? [String: Any])?["alias"] as? String == "db-staging")
+            return ["id": req["id"]!, "result": ["ok": true]]
+        }
+        try client.connect()
+        #expect(server.waitForClient(timeout: 2))
+        try await client.stopTunnel(alias: "db-staging")
+    }
+
     @Test func aDaemonOfAnotherProtocolVersionIsAMismatch() async throws {
         server.handler = { req in
             ["id": req["id"]!, "result": ["protocolVersion": 2, "connected": true, "sessions": [], "usage": ["claude": NSNull(), "codex": NSNull()]]]
