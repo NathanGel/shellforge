@@ -92,8 +92,9 @@ struct ProjectHeaderRow: View {
         }
     }
 
-    /// What the "+" and the context menu both offer. A review needs a remote to have merge
-    /// requests or branches anyone else pushed, so a project with none cannot start one.
+    /// What the "+" and the context menu both offer. New Review is greyed only for a folder that is
+    /// no repository at all (`.none`); a repository without a remote reads as plain git, and a
+    /// review of one of its local branches works — its branch is then left as it was on removal.
     @ViewBuilder private var newItems: some View {
         Button("New Task…", action: newTask)
         Button("New Review…", action: newReview).disabled(provider == .none)

@@ -100,8 +100,10 @@ extension GitRepository {
         }
         let worktreePath = try prepareWorktree(slug: slug)
         let created = local == nil
+        // AiTerm's five minutes: a checkout killed halfway leaves a locked worktree that every retry
+        // is refused over, which is worse than waiting.
         try run(["worktree", "add", "--lock", "--reason", Self.reviewLockReason]
-                + (created ? ["-b", branch, worktreePath, "origin/" + branch] : [worktreePath, branch]))
+                + (created ? ["-b", branch, worktreePath, "origin/" + branch] : [worktreePath, branch]), timeout: 300)
         // So that a plain `git push` from the review lands on origin's branch. Written as config
         // rather than asked of `--track`, which refuses an `origin/<branch>` that
         // `remote.origin.fetch` does not cover — a single-branch clone's. Best-effort: the checkout
@@ -151,7 +153,7 @@ extension GitRepository {
         catch { return .kept(.originUnreachable(Self.reason(of: error))) }
         if let remote = onOrigin[branch] {
             guard fetched(remote, branch: branch) else { return .kept(.originNotFetched) }
-            guard try !isAncestor(local, of: remote) else { return delete(branch) }
+            guard try !isAncestor(local, of: remote) else { return delete(branch, at: local) }
             return .kept(.unpushed(commits: count(remote, local)))
         }
         // Origin no longer has the branch. Its commits are safe only where they still live: on the
@@ -160,7 +162,7 @@ extension GitRepository {
             onOrigin[target].map { try fetched($0, branch: target) && isAncestor(local, of: $0) } == true
                 || sha("refs/heads/" + target).map { try isAncestor(local, of: $0) } == true)
         guard retained else { return .kept(.unmerged(target: target)) }
-        return delete(branch)
+        return delete(branch, at: local)
     }
 
     /// What origin has for each of `branches` right now: a name absent from the answer is a branch
@@ -185,10 +187,12 @@ extension GitRepository {
         return sha(commit) != nil
     }
 
-    /// `-D` because the question `-d` asks — merged into HEAD or the upstream — is not the one
-    /// answered above, and the project's checkout is usually on some other branch.
-    private func delete(_ branch: String) -> ReviewBranchRelease {
-        do { try run(["branch", "-D", branch]); return .deleted }
+    /// The branch deleted only if it is still at `commit`, the one judged safe above: git refuses
+    /// the update when the ref has moved on since — someone's new commit, not on origin — and the
+    /// branch is kept. AiTerm runs `branch -D` by name; the question `-d` asks — merged into HEAD or
+    /// the upstream — is not the one answered above either way.
+    private func delete(_ branch: String, at commit: String) -> ReviewBranchRelease {
+        do { try run(["update-ref", "-d", "refs/heads/" + branch, commit]); return .deleted }
         catch { return .kept(.notDeleted(Self.reason(of: error))) }
     }
 }

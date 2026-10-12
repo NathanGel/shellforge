@@ -5,8 +5,8 @@ import Foundation
 /// stand-in that times out or records, in the tests that need one — AiTerm's `GitRunning`.
 public protocol GitCommands: Sendable {
     /// `git -C directory args`. `remote` marks a call that talks to origin: it may not prompt for
-    /// credentials, and gets a shorter deadline.
-    func git(_ args: [String], in directory: String, remote: Bool) throws -> ChildOutput
+    /// credentials, and gets a shorter deadline. `timeout`, when given, is the call's own deadline.
+    func git(_ args: [String], in directory: String, remote: Bool, timeout: TimeInterval?) throws -> ChildOutput
 }
 
 /// git as the login shell finds it.
@@ -14,9 +14,9 @@ public struct LauncherGit: GitCommands {
     let launcher: CommandLauncher
     public init(launcher: CommandLauncher) { self.launcher = launcher }
 
-    public func git(_ args: [String], in directory: String, remote: Bool) throws -> ChildOutput {
+    public func git(_ args: [String], in directory: String, remote: Bool, timeout: TimeInterval?) throws -> ChildOutput {
         try launcher.run("git", ["-C", directory] + args, extra: remote ? ["GIT_TERMINAL_PROMPT": "0"] : [:],
-                         timeout: remote ? 30 : 60)
+                         timeout: timeout ?? (remote ? 30 : 60))
     }
 }
 
@@ -39,14 +39,15 @@ public struct GitRepository: Sendable {
 
     /// git's output, trimmed; a refusal throws `GitFailure` with git's words, a timeout `GitTimedOut`.
     @discardableResult
-    func run(_ args: [String], in directory: String? = nil, remote: Bool = false) throws -> String {
-        guard let out = try ask(args, in: directory, remote: remote, none: []) else { return "" }
+    func run(_ args: [String], in directory: String? = nil, remote: Bool = false, timeout: TimeInterval? = nil) throws -> String {
+        guard let out = try ask(args, in: directory, remote: remote, timeout: timeout, none: []) else { return "" }
         return out
     }
 
     /// `run`, with `none`'s exit codes answered as nil: git's way of saying "there is none".
-    func ask(_ args: [String], in directory: String? = nil, remote: Bool = false, none: Set<Int32>) throws -> String? {
-        let out = try commands.git(args, in: directory ?? path, remote: remote)
+    func ask(_ args: [String], in directory: String? = nil, remote: Bool = false, timeout: TimeInterval? = nil,
+             none: Set<Int32>) throws -> String? {
+        let out = try commands.git(args, in: directory ?? path, remote: remote, timeout: timeout)
         let command = "git " + args.joined(separator: " ")
         if out.timedOut { throw GitTimedOut(command: command) }
         if none.contains(out.status) { return nil }

@@ -10,9 +10,9 @@ import Darwin
 /// that could not answer, which is never taken for a "no".
 struct TimingOutGit: GitCommands {
     let prefix: [String], real: LauncherGit
-    func git(_ args: [String], in directory: String, remote: Bool) throws -> ChildOutput {
+    func git(_ args: [String], in directory: String, remote: Bool, timeout: TimeInterval?) throws -> ChildOutput {
         if args.starts(with: prefix) { return ChildOutput(status: 15, stdout: "", stderr: "", timedOut: true) }
-        return try real.git(args, in: directory, remote: remote)
+        return try real.git(args, in: directory, remote: remote, timeout: timeout)
     }
 }
 
@@ -20,12 +20,31 @@ struct TimingOutGit: GitCommands {
 final class RecordingGit: GitCommands, @unchecked Sendable {
     private let lock = NSLock()
     private var recorded: [[String]] = []
+    private var deadlines: [[String]: TimeInterval] = [:]
+    func timeout(of prefix: [String]) -> TimeInterval? { lock.lock(); defer { lock.unlock() }; return deadlines.first { $0.key.starts(with: prefix) }?.value }
     let real: LauncherGit
     init(real: LauncherGit) { self.real = real }
     var calls: [[String]] { lock.lock(); defer { lock.unlock() }; return recorded }
-    func git(_ args: [String], in directory: String, remote: Bool) throws -> ChildOutput {
-        lock.lock(); recorded.append(args); lock.unlock()
-        return try real.git(args, in: directory, remote: remote)
+    func git(_ args: [String], in directory: String, remote: Bool, timeout: TimeInterval?) throws -> ChildOutput {
+        lock.lock(); recorded.append(args); if let timeout { deadlines[args] = timeout }; lock.unlock()
+        return try real.git(args, in: directory, remote: remote, timeout: timeout)
+    }
+}
+
+/// git that, just before the review branch is deleted, moves it on to a new commit: someone
+/// committing to it between the release's judgement and its delete.
+struct RacingGit: GitCommands {
+    let branch: String, real: LauncherGit
+    func git(_ args: [String], in directory: String, remote: Bool, timeout: TimeInterval?) throws -> ChildOutput {
+        let deleting = (args.first == "branch" && args.contains(branch)) || (args.first == "update-ref" && args.contains("-d"))
+        if deleting {
+            let tree = try real.git(["rev-parse", branch + "^{tree}"], in: directory, remote: false, timeout: nil).stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+            let parent = try real.git(["rev-parse", branch], in: directory, remote: false, timeout: nil).stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+            let newer = try real.git(["commit-tree", tree, "-p", parent, "-m", "pushed meanwhile"], in: directory, remote: false, timeout: nil)
+                .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+            _ = try real.git(["update-ref", "refs/heads/" + branch, newer], in: directory, remote: false, timeout: nil)
+        }
+        return try real.git(args, in: directory, remote: remote, timeout: timeout)
     }
 }
 
@@ -233,7 +252,27 @@ final class RecordingGit: GitCommands, @unchecked Sendable {
         #expect(recording.calls.contains { $0.starts(with: ["worktree", "add", "--lock", "--reason", GitRepository.reviewLockReason]) })
     }
 
+    /// A checkout killed halfway leaves a locked worktree every retry is refused over: it gets
+    /// AiTerm's five minutes, not the minute other git calls get.
+    @Test func aReviewCheckoutGetsFiveMinutes() throws {
+        let repo = try repoWithRemoteOnlyBranch()
+        let recording = RecordingGit(real: git)
+        _ = try repository(repo, git: recording).addReviewWorktree(slug: "review-mr-branch", branch: "feat/mr-branch")
+        #expect(recording.timeout(of: ["worktree", "add"]) == 300)
+    }
+
     // -- releasing a review's branch ----------------------------------------------------------
+
+    /// The delete names the commit that was judged safe: a branch moved on meanwhile — someone's
+    /// new commit, not on origin — is kept rather than deleted with it.
+    @Test func aReviewBranchMovedOnWhileBeingReleasedIsKept() throws {
+        let repo = try repoWithRemoteOnlyBranch()
+        let path = try repository(repo).addReviewWorktree(slug: "review-mr-branch", branch: "feat/mr-branch")
+        try removeWorktree(path, in: repo)
+        let release = repository(repo, git: RacingGit(branch: "feat/mr-branch", real: git)).releaseReviewBranch("feat/mr-branch", target: "main")
+        #expect(try hasLocalBranch("feat/mr-branch", in: repo), "the new commit went with the branch: \(release)")
+        guard case .kept(.notDeleted) = release else { Issue.record("expected kept as not deleted, got \(release)"); return }
+    }
 
     /// Deleted when every commit on it is on origin, kept — and why — when some are not. The remote
     /// branch is never touched.
