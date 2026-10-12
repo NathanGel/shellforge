@@ -24,15 +24,53 @@ public struct CreationFailure: Equatable {
     }
 }
 
-/// The New Task sheet's state: the draft, the chosen agent's models, the project's branches, and
-/// the one create call. AiTerm's `CreationModel<TaskCreation>` on an `ObservableObject` (macOS 13
-/// has no `@Observable`), without its Jira search (M1d) and prompt completions (M1c-3d).
+/// What a creation sheet is for — New Task or New Review — and what that changes: AiTerm's
+/// `CreationKind`. The rest of `CreationModel` is the same for both.
 @MainActor
-public final class NewTaskModel: ObservableObject, Identifiable {
+public protocol CreationKind {
+    associatedtype Draft: AgentDraft
+    /// What the sheet's search field lists: a Jira ticket, a merge request.
+    associatedtype Item: Identifiable & Equatable
+    /// The worktree directory the draft wants, before an unused one is found.
+    static func slug(of draft: Draft) -> String
+    /// The agent's first prompt, as the command will carry it.
+    static func prompt(of draft: Draft) -> String?
+    /// Whether the first step is filled in enough to go on.
+    static func firstStepDone(_ draft: Draft) -> Bool
+    /// The project's branches, once read: what the draft takes from them, given the draft it opened with.
+    static func branchesLoaded(_ found: [String], into draft: inout Draft, opened: Draft)
+}
+
+/// New Task: a ticket, a new branch from a base, and the ticket's details in the prompt.
+public enum TaskCreation: CreationKind {
+    public typealias Draft = TaskDraft
+    public typealias Item = JiraTicket
+    public static func slug(of draft: TaskDraft) -> String { draft.worktreeSlug }
+    public static func prompt(of draft: TaskDraft) -> String? {
+        AgentCommand.composePrompt(userText: draft.promptText, ticket: draft.ticket, appendTicket: draft.appendTicket)
+    }
+    public static func firstStepDone(_ draft: TaskDraft) -> Bool {
+        !draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+    /// The base the draft opened with is replaced by the repository's default, unless the person
+    /// picked another meanwhile.
+    public static func branchesLoaded(_ found: [String], into draft: inout TaskDraft, opened: TaskDraft) {
+        if draft.baseBranch == opened.baseBranch, let first = found.first { draft.baseBranch = first }
+    }
+}
+
+/// New Task's model, as every caller names it.
+public typealias NewTaskModel = CreationModel<TaskCreation>
+
+/// A creation sheet's state: the draft, the chosen agent's models, the project's branches, the
+/// search field, and the one create call. AiTerm's `CreationModel` on an `ObservableObject` (macOS 13
+/// has no `@Observable`).
+@MainActor
+public final class CreationModel<Kind: CreationKind>: ObservableObject, Identifiable {
     public nonisolated let id = UUID()
     public let project: Project
     public let agents: [AgentDefinition]
-    @Published public var draft: TaskDraft
+    @Published public var draft: Kind.Draft
     @Published public private(set) var branches: [String] = []
     @Published public private(set) var models: [AgentModel] = []
     @Published public private(set) var catalogueLoaded = false
@@ -40,14 +78,15 @@ public final class NewTaskModel: ObservableObject, Identifiable {
     @Published public private(set) var catalogueFailure: String?
     @Published public private(set) var creating = false
     @Published public private(set) var error: CreationFailure?
-    /// The ticket field: what is typed, what the last search found, and why it found nothing.
+    /// The search field — a ticket's, a merge request's: what is typed, what the last search found,
+    /// and why it found nothing.
     @Published public var query = ""
-    @Published public private(set) var results: [JiraTicket] = []
-    /// Whether the ticket list hangs open under its field. AiTerm keeps this in the sheet; here the
-    /// model holds it, so the ways it closes — ⎋, a click past it, leaving the step — are testable.
-    @Published public var ticketsOpen = false
+    @Published public private(set) var results: [Kind.Item] = []
+    /// Whether the list hangs open under its field. AiTerm keeps this in the sheet; here the model
+    /// holds it, so the ways it closes — ⎋, a click past it, leaving the step — are testable.
+    @Published public var listOpen = false
     @Published public private(set) var searchError: String?
-    private let searchIssues: @MainActor (String) async throws -> [JiraTicket]
+    private let searchItems: @MainActor (String) async throws -> [Kind.Item]
     private var searchTask: Task<Void, Never>?
     private var searchGeneration = 0
     /// The agent's commands and skills for the prompt's `/` popup, read with its models.
@@ -60,29 +99,28 @@ public final class NewTaskModel: ObservableObject, Identifiable {
     private let rememberedModels: [String: String]
     private let catalogue: @Sendable (AgentDefinition) throws -> [AgentModel]
     private let listBranches: @Sendable () -> [String]
-    private let submit: @MainActor (TaskDraft) async throws -> Void
+    private let submit: @MainActor (Kind.Draft) async throws -> Void
     private var catalogueGeneration = 0
     private var resetModel = false
-    /// The base branch the draft opened with: replaced by the repository's default once the
-    /// branches are read, unless the person picked another meanwhile.
-    private let openedBase: String
+    /// The draft as the sheet opened with it, for what the branches, once read, may replace.
+    private let opened: Kind.Draft
     /// `worktreeSlug` stats the worktree directory; remembered per slug so a redraw does not.
     private var unusedSlugMemo: (slug: String, unused: String)?
 
-    public init(project: Project, agents: [AgentDefinition], available: Set<String>, draft: TaskDraft,
+    public init(project: Project, agents: [AgentDefinition], available: Set<String>, draft: Kind.Draft,
                 rememberedModels: [String: String],
                 catalogue: @escaping @Sendable (AgentDefinition) throws -> [AgentModel],
                 branches: @escaping @Sendable () -> [String],
-                submit: @escaping @MainActor (TaskDraft) async throws -> Void,
-                searchIssues: @escaping @MainActor (String) async throws -> [JiraTicket] = { _ in [] },
+                submit: @escaping @MainActor (Kind.Draft) async throws -> Void,
+                search: @escaping @MainActor (String) async throws -> [Kind.Item] = { _ in [] },
                 home: URL) {
         self.home = home
-        self.searchIssues = searchIssues
+        self.searchItems = search
         self.project = project
         self.agents = agents
         self.availableAgents = available
         self.draft = draft
-        self.openedBase = draft.baseBranch
+        self.opened = draft
         self.rememberedModels = rememberedModels
         self.catalogue = catalogue
         self.listBranches = branches
@@ -94,7 +132,7 @@ public final class NewTaskModel: ObservableObject, Identifiable {
 
     /// The worktree directory the sheet names: the one create will make.
     public var worktreeSlug: String {
-        let slug = draft.worktreeSlug
+        let slug = Kind.slug(of: draft)
         guard !slug.isEmpty else { return "" }
         if let memo = unusedSlugMemo, memo.slug == slug { return memo.unused }
         let unused = BranchNaming.unused(slug, in: project.path)
@@ -105,7 +143,7 @@ public final class NewTaskModel: ObservableObject, Identifiable {
     /// The exact command the task will run, built without touching the disk.
     public var previewCommand: String {
         AgentCommand.previewCommand(agent: agent, model: draft.model, reasoning: draft.reasoning,
-                                    prompt: AgentCommand.composePrompt(userText: draft.promptText, ticket: draft.ticket, appendTicket: draft.appendTicket))
+                                    prompt: Kind.prompt(of: draft))
     }
 
     public var selectedModelIsCurrent: Bool { catalogueLoaded && models.contains { $0.id == draft.model } }
@@ -114,9 +152,10 @@ public final class NewTaskModel: ObservableObject, Identifiable {
     /// still offers.
     public var agentIsReady: Bool { availableAgents.contains(draft.agentId) && selectedModelIsCurrent }
 
-    /// Step 1 needs a name and nothing else; the agent and prompt steps need an agent that can run.
+    /// Step 1 needs what its kind asks — a name, for a task; the agent and prompt steps need an
+    /// agent that can run.
     public func canAdvance(step: Int) -> Bool {
-        guard !creating, !draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        guard !creating, Kind.firstStepDone(draft) else { return false }
         return step == 1 || agentIsReady
     }
 
@@ -167,7 +206,7 @@ public final class NewTaskModel: ObservableObject, Identifiable {
         let found = await BackgroundWork.run { list() }
         guard !Task.isCancelled else { return }
         branches = found
-        if draft.baseBranch == openedBase, let first = found.first { draft.baseBranch = first }
+        Kind.branchesLoaded(found, into: &draft, opened: opened)
     }
 
     /// False means nothing was created and the same draft can be corrected — notably when git
@@ -181,13 +220,7 @@ public final class NewTaskModel: ObservableObject, Identifiable {
         return false
     }
 
-    // -- the Jira ticket field (AiTerm's CreationModel search) --------------------------------
-
-    /// The ticket field's placeholder names what it searches: the linked Jira projects, or — with
-    /// none linked — every project the account can see.
-    public var ticketPlaceholder: String {
-        project.jiraProjects.isEmpty ? "Search by key or title" : "Search \(project.jiraProjects.keyList) by key or title"
-    }
+    // -- the search field (AiTerm's CreationModel search) --------------------------------------
 
     public func cancelSearch() {
         searchGeneration += 1
@@ -214,7 +247,7 @@ public final class NewTaskModel: ObservableObject, Identifiable {
         do {
             if debounce { try await Task.sleep(for: .milliseconds(250)) }
             try Task.checkCancellation()
-            let found = try await searchIssues(text)
+            let found = try await searchItems(text)
             guard !Task.isCancelled, generation == searchGeneration else { return }
             results = found; searchError = nil
         } catch {
@@ -222,6 +255,41 @@ public final class NewTaskModel: ObservableObject, Identifiable {
             results = []
             searchError = error.localizedDescription
         }
+    }
+
+    /// Names the missing CLIs and where Settings installs them; nothing when every one is there.
+    public static func missingAgentNote(agents: [AgentDefinition], available: Set<String>) -> String? {
+        let missing = agents.filter { !available.contains($0.id) }.map(\.name)
+        guard let last = missing.last else { return nil }
+        let names = missing.count == 1 ? last : missing.dropLast().joined(separator: ", ") + " and " + last
+        return names + (missing.count == 1 ? " isn’t installed. Install it" : " aren’t installed. Install them")
+            + " in Settings › Agents."
+    }
+}
+
+extension CreationModel where Kind == TaskCreation {
+    /// New Task's model, its search being Jira's.
+    public convenience init(project: Project, agents: [AgentDefinition], available: Set<String>, draft: TaskDraft,
+                            rememberedModels: [String: String],
+                            catalogue: @escaping @Sendable (AgentDefinition) throws -> [AgentModel],
+                            branches: @escaping @Sendable () -> [String],
+                            submit: @escaping @MainActor (TaskDraft) async throws -> Void,
+                            searchIssues: @escaping @MainActor (String) async throws -> [JiraTicket] = { _ in [] },
+                            home: URL) {
+        self.init(project: project, agents: agents, available: available, draft: draft, rememberedModels: rememberedModels,
+                  catalogue: catalogue, branches: branches, submit: submit, search: searchIssues, home: home)
+    }
+
+    /// The ticket list's open flag, as New Task names it.
+    public var ticketsOpen: Bool {
+        get { listOpen }
+        set { listOpen = newValue }
+    }
+
+    /// The ticket field's placeholder names what it searches: the linked Jira projects, or — with
+    /// none linked — every project the account can see.
+    public var ticketPlaceholder: String {
+        project.jiraProjects.isEmpty ? "Search by key or title" : "Search \(project.jiraProjects.keyList) by key or title"
     }
 
     /// AiTerm's `jiraSearcher`: an empty query lists the person's open tickets, across every linked
@@ -240,14 +308,5 @@ public final class NewTaskModel: ObservableObject, Identifiable {
                 ? try await client.myOpenIssues(projects: jiraProjects)
                 : try await client.search(text: text, projects: jiraProjects)
         }
-    }
-
-    /// Names the missing CLIs and where Settings installs them; nothing when every one is there.
-    public static func missingAgentNote(agents: [AgentDefinition], available: Set<String>) -> String? {
-        let missing = agents.filter { !available.contains($0.id) }.map(\.name)
-        guard let last = missing.last else { return nil }
-        let names = missing.count == 1 ? last : missing.dropLast().joined(separator: ", ") + " and " + last
-        return names + (missing.count == 1 ? " isn’t installed. Install it" : " aren’t installed. Install them")
-            + " in Settings › Agents."
     }
 }

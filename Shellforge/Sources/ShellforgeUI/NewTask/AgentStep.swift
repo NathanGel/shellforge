@@ -6,8 +6,8 @@ import SwiftUI
 /// Step 2. An agent whose CLI is not on the login shell's `PATH` cannot be picked, and the sheet
 /// says which one and where to install it instead of letting the task open a tab that prints
 /// "command not found". With none installed, Continue stays disabled.
-struct AgentStep: View {
-    @ObservedObject var model: NewTaskModel
+struct AgentStep<Kind: CreationKind>: View {
+    @ObservedObject var model: CreationModel<Kind>
 
     /// What stands where the model picker would, when an agent lists no models: AiTerm's per-agent
     /// sentence for a preset, the generic one for anyone else.
@@ -37,7 +37,7 @@ struct AgentStep: View {
             FormField("Agent") {
                 AgentSegmented(agents: model.agents, available: model.availableAgents,
                                selection: Binding(get: { model.draft.agentId }, set: { model.selectAgent($0) }))
-                if let note = NewTaskModel.missingAgentNote(agents: model.agents, available: model.availableAgents) {
+                if let note = CreationModel<Kind>.missingAgentNote(agents: model.agents, available: model.availableAgents) {
                     HelpText(note, tone: .warning)
                 }
             }

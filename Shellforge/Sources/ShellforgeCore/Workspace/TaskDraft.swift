@@ -57,14 +57,4 @@ public struct TaskDraft: Equatable, Sendable {
         guard type != branchType else { return }
         branchType = type; typeEdited = true
     }
-
-    /// Switching model can change which reasoning levels exist, so a level the new model does not
-    /// offer becomes that model's default. `efforts` and `defaultEffort` are the agent's own, for a
-    /// model that publishes none (AiTerm's `Harness.efforts(for:)` and `defaultEffort(for:)`).
-    public mutating func setModel(_ id: String, catalog: [AgentModel], efforts: [String], defaultEffort: String?) {
-        model = id
-        let picked = catalog.first { $0.id == id }
-        if let current = reasoning, (picked?.efforts ?? efforts).contains(current) { return }
-        reasoning = picked.map(\.defaultEffort) ?? defaultEffort
-    }
 }
