@@ -86,7 +86,7 @@ import Testing
         host.tabs[1] = TabSnapshot(id: "t2-pane", tabId: 2, title: "b", taskId: task, projectId: project)
         host.selectedTabId = "t2-pane"
         model.closeCurrentTab(ofTask: task)
-        #expect(host.closed == ["t2"])
+        #expect(host.closed == ["t2-pane"], "tab 2, by the name the window has for it now")
     }
 
     // -- M4f: panes --
@@ -137,5 +137,30 @@ import Testing
         #expect(model.closeTitle(ofTab: "t1") == "Close Pane" && model.closeTitle(ofTask: task) == "Close Pane")
         model.closeTab("t1")
         #expect(model.closeTitle(ofTab: "t1") == "Close Tab")
+    }
+
+    /// Another task's tab is in front: the task row brings its own tab forward before closing a
+    /// pane of it, so the pane closed is one the user sees.
+    @Test func theTaskRowShowsItsTabBeforeClosingAPane() throws {
+        let (model, host, project, task) = try model()
+        let other = UUID()
+        host.tabs = [split("t1", 1, task: task, project: project, panes: 2),
+                     TabSnapshot(id: "b1", tabId: 2, title: "b", taskId: other, projectId: project)]
+        host.selectedTabId = "b1"
+        host.onChange?()
+        model.closeCurrentTab(ofTask: task)
+        #expect(host.selectedTabId == "t1")
+        #expect(host.closedPanes == ["t1"])
+    }
+
+    /// Focusing the other pane of a split tab renames the tab's session with no refresh: Close Pane
+    /// from the row still finds the tab, by its tab id, and closes a pane, not the whole tab.
+    @Test func closePaneFindsTheTabAfterTheFocusMoved() throws {
+        let (model, host, _, _) = try model()
+        host.tabs = [split("o1", 1, task: nil, project: nil, panes: 2)]
+        host.onChange?()
+        host.tabs[0].id = "o1-other-pane"
+        model.closeTab("o1")
+        #expect(host.closedPanes == ["o1-other-pane"] && host.closed.isEmpty)
     }
 }

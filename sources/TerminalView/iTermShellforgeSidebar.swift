@@ -116,6 +116,8 @@ final class iTermShellforgeHost: TerminalHost {
             .PTYSessionPresentationNameDidChange,
             .iTermTabDidClose,
             .init(iTermSelectedTabDidChange),
+            // Another pane of a split tab focused: the tab's row is named by its focused pane.
+            .init(kCurrentSessionDidChange),
         ]
         for name in names {
             observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
