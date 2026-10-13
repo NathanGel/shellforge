@@ -367,7 +367,8 @@ extension iTermShellforgeSidebar {
     }
 
     /// The first window's sidebar: where a tunnel's start is checked and its keep-running read.
-    fileprivate static var anySidebar: SidebarModel? { sidebars.allObjects.first }
+    /// The key window's sidebar, else the first: where a tunnel's start is checked and a problem said.
+    fileprivate static var anySidebar: SidebarModel? { keySidebar ?? sidebars.allObjects.first }
 }
 
 @MainActor
@@ -399,9 +400,11 @@ private final class TunnelMenuController: NSObject, NSMenuItemValidation {
         }
     }
 
+    /// Start or Stop by the tunnel's state now, not the one the item was built with: Open Quickly
+    /// keeps the items it listed, and a tunnel can have changed since.
     @objc func choose(_ sender: NSMenuItem) {
         guard let alias = sender.representedObject as? String, let sidebar = iTermShellforgeSidebar.anySidebar else { return }
-        if sender.tag == 1 { sidebar.startTunnel(alias) } else { sidebar.stopTunnel(alias) }
+        if [.connecting, .up].contains(sidebar.tunnelState(alias)) { sidebar.stopTunnel(alias) } else { sidebar.startTunnel(alias) }
     }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {

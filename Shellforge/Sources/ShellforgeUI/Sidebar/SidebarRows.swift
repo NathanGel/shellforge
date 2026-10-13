@@ -66,7 +66,9 @@ struct ProjectHeaderRow: View {
     /// An empty project has nothing to fold; its terminals are something.
     private var collapses: Bool { Self.collapses(node) }
 
-    static func collapses(_ node: ProjectNode) -> Bool { !node.tasks.isEmpty || !node.terminals.isEmpty }
+    static func collapses(_ node: ProjectNode) -> Bool {
+        !node.tasks.isEmpty || !node.terminals.isEmpty || !node.project.tunnels.isEmpty
+    }
 
     var body: some View {
         HStack(spacing: scale(Space.base)) {

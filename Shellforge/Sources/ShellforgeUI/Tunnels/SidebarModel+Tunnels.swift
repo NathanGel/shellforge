@@ -24,6 +24,21 @@ public struct TunnelRowItem: Equatable, Identifiable, Sendable {
     public var ports: String { forwards.map { String($0.localPort) }.joined(separator: ", ") }
 }
 
+/// The on-launch tunnels asked of the connected helper, once for the app however many windows'
+/// sidebars watch it: shared per workspace document, as `RemovalBoard` is.
+@MainActor
+final class LaunchStarts {
+    var requested: Set<String> = []
+    private static let boards = NSMapTable<WorkspaceDocument, LaunchStarts>.weakToStrongObjects()
+
+    static func shared(for document: WorkspaceDocument) -> LaunchStarts {
+        if let board = boards.object(forKey: document) { return board }
+        let board = LaunchStarts()
+        boards.setObject(board, forKey: document)
+        return board
+    }
+}
+
 /// A project's tunnels: kept with the project, read against `~/.ssh/config`, started and stopped
 /// through the helper, started by themselves by their rule, and their ports handed to a task's shell.
 extension SidebarModel {
@@ -101,6 +116,14 @@ extension SidebarModel {
 
     /// Starts `alias`'s tunnel through the helper; refused, and said, when the config has no such host.
     public func startTunnel(_ alias: String) {
+        // Asked before the config was read: read it, then answer — not "isn't in ~/.ssh/config".
+        guard sshHosts != nil else {
+            Task {
+                _ = await loadSSHHosts()
+                startTunnel(alias)
+            }
+            return
+        }
         guard sshHosts?[alias] != nil else {
             lastError = "\(alias) isn’t in ~/.ssh/config."
             return
@@ -120,8 +143,12 @@ extension SidebarModel {
     /// tab's ssh ends.
     public func answerInTab(_ alias: String, in projectId: UUID) {
         guard let project = project(projectId) else { return }
-        guard let forward = sshHosts?[alias]?.forwards.first else {
+        guard let sshHost = sshHosts?[alias] else {
             lastError = "\(alias) isn’t in ~/.ssh/config."
+            return
+        }
+        guard let forward = sshHost.forwards.first else {
+            lastError = "\(alias) forwards no local port to watch."
             return
         }
         host.openTab(in: project.path, title: "ssh \(alias)", command: TunnelDefinition.tabCommand(alias: alias))
@@ -133,10 +160,17 @@ extension SidebarModel {
     /// has bound it, so a tab opened as its tunnel starts gets it too.
     public func portEnvironment(for projectId: UUID, starting: Set<String> = []) -> [String: String] {
         guard let project = project(projectId) else { return [:] }
+        // Two aliases that name one variable (db-prod, db.prod): neither is set, rather than one
+        // silently winning.
+        var counts: [String: Int] = [:]
+        for tunnel in project.tunnels { counts[TunnelDefinition.environmentName(alias: tunnel.alias), default: 0] += 1 }
         var environment: [String: String] = [:]
         for tunnel in project.tunnels where starting.contains(tunnel.alias) || [.connecting, .up].contains(tunnelState(tunnel.alias)) {
-            if let port = sshHosts?[tunnel.alias]?.forwards.first?.localPort {
-                environment[TunnelDefinition.environmentName(alias: tunnel.alias)] = String(port)
+            let name = TunnelDefinition.environmentName(alias: tunnel.alias)
+            guard counts[name] == 1 else { continue }
+            // The first forward is the variable's own; each further one is numbered from 2.
+            for (index, forward) in (sshHosts?[tunnel.alias]?.forwards ?? []).enumerated() {
+                environment[index == 0 ? name : "\(name)_\(index + 1)"] = String(forward.localPort)
             }
         }
         return environment

@@ -114,7 +114,10 @@ public final class SidebarModel: ObservableObject {
     @Published public internal(set) var sshHosts: [String: SSHHost]?
     var readingSSH = false
     /// The `.onLaunch` tunnels asked of the helper now connected; emptied when it goes.
-    var launchRequested: Set<String> = []
+    var launchRequested: Set<String> {
+        get { LaunchStarts.shared(for: document).requested }
+        set { LaunchStarts.shared(for: document).requested = newValue }
+    }
     /// The tab selected at the last refresh: moving to another is opening it.
     private var lastSelectedTab: String?
 

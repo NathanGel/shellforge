@@ -112,11 +112,11 @@ import Testing
         let (model, host, feed, _, project) = try await model(tunnels: [TunnelDefinition(alias: "db"), TunnelDefinition(alias: "web")])
         say(feed, [TunnelInfo(alias: "db", state: .up, error: nil, since: 1),
                    TunnelInfo(alias: "web", state: .failed, error: "bind: Address already in use", since: 1)])
-        #expect(await eventually { model.portEnvironment(for: project) == ["SHELLFORGE_TUNNEL_DB_PORT": "5432"] })
+        #expect(await eventually { model.portEnvironment(for: project) == ["SHELLFORGE_TUNNEL_DB_PORT": "5432", "SHELLFORGE_TUNNEL_DB_PORT_2": "6379"] })
         var draft = TaskDraft(baseBranch: "main", agentId: "claude", model: "opus", reasoning: nil)
         draft.setTitle("Login")
         try await model.newTask(draft: draft, in: project)
-        #expect(host.opened.last?.environment == ["SHELLFORGE_TUNNEL_DB_PORT": "5432"])
+        #expect(host.opened.last?.environment == ["SHELLFORGE_TUNNEL_DB_PORT": "5432", "SHELLFORGE_TUNNEL_DB_PORT_2": "6379"])
     }
 
     @Test func theRowSaysEachState() {
@@ -151,7 +151,7 @@ import Testing
         var draft = TaskDraft(baseBranch: "main", agentId: "claude", model: "opus", reasoning: nil)
         draft.setTitle("Login")
         try await model.newTask(draft: draft, in: project)
-        #expect(host.opened.last?.environment == ["SHELLFORGE_TUNNEL_DB_PORT": "5432"], "the port is the config's, set as it starts")
+        #expect(host.opened.last?.environment == ["SHELLFORGE_TUNNEL_DB_PORT": "5432", "SHELLFORGE_TUNNEL_DB_PORT_2": "6379"], "the port is the config's, set as it starts")
         #expect(await eventually { feed.tunnelCalls == ["start db"] })
     }
 
@@ -288,5 +288,59 @@ import Testing
         #expect(await eventually { model.sshHosts != nil })
         model.answerInTab("db", in: project)
         #expect(feed.tunnelCalls == ["hold db 5432 at ::1"])
+    }
+
+    // -- M5a --
+
+    @Test func onLaunchIsAskedOncePerAppAcrossWindows() async throws {
+        let feed = FakeFeed()
+        let (first, _, _, document, _) = try await model(tunnels: [TunnelDefinition(alias: "db", autoStart: .onLaunch)], feed: feed)
+        let second = SidebarModel(host: FakeTerminalHost(), document: document, launcher: first.launcher, feed: feed,
+                                  jiraSettings: { nil }, sshConfig: first.sshConfig)
+        say(feed, [])
+        try await Task.sleep(for: .milliseconds(400))
+        #expect(feed.tunnelCalls == ["start db"], "two windows, one start")
+        _ = second
+    }
+
+    @Test func startingBeforeTheConfigIsReadReadsIt() async throws {
+        let (model, _, feed, _, _) = try await model(tunnels: [TunnelDefinition(alias: "db")])
+        model.sshHosts = nil
+        model.startTunnel("db")
+        #expect(await eventually { feed.tunnelCalls == ["start db"] })
+        #expect(model.lastError == nil)
+    }
+
+    @Test func aProjectWithOnlyTunnelsFolds() async throws {
+        let (model, _, _, _, _) = try await model(tunnels: [TunnelDefinition(alias: "db")])
+        let node = try #require(model.tree.projects.first)
+        #expect(ProjectHeaderRow.collapses(node))
+    }
+
+    @Test func thePortsTooltipIsForARunningTunnel() {
+        var row = upRow(since: 0)
+        #expect(TunnelRowView.portsHelp(row) != nil)
+        row.state = .stopped
+        #expect(TunnelRowView.portsHelp(row) == nil, "nothing holds the ports of a stopped tunnel")
+    }
+
+    @Test func answerInTabOnAHostWithNoForwardSaysSo() async throws {
+        let config = "Host db\n  LocalForward 5432 db:5432\nHost plain\n  HostName p\n"
+        let (model, _, feed, _, project) = try await model(tunnels: [TunnelDefinition(alias: "plain")], config: config)
+        #expect(await eventually { model.sshHosts != nil })
+        model.answerInTab("plain", in: project)
+        #expect(model.lastError == "plain forwards no local port to watch.")
+        #expect(feed.tunnelCalls.isEmpty)
+    }
+
+    @Test func collidingNamesAreLeftOutAndExtraPortsAreNumbered() async throws {
+        let config = "Host db-prod\n  LocalForward 5432 a:5432\nHost db.prod\n  LocalForward 5433 b:5432\n"
+            + "Host web\n  LocalForward 8080 w:80\n  LocalForward 8443 w:443\n"
+        let (model, _, feed, _, project) = try await model(tunnels: [TunnelDefinition(alias: "db-prod"), TunnelDefinition(alias: "db.prod"),
+                                                                     TunnelDefinition(alias: "web")], config: config)
+        say(feed, ["db-prod", "db.prod", "web"].map { TunnelInfo(alias: $0, state: .up, error: nil, since: 1) })
+        #expect(await eventually {
+            model.portEnvironment(for: project) == ["SHELLFORGE_TUNNEL_WEB_PORT": "8080", "SHELLFORGE_TUNNEL_WEB_PORT_2": "8443"]
+        }, "db-prod and db.prod name the same variable: neither is set")
     }
 }
