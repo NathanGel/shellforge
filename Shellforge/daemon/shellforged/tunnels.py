@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any
 
 from . import protocol, traffic
+from .offload import run_detached
 
 log = logging.getLogger(__name__)
 
@@ -159,12 +160,14 @@ class TunnelSupervisor:
                  up_after: float = 2.0, backoff_start: float = 1.0, backoff_cap: float = 30.0, steady_after: float = 60.0,
                  ledger: Path | None = None, ps: Callable[[int], str | None] = ps_command, traffic_every: float = 5.0,
                  sample: Callable[[list[int]], Awaitable[dict[int, tuple[int, int]]]] = traffic.sample,
-                 probe_every: float = 1.0, hold_timeout: float = 120.0):
+                 probe_every: float = 1.0, hold_timeout: float = 120.0, probe_up_every: float = 5.0):
         self.broadcast, self.clock = broadcast, clock
         self.up_after, self.backoff_start, self.backoff_cap, self.steady_after = up_after, backoff_start, backoff_cap, steady_after
         self.ledger, self.ps = ledger, ps
         self.traffic_every, self.sample = traffic_every, sample
         self.probe_every, self.hold_timeout = probe_every, hold_timeout
+        # Once a tab's forward accepts, its end is noticed within this, not within `probe_every`.
+        self.probe_up_every = probe_up_every
         self._sampler: asyncio.Task[None] | None = None
         self._tunnels: dict[str, _Tunnel] = {}
         # Ledger entries ps could not answer for: kept as they were, for the next daemon to try.
@@ -260,7 +263,7 @@ class TunnelSupervisor:
                 await self._set(tunnel, "up", None)
             elif not accepts and (tunnel.state == "up" or loop.time() >= deadline):
                 break
-            await asyncio.sleep(self.probe_every)
+            await asyncio.sleep(self.probe_up_every if tunnel.state == "up" else self.probe_every)
         if tunnel.stopping:
             return
         tunnel.held_by = None
@@ -390,10 +393,13 @@ class TunnelSupervisor:
             tunnel.bytes_in = tunnel.bytes_out = None
             self._write_ledger()
             started = loop.time()
-            while popen.poll() is None:
-                if tunnel.state != "up" and loop.time() - started >= self.up_after and not tunnel.stopping:
-                    await self._set(tunnel, "up", None)
-                await asyncio.sleep(POLL)
+            # Waited on, on a thread of its own, rather than polled: an up tunnel wakes nothing.
+            # A stop ends the wait by ending ssh's process group.
+            exited = run_detached(popen.wait)
+            done, _ = await asyncio.wait({exited}, timeout=self.up_after)
+            if not done and tunnel.state != "up" and not tunnel.stopping:
+                await self._set(tunnel, "up", None)
+            await exited
             tunnel.child = None
             self._write_ledger()
             if tunnel.stopping:
@@ -508,6 +514,9 @@ class TunnelSupervisor:
             await asyncio.sleep(self.traffic_every)
             up = [t for t in self._tunnels.values() if t.state == "up" and t.child is not None]
             if not up:
+                # Ended until a tunnel is up again (`_set` starts it): no wakeups with none to count.
+                if not any(t.state in ("connecting", "up") for t in self._tunnels.values()):
+                    return
                 continue
             try:
                 counts = await self.sample([t.child.pid for t in up if t.child is not None])
@@ -528,6 +537,8 @@ class TunnelSupervisor:
         tunnel.state, tunnel.error, tunnel.since = state, error, self.clock()
         if state != "up":
             tunnel.bytes_in = tunnel.bytes_out = None
+        elif tunnel.child is not None:
+            self._start_sampler()
         if state != "failed":
             tunnel.needs_input = None
         if state == "up":

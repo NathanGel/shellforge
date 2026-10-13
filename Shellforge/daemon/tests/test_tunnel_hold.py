@@ -14,7 +14,7 @@ from tests.test_tunnels import Events, ssh_env, tunnel_stack  # noqa: F401 - fix
 
 def held(events, **overrides):
     return TunnelSupervisor(events.broadcast, **{"up_after": 0.2, "backoff_start": 0.1, "backoff_cap": 0.4,
-                                                  "probe_every": 0.05, "hold_timeout": 2.0, **overrides})
+                                                  "probe_every": 0.05, "probe_up_every": 0.05, "hold_timeout": 2.0, **overrides})
 
 
 async def listener(port=0):
@@ -186,3 +186,23 @@ async def test_hold_takes_a_bind_through_the_daemon(tunnel_stack):
     assert (await call(r, w, "tunnels.hold", {"alias": "db", "port": free_port(), "bind": "localhost"}))["result"] == {"ok": True}
     assert (await call(r, w, "tunnels.hold", {"alias": "db", "port": 22, "bind": 3}, id_=2))["error"]["code"] == "bad_params"
     await svc.tunnels.stop("db")
+
+
+async def test_an_up_hold_probes_less_often(ssh_env, monkeypatch):
+    """Once the tab's forward accepts, the probe slows to `probe_up_every`."""
+    events = Events()
+    tunnels = held(events, probe_up_every=10.0)
+    await tunnels.start("db", ssh_env("fail", FAKE_SSH_LINE="Host key verification failed."))
+    await wait_until(lambda: "failed" in events.states("db"))
+    port = free_port()
+    await tunnels.hold("db", port)
+    server, _ = await listener(port)
+    await wait_until(lambda: tunnels.list()[0]["state"] == "up")
+    await asyncio.sleep(0.1)  # the probe that saw it up has gone to its slower sleep
+    probes = []
+    real = TunnelSupervisor._bound
+    monkeypatch.setattr(TunnelSupervisor, "_bound", staticmethod(lambda p, a: (probes.append(1), real(p, a))[1]))
+    await asyncio.sleep(0.5)
+    assert len(probes) <= 1
+    server.close()
+    await tunnels.stop_all()
