@@ -350,3 +350,27 @@ def test_a_supervisor_without_a_ledger_logs_under_the_tests_own_folder(tmp_path)
     """Its ssh logs go to a fresh temporary folder: in a test, one pytest removes with the test's."""
     tunnels = TunnelSupervisor(Events().broadcast)
     assert tmp_path in tunnels._log_file("db").parents
+
+
+async def test_an_adopted_tunnel_s_end_is_seen_without_polling(tmp_path, ssh_env, monkeypatch):
+    """An adopted ssh is no child, yet its end is watched (kqueue), not checked every second."""
+    from shellforged import tunnels as module
+    events, ledger = Events(), tmp_path / "tunnels.json"
+    first = supervisor(events, ledger)
+    await first.start("kept", ssh_env(), keep_running=True)
+    await wait_until(lambda: "up" in events.states("kept"))
+    pid = first.pid("kept")
+    await first.stop_all()
+    later = Events()
+    second = supervisor(later, ledger)
+    await second.adopt()
+    checks = []
+    real = module._Child.alive
+    monkeypatch.setattr(module._Child, "alive", lambda self: (checks.append(1), real(self))[1])
+    await asyncio.sleep(1.5)
+    assert len(checks) <= 1, f"{len(checks)} liveness checks in 1.5 s: one as the watch begins, then none"
+    monkeypatch.setattr(module._Child, "alive", real)
+    os.killpg(pid, 15)
+    first._tunnels["kept"].child.popen.wait()
+    await wait_until(lambda: "stopped" in later.states("kept"), timeout=3)
+    await second.stop_all()

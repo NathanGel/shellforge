@@ -77,11 +77,12 @@ import Testing
 
     @Test func closingAWindowsOnlyTabAddsAFreshOneFirst() {
         let window = Window([Tab("a", panes: [nil])])
-        #expect(TaskTabs.closeOne(window.tabs[0], in: window, tabs: { $0.tabs }, keep: fresh, close: { $0.close($1) }))
+        #expect(closeOne(window.tabs[0], in: window))
         #expect(window.tabs.map(\.name) == ["fresh"])
         let two = Window([Tab("a", panes: [nil]), Tab("b", panes: [nil])])
         var kept = 0
-        #expect(TaskTabs.closeOne(two.tabs[0], in: two, tabs: { $0.tabs }, keep: { _ in kept += 1; return true }, close: { $0.close($1) }))
+        #expect(TaskTabs.closeOne(two.tabs[0], in: two, tabs: { $0.tabs }, keep: { _ in kept += 1; return nil },
+                                  select: { _, _ in }, close: { $0.close($1) }, discard: { $0.close($1) }))
         #expect(kept == 0 && two.tabs.map(\.name) == ["b"])
     }
 
@@ -93,5 +94,31 @@ import Testing
         #expect(TaskTabs.joining([nil, id, nil]) == id)
         #expect(TaskTabs.joining([id, id]) == nil, "nothing to tag")
         #expect(TaskTabs.joining([nil, nil]) == nil, "no task's tab")
+    }
+
+    // -- M5e --
+
+    /// The fresh tab, as the app opens iTerm2's own.
+    private func freshTab(_ window: Window) -> Tab? { let tab = Tab("fresh", panes: [nil]); window.tabs.append(tab); return tab }
+
+    private func closeOne(_ tab: Tab, in window: Window, selected: ((String) -> Void)? = nil) -> Bool {
+        TaskTabs.closeOne(tab, in: window, tabs: { $0.tabs }, keep: freshTab, select: { _, tab in selected?(tab.name) },
+                          close: { $0.close($1) }, discard: { $0.close($1) })
+    }
+
+    /// iTerm2's alert answered Cancel on a window's only tab: the fresh tab opened for it goes again.
+    @Test func aRefusedCloseTakesItsFreshTabAway() {
+        let window = Window([Tab("a", panes: [nil])])
+        window.stubborn = ["a"]
+        #expect(!closeOne(window.tabs[0], in: window))
+        #expect(window.tabs.map(\.name) == ["a"])
+    }
+
+    /// The tab being closed is in front when iTerm2 asks about it, not the fresh one.
+    @Test func theClosedTabIsInFrontWhenItAsks() {
+        let window = Window([Tab("a", panes: [nil])])
+        var selected: [String] = []
+        #expect(closeOne(window.tabs[0], in: window) { selected.append($0) })
+        #expect(selected == ["a"])
     }
 }

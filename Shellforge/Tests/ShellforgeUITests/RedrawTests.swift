@@ -58,4 +58,18 @@ import Testing
         #expect(redraws(of: model) { model.addDivider(name: "Work") } >= 1)
         #expect(model.rows.contains { if case .divider = $0 { true } else { false } })
     }
+
+    /// Clicking the selected task, or Focus View showing it again, assigns nothing.
+    @Test func reselectingATaskRedrawsNothing() throws {
+        let (model, host, _) = try model()
+        let project = try #require(model.tree.projects.first).project.id
+        let task = TaskItem(projectId: project, title: "Fix", branch: "fix", worktreePath: "/api/.worktrees/fix", baseBranch: "main")
+        try model.document.update { $0.tasks.append(task) }
+        host.tabs = [TabSnapshot(id: "t1", tabId: 1, title: "a", taskId: task.id, projectId: project)]
+        host.selectedTabId = "t1"
+        host.onChange?()
+        model.select(task: task.id)
+        #expect(redraws(of: model) { model.select(task: task.id) } == 0)
+        #expect(redraws(of: model) { model.show(task: task.id) } == 0)
+    }
 }

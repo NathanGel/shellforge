@@ -31,12 +31,22 @@ public enum TaskTabs {
         return paneTags.lazy.compactMap { $0 }.first
     }
 
-    /// One tab, closed; a window's only tab gets a fresh one beside it first. True once it closed.
+    /// One tab, closed. A window's only tab gets a fresh one beside it first (`keep`, which hands it
+    /// back), and is brought in front again (`select`) so iTerm2's question is about it. Refused, the
+    /// fresh tab goes again (`discard`): the window is as it was. True once it closed.
     @MainActor
     public static func closeOne<Window, Tab: AnyObject>(_ tab: Tab, in window: Window, tabs: (Window) -> [Tab],
-                                                        keep: (Window) -> Bool, close: (Window, Tab) -> Void) -> Bool {
-        if tabs(window).count == 1, !keep(window) { return false }
+                                                        keep: (Window) -> Tab?, select: (Window, Tab) -> Void,
+                                                        close: (Window, Tab) -> Void, discard: (Window, Tab) -> Void) -> Bool {
+        var fresh: Tab?
+        if tabs(window).count == 1 {
+            guard let added = keep(window) else { return false }
+            fresh = added
+            select(window, tab)
+        }
         close(window, tab)
-        return !tabs(window).contains { $0 === tab }
+        let closed = !tabs(window).contains { $0 === tab }
+        if !closed, let fresh { discard(window, fresh) }
+        return closed
     }
 }

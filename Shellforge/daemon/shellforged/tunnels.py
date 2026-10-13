@@ -26,6 +26,7 @@ import hashlib
 import json
 import logging
 import os
+import select
 import shutil
 import errno
 import signal
@@ -38,7 +39,6 @@ from pathlib import Path
 from typing import Any
 
 from . import protocol, traffic
-from .offload import run_detached
 
 log = logging.getLogger(__name__)
 
@@ -63,6 +63,49 @@ def needs_input(line: str) -> bool:
     return "Permission denied" in line and "(publickey)" not in line
 
 POLL = 0.05
+
+
+async def wait_for_exit(pid: int, every: float = 1.0) -> None:
+    """Returns once `pid` has exited: kqueue's NOTE_EXIT, read on the event loop — no thread blocked
+    in wait, no poll. A pid already gone returns at once. Cancelled, it leaves nothing behind. With
+    no kqueue to be had (out of descriptors), it checks every `every` seconds instead of failing."""
+    loop = asyncio.get_running_loop()
+    try:
+        kq = select.kqueue()
+    except OSError:
+        while _running(pid):
+            await asyncio.sleep(every)
+        return
+    try:
+        try:
+            kq.control([select.kevent(pid, select.KQ_FILTER_PROC, select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
+                                      select.KQ_NOTE_EXIT)], 0, 0)
+        except ProcessLookupError:
+            return
+        except OSError:
+            while _running(pid):
+                await asyncio.sleep(every)
+            return
+        exited = loop.create_future()
+        loop.add_reader(kq.fileno(), lambda: exited.done() or exited.set_result(None))
+        try:
+            await exited
+        finally:
+            loop.remove_reader(kq.fileno())
+    finally:
+        kq.close()
+
+
+def _running(pid: int) -> bool:
+    """Whether `pid` still runs: signalable and no zombie (a child that exited, not yet reaped)."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    state = subprocess.run(["/bin/ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+    return bool(state) and not state.startswith("Z")
 
 
 class InspectionFailed(Exception):
@@ -351,9 +394,9 @@ class TunnelSupervisor:
         self._write_ledger()
 
     async def _watch_adopted(self, tunnel: _Tunnel) -> None:
-        """An adopted ssh is no child of this daemon: its end is seen by polling its pid."""
-        while tunnel.child is not None and tunnel.child.alive():
-            await asyncio.sleep(1.0)
+        """An adopted ssh is no child of this daemon: its end is watched by its pid (kqueue)."""
+        if tunnel.child is not None and tunnel.child.alive():
+            await wait_for_exit(tunnel.child.pid)
         if tunnel.stopping:
             return
         tunnel.child = None
@@ -391,13 +434,19 @@ class TunnelSupervisor:
             tunnel.bytes_in = tunnel.bytes_out = None
             self._write_ledger()
             started = loop.time()
-            # Waited on, on a thread of its own, rather than polled: an up tunnel wakes nothing.
-            # A stop ends the wait by ending ssh's process group.
-            exited = run_detached(popen.wait)
-            done, _ = await asyncio.wait({exited}, timeout=self.up_after)
-            if not done and tunnel.state != "up" and not tunnel.stopping:
-                await self._set(tunnel, "up", None)
-            await exited
+            # Its exit watched by kqueue, not polled nor waited on by a thread: an up tunnel wakes
+            # nothing, and a run cancelled at quit (keep running) leaves nothing waiting.
+            exited = loop.create_task(wait_for_exit(popen.pid))
+            try:
+                done, _ = await asyncio.wait({exited}, timeout=self.up_after)
+                if not done and tunnel.state != "up" and not tunnel.stopping:
+                    await self._set(tunnel, "up", None)
+                await exited
+            finally:
+                exited.cancel()
+                # Its kqueue closed now, not on a later tick the loop may never run at quit.
+                await asyncio.gather(exited, return_exceptions=True)
+            popen.wait()
             tunnel.child = None
             self._write_ledger()
             if tunnel.stopping:

@@ -96,7 +96,8 @@ struct SidebarView: View {
         VStack(spacing: 0) {
             SidebarBanners(model: model)
             List {
-                SidebarHeader(addProject: addProject, addDivider: showAddDivider, showHooks: showHooks, showMacSettings: showMacSettings,
+                SidebarHeader(addProject: addProject, addDivider: showAddDivider, canAddDivider: model.can(.addDivider),
+                              showHooks: showHooks, showMacSettings: showMacSettings,
                               hideSidebar: hideSidebar)
                 ForEach(model.rows) { row in rowView(row) }
             }
@@ -121,7 +122,8 @@ struct SidebarView: View {
             case .newReview(let project): showNewReview(in: project)
             case .addProject: addProject()
             case .removeTask(let task): Task { await model.confirmRemove(taskId: task) }
-            case .closeLastTab(let task, let tab): Task { await model.confirmRemove(taskId: task, closingFirst: tab) }
+            case .closeLastTab(let task, let tab, let paneOnly):
+                Task { await model.confirmRemove(taskId: task, closingFirst: tab, paneOnly: paneOnly) }
             case .newTerminal(let project): showNewTerminal(in: project)
             case .addDivider: showAddDivider()
             }

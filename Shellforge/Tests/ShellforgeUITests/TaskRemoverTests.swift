@@ -81,6 +81,15 @@ import Testing
         #expect(s.row == nil)
     }
 
+    /// From Close Pane in a shared tab: the removal closes that pane, not the tab around it.
+    @Test func aRemoveFromClosePaneClosesOnlyThePane() async throws {
+        let s = try await setup([Self.remove])
+        let tab = try #require(s.host.tabs.first).id
+        s.host.tabs[0].paneCount = 2
+        #expect(await s.sidebar.confirmRemove(taskId: s.task.id, closingFirst: tab, paneOnly: true))
+        #expect(s.host.closedPanes == [tab] && s.host.closed.isEmpty)
+    }
+
     /// The running job's alert answered Cancel: nothing is removed, and the row stays as it was.
     @Test func aTabThatWillNotCloseStopsTheRemove() async throws {
         let s = try await setup([Self.remove])

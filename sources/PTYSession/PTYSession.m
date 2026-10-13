@@ -770,6 +770,9 @@ typedef NS_ENUM(NSUInteger, PTYSessionTurdType) {
 
     NSDictionary<NSString *, iTermExpressionObserver *> *_bindings;
     BOOL _preferencesLoaded;
+    // Shellforge: a task's agent command, held here rather than in the profile: ⌘T and ⌘D copy
+    // the profile, and must never start the agent again. Sent once, then gone.
+    NSString *_shellforgeInitialText;
 }
 
 @synthesize isDivorced = _divorced;
@@ -1093,6 +1096,7 @@ typedef NS_ENUM(NSUInteger, PTYSessionTurdType) {
 ITERM_WEAKLY_REFERENCEABLE
 
 - (void)dealloc {
+    [_shellforgeInitialText release];
     [NSApp removeObserver:self forKeyPath:@"effectiveAppearance"];
     NSString *guid = [_guid copy];
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -3523,14 +3527,12 @@ webViewConfiguration:(WKWebViewConfiguration *)webViewConfiguration
         DLog(@"Not sending initial text because ssh");
         return;
     }
-    NSString *initialText = _profile[KEY_INITIAL_TEXT];
+    // Shellforge: a task's agent command, held outside the profile (setProfile:), is sent once.
+    NSString *initialText = _shellforgeInitialText ? [[_shellforgeInitialText retain] autorelease] : _profile[KEY_INITIAL_TEXT];
+    [_shellforgeInitialText release];
+    _shellforgeInitialText = nil;
     if (![initialText length]) {
         return;
-    }
-    // Shellforge: a task's agent command is sent once. Cleared from this session's profile, so a
-    // split or a new tab that copies it starts a plain shell, not the agent and its prompt again.
-    if ([_profile[@"Shellforge Initial Text Once"] boolValue]) {
-        [self setSessionSpecificProfileValues:@{ KEY_INITIAL_TEXT: @"", @"Shellforge Initial Text Once": @NO }];
     }
     DLog(@"Evaluate initial text %@", initialText);
 
@@ -6845,6 +6847,16 @@ webViewConfiguration:(WKWebViewConfiguration *)webViewConfiguration
     // profile that's stored in a saved window arrangement. It doesn't get
     // saved back into the arrangement, unfortunately.
     [ProfileModel migratePromptOnCloseInMutableBookmark:mutableProfile];
+    // Shellforge: a one-shot initial text leaves the profile at once, so no copy of it ever holds it.
+    if ([mutableProfile[@"Shellforge Initial Text Once"] boolValue]) {
+        NSString *text = [NSString castFrom:mutableProfile[KEY_INITIAL_TEXT]];
+        if (text.length) {
+            [_shellforgeInitialText release];
+            _shellforgeInitialText = [text copy];
+        }
+        [mutableProfile removeObjectForKey:KEY_INITIAL_TEXT];
+        [mutableProfile removeObjectForKey:@"Shellforge Initial Text Once"];
+    }
 
     NSString *originalGuid = newProfile[KEY_ORIGINAL_GUID];
     if (originalGuid) {

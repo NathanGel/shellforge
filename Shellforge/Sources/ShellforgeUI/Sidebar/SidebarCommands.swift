@@ -15,7 +15,8 @@ public enum SidebarSheetRequest: Equatable, Sendable {
     case newTask(UUID), newReview(UUID), addProject, removeTask(UUID), newTerminal(UUID), addDivider
     /// Close Tab on a task's last tab: Remove Task's confirmation, then that tab closed as Close Tab
     /// closes it.
-    case closeLastTab(task: UUID, tab: String)
+    /// `paneOnly`: its last pane, in a tab shared with another task's; the removal closes the pane.
+    case closeLastTab(task: UUID, tab: String, paneOnly: Bool = false)
 }
 
 extension SidebarModel {
@@ -44,7 +45,9 @@ extension SidebarModel {
     public func can(_ command: SidebarCommand) -> Bool {
         switch command {
         case .newTask, .newReview, .newTerminal: targetProject != nil
-        case .addProject, .focusView, .listView, .addDivider: true
+        case .addProject, .focusView, .listView: true
+        // With no project a divider divides nothing, and is not drawn to remove again.
+        case .addDivider: !tree.projects.isEmpty
         case .nextTask, .previousTask: !steppableTasks.isEmpty
         case .removeTask: selectedTaskId != nil
         }

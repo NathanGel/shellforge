@@ -36,7 +36,11 @@ import Testing
         onChange?()
         return true
     }
-    func paneCount(ofTask id: UUID) -> Int { (tabs + tabsElsewhere).filter { $0.taskId == id }.map(\.paneCount).reduce(0, +) }
+    /// A task's tagged panes when a tab mixes two tasks' panes, which the snapshots cannot show.
+    var taggedPanes: [UUID: Int] = [:]
+    func paneCount(ofTask id: UUID) -> Int {
+        taggedPanes[id] ?? (tabs + tabsElsewhere).filter { $0.taskId == id }.map(\.paneCount).reduce(0, +)
+    }
     /// The tabs whose focused pane was closed, by their active session.
     var closedPanes: [String] = []
     func closePane(ofTab id: String) -> Bool {
@@ -328,6 +332,21 @@ import Testing
         #expect(feed.seen.isEmpty)            // done while Two is shown: not seen yet
         sidebar.select(task: two)
         #expect(feed.seen.isEmpty)            // Two is not done
+        sidebar.select(task: one)
+        #expect(feed.seen == [one])
+    }
+
+    /// A task with one tab done and another still working: shown, its done tab is seen.
+    @Test func aShownTaskMarksItsDoneTabsSeenWhileAnotherWorks() async throws {
+        let repo = try GitRepoForUI()
+        let host = FakeTerminalHost(), feed = FakeFeed()
+        let sidebar = SidebarModel(host: host, document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher, feed: feed, jiraSettings: { nil })
+        await sidebar.addProject(folder: repo.path)
+        let project = try #require(sidebar.tree.projects.first).id
+        await sidebar.newTask(title: "One", in: project)
+        let one = try #require(sidebar.selectedTaskId)
+        await sidebar.newTask(title: "Two", in: project)
+        feed.sayAll([(state: .done, session: "d1", task: one, agent: .claude), (state: .working, session: "w1", task: one, agent: .codex)])
         sidebar.select(task: one)
         #expect(feed.seen == [one])
     }

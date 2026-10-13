@@ -110,8 +110,10 @@ extension SidebarModel {
     func shown(terminal id: UUID, explicit: Bool) {
         let changed = selectedTerminalId != id
         selectTerminalRow(id)
-        guard explicit || changed, status(ofTerminal: id) == .done else { return }
-        feed?.markSeen(sessions: tabs(ofTerminal: id).flatMap { sessions.sessions(ofTab: $0.id) }.map(\.sessionId))
+        guard explicit || changed else { return }
+        // Its done tabs, even beside one still working.
+        let done = tabs(ofTerminal: id).flatMap { sessions.sessions(ofTab: $0.id) }.filter { $0.state == .done }
+        if !done.isEmpty { feed?.markSeen(sessions: done.map(\.sessionId)) }
     }
 
     /// The agents in the terminal's tabs, in tab order.

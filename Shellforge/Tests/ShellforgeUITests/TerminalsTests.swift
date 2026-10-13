@@ -226,6 +226,21 @@ import Testing
         #expect(feed.seen.isEmpty, "no task was seen")
     }
 
+    /// One tab done, the other still working: shown, the done one is seen; the working one is not.
+    @Test func aShownTerminalMarksItsDoneTabsSeenWhileAnotherWorks() throws {
+        let feed = FakeFeed()
+        let (model, host, document, project) = try model(feed: feed)
+        model.newTerminal(name: "logs", in: project)
+        let terminal = try #require(document.workspace.terminals.first)
+        host.openTab(in: "/api", terminalId: terminal.id, projectId: project, title: "logs")
+        let done = host.tabs[0].id, working = host.tabs[1].id
+        model.selectTerminalRow(nil)
+        say(feed, [(done, .done), (working, .working)])
+        model.select(terminal: terminal.id)
+        // Seen by the click, and again as its tab comes forward: the daemon takes a repeat as nothing.
+        #expect(!feed.seenSessions.isEmpty && feed.seenSessions.allSatisfy { $0 == [done] })
+    }
+
     /// Switching to a done terminal's tab in iTerm2 sees it too, as switching to a task's does.
     @Test func openingADoneTerminalsTabSeesIt() throws {
         let feed = FakeFeed()

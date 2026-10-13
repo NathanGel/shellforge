@@ -353,7 +353,7 @@ async def test_an_exit_is_seen_without_polling(ssh_env, monkeypatch):
     real = subprocess.Popen.poll
     monkeypatch.setattr(subprocess.Popen, "poll", lambda self: (polls.append(1), real(self))[1])
     await asyncio.sleep(0.5)
-    assert len(polls) <= 2, f"{len(polls)} polls in 0.5 s"
+    assert polls == [], f"{len(polls)} polls in 0.5 s: an up tunnel's exit is watched, never polled"
     monkeypatch.setattr(subprocess.Popen, "poll", real)
     await tunnels.stop_all()
 
@@ -412,3 +412,52 @@ def test_no_fake_ssh_outlives_its_test(tmp_path):
     time.sleep(0.2)
     assert kill_fake_ssh(bin_dir) >= 1
     assert child.wait(timeout=2) is not None
+
+
+async def test_an_exit_is_watched_without_a_thread(ssh_env):
+    """No thread waits on an up tunnel's ssh: its exit comes from kqueue on the event loop."""
+    import threading
+    events = Events()
+    tunnels = fast(events)
+    await tunnels.start("db", ssh_env())
+    await wait_until(lambda: "up" in events.states("db"))
+    assert not any(t.name == "shellforged-offload" and t.is_alive() for t in threading.enumerate())
+    await tunnels.stop_all()
+
+
+async def test_an_exit_watch_on_a_gone_pid_returns_at_once():
+    """A pid already gone — exited before the watch began — is no wait at all."""
+    import subprocess
+    from shellforged.tunnels import wait_for_exit
+    child = subprocess.Popen(["/usr/bin/true"])
+    child.wait()
+    await asyncio.wait_for(wait_for_exit(child.pid), timeout=1)
+
+
+async def test_a_cancelled_exit_watch_leaves_no_descriptor():
+    import subprocess
+    from shellforged.tunnels import wait_for_exit
+    child = subprocess.Popen(["/bin/sleep", "30"])
+    before = len(os.listdir("/dev/fd"))
+    watch = asyncio.get_running_loop().create_task(wait_for_exit(child.pid))
+    await asyncio.sleep(0.05)
+    watch.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await watch
+    assert len(os.listdir("/dev/fd")) == before
+    child.kill()
+    child.wait()
+
+
+async def test_an_exit_watch_that_cannot_use_kqueue_still_sees_the_end(monkeypatch):
+    """No kqueue to be had (out of descriptors): the watch falls back to checking, never hangs."""
+    import select
+    import subprocess
+    from shellforged import tunnels as module
+
+    def no_kqueue():
+        raise OSError(24, "Too many open files")
+    monkeypatch.setattr(select, "kqueue", no_kqueue)
+    child = subprocess.Popen(["/bin/sleep", "0.3"])
+    await asyncio.wait_for(module.wait_for_exit(child.pid, every=0.05), timeout=3)
+    child.wait()

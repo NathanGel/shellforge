@@ -33,8 +33,8 @@ public protocol TerminalHost: AnyObject {
     @discardableResult func close(tab id: String) -> Bool
     /// How many panes tagged with the task every window holds.
     func paneCount(ofTask id: UUID) -> Int
-    /// Closes the focused pane of the tab holding session `id`, as iTerm2's Close does: a running
-    /// job asks first. True once it closed.
+    /// Closes the pane of session `id` — the tab's focused pane when the row was drawn — as iTerm2's
+    /// Close does: a running job asks first. True once it closed.
     @discardableResult func closePane(ofTab id: String) -> Bool
 }
 
@@ -307,7 +307,8 @@ public final class SidebarModel: ObservableObject {
     /// Shows the task: its first open tab, or a new one in its worktree when none is open.
     public func select(task id: UUID) {
         guard let node = tree.projects.lazy.flatMap(\.tasks).first(where: { $0.id == id }) else { return }
-        selectedTerminalId = nil
+        // Assigned only when it changes: an equal assignment still redraws the whole sidebar.
+        if selectedTerminalId != nil { selectedTerminalId = nil }
         guard let tab = node.tabs.first else {
             selectedTaskId = id
             // A shell, as AiTerm's New Terminal: the agent ran once, in the task's first tab.
@@ -330,8 +331,8 @@ public final class SidebarModel: ObservableObject {
     /// leave a shell behind for each, nor a second tab for one whose tab is in another window.
     public func show(task id: UUID) {
         guard let node = tree.projects.lazy.flatMap(\.tasks).first(where: { $0.id == id }) else { return }
-        selectedTaskId = id
-        selectedTerminalId = nil
+        if selectedTaskId != id { selectedTaskId = id }
+        if selectedTerminalId != nil { selectedTerminalId = nil }
         if let tab = node.tabs.first, tab.id != host.selectedTabId { host.select(tab: tab.id) }
     }
 
@@ -502,7 +503,8 @@ public final class SidebarModel: ObservableObject {
     private func shown(_ id: UUID, explicit: Bool) {
         let changed = selectedTaskId != id
         if changed { selectedTaskId = id }
-        if explicit || changed, sessions.status(ofTask: id) == .done { feed?.markSeen(task: id) }
+        // Any done tab, even beside one still working: the daemon marks only the done ones seen.
+        if explicit || changed, sessions.sessions(ofTask: id).contains(where: { $0.state == .done }) { feed?.markSeen(task: id) }
     }
 
     func attempt(_ action: () throws -> Void) {
