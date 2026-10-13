@@ -7,7 +7,7 @@ import ShellforgeCore
 import ShellforgeDesign
 import SwiftUI
 
-/// `PROJECTS`, Hide Sidebar, the Agent hooks and Settings buttons, and the menu that adds a project.
+/// `PROJECTS`, the Agent hooks and Settings buttons, the menu that adds a project, and Hide Sidebar.
 struct SidebarHeader: View {
     let addProject: () -> Void
     var addDivider: () -> Void = {}
@@ -22,13 +22,6 @@ struct SidebarHeader: View {
         HStack {
             SidebarHeading("Projects")
             Spacer()
-            Button(action: hideSidebar) {
-                Image(systemName: "sidebar.left").font(Typography.label).foregroundStyle(surface.secondaryInk)
-            }
-            .buttonStyle(.plain)
-            .frame(width: SidebarRowLayout.trailingSlot(scale), height: SidebarRowLayout.trailingSlot(scale))
-            .help("Hide Sidebar (⌃⌘S)")
-            .accessibilityLabel("Hide Sidebar")
             Button(action: showHooks) {
                 Image(systemName: "bolt.horizontal.circle").font(Typography.label).foregroundStyle(surface.secondaryInk)
             }
@@ -47,6 +40,14 @@ struct SidebarHeader: View {
                 Button("Add Project…", action: addProject)
                 Button("Add Divider…", action: addDivider)
             }
+            // Last, at the sidebar's edge: the side it folds away to.
+            Button(action: hideSidebar) {
+                Image(systemName: "sidebar.left").font(Typography.label).foregroundStyle(surface.secondaryInk)
+            }
+            .buttonStyle(.plain)
+            .frame(width: SidebarRowLayout.trailingSlot(scale), height: SidebarRowLayout.trailingSlot(scale))
+            .help("Hide Sidebar (⌃⌘S)")
+            .accessibilityLabel("Hide Sidebar")
         }
         .frame(height: scale(Size.menuRow)).padding(.leading, scale(Space.base)).padding(.trailing, SidebarRowLayout.trailingInset(scale))
         .padding(.top, scale(Space.base)).padding(.bottom, scale(Space.tight))
