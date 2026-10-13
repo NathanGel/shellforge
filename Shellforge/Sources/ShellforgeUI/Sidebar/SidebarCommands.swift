@@ -86,7 +86,12 @@ extension SidebarModel {
             !tasks.contains { $0.projectId == project && waiting.contains($0.id) }
                 && !terminals.contains { $0.projectId == project && waitingTerminals.contains($0.id) }
         }
-        if let first = waitingOnYou.first { show(task: first) }
+        // The first task waiting, else the first terminal: Focus View shows what the Dock badge counts.
+        if let first = waitingOnYou.first {
+            show(task: first)
+        } else if let terminal = waitingTerminals.first {
+            show(terminal: terminal)
+        }
     }
 
     private func setCollapsed(_ collapsed: (UUID) -> Bool) {

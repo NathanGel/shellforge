@@ -160,4 +160,67 @@ import Testing
         #expect(model.rows.count >= 2)
         _ = model.canMove(.project(project.id), up: false)
     }
+
+    // -- Codex's review --
+
+    /// The daemon saying each of these tab sessions' states.
+    private func say(_ feed: FakeFeed?, _ states: [(String, SessionState)]) {
+        var snapshot = DaemonSnapshot(protocolVersion: 1, connected: true, sessions: states.enumerated().map { index, pair in
+            SessionInfo(sessionId: pair.0, windowId: "w", tabIndex: index, taskId: nil, projectId: nil, agent: .claude, model: nil,
+                        state: pair.1, title: "t", cwd: "/api")
+        }, usage: .empty)
+        snapshot.tunnels = []
+        var store = SessionStore()
+        store.apply(.snapshot(snapshot))
+        feed?.store = store
+    }
+
+    @Test func aTerminalWorkingInOneWindowIsNotWaitingInAnother() throws {
+        let feed = FakeFeed()
+        let (first, host, document, project) = try model(feed: feed)
+        first.newTerminal(name: "logs", in: project)
+        let terminal = try #require(document.workspace.terminals.first)
+        // A second window holding another tab of the same terminal.
+        let otherHost = FakeTerminalHost()
+        otherHost.nextTab = 100
+        let launcher = CommandLauncher(resolve: { ResolvedEnvironment(variables: ["PATH": "/usr/bin"], source: .loginShell("/bin/zsh")) })
+        let second = SidebarModel(host: otherHost, document: document, launcher: launcher, feed: feed, jiraSettings: { nil })
+        otherHost.openTab(in: "/api", terminalId: terminal.id, projectId: project, title: "logs")
+        say(feed, [(try #require(host.tabs.first).id, .working), (try #require(otherHost.tabs.first).id, .done)])
+        #expect(DockBadge.count(across: [first, second]) == 0, "working in one window: the terminal is not waiting")
+    }
+
+    @Test func aTabWithATaskPaneBelongsToTheTask() {
+        let project = Project(name: "api", path: "/api")
+        let task = TaskItem(projectId: project.id, title: "Login", branch: "feat/login", worktreePath: "/wt", baseBranch: "main")
+        let terminal = TerminalItem(projectId: project.id, name: "logs")
+        var workspace = Workspace(projects: [project], tasks: [task])
+        workspace.terminals = [terminal]
+        let both = TabSnapshot(id: "s1", tabId: 1, title: "t", taskId: task.id, projectId: project.id, terminalId: terminal.id)
+        let tree = SidebarTree.build(workspace, tabs: [both])
+        #expect(tree.projects[0].tasks[0].tabs.map(\.id) == ["s1"])
+        #expect(tree.projects[0].terminals[0].tabs.isEmpty, "one owner per tab: the task")
+    }
+
+    @Test func aTerminalWhoseTabsWillNotCloseKeepsItsRow() throws {
+        let (model, host, document, project) = try model()
+        model.newTerminal(name: "logs", in: project)
+        host.closesTabs = false
+        model.removeTerminal(try #require(document.workspace.terminals.first).id)
+        #expect(document.workspace.terminals.count == 1)
+        #expect(model.lastError == "The terminal’s tab didn’t close, so its row stays. Close the tab, then remove it again.")
+    }
+
+    @Test func focusViewShowsAWaitingTerminalWhenNoTaskWaits() throws {
+        let feed = FakeFeed()
+        let (model, host, document, project) = try model(feed: feed)
+        model.newTerminal(name: "logs", in: project)
+        let terminal = try #require(document.workspace.terminals.first)
+        model.selectTerminalRow(nil)
+        host.selectedTabId = nil
+        say(feed, [(try #require(host.tabs.first).id, .needsInput)])
+        model.perform(.focusView)
+        #expect(model.selectedTerminalId == terminal.id)
+        #expect(host.openedTerminals.count == 1, "shown, not opened again")
+    }
 }

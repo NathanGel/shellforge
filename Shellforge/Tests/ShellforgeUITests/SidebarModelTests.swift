@@ -56,6 +56,7 @@ import Testing
 
     func closeTabs(ofTerminal id: UUID) -> Bool {
         closedTerminals.append(id)
+        guard closesTabs else { return false }
         tabs.removeAll { $0.terminalId == id }
         onChange?()
         return true

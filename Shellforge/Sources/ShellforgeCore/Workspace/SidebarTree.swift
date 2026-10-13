@@ -41,7 +41,10 @@ public struct SidebarTree: Equatable, Sendable {
             ProjectNode(project: project, tasks: workspace.tasks(in: project.id).map { task in
                 TaskNode(task: task, tabs: ordered.filter { $0.taskId == task.id })
             }, terminals: workspace.terminals.filter { $0.projectId == project.id }.map { terminal in
-                TerminalNode(terminal: terminal, tabs: ordered.filter { $0.terminalId == terminal.id })
+                // One owner per tab: a pane of a task moved in makes the tab the task's.
+                TerminalNode(terminal: terminal, tabs: ordered.filter { tab in
+                    tab.terminalId == terminal.id && !(tab.taskId.map(known.contains) ?? false)
+                })
             })
         }
         let other = ordered.filter { tab in

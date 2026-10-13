@@ -44,7 +44,12 @@ extension SidebarModel {
     /// AiTerm's Remove Terminal: its tabs closed and the row gone, with no question — nothing on
     /// disk is touched.
     public func removeTerminal(_ id: UUID) {
-        _ = host.closeTabs(ofTerminal: id)
+        // A tab iTerm2 would not close stays the terminal's, row and all: dropped, it would be an
+        // unowned "other tab".
+        guard host.closeTabs(ofTerminal: id) else {
+            lastError = "The terminal’s tab didn’t close, so its row stays. Close the tab, then remove it again."
+            return
+        }
         do {
             try document.update { $0.terminals.removeAll { $0.id == id } }
         } catch {
@@ -83,6 +88,21 @@ extension SidebarModel {
     /// The terminals whose tabs in this window wait on you: needing input, or done and unseen.
     public var waitingTerminals: [UUID] {
         tree.projects.flatMap(\.terminals).map(\.id).filter { [.needsInput, .done].contains(status(ofTerminal: $0)) }
+    }
+
+    /// The state of each terminal with a tab in this window, from those tabs alone. A terminal's
+    /// state for the app combines every window's (DockBadge).
+    public var terminalStates: [UUID: SessionState] {
+        Dictionary(tree.projects.flatMap(\.terminals).filter { !$0.tabs.isEmpty }.map { ($0.id, status(ofTerminal: $0.id)) },
+                   uniquingKeysWith: { first, _ in first })
+    }
+
+    /// Focus View's way to a terminal: its tab in this window when it has one, else only the row —
+    /// it opens nothing, as stepping to a task does not.
+    public func show(terminal id: UUID) {
+        guard let node = tree.projects.lazy.flatMap(\.terminals).first(where: { $0.id == id }) else { return }
+        selectTerminalRow(id)
+        if let tab = node.tabs.first, tab.id != host.selectedTabId { host.select(tab: tab.id) }
     }
 
     /// The agents in the terminal's tabs, in tab order.

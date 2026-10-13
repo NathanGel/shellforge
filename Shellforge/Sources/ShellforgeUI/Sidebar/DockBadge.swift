@@ -1,5 +1,6 @@
 // Ported from AiTerm (app/Sources/AiTermCore/Interface/DockBadge.swift), GPLv3, Laurens D'Hondt.
 import Foundation
+import ShellforgeCore
 
 /// The Dock icon's badge: how many task and terminal rows wait on you — needing input, or done and
 /// unseen — the rows Focus View shows. None at zero.
@@ -11,7 +12,13 @@ public enum DockBadge {
     @MainActor
     public static func count(across sidebars: [SidebarModel]) -> Int {
         let tasks = Set(sidebars.flatMap(\.waitingOnYou))
-        let terminals = Set(sidebars.flatMap(\.waitingTerminals))
+        // A terminal with tabs in two windows: its state is both windows' together, so a tab still
+        // working in one keeps a done tab in the other from counting.
+        var states: [UUID: [SessionState]] = [:]
+        for sidebar in sidebars {
+            for (terminal, state) in sidebar.terminalStates { states[terminal, default: []].append(state) }
+        }
+        let terminals = states.values.filter { [.needsInput, .done].contains(TaskStatus.aggregate($0)) }
         return tasks.count + terminals.count
     }
 }
