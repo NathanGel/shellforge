@@ -49,8 +49,7 @@ import Testing
         let x = field.minX + completions.anchor.x + (1 + Space.tight) / 2
         #expect(top + height > field.maxY + 100, "the popup must hang well past the field to test anything")
 
-        let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let bitmap = try #require(Snapshot.bitmap(of: host))
         let scale = CGFloat(bitmap.pixelsWide) / host.bounds.width
         func pixel(_ x: CGFloat, _ y: CGFloat) throws -> NSColor {
             try #require(bitmap.colorAt(x: Int(x * scale), y: Int(y * scale))?.usingColorSpace(.sRGB))

@@ -2,6 +2,7 @@
 import AppKit
 import SwiftUI
 import Testing
+@testable import ShellforgeTestSupport
 @testable import ShellforgeCore
 @testable import ShellforgeDesign
 @testable import ShellforgeUI
@@ -22,8 +23,7 @@ import Testing
         let window = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
         window.contentView = host
         RunLoop.main.run(until: Date().addingTimeInterval(0.05)); host.layoutSubtreeIfNeeded()
-        let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let bitmap = try #require(Snapshot.bitmap(of: host))
         let ground = try #require(bitmap.colorAt(x: 1, y: 1))
         var box = CGRect.null
         for x in 0..<bitmap.pixelsWide {
@@ -55,8 +55,7 @@ import Testing
         host.appearance = NSAppearance(named: .darkAqua)
         host.frame = NSRect(x: 0, y: 0, width: Size.sidebarWidth, height: host.fittingSize.height)
         host.layoutSubtreeIfNeeded()
-        let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let bitmap = try #require(Snapshot.bitmap(of: host))
         // The amber dot: strongly orange pixels.
         var xs: [Int] = []
         for x in 0..<bitmap.pixelsWide {

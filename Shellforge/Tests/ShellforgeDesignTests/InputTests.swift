@@ -3,6 +3,7 @@ import AppKit
 import ObjectiveC
 import SwiftUI
 import Testing
+@testable import ShellforgeTestSupport
 @testable import ShellforgeDesign
 
 @MainActor
@@ -142,8 +143,7 @@ struct InputTests {
 
     /// The summed RGB of what `view` draws at `point`, in its own coordinates.
     private func brightness(of view: NSView, at point: NSPoint) throws -> CGFloat {
-        let bitmap = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
-        view.cacheDisplay(in: view.bounds, to: bitmap)
+        let bitmap = try #require(Snapshot.bitmap(of: view))
         let scale = CGFloat(bitmap.pixelsWide) / view.bounds.width
         let y = view.isFlipped ? point.y : view.bounds.height - point.y
         let pixel = try #require(bitmap.colorAt(x: Int(point.x * scale), y: Int(y * scale))?.usingColorSpace(.sRGB))

@@ -3,6 +3,7 @@ import AppKit
 import SwiftUI
 import ShellforgeDesign
 import Testing
+@testable import ShellforgeTestSupport
 @testable import ShellforgeCore
 @testable import ShellforgeUI
 
@@ -33,8 +34,7 @@ struct StatusMarkTests {
         host.appearance = NSAppearance(named: .darkAqua)
         host.layoutSubtreeIfNeeded()
 
-        let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let bitmap = try #require(Snapshot.bitmap(of: host))
         let expected = try #require(NSColor(color).usingColorSpace(.sRGB))
         let scale = CGFloat(bitmap.pixelsWide) / size
         let center = CGFloat(bitmap.pixelsWide - 1) / 2
@@ -92,8 +92,7 @@ struct StatusMarkTests {
     /// bright pixels' direction (clockwise from three o'clock, the way the arc turns) less the
     /// arc's own midpoint (27 degrees: it spans 15 % of the circle) less the clock's rotation now.
     private func offsetFromClock(_ host: NSView) throws -> Double {
-        let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let bitmap = try #require(Snapshot.bitmap(of: host))
         let centre = CGFloat(bitmap.pixelsWide - 1) / 2
         var sumX = 0.0, sumY = 0.0
         for y in 0..<bitmap.pixelsHigh {
@@ -119,8 +118,7 @@ struct StatusMarkTests {
     }
 
     private func snapshot(_ host: NSView) throws -> [UInt8] {
-        let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let bitmap = try #require(Snapshot.bitmap(of: host))
         return Array(UnsafeBufferPointer(start: bitmap.bitmapData, count: bitmap.bytesPerRow * bitmap.pixelsHigh))
     }
 

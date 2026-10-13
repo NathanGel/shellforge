@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import Testing
+@testable import ShellforgeTestSupport
 @testable import ShellforgeCore
 import ShellforgeDesign
 @testable import ShellforgeUI
@@ -22,8 +23,7 @@ import ShellforgeDesign
         let content = try #require(panel.contentView)
         content.layoutSubtreeIfNeeded()
         #expect(content.fittingSize.width == Sheet.width)
-        let bitmap = try #require(content.bitmapImageRepForCachingDisplay(in: content.bounds))
-        content.cacheDisplay(in: content.bounds, to: bitmap)
+        let bitmap = try #require(Snapshot.bitmap(of: content))
         let ground = try #require(bitmap.colorAt(x: Int(content.bounds.width) - 6, y: Int(content.bounds.height) / 2)?.usingColorSpace(.sRGB))
         #expect(ground.brightnessComponent < 0.3, "the sheet draws light: \(ground)")
     }

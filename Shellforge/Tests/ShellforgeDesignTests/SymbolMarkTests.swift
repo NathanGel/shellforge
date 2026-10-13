@@ -2,6 +2,7 @@
 import AppKit
 import SwiftUI
 import Testing
+@testable import ShellforgeTestSupport
 @testable import ShellforgeDesign
 
 @MainActor
@@ -24,8 +25,7 @@ struct SymbolMarkTests {
     /// The disc is `controlActive`: a point inside the disc but outside the half-size glyph is it.
     @Test func theDiscIsControlActive() throws {
         let host = host(SymbolMark(symbol: "personalhotspot", size: 28))
-        let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let bitmap = try #require(Snapshot.bitmap(of: host))
         let scale = CGFloat(bitmap.pixelsWide) / host.bounds.width
         let sample = try #require(bitmap.colorAt(x: Int(5 * scale), y: Int(14 * scale))?.usingColorSpace(.sRGB))
         // Resolved as `ColorProbe` resolves: `controlActive` is a dynamic colour, light outside
@@ -43,8 +43,7 @@ struct SymbolMarkTests {
     /// and on its Settings card. The disc reads as white.
     @Test func thePaperDiscIsMarkPaper() throws {
         let host = host(SymbolMark(symbol: "macbook", size: 28, style: .paper))
-        let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let bitmap = try #require(Snapshot.bitmap(of: host))
         let scale = CGFloat(bitmap.pixelsWide) / host.bounds.width
         let sample = try #require(bitmap.colorAt(x: Int(5 * scale), y: Int(14 * scale))?.usingColorSpace(.sRGB))
         #expect(sample.redComponent > 0.97 && sample.greenComponent > 0.97 && sample.blueComponent > 0.97)

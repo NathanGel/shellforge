@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import Testing
+@testable import ShellforgeTestSupport
 @testable import ShellforgeCore
 @testable import ShellforgeUI
 
@@ -14,8 +15,7 @@ import Testing
         let panel = slot.present(over: parent) { _ in Color(nsColor: .windowBackgroundColor).frame(width: 40, height: 40) }
         let content = try #require(panel.contentView)
         content.layoutSubtreeIfNeeded()
-        let bitmap = try #require(content.bitmapImageRepForCachingDisplay(in: content.bounds))
-        content.cacheDisplay(in: content.bounds, to: bitmap)
+        let bitmap = try #require(Snapshot.bitmap(of: content))
         let ground = try #require(bitmap.colorAt(x: 20, y: 20)?.usingColorSpace(.sRGB))
         #expect(ground.brightnessComponent < 0.3, "the sheet draws light: \(ground)")
         #expect(parent.appearance?.name == .aqua, "the window it hangs from keeps its own")
