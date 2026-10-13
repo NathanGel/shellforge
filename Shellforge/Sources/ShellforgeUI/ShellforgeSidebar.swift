@@ -144,7 +144,8 @@ struct SidebarView: View {
         case .terminal(let node, let selected):
             TerminalRowView(node: node, selected: selected, agents: model.avatars(forTerminal: node.id),
                             status: model.status(ofTerminal: node.id), activate: { model.select(terminal: node.id) },
-                            rename: { showRenameTerminal(node.terminal) }, remove: { model.removeTerminal(node.id) })
+                            rename: { showRenameTerminal(node.terminal) }, remove: { model.removeTerminal(node.id) },
+                            menuExtras: AnyView(OpenInMenuItems(folder: model.project(node.terminal.projectId)?.path ?? "")))
                 .listRowSeparator(.hidden)
         case .divider(let row):
             DividerRow(row: row, rename: { showRenameDivider(row.divider) }, move: { up in model.move(.divider(row.divider.id), up: up) },

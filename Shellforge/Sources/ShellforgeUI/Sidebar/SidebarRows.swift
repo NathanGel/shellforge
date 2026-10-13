@@ -99,6 +99,8 @@ struct ProjectHeaderRow: View {
             Button("Jira Projects…", action: editJiraProjects)
             Button("Tunnels…", action: editTunnels)
             Divider()
+            OpenInMenuItems(folder: node.project.path)
+            Divider()
             Button("Move Up") { move(true) }.disabled(!canMoveUp)
             Button("Move Down") { move(false) }.disabled(!canMoveDown)
             Button("SSH Host…", action: editSSHHost)
@@ -149,6 +151,7 @@ struct TaskRowView: View {
                                 Badge(request.label, icon: .brand(request.host.brand), help: request.help, style: .quiet,
                                       action: { ExternalLink.open(request.url) })
                             }
+                            VSCodeBadge(folder: node.task.worktreePath)
                             BranchLabelView(label: BranchLabel(name: node.task.branch, extra: 0, drifted: false, detail: ""))
                                 .layoutPriority(1)
                         }
@@ -164,6 +167,8 @@ struct TaskRowView: View {
         .contextMenu {
             // Greyed while the row is being removed, as AiTerm's is.
             Button("Rename…", action: rename).disabled(removal == .removing)
+            Divider()
+            OpenInMenuItems(folder: node.task.worktreePath)
             Divider()
             Button("Remove \(node.task.kindName)…", role: .destructive, action: remove).disabled(removal == .removing)
         }
