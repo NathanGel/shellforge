@@ -24,6 +24,7 @@
 #import "PTYWindow.h"
 #import "iTermAdvancedSettingsModel.h"
 #import "PseudoTerminal.h"
+#import "PTYSession.h"
 #import "iTerm2SharedARC-Swift.h"
 #import "iTermApplication.h"
 #import "iTermDragHandleView.h"
@@ -1219,7 +1220,10 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
     if (!_shellforgeSidebar || _shellforgeSidebarHidden) {
         return 0;
     }
-    return [iTermShellforgeSidebar widthForPreferred:_shellforgeSidebarPreferredWidth windowWidth:NSWidth(self.bounds)];
+    const CGFloat toolbeltWidth = [self shouldShowToolbelt] ? NSWidth(_toolbelt.frame) : 0;
+    return [iTermShellforgeSidebar widthForPreferred:_shellforgeSidebarPreferredWidth
+                                         windowWidth:NSWidth(self.bounds)
+                                       toolbeltWidth:toolbeltWidth];
 }
 
 // Shellforge: what fitting the window to its tabs adds for the sidebar: the width it will have,
@@ -1239,20 +1243,28 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
     }
     _shellforgeSidebarHidden = !_shellforgeSidebarHidden;
     [iTermShellforgeSidebar setStartsHidden:_shellforgeSidebarHidden];
+    // Typing into a hidden sidebar would go nowhere visible: the current session takes the keys.
+    NSResponder *responder = self.window.firstResponder;
+    if (_shellforgeSidebarHidden &&
+        [responder isKindOfClass:[NSView class]] &&
+        [(NSView *)responder isDescendantOf:_shellforgeSidebar]) {
+        PTYSession *session = [(PseudoTerminal *)_delegate currentSession];
+        if (session.textview) {
+            [self.window makeFirstResponder:session.textview];
+        }
+    }
     [self layoutSubviews];
     [_delegate rootTerminalViewDidResizeContentArea];
 }
 
-// Shellforge: a 3 pt handle on the sidebar's right edge, as the left tab bar has.
+// Shellforge: a handle across the sidebar's right edge, clear of its list's scroller.
 - (void)updateShellforgeSidebarDragHandle {
     // Hidden, or stepped aside in a window too narrow for it and the terminal both.
     if (!_shellforgeSidebar || _shellforgeSidebarHidden || self.shellforgeSidebarWidth == 0) {
         _shellforgeSidebarDragHandle.hidden = YES;
         return;
     }
-    const CGFloat handleWidth = 3;
-    const NSRect sidebar = _shellforgeSidebar.frame;
-    const NSRect frame = NSMakeRect(NSMaxX(sidebar) - handleWidth, NSMinY(sidebar), handleWidth, NSHeight(sidebar));
+    const NSRect frame = [iTermShellforgeSidebar dragHandleFrameForSidebar:_shellforgeSidebar.frame];
     if (!_shellforgeSidebarDragHandle) {
         _shellforgeSidebarDragHandle = [[iTermDragHandleView alloc] initWithFrame:frame];
         _shellforgeSidebarDragHandle.delegate = self;

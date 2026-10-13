@@ -384,12 +384,7 @@ static NSModalResponse iTermCompareRenderingRunModal(id self, SEL _cmd) {
     [viewMenu addItem:backpackItem];
 
     // Shellforge: Hide Sidebar, ⌃⌘S as in Finder and Mail.
-    NSMenuItem *sidebarItem = [[[NSMenuItem alloc] initWithTitle:@"Hide Sidebar"
-                                                          action:@selector(shellforgeToggleSidebar:)
-                                                   keyEquivalent:@"s"] autorelease];
-    sidebarItem.keyEquivalentModifierMask = NSEventModifierFlagControl | NSEventModifierFlagCommand;
-    sidebarItem.target = self;
-    [viewMenu addItem:sidebarItem];
+    [viewMenu addItem:[iTermShellforgeSidebar toggleSidebarItemWithAction:@selector(shellforgeToggleSidebar:) target:self]];
 
     // Shellforge: the Tasks menu after View, its keys all ⌃⌘ ones iTerm2 leaves free.
     NSMenuItem *tasksItem = [[[NSMenuItem alloc] initWithTitle:@"Tasks" action:nil keyEquivalent:@""] autorelease];

@@ -482,9 +482,25 @@ extension iTermShellforgeSidebar {
     /// The preferred width a new window starts with: the last one dragged, in any window.
     @objc static func defaultPreferredWidth() -> CGFloat { layout.width }
 
-    /// The width a window of `windowWidth` gives a sidebar that prefers `preferred`.
-    @objc static func width(forPreferred preferred: CGFloat, windowWidth: CGFloat) -> CGFloat {
-        SidebarLayoutSettings.width(preferred, windowWidth: windowWidth)
+    /// The width a window of `windowWidth` gives a sidebar that prefers `preferred`, with a
+    /// toolbelt of `toolbeltWidth` showing on the right.
+    @objc static func width(forPreferred preferred: CGFloat, windowWidth: CGFloat, toolbeltWidth: CGFloat) -> CGFloat {
+        SidebarLayoutSettings.width(preferred, windowWidth: windowWidth, beside: toolbeltWidth)
+    }
+
+    /// The drag handle's frame for a sidebar of `frame`.
+    @objc static func dragHandleFrame(forSidebar frame: NSRect) -> NSRect {
+        let handle = SidebarLayoutSettings.dragHandle(edge: frame.maxX)
+        return NSRect(x: handle.x, y: frame.minY, width: handle.width, height: frame.height)
+    }
+
+    /// View › Hide Sidebar, built from the same list as the Tasks menu's keys.
+    @objc static func toggleSidebarItem(action: Selector, target: AnyObject) -> NSMenuItem {
+        let item = SidebarCommandMenu.toggleSidebar
+        let menuItem = NSMenuItem(title: item.title, action: action, keyEquivalent: item.key)
+        menuItem.keyEquivalentModifierMask = NSEvent.ModifierFlags(rawValue: item.modifiers.rawValue)
+        menuItem.target = target
+        return menuItem
     }
 
     /// A window's preferred width after a drag of `delta`, saved to seed new windows.
