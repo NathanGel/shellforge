@@ -11,6 +11,11 @@ extension SidebarModel {
         let live = liveTab(row)
         let id = live?.id ?? row
         if let live, live.paneCount > 1 {
+            // The focused pane is its task's last, in a tab shared with another task's: ask Remove.
+            if let task = live.taskId, host.paneCount(ofTask: task) <= 1 {
+                sheetRequests.send(.closeLastTab(task: task, tab: id, paneOnly: true))
+                return
+            }
             host.closePane(ofTab: id)
             return
         }

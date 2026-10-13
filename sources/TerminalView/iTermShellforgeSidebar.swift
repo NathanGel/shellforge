@@ -204,8 +204,10 @@ final class iTermShellforgeHost: TerminalHost {
         let windows = (iTermController.sharedInstance()?.terminals() ?? []) as [PseudoTerminal]
         for window in windows {
             for tab in window.tabs() where tab.sessions().contains(where: { $0.guid == id }) {
-                let closed = TaskTabs.closeOne(tab, in: window, tabs: { $0.tabs() }, keep: Self.keepOpen,
-                                               close: { window, tab in _ = window.closeTabIfConfirmed(tab) })
+                let closed = TaskTabs.closeOne(tab, in: window, tabs: { $0.tabs() }, keep: Self.freshTab,
+                                               select: { _, tab in tab.tabViewItem?.tabView?.selectTabViewItem(tab.tabViewItem) },
+                                               close: { window, tab in _ = window.closeTabIfConfirmed(tab) },
+                                               discard: { window, tab in window.close(tab) })
                 onChange?()
                 return closed
             }
@@ -216,18 +218,27 @@ final class iTermShellforgeHost: TerminalHost {
     /// iTerm2 closes a window with its last tab, and the sidebar with it: the window gets iTerm2's
     /// own new tab first — the default profile in its default folder, never the folder of a tab
     /// about to close (a worktree being deleted). Added at once, before any close runs.
-    static func keepOpen(_ window: PseudoTerminal) -> Bool {
-        guard let profile = ProfileModel.sharedInstance()?.defaultBookmark() else { return false }
-        return window.createTab(withProfile: profile, withCommand: nil, environment: nil, tabIndex: nil,
-                                previousDirectory: nil, parent: nil, completion: nil) != nil
+    static func keepOpen(_ window: PseudoTerminal) -> Bool { freshTab(window) != nil }
+
+    /// iTerm2's own new tab in `window`, as `keepOpen` adds it; nil when it could not be added.
+    static func freshTab(_ window: PseudoTerminal) -> PTYTab? {
+        guard let profile = ProfileModel.sharedInstance()?.defaultBookmark(),
+              let session = window.createTab(withProfile: profile, withCommand: nil, environment: nil, tabIndex: nil,
+                                             previousDirectory: nil, parent: nil, completion: nil) else { return nil }
+        return window.tab(for: session)
     }
 
-    /// Every window's panes tagged with the task.
+    /// Every window's panes of the task: tagged with it, or untagged in a tab that holds one tagged —
+    /// a pane just split off (⌘D) before `joinPanes` gives it the tag.
     func paneCount(ofTask id: UUID) -> Int {
         let tag = id.uuidString.lowercased()
         let windows = (iTermController.sharedInstance()?.terminals() ?? []) as [PseudoTerminal]
-        return windows.flatMap { $0.tabs() }.flatMap { $0.sessions() }
-            .filter { ($0.genericScope.value(forVariableName: ShellforgeTags.task) as? String) == tag }.count
+        return windows.flatMap { $0.tabs() }.reduce(0) { count, tab in
+            let sessions: [PTYSession] = tab.sessions()
+            let tags = sessions.map { $0.genericScope.value(forVariableName: ShellforgeTags.task) as? String }
+            guard tags.contains(tag) else { return count }
+            return count + tags.filter { $0 == tag || $0 == nil }.count
+        }
     }
 
     /// The focused pane of the tab holding session `id`, closed as iTerm2's Close closes it: a

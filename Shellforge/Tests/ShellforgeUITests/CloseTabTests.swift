@@ -163,4 +163,15 @@ import Testing
         model.closeTab("o1")
         #expect(host.closedPanes == ["o1-other-pane"] && host.closed.isEmpty)
     }
+
+    /// One tab, two panes: this task's and another's. Closing this task's only pane asks Remove,
+    /// and the removal will close the pane, not the tab the other task shares.
+    @Test func aTasksLastPaneInASharedTabAsks() throws {
+        let (model, host, project, task) = try model()
+        host.tabs = [split("t1", 1, task: task, project: project, panes: 2)]
+        host.taggedPanes = [task: 1]
+        host.onChange?()
+        #expect(requests(model) { model.closeTab("t1") } == [.closeLastTab(task: task, tab: "t1", paneOnly: true)])
+        #expect(host.closedPanes.isEmpty)
+    }
 }

@@ -36,7 +36,11 @@ import Testing
         onChange?()
         return true
     }
-    func paneCount(ofTask id: UUID) -> Int { (tabs + tabsElsewhere).filter { $0.taskId == id }.map(\.paneCount).reduce(0, +) }
+    /// A task's tagged panes when a tab mixes two tasks' panes, which the snapshots cannot show.
+    var taggedPanes: [UUID: Int] = [:]
+    func paneCount(ofTask id: UUID) -> Int {
+        taggedPanes[id] ?? (tabs + tabsElsewhere).filter { $0.taskId == id }.map(\.paneCount).reduce(0, +)
+    }
     /// The tabs whose focused pane was closed, by their active session.
     var closedPanes: [String] = []
     func closePane(ofTab id: String) -> Bool {
