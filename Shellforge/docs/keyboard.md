@@ -12,7 +12,9 @@ checks in the running app that each key below is in the main menu once.
 |---|---|---|
 | ⌃⌘N | New Task… | The target project: the selected task's, else the window's only project. Off with several projects and no task selected. |
 | ⌃⌘R | New Review… | The same target. |
+| ⌃⌘T | New Terminal… | The same target: a plain shell row under the project. |
 | ⌃⌘P | Add Project… | — |
+| ⌃⌘D | Add Divider… | A named rule at the end of the project list. |
 | ⌃⌘] / ⌃⌘[ | Next Task / Previous Task | The open projects' tasks in sidebar order, wrapping round. From no selection, the first or the last. |
 | ⌃⌘⌫ | Remove Task… | The selected task; it asks first, as the row's menu does. |
 | ⌃⌘A | Focus View | Opens the projects with a task waiting on you (needing input, or done and unseen), folds the rest, and shows the first such task. |
