@@ -344,3 +344,9 @@ async def test_a_log_folder_that_cannot_be_made_does_not_stop_the_tunnel(tmp_pat
     await tunnels.start("db", ssh_env())
     await wait_until(lambda: "up" in events.states("db"))
     await tunnels.stop_all()
+
+
+def test_a_supervisor_without_a_ledger_logs_under_the_tests_own_folder(tmp_path):
+    """Its ssh logs go to a fresh temporary folder: in a test, one pytest removes with the test's."""
+    tunnels = TunnelSupervisor(Events().broadcast)
+    assert tmp_path in tunnels._log_file("db").parents
