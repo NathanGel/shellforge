@@ -44,7 +44,9 @@ extension SidebarModel {
     public func can(_ command: SidebarCommand) -> Bool {
         switch command {
         case .newTask, .newReview, .newTerminal: targetProject != nil
-        case .addProject, .focusView, .listView, .addDivider: true
+        case .addProject, .focusView, .listView: true
+        // With no project a divider divides nothing, and is not drawn to remove again.
+        case .addDivider: !tree.projects.isEmpty
         case .nextTask, .previousTask: !steppableTasks.isEmpty
         case .removeTask: selectedTaskId != nil
         }

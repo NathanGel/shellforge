@@ -71,10 +71,21 @@ import Testing
         #expect(SidebarLayoutSettings.minimumWindowWidth(beside: 250, toolbeltMaxFraction: 0.5) == base + 250, "within half: as it is")
     }
 
+    /// Over the terminal it reaches no further than the terminal's side margin: a click on the
+    /// first column's text selects it rather than starting a resize.
+    @Test func theHandleStaysWithinTheMargin() {
+        let tight = SidebarLayoutSettings.dragHandle(edge: 260, margin: 1)
+        #expect(tight.x + tight.width <= 261)
+        let none = SidebarLayoutSettings.dragHandle(edge: 260, margin: 0)
+        #expect(none.x + none.width <= 260 && none.width >= 1)
+        let usual = SidebarLayoutSettings.dragHandle(edge: 260, margin: 5)
+        #expect(usual.x + usual.width == 263, "3 pt over a usual margin")
+    }
+
     /// The drag handle straddles the sidebar's border, mostly outside it: the list's scroller, at
     /// the sidebar's right edge, stays clickable.
     @Test func theHandleSitsOnTheBorderClearOfTheScroller() {
-        let handle = SidebarLayoutSettings.dragHandle(edge: 260)
+        let handle = SidebarLayoutSettings.dragHandle(edge: 260, margin: 5)
         #expect(handle.x < 260 && handle.x + handle.width > 260, "on the border")
         #expect(260 - handle.x <= 1, "no more than the hairline inside the sidebar")
         #expect(handle.width >= 3, "as wide as the left tab bar's handle")

@@ -96,7 +96,8 @@ struct SidebarView: View {
         VStack(spacing: 0) {
             SidebarBanners(model: model)
             List {
-                SidebarHeader(addProject: addProject, addDivider: showAddDivider, showHooks: showHooks, showMacSettings: showMacSettings,
+                SidebarHeader(addProject: addProject, addDivider: showAddDivider, canAddDivider: model.can(.addDivider),
+                              showHooks: showHooks, showMacSettings: showMacSettings,
                               hideSidebar: hideSidebar)
                 ForEach(model.rows) { row in rowView(row) }
             }

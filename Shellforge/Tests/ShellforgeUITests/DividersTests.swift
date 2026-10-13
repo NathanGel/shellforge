@@ -83,6 +83,17 @@ import Testing
         #expect(TerminalRowView.voiceOverActions == ["Rename", "Remove Terminal"])
     }
 
+    /// With no project a divider would divide nothing, and would not be drawn to remove again.
+    @Test func addDividerNeedsAProject() throws {
+        let folder = TestScratch.root.appendingPathComponent("shellforge-dividers-\(UUID().uuidString)")
+        let document = WorkspaceDocument(store: WorkspaceStore(folder: folder))
+        let launcher = CommandLauncher(resolve: { ResolvedEnvironment(variables: ["PATH": "/usr/bin"], source: .loginShell("/bin/zsh")) })
+        let empty = SidebarModel(host: FakeTerminalHost(), document: document, launcher: launcher, jiraSettings: { nil })
+        #expect(!empty.can(.addDivider))
+        let (model, _, _, _) = try model()
+        #expect(model.can(.addDivider))
+    }
+
     @Test func addDividerIsACommand() throws {
         let (model, _, _, _) = try model()
         var requests: [SidebarSheetRequest] = []

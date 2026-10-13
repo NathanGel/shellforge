@@ -59,7 +59,10 @@ public struct SidebarLayoutSettings {
         return base / (1 - toolbeltMaxFraction)
     }
 
-    /// The drag handle across the sidebar's right `edge`: its hairline inside, the rest over the
-    /// terminal's margin, so the list's scroller under the edge keeps its clicks.
-    public static func dragHandle(edge: CGFloat) -> (x: CGFloat, width: CGFloat) { (edge - 1, 4) }
+    /// The drag handle across the sidebar's right `edge`: its hairline inside, and up to 3 pt over
+    /// the terminal, never past its side `margin` — the list's scroller under the edge keeps its
+    /// clicks, and so does the terminal's first column.
+    public static func dragHandle(edge: CGFloat, margin: CGFloat) -> (x: CGFloat, width: CGFloat) {
+        (edge - 1, 1 + min(3, max(0, margin)))
+    }
 }

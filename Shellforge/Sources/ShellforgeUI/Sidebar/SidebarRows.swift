@@ -11,6 +11,8 @@ import SwiftUI
 struct SidebarHeader: View {
     let addProject: () -> Void
     var addDivider: () -> Void = {}
+    /// Greyed with no project: a divider would divide nothing.
+    var canAddDivider = true
     let showHooks: () -> Void
     let showMacSettings: () -> Void
     /// ⌃⌘S as a button; while hidden, the window's title bar shows the same icon to bring it back.
@@ -38,7 +40,7 @@ struct SidebarHeader: View {
             .accessibilityLabel("Settings")
             AddMenu(help: "Add project", enabled: true) {
                 Button("Add Project…", action: addProject)
-                Button("Add Divider…", action: addDivider)
+                Button("Add Divider…", action: addDivider).disabled(!canAddDivider)
             }
             // Last, at the sidebar's edge: the side it folds away to.
             Button(action: hideSidebar) {

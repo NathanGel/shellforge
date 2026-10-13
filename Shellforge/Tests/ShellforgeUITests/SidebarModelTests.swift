@@ -332,6 +332,21 @@ import Testing
         #expect(feed.seen == [one])
     }
 
+    /// A task with one tab done and another still working: shown, its done tab is seen.
+    @Test func aShownTaskMarksItsDoneTabsSeenWhileAnotherWorks() async throws {
+        let repo = try GitRepoForUI()
+        let host = FakeTerminalHost(), feed = FakeFeed()
+        let sidebar = SidebarModel(host: host, document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher, feed: feed, jiraSettings: { nil })
+        await sidebar.addProject(folder: repo.path)
+        let project = try #require(sidebar.tree.projects.first).id
+        await sidebar.newTask(title: "One", in: project)
+        let one = try #require(sidebar.selectedTaskId)
+        await sidebar.newTask(title: "Two", in: project)
+        feed.sayAll([(state: .done, session: "d1", task: one, agent: .claude), (state: .working, session: "w1", task: one, agent: .codex)])
+        sidebar.select(task: one)
+        #expect(feed.seen == [one])
+    }
+
     @Test func switchingToADoneTasksTabInITerm2MarksItSeen() async throws {
         let repo = try GitRepoForUI()
         let host = FakeTerminalHost(), feed = FakeFeed()

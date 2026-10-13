@@ -579,7 +579,7 @@ extension iTermShellforgeSidebar {
 
     /// The drag handle's frame for a sidebar of `frame`.
     @objc static func dragHandleFrame(forSidebar frame: NSRect) -> NSRect {
-        let handle = SidebarLayoutSettings.dragHandle(edge: frame.maxX)
+        let handle = SidebarLayoutSettings.dragHandle(edge: frame.maxX, margin: CGFloat(iTermPreferences.sideMargins()))
         return NSRect(x: handle.x, y: frame.minY, width: handle.width, height: frame.height)
     }
 
