@@ -6156,6 +6156,18 @@ hidingToolbeltShouldResizeWindow:(BOOL)hidingToolbeltShouldResizeWindow
     }
 }
 
+// Shellforge: the sidebar's Show Sidebar button in the title bar, kept through iTerm2's nanny, which
+// removes any accessory it does not know about and re-adds its own across style and window changes.
+- (void)shellforgeShowTitlebarAccessory:(NSTitlebarAccessoryViewController *)viewController shown:(BOOL)shown {
+    const BOOL has = [_titlebarAccessoryNanny.viewControllers containsObject:viewController];
+    if (shown && !has) {
+        [viewController view];
+        [_titlebarAccessoryNanny add:viewController];
+    } else if (!shown && has) {
+        [_titlebarAccessoryNanny remove:viewController];
+    }
+}
+
 - (BOOL)shouldHaveShortcutAccessory {
     RLog(@"windowType=%@", @(self.windowType));
 

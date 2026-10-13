@@ -7,12 +7,14 @@ import ShellforgeCore
 import ShellforgeDesign
 import SwiftUI
 
-/// `PROJECTS`, the menu that adds a project, and the Agent hooks button.
+/// `PROJECTS`, the Agent hooks and Settings buttons, the menu that adds a project, and Hide Sidebar.
 struct SidebarHeader: View {
     let addProject: () -> Void
     var addDivider: () -> Void = {}
     let showHooks: () -> Void
     let showMacSettings: () -> Void
+    /// ⌃⌘S as a button; while hidden, the window's title bar shows the same icon to bring it back.
+    var hideSidebar: () -> Void = {}
     @Environment(\.interfaceScale) private var scale
     @Environment(\.surface) private var surface
 
@@ -38,6 +40,14 @@ struct SidebarHeader: View {
                 Button("Add Project…", action: addProject)
                 Button("Add Divider…", action: addDivider)
             }
+            // Last, at the sidebar's edge: the side it folds away to.
+            Button(action: hideSidebar) {
+                Image(systemName: "sidebar.left").font(Typography.label).foregroundStyle(surface.secondaryInk)
+            }
+            .buttonStyle(.plain)
+            .frame(width: SidebarRowLayout.trailingSlot(scale), height: SidebarRowLayout.trailingSlot(scale))
+            .help("Hide Sidebar (⌃⌘S)")
+            .accessibilityLabel("Hide Sidebar")
         }
         .frame(height: scale(Size.menuRow)).padding(.leading, scale(Space.base)).padding(.trailing, SidebarRowLayout.trailingInset(scale))
         .padding(.top, scale(Space.base)).padding(.bottom, scale(Space.tight))

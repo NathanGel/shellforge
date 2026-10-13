@@ -20,7 +20,7 @@ running iTerm2: `SHELLFORGED_LIVE=1 .venv/bin/pytest tests/integration -q`.
 
 ## App connection
 
-`workspace.snapshot` returns protocol version 1, iTerm2 availability, tagged sessions, and
+`workspace.snapshot` returns protocol version 2, iTerm2 availability, tagged sessions, and
 usage. The server writes this response before yielding; the Swift client places it in its
 event stream as a bootstrap barrier. Events before the barrier are discarded. A disconnected
 snapshot does not prove any window closed. Event overflow or malformed framing closes the
