@@ -23,6 +23,11 @@ public protocol TerminalHost: AnyObject {
     func closeTabs(ofTask id: UUID) -> Bool
     /// Opens a tab of no task in `directory`, typing `command` into its shell, and selects it.
     func openTab(in directory: String, title: String, command: String)
+    /// Opens a terminal row's tab: a plain shell in `directory`, tagged with the terminal and its
+    /// project, and selects it.
+    func openTab(in directory: String, terminalId: UUID, projectId: UUID, title: String)
+    /// Closes every tab of the terminal, in every window. True once none is left open.
+    func closeTabs(ofTerminal id: UUID) -> Bool
 }
 
 extension TerminalHost {
@@ -57,6 +62,8 @@ public protocol SessionFeed: AnyObject {
 public final class SidebarModel: ObservableObject {
     @Published public private(set) var tree = SidebarTree(projects: [], otherTabs: [])
     @Published public private(set) var selectedTaskId: UUID?
+    /// The terminal row shown, when the selected tab is a terminal's (Terminals/).
+    @Published public internal(set) var selectedTerminalId: UUID?
     /// The last action's failure, in words the user can act on; cleared by the next success.
     @Published public var lastError: String?
     /// What is being done right now, such as "Creating Fix login…"; nil when idle.
@@ -350,10 +357,12 @@ public final class SidebarModel: ObservableObject {
         lastSelectedTab = host.selectedTabId
         if let selected = host.tabs.first(where: { $0.id == host.selectedTabId }) {
             if let task = tree.task(owning: selected) {
+                selectedTerminalId = nil
                 shown(task.id, explicit: opened)
             } else {
-                // A tab of no task is shown: no task is.
+                // A tab of no task is shown: no task is — a terminal's, perhaps.
                 selectedTaskId = nil
+                selectedTerminalId = selected.terminalId.flatMap { id in document.workspace.terminals.contains { $0.id == id } ? id : nil }
             }
         }
     }
@@ -443,6 +452,7 @@ public final class SidebarModel: ObservableObject {
                 rows.append(.task(task, selected: task.id == selectedTaskId && !(listsTabs && ownsCurrent)))
                 if listsTabs { rows += task.tabs.map { .tab($0, selected: $0.id == current) } }
             }
+            rows += node.terminals.map { .terminal($0, selected: $0.id == selectedTerminalId) }
         }
         if !tree.otherTabs.isEmpty {
             rows.append(.otherTabsHeading)

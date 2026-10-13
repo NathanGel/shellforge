@@ -118,6 +118,7 @@ struct SidebarView: View {
             case .newReview(let project): showNewReview(in: project)
             case .addProject: addProject()
             case .removeTask(let task): Task { await model.confirmRemove(taskId: task) }
+            case .newTerminal(let project): showNewTerminal(in: project)
             }
         }
     }
@@ -132,9 +133,15 @@ struct SidebarView: View {
                              toggle: { model.toggleCollapsed(node.id) },
                              newTask: { showNewTask(in: node.id) },
                              newReview: { showNewReview(in: node.id) },
+                             newTerminal: { showNewTerminal(in: node.id) },
                              editJiraProjects: { showJiraProjects(for: node.id) },
                              editTunnels: { showTunnels(for: node.id) },
                              editSSHHost: { showSSHHost(for: node.id) })
+                .listRowSeparator(.hidden)
+        case .terminal(let node, let selected):
+            TerminalRowView(node: node, selected: selected, agents: model.avatars(forTerminal: node.id),
+                            status: model.status(ofTerminal: node.id), activate: { model.select(terminal: node.id) },
+                            rename: { showRenameTerminal(node.terminal) }, remove: { model.removeTerminal(node.id) })
                 .listRowSeparator(.hidden)
         case .tunnel(let tunnel):
             TunnelRowView(row: tunnel, start: { model.startTunnel(tunnel.alias) }, stop: { model.stopTunnel(tunnel.alias) },
@@ -208,6 +215,24 @@ struct SidebarView: View {
         sheet.present(over: anchor.window) { dismiss in
             SSHHostSheet(projectName: project.name, current: project.sshHost, loadHosts: model.loadSSHHosts,
                          submit: { model.setSSHHost($0, on: id) }, dismiss: dismiss)
+        }
+    }
+
+    /// AiTerm's New terminal sheet: the row's name, prefilled with the suggestion.
+    private func showNewTerminal(in id: UUID) {
+        guard let project = model.project(id) else { return }
+        let suggested = model.suggestedTerminalName(in: id)
+        sheet.present(over: anchor.window) { dismiss in
+            NameSheet.newTerminal(projectName: project.name, suggestedName: suggested,
+                                  create: { model.newTerminal(name: $0, in: id) }, dismiss: dismiss)
+        }
+    }
+
+    private func showRenameTerminal(_ terminal: TerminalItem) {
+        sheet.present(over: anchor.window) { dismiss in
+            NameSheet(title: "Rename terminal", subtitle: "Renames the row in the sidebar; its iTerm2 tabs keep their titles.",
+                      fieldLabel: "Terminal name", placeholder: terminal.name, confirmLabel: "Rename", initialName: terminal.name,
+                      submit: { model.renameTerminal(terminal.id, to: $0) }, dismiss: dismiss)
         }
     }
 

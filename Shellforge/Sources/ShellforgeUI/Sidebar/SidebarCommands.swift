@@ -7,12 +7,12 @@ import ShellforgeCore
 
 /// What the sidebar's keyboard shortcuts do (Shellforge/docs/keyboard.md).
 public enum SidebarCommand: Int, CaseIterable, Sendable {
-    case newTask, newReview, addProject, nextTask, previousTask, removeTask, focusView, listView
+    case newTask, newReview, addProject, nextTask, previousTask, removeTask, focusView, listView, newTerminal
 }
 
 /// A command that needs one of the sidebar's sheets: the view presents it, as its "+" would.
 public enum SidebarSheetRequest: Equatable, Sendable {
-    case newTask(UUID), newReview(UUID), addProject, removeTask(UUID)
+    case newTask(UUID), newReview(UUID), addProject, removeTask(UUID), newTerminal(UUID)
 }
 
 extension SidebarModel {
@@ -38,7 +38,7 @@ extension SidebarModel {
 
     public func can(_ command: SidebarCommand) -> Bool {
         switch command {
-        case .newTask, .newReview: targetProject != nil
+        case .newTask, .newReview, .newTerminal: targetProject != nil
         case .addProject, .focusView, .listView: true
         case .nextTask, .previousTask: !steppableTasks.isEmpty
         case .removeTask: selectedTaskId != nil
@@ -51,6 +51,7 @@ extension SidebarModel {
         case .newTask: if let project = targetProject { sheetRequests.send(.newTask(project)) }
         case .newReview: if let project = targetProject { sheetRequests.send(.newReview(project)) }
         case .addProject: sheetRequests.send(.addProject)
+        case .newTerminal: if let project = targetProject { sheetRequests.send(.newTerminal(project)) }
         case .removeTask: if let task = selectedTaskId { sheetRequests.send(.removeTask(task)) }
         case .nextTask: step(by: 1)
         case .previousTask: step(by: -1)
@@ -117,6 +118,7 @@ public enum SidebarCommandMenu {
     public static let items: [Item] = [
         Item(title: "New Task…", key: "n", modifiers: keys, command: .newTask),
         Item(title: "New Review…", key: "r", modifiers: keys, command: .newReview),
+        Item(title: "New Terminal…", key: "t", modifiers: keys, command: .newTerminal),
         Item(title: "Add Project…", key: "p", modifiers: keys, command: .addProject),
         Item(title: "", key: "", modifiers: [], command: nil),
         Item(title: "Next Task", key: "]", modifiers: keys, command: .nextTask),

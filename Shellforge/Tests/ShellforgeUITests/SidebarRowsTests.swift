@@ -30,6 +30,7 @@ import Testing
             case .task(let node, _): "task \(node.task.title)"
             case .tab(let tab, _): "tab \(tab.title)"
             case .tunnel(let row): "tunnel \(row.alias)"
+            case .terminal(let node, _): "terminal \(node.terminal.name)"
             case .otherTabsHeading: "other tabs"
             }
         }

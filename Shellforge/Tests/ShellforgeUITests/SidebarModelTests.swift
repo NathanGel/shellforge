@@ -16,7 +16,7 @@ import Testing
     /// iTerm2 refusing the split: a tmux tab, a window too small.
     var refusesSplit = false
     /// Ids are never reused, as iTerm2's are not, even after a tab closes.
-    private var nextTab = 0
+    var nextTab = 0
 
     func select(tab id: String) {
         selectedTabId = id
@@ -39,6 +39,26 @@ import Testing
 
     func openTab(in directory: String, title: String, command: String) {
         openedPlain.append((directory, title, command))
+    }
+
+    /// The terminal tabs opened, and the terminals whose tabs were asked to close.
+    var openedTerminals: [(directory: String, terminalId: UUID, projectId: UUID, title: String)] = []
+    var closedTerminals: [UUID] = []
+
+    func openTab(in directory: String, terminalId: UUID, projectId: UUID, title: String) {
+        openedTerminals.append((directory, terminalId, projectId, title))
+        nextTab += 1
+        let tab = TabSnapshot(id: "s\(nextTab)", tabId: nextTab, title: title, taskId: nil, projectId: projectId, terminalId: terminalId)
+        tabs.append(tab)
+        selectedTabId = tab.id
+        onChange?()
+    }
+
+    func closeTabs(ofTerminal id: UUID) -> Bool {
+        closedTerminals.append(id)
+        tabs.removeAll { $0.terminalId == id }
+        onChange?()
+        return true
     }
 
     /// The tasks whose tabs were asked to close, and whether they then did.

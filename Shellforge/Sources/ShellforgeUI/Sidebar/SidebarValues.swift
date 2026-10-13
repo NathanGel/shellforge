@@ -37,6 +37,7 @@ public enum SidebarRow: Equatable, Identifiable {
     case task(TaskNode, selected: Bool)
     case tab(TabSnapshot, selected: Bool)
     case tunnel(TunnelRowItem)
+    case terminal(TerminalNode, selected: Bool)
     case otherTabsHeading
 
     public var id: String {
@@ -46,6 +47,7 @@ public enum SidebarRow: Equatable, Identifiable {
         case .task(let node, _): "task-\(node.id)"
         case .tab(let tab, _): "tab-\(tab.id)"
         case .tunnel(let row): "tunnel-\(row.projectId)-\(row.alias)"
+        case .terminal(let node, _): "terminal-\(node.id)"
         case .otherTabsHeading: "other-tabs"
         }
     }

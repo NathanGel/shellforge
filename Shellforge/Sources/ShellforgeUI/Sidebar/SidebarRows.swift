@@ -52,6 +52,7 @@ struct ProjectHeaderRow: View {
     let toggle: () -> Void
     let newTask: () -> Void
     let newReview: () -> Void
+    var newTerminal: () -> Void = {}
     let editJiraProjects: () -> Void
     var editTunnels: () -> Void = {}
     var editSSHHost: () -> Void = {}
@@ -102,6 +103,7 @@ struct ProjectHeaderRow: View {
     @ViewBuilder private var newItems: some View {
         Button("New Task…", action: newTask)
         Button("New Review…", action: newReview).disabled(provider == .none)
+        Button("New Terminal…", action: newTerminal)
     }
 }
 
