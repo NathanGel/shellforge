@@ -263,6 +263,20 @@ import Testing
         #expect(backpack.currentNetwork == "Home")
     }
 
+    /// The 5 s tick while on: a tick that changes nothing redraws no footer.
+    @Test func anUnchangedBackpackTickRedrawsNothing() async {
+        let fake = FakeBackpack()
+        let backpack = controller(fake, working: { true })
+        await backpack.connect(network: "Phone", password: nil)
+        await backpack.tick()
+        var redraws = 0
+        let subscription = backpack.objectWillChange.sink { redraws += 1 }
+        await backpack.tick()
+        subscription.cancel()
+        #expect(backpack.isOn)
+        #expect(redraws == 0)
+    }
+
     /// With the lid open only the battery cutoff ends it: an open lid holds the idle grace.
     @Test func endingItselfRejoinsTheNetworkTheMacWasOn() async {
         let fake = FakeBackpack()
