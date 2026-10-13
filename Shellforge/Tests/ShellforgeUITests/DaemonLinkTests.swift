@@ -170,6 +170,38 @@ import Testing
         #expect(sent("tunnels.stop")?["alias"] as? String == "db")
     }
 
+    /// A daemon refusing tunnel calls: the refusal is said, not dropped.
+    private func tunnelRefusingServer() -> FakeSocketServer {
+        let server = FakeSocketServer(path: "/tmp/sf-link-\(UUID().uuidString.prefix(8)).sock")
+        server.handler = { req in
+            (req["method"] as? String).map { $0.hasPrefix("tunnels.") } == true
+                ? ["id": req["id"]!, "error": ["code": "not_found", "message": "no such tunnel"]]
+                : Self.snapshotReply(req)
+        }
+        server.start()
+        return server
+    }
+
+    @Test func aRefusedTunnelStartIsSaid() async throws {
+        let server = tunnelRefusingServer()
+        let link = DaemonLink(socketPath: server.path, daemonDir: nil, findPython: { nil }, reports: { [] }, environment: { [:] })
+        defer { link.shutdown(); server.stop() }
+        link.supervisorChanged(.listening(pid: 1))
+        #expect(await eventually { link.status == .connected })
+        link.startTunnel(alias: "db", keepRunning: false)
+        #expect(await eventually { link.tunnelError?.hasPrefix("Couldn’t start tunnel db") == true })
+    }
+
+    @Test func aRefusedStopIsSaid() async throws {
+        let server = tunnelRefusingServer()
+        let link = DaemonLink(socketPath: server.path, daemonDir: nil, findPython: { nil }, reports: { [] })
+        defer { link.shutdown(); server.stop() }
+        link.supervisorChanged(.listening(pid: 1))
+        #expect(await eventually { link.status == .connected })
+        link.stopTunnel(alias: "web")
+        #expect(await eventually { link.tunnelError?.hasPrefix("Couldn’t stop tunnel web") == true })
+    }
+
     /// The daemon's answer to `sessions.update`, as a fake server gives it.
     private func rejectingServer(code: String) -> FakeSocketServer {
         let server = FakeSocketServer(path: "/tmp/sf-link-\(UUID().uuidString.prefix(8)).sock")

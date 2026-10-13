@@ -57,6 +57,8 @@ public struct AgentNotInstalled: Error, Equatable, LocalizedError {
 public protocol SessionFeed: AnyObject {
     var statusPublisher: AnyPublisher<HelperStatus, Never> { get }
     var storePublisher: AnyPublisher<SessionStore, Never> { get }
+    /// The last tunnel call the helper refused, said as the sidebar's error.
+    var tunnelErrorPublisher: AnyPublisher<String?, Never> { get }
     func markSeen(task: UUID)
     /// A terminal's tabs, by their sessions: they carry no task.
     func markSeen(sessions: [String])
@@ -167,6 +169,9 @@ public final class SidebarModel: ObservableObject {
         if let feed {
             feedSubscriptions = [
                 feed.storePublisher.sink { [weak self] store in MainActor.assumeIsolated { self?.take(store) } },
+                feed.tunnelErrorPublisher.compactMap { $0 }.sink { [weak self] error in
+                    MainActor.assumeIsolated { self?.lastError = error }
+                },
                 feed.statusPublisher.sink { [weak self] status in
                     MainActor.assumeIsolated {
                         guard let self else { return }

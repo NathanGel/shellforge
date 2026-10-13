@@ -7,6 +7,8 @@ import ShellforgeCore
 @MainActor
 public final class DaemonLink: ObservableObject {
     @Published public private(set) var status: HelperStatus = .starting
+    /// The last tunnel call the helper refused, as the sidebar's error banner says it.
+    @Published public private(set) var tunnelError: String?
     @Published public private(set) var store = SessionStore()
 
     private let socketPath: String
@@ -110,20 +112,37 @@ public final class DaemonLink: ObservableObject {
     public func startTunnel(alias: String, keepRunning: Bool) {
         guard let client else { return }
         let environment = self.environment
-        Task {
+        tunnelCall("start", alias, client) {
             let variables = await BackgroundWork.run { environment() }
-            _ = try? await client.startTunnel(alias: alias, environment: variables, keepRunning: keepRunning)
+            _ = try await client.startTunnel(alias: alias, environment: variables, keepRunning: keepRunning)
         }
     }
 
     public func holdTunnel(alias: String, port: Int, bind: String?) {
         guard let client else { return }
-        Task { _ = try? await client.holdTunnel(alias: alias, port: port, bind: bind) }
+        tunnelCall("watch", alias, client) { _ = try await client.holdTunnel(alias: alias, port: port, bind: bind) }
     }
 
     public func stopTunnel(alias: String) {
         guard let client else { return }
-        Task { _ = try? await client.stopTunnel(alias: alias) }
+        tunnelCall("stop", alias, client) { _ = try await client.stopTunnel(alias: alias) }
+    }
+
+    /// A tunnel call, its refusal said rather than dropped; a helper this app cannot speak to is a
+    /// mismatch, as a refused session list is. Not retried: the next click is the retry.
+    private func tunnelCall(_ verb: String, _ alias: String, _ client: DaemonClient, _ call: @escaping @MainActor () async throws -> Void) {
+        Task {
+            do {
+                try await call()
+                tunnelError = nil
+            } catch {
+                tunnelError = "Couldn’t \(verb) tunnel \(alias): \(error.localizedDescription)"
+                if let error = error as? DaemonError, error.isMismatch, self.client === client {
+                    refused = client
+                    status = .helperMismatch
+                }
+            }
+        }
     }
 
     func supervisorChanged(_ state: DaemonSupervisor.State) {
@@ -161,4 +180,5 @@ public final class DaemonLink: ObservableObject {
 extension DaemonLink: SessionFeed {
     public var statusPublisher: AnyPublisher<HelperStatus, Never> { $status.eraseToAnyPublisher() }
     public var storePublisher: AnyPublisher<SessionStore, Never> { $store.eraseToAnyPublisher() }
+    public var tunnelErrorPublisher: AnyPublisher<String?, Never> { $tunnelError.eraseToAnyPublisher() }
 }

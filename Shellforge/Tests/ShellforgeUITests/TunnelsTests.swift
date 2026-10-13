@@ -331,6 +331,14 @@ import Testing
         _ = model
     }
 
+    /// The helper refused a tunnel call: the sidebar's error banner says so.
+    @Test func aTunnelErrorShowsInTheSidebar() async throws {
+        let feed = FakeFeed()
+        let (model, _, _, _, _) = try await model(feed: feed)
+        feed.tunnelError = "Couldn’t start tunnel db: no such tunnel"
+        #expect(model.lastError == "Couldn’t start tunnel db: no such tunnel")
+    }
+
     @Test func startingBeforeTheConfigIsReadReadsIt() async throws {
         let (model, _, feed, _, _) = try await model(tunnels: [TunnelDefinition(alias: "db")])
         model.sshHosts = nil
