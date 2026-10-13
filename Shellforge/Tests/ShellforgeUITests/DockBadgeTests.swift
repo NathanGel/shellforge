@@ -7,6 +7,17 @@ import Testing
 /// AiTerm's Dock badge: how many task and terminal rows wait on you — needing input, or done and
 /// unseen — once for the app, however many windows show them.
 @MainActor @Suite struct DockBadgeTests {
+    /// The Dock is written only when the label changes, and not at all for a first zero.
+    @Test func theSetterWritesOnlyChanges() {
+        var written: [String?] = []
+        let setter = DockBadge.Setter { written.append($0) }
+        setter.update(count: 0)
+        setter.update(count: 2)
+        setter.update(count: 2)
+        setter.update(count: 0)
+        #expect(written == ["2", nil])
+    }
+
     @Test func zeroIsNoBadge() {
         #expect(DockBadge.label(count: 0) == nil)
         #expect(DockBadge.label(count: 3) == "3")

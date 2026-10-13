@@ -75,6 +75,17 @@ final class DaemonClientTests {
         #expect(try await client.markSeen(task: Self.task) == 2)
     }
 
+    /// A terminal's tabs carry no task: they are marked seen by their session ids.
+    @Test func markSeenBySessionsSendsTheirIds() async throws {
+        server.handler = { req in
+            #expect((req["params"] as? [String: Any])?["sessionIds"] as? [String] == ["A", "B"])
+            return ["id": req["id"]!, "result": ["changed": 1]]
+        }
+        try client.connect()
+        #expect(server.waitForClient(timeout: 2))
+        #expect(try await client.markSeen(sessions: ["A", "B"]) == 1)
+    }
+
     /// A tunnel is started with the app's login environment: the daemon has none of its own.
     @Test func startingATunnelSendsItsAliasAndTheEnvironment() async throws {
         server.handler = { req in

@@ -489,6 +489,11 @@ public final class DaemonClient: Sendable {
         return snapshot
     }
     public func markSeen(task: UUID) async throws -> Int { try await request(.sessionsMarkSeen, params: TaskParams(taskId: Self.wireId(task)), as: ChangedResult.self).changed }
+    struct SessionIdsParams: Encodable { var sessionIds: [String] }
+    /// A terminal's tabs, which carry no task, seen by their session ids.
+    public func markSeen(sessions: [String]) async throws -> Int {
+        try await request(.sessionsMarkSeen, params: SessionIdsParams(sessionIds: sessions), as: ChangedResult.self).changed
+    }
 
     /// A task or project id as the daemon matches it: lowercase, as the sidebar's session tags are.
     static func wireId(_ id: UUID) -> String { id.uuidString.lowercased() }

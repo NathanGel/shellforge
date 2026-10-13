@@ -44,12 +44,14 @@ public struct AgentNotInstalled: Error, Equatable, LocalizedError {
 }
 
 /// What the sidebar needs from the helper: its status, what the daemon says about the sessions,
-/// and where to say a task was seen. `DaemonLink` is the app's; the tests use a fake.
+/// and where to say a task or a terminal was seen. `DaemonLink` is the app's; the tests use a fake.
 @MainActor
 public protocol SessionFeed: AnyObject {
     var statusPublisher: AnyPublisher<HelperStatus, Never> { get }
     var storePublisher: AnyPublisher<SessionStore, Never> { get }
     func markSeen(task: UUID)
+    /// A terminal's tabs, by their sessions: they carry no task.
+    func markSeen(sessions: [String])
     func startTunnel(alias: String, keepRunning: Bool)
     func stopTunnel(alias: String)
     func holdTunnel(alias: String, port: Int, bind: String?)
@@ -370,7 +372,11 @@ public final class SidebarModel: ObservableObject {
             } else {
                 // A tab of no task is shown: no task is — a terminal's, perhaps.
                 selectedTaskId = nil
-                selectedTerminalId = selected.terminalId.flatMap { id in document.workspace.terminals.contains { $0.id == id } ? id : nil }
+                if let id = selected.terminalId, document.workspace.terminals.contains(where: { $0.id == id }) {
+                    shown(terminal: id, explicit: opened)
+                } else {
+                    selectedTerminalId = nil
+                }
             }
         }
     }

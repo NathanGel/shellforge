@@ -289,12 +289,9 @@ extension iTermShellforgeSidebar {
     }
 
     /// The Dock icon's badge: the rows waiting on you, once for the app, written only when it changes.
-    private static var dockBadge: String?
+    private static let dockBadge = DockBadge.Setter { NSApp.dockTile.badgeLabel = $0 }
     static func updateDockBadge() {
-        let label = DockBadge.label(count: DockBadge.count(across: sidebars.allObjects))
-        guard label != dockBadge else { return }
-        dockBadge = label
-        NSApp.dockTile.badgeLabel = label
+        dockBadge.update(count: DockBadge.count(across: sidebars.allObjects))
     }
 
     /// Every window's sidebar re-reads whether the environment is a fallback.

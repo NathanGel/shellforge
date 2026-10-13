@@ -37,6 +37,18 @@ import Testing
         #expect(tree.otherTabs.map(\.id) == ["s0", "s9"])
     }
 
+    /// A terminal whose project is gone — a hand-edited workspace — draws no row: its tab falls
+    /// back to Other tabs rather than vanishing.
+    @Test func aTabOfATerminalWithNoProjectIsAnOtherTab() {
+        let orphan = TerminalItem(projectId: UUID(), name: "logs")
+        let tab = TabSnapshot(id: "s1", tabId: 1, title: "logs", taskId: nil, projectId: nil, terminalId: orphan.id)
+        var workspace = Workspace(projects: [project], tasks: [])
+        workspace.terminals = [orphan]
+        let tree = SidebarTree.build(workspace, tabs: [tab])
+        #expect(tree.otherTabs.map(\.id) == ["s1"])
+        #expect(tree.projects[0].terminals.isEmpty)
+    }
+
     @Test func tabsKeepTheirOrderInTheWindow() {
         let a = login
         let tree = SidebarTree.build(Workspace(projects: [project], tasks: [a]),

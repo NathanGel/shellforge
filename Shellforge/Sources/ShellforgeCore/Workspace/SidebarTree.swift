@@ -36,7 +36,9 @@ public struct SidebarTree: Equatable, Sendable {
     public static func build(_ workspace: Workspace, tabs: [TabSnapshot]) -> SidebarTree {
         let ordered = tabs.sorted { $0.tabId < $1.tabId }
         let known = Set(workspace.tasks.map(\.id))
-        let terminals = Set(workspace.terminals.map(\.id))
+        // Only a terminal whose project is drawn has a row; another's tabs are other tabs.
+        let projectIds = Set(workspace.projects.map(\.id))
+        let terminals = Set(workspace.terminals.filter { projectIds.contains($0.projectId) }.map(\.id))
         let projects = workspace.projects.map { project in
             ProjectNode(project: project, tasks: workspace.tasks(in: project.id).map { task in
                 TaskNode(task: task, tabs: ordered.filter { $0.taskId == task.id })

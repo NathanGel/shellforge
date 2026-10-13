@@ -266,6 +266,7 @@ async def test_claude_hook_updates_status_via_pid_mapping(stack, tmp_path):
                                                        "from_model": "a", "to_model": "claude-opus-5"})
     assert (await next_event(r, "session.changed"))["model"] == "claude-opus-5"
     assert (await call(r, w, "sessions.markSeen", {"taskId": "t1"}, id_=4))["result"] == {"changed": 0}
+    assert (await call(r, w, "sessions.markSeen", {"sessionIds": [sid]}, id_=5))["result"] == {"changed": 0}
 
 
 async def test_hook_over_http_updates_session(stack, tmp_path):
@@ -1030,6 +1031,8 @@ async def test_a_new_claude_process_in_the_tab_is_not_held_working_by_the_old_on
     ("tab.create", {"windowId": "w1", "agentCommand": 5}),
     ("tab.create", {"windowId": "w1", "cwd": 5}),
     ("sessions.markSeen", {"taskId": None}),
+    ("sessions.markSeen", {"sessionIds": "s1"}),
+    ("sessions.markSeen", {"sessionIds": [1]}),
     ("sessions.setTitles", {"titles": "main"}),
 ])
 async def test_malformed_params_are_bad_params_not_internal_errors(stack, method, params):

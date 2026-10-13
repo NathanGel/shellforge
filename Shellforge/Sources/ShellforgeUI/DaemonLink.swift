@@ -100,6 +100,11 @@ public final class DaemonLink: ObservableObject {
         Task { _ = try? await client.markSeen(task: task) }
     }
 
+    public func markSeen(sessions: [String]) {
+        guard let client, !sessions.isEmpty else { return }
+        Task { _ = try? await client.markSeen(sessions: sessions) }
+    }
+
     /// Starts `alias`'s tunnel with the login environment, read off the main thread — the first
     /// read asks a login shell. Its state comes back as `tunnel.changed`.
     public func startTunnel(alias: String, keepRunning: Bool) {

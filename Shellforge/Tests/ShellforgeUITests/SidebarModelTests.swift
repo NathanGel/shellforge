@@ -95,6 +95,8 @@ import Testing
     var statusPublisher: AnyPublisher<HelperStatus, Never> { $status.eraseToAnyPublisher() }
     var storePublisher: AnyPublisher<SessionStore, Never> { $store.eraseToAnyPublisher() }
     func markSeen(task: UUID) { seen.append(task) }
+    var seenSessions: [[String]] = []
+    func markSeen(sessions: [String]) { seenSessions.append(sessions) }
     var tunnelCalls: [String] = []
     func startTunnel(alias: String, keepRunning: Bool) { tunnelCalls.append("start \(alias)" + (keepRunning ? " (keep)" : "")) }
     func stopTunnel(alias: String) { tunnelCalls.append("stop \(alias)") }

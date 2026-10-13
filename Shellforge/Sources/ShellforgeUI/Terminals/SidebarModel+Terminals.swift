@@ -33,7 +33,7 @@ extension SidebarModel {
     public func select(terminal id: UUID) {
         guard let node = tree.projects.lazy.flatMap(\.terminals).first(where: { $0.id == id }),
               let project = project(node.terminal.projectId) else { return }
-        selectTerminalRow(id)
+        shown(terminal: id, explicit: true)
         if let tab = node.tabs.first {
             if tab.id != host.selectedTabId { host.select(tab: tab.id) }
         } else {
@@ -101,8 +101,17 @@ extension SidebarModel {
     /// it opens nothing, as stepping to a task does not.
     public func show(terminal id: UUID) {
         guard let node = tree.projects.lazy.flatMap(\.terminals).first(where: { $0.id == id }) else { return }
-        selectTerminalRow(id)
+        shown(terminal: id, explicit: true)
         if let tab = node.tabs.first, tab.id != host.selectedTabId { host.select(tab: tab.id) }
+    }
+
+    /// The terminal the user is now looking at. A done one has been seen, as a task is: its tabs'
+    /// sessions, by id — they carry no task for the daemon to find them by.
+    func shown(terminal id: UUID, explicit: Bool) {
+        let changed = selectedTerminalId != id
+        selectTerminalRow(id)
+        guard explicit || changed, status(ofTerminal: id) == .done else { return }
+        feed?.markSeen(sessions: tabs(ofTerminal: id).flatMap { sessions.sessions(ofTab: $0.id) }.map(\.sessionId))
     }
 
     /// The agents in the terminal's tabs, in tab order.
