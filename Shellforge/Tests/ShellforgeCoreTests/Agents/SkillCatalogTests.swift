@@ -1,11 +1,12 @@
 // Ported from AiTerm (app/Tests/AiTermCoreTests/SkillCatalogTests.swift), GPLv3, Laurens D'Hondt.
 import Testing
 import Foundation
+@testable import ShellforgeTestSupport
 @testable import ShellforgeCore
 
 @Suite struct SkillCatalogTests {
     func tempDir() -> URL {
-        let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("skillcat-" + UUID().uuidString)
+        let url = TestScratch.root.appendingPathComponent("skillcat-" + UUID().uuidString)
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }

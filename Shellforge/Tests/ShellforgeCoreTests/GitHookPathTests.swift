@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+@testable import ShellforgeTestSupport
 @testable import ShellforgeCore
 
 /// The bug this package exists for: an app opened from the Dock runs `git worktree add`, git runs
@@ -16,7 +17,7 @@ import Testing
         let shell: FakeShell
 
         init() throws {
-            let root = FileManager.default.temporaryDirectory.appendingPathComponent("shellforge-home-\(UUID().uuidString)").path
+            let root = TestScratch.root.appendingPathComponent("shellforge-home-\(UUID().uuidString)").path
             home = root
             let bin = "\(root)/.local/bin"
             try FileManager.default.createDirectory(atPath: bin, withIntermediateDirectories: true)

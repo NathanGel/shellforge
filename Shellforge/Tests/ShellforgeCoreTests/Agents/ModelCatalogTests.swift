@@ -1,6 +1,7 @@
 // Ported from AiTerm (app/Tests/AiTermCoreTests/ModelCatalogTests.swift), GPLv3, Laurens D'Hondt.
 import Testing
 import Foundation
+@testable import ShellforgeTestSupport
 @testable import ShellforgeCore
 
 @Suite struct ModelCatalogTests {
@@ -206,7 +207,7 @@ import Foundation
     /// The cache file is named per org and per surface; the sheet must find the `-cc` one (Claude
     /// Code's own surface) and ignore the others.
     @Test func testTheClaudeCatalogueFileIsFoundByItsSurfaceSuffix() throws {
-        let home = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+        let home = TestScratch.root.appendingPathComponent(UUID().uuidString)
         let dir = home.appendingPathComponent(".claude/cache/model-catalog")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: home) }

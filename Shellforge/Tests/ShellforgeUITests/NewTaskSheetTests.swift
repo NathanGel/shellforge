@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import Testing
+@testable import ShellforgeTestSupport
 @testable import ShellforgeCore
 import ShellforgeDesign
 @testable import ShellforgeUI
@@ -10,7 +11,7 @@ import ShellforgeDesign
         NewTaskModel(project: Project(name: "demo", path: "/tmp/demo"), agents: AgentPresets.all, available: ["claude"],
                      draft: TaskDraft(baseBranch: "main", agentId: "claude", model: "", reasoning: nil), rememberedModels: [:],
                      catalogue: { _ in [] }, branches: { ["main"] }, submit: { _ in },
-                     home: FileManager.default.temporaryDirectory.appendingPathComponent("nts-home-\(UUID().uuidString)"))
+                     home: TestScratch.root.appendingPathComponent("nts-home-\(UUID().uuidString)"))
     }
 
     @Test func theSheetIsAiTermsSizeAndDarkInALightWindow() throws {
@@ -22,9 +23,8 @@ import ShellforgeDesign
         let content = try #require(panel.contentView)
         content.layoutSubtreeIfNeeded()
         #expect(content.fittingSize.width == Sheet.width)
-        let bitmap = try #require(content.bitmapImageRepForCachingDisplay(in: content.bounds))
-        content.cacheDisplay(in: content.bounds, to: bitmap)
-        let ground = try #require(bitmap.colorAt(x: Int(content.bounds.width) - 6, y: Int(content.bounds.height) / 2)?.usingColorSpace(.sRGB))
+        let bitmap = try #require(Snapshot.bitmap(of: content))
+        let ground = try #require(bitmap.colorAt(x: Int((content.bounds.width - 6) * Snapshot.scale), y: Int(content.bounds.height / 2 * Snapshot.scale))?.usingColorSpace(.sRGB))
         #expect(ground.brightnessComponent < 0.3, "the sheet draws light: \(ground)")
     }
 

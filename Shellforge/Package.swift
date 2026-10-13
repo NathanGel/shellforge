@@ -19,7 +19,7 @@ let package = Package(
         // Fakes and helpers the test targets share; test targets cannot share a source file.
         .target(name: "ShellforgeTestSupport", dependencies: ["ShellforgeCore"], path: "Tests/ShellforgeTestSupport"),
         .testTarget(name: "ShellforgeCoreTests", dependencies: ["ShellforgeCore", "ShellforgeTestSupport"], path: "Tests/ShellforgeCoreTests"),
-        .testTarget(name: "ShellforgeDesignTests", dependencies: ["ShellforgeDesign"], path: "Tests/ShellforgeDesignTests"),
+        .testTarget(name: "ShellforgeDesignTests", dependencies: ["ShellforgeDesign", "ShellforgeTestSupport"], path: "Tests/ShellforgeDesignTests"),
         .testTarget(name: "ShellforgeUITests", dependencies: ["ShellforgeUI", "ShellforgeCore", "ShellforgeDesign", "ShellforgeTestSupport"], path: "Tests/ShellforgeUITests"),
     ],
     swiftLanguageModes: [.v6]

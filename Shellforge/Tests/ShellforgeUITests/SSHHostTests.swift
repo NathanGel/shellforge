@@ -7,7 +7,7 @@ import Testing
 /// A project's one SSH host: chosen from `~/.ssh/config` (here a temporary file), kept with the
 /// project, offered by New Task as a pane beside the agent.
 @MainActor @Suite struct SSHHostTests {
-    private let folder = FileManager.default.temporaryDirectory.appendingPathComponent("shellforge-sshhost-\(UUID().uuidString)")
+    private let folder = TestScratch.root.appendingPathComponent("shellforge-sshhost-\(UUID().uuidString)")
 
     private func model() async throws -> (SidebarModel, WorkspaceDocument, UUID) {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

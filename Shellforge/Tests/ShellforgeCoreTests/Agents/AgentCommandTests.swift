@@ -1,10 +1,11 @@
 // Ported from AiTerm (app/Tests/AiTermCoreTests/AgentCommandTests.swift), GPLv3, Laurens D'Hondt.
 import Testing
+@testable import ShellforgeTestSupport
 import Foundation
 @testable import ShellforgeCore
 
 @Suite struct AgentCommandTests {
-    let wt = FileManager.default.temporaryDirectory.appendingPathComponent("wt-\(UUID().uuidString)").path
+    let wt = TestScratch.root.appendingPathComponent("wt-\(UUID().uuidString)").path
     /// git with no user configuration, for the exclude file; a folder that is no repository leaves it be.
     let launcher = CommandLauncher { ResolvedEnvironment(variables: ["PATH": "/usr/bin:/bin", "GIT_CONFIG_NOSYSTEM": "1"],
                                                          source: .loginShell("/bin/sh")) }

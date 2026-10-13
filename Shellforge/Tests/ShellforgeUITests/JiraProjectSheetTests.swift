@@ -182,8 +182,7 @@ import Testing
         let frame = h.host.convert(field.bounds, from: field)
         let fieldRect = NSRect(x: Space.margin, y: frame.minY - (Size.control - frame.height) / 2,
                                width: Sheet.width - 2 * Space.margin, height: Size.control)
-        let bitmap = try #require(h.host.bitmapImageRepForCachingDisplay(in: h.host.bounds))
-        h.host.cacheDisplay(in: h.host.bounds, to: bitmap)
+        let bitmap = try #require(Snapshot.bitmap(of: h.host))
         let scale = CGFloat(bitmap.pixelsWide) / h.host.bounds.width
         func pixel(_ x: CGFloat, _ y: CGFloat) throws -> NSColor {
             try #require(bitmap.colorAt(x: Int(x * scale), y: Int(y * scale))?.usingColorSpace(.sRGB))

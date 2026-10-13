@@ -43,7 +43,25 @@ def ssh_env(tmp_path):
                 "FAKE_SSH_MARK": "handed-in", **extra}
 
     env.log = log
-    return env
+    yield env
+    # A test that failed before stopping its tunnels leaves their fake ssh running: none outlives it.
+    kill_fake_ssh(bin_dir)
+
+
+def kill_fake_ssh(bin_dir) -> int:
+    """Every process still running the fake ssh in `bin_dir`, killed with its group. How many."""
+    import signal
+    import subprocess
+    found = subprocess.run(["/usr/bin/pgrep", "-f", str(bin_dir)], capture_output=True, text=True).stdout.split()
+    own = os.getpgid(0)
+    for pid in map(int, found):
+        try:
+            group = os.getpgid(pid)
+            # A fake ssh started without a session of its own shares pytest's group: kill it alone.
+            os.kill(pid, signal.SIGKILL) if group == own else os.killpg(group, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+    return len(found)
 
 
 class Events:
@@ -378,3 +396,19 @@ async def test_the_sampler_stops_with_the_last_up_tunnel(ssh_env):
     before = len(samples)
     await wait_until(lambda: len(samples) > before, timeout=5)
     await tunnels.stop_all()
+
+
+def test_no_fake_ssh_outlives_its_test(tmp_path):
+    """The fixture's cleanup kills a fake ssh a failed test left running, group and all."""
+    import subprocess
+    import time
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    ssh = bin_dir / "ssh"
+    ssh.write_text(FAKE_SSH)
+    ssh.chmod(ssh.stat().st_mode | stat.S_IEXEC)
+    child = subprocess.Popen([str(ssh), "db"], env={"PATH": "/usr/bin:/bin", "FAKE_SSH_LOG": str(tmp_path / "log")},
+                             start_new_session=True)
+    time.sleep(0.2)
+    assert kill_fake_ssh(bin_dir) >= 1
+    assert child.wait(timeout=2) is not None

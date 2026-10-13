@@ -1,6 +1,7 @@
 // Ported from AiTerm (app/Tests/AiTermCoreTests/HookConfigTests.swift), GPLv3, Laurens D'Hondt.
 import Foundation
 import Testing
+@testable import ShellforgeTestSupport
 @testable import ShellforgeCore
 
 @Suite struct ClaudeHooksTests {
@@ -39,7 +40,7 @@ import Testing
     }
 
     @Test func testTelemetryReinstallPreservesACustomDisplayButDoesNotReviveARemovedOne() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("sf-home-\(UUID())")
+        let home = TestScratch.root.appendingPathComponent("sf-home-\(UUID())")
         defer { try? FileManager.default.removeItem(at: home) }
         let settings = home.appendingPathComponent(".claude/settings.json")
         try FileManager.default.createDirectory(at: settings.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -96,7 +97,7 @@ import Testing
         let (cleaned, _) = try ClaudeSettings.merge(onlyOurs, hookURL: "u", shimPath: "s")
         #expect(((try JSONSerialization.jsonObject(with: cleaned) as! [String: Any])["hooks"] as! [String: Any])["PreToolUse"] == nil)
 
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("sf-home-\(UUID())")
+        let home = TestScratch.root.appendingPathComponent("sf-home-\(UUID())")
         defer { try? FileManager.default.removeItem(at: home) }
         let settings = home.appendingPathComponent(".claude/settings.json")
         try FileManager.default.createDirectory(at: settings.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -172,7 +173,7 @@ import Testing
     }
 
     @Test func testInstallWritesOriginalStatusLineBeforeSettingsFileSurvivesASettingsWriteFailure() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("sf-home-\(UUID().uuidString)")
+        let home = TestScratch.root.appendingPathComponent("sf-home-\(UUID().uuidString)")
         let claudeDir = home.appendingPathComponent(".claude")
         try FileManager.default.createDirectory(at: claudeDir, withIntermediateDirectories: true)
         let settingsURL = claudeDir.appendingPathComponent("settings.json")
@@ -220,7 +221,7 @@ import Testing
     /// report the feed as broken. What it must not agree with is a path nothing answers at.
 
     @Test func testTheShimIsStillOursAfterTheBundleMovesButNotAfterItVanishes() throws {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("aiterm-shim-\(UUID())")
+        let dir = TestScratch.root.appendingPathComponent("aiterm-shim-\(UUID())")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
         let moved = dir.appendingPathComponent("shellforge-claude-statusline.sh")
@@ -253,7 +254,7 @@ import Testing
     }
 
     func temporaryHome() throws -> URL {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("sf-home-\(UUID().uuidString)")
+        let home = TestScratch.root.appendingPathComponent("sf-home-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: home.appendingPathComponent(".claude"), withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: home.appendingPathComponent(".codex"), withIntermediateDirectories: true)
         return home

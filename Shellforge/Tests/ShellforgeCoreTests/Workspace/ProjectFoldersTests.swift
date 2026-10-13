@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+@testable import ShellforgeTestSupport
 @testable import ShellforgeCore
 
 @Suite struct ProjectFoldersTests {
@@ -19,7 +20,7 @@ import Testing
 
     @Test func aFolderOutsideGitIsRefused() throws {
         let repo = try GitRepoFixture()
-        let plain = FileManager.default.temporaryDirectory.appendingPathComponent("plain-\(UUID().uuidString)").path
+        let plain = TestScratch.root.appendingPathComponent("plain-\(UUID().uuidString)").path
         try FileManager.default.createDirectory(atPath: plain, withIntermediateDirectories: true)
         let refusal = try #require(throws: ProjectFolders.Refusal.self) {
             try ProjectFolders.project(at: plain, in: Workspace(), launcher: repo.launcher)

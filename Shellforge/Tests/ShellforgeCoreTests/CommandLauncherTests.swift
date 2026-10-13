@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+@testable import ShellforgeTestSupport
 @testable import ShellforgeCore
 
 /// A folder holding one executable script, standing in for `~/.local/bin` with `uv` in it.
@@ -7,7 +8,7 @@ private struct ToolFolder {
     let path: String
 
     init(tool name: String, printing text: String = "ran") throws {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("shellforge-bin-\(UUID().uuidString)")
+        let url = TestScratch.root.appendingPathComponent("shellforge-bin-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         path = url.path
         let tool = url.appendingPathComponent(name).path

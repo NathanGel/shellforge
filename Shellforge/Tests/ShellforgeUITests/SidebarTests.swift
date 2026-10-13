@@ -1,18 +1,19 @@
 import AppKit
 import Testing
+@testable import ShellforgeTestSupport
 @testable import ShellforgeCore
 import ShellforgeDesign
 @testable import ShellforgeUI
 
 @MainActor @Suite struct SidebarTests {
     private func sidebarModel() throws -> SidebarModel {
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("shellforge-view-\(UUID().uuidString)")
+        let folder = TestScratch.root.appendingPathComponent("shellforge-view-\(UUID().uuidString)")
         return SidebarModel(host: FakeTerminalHost(), document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: try GitRepoForUI().launcher, jiraSettings: { nil })
     }
 
     /// An Agent hooks sheet on a scratch home: building the view reads no file.
     private func hooks() -> AgentHooksModel {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("shellforge-view-home-\(UUID().uuidString)")
+        let home = TestScratch.root.appendingPathComponent("shellforge-view-home-\(UUID().uuidString)")
         return AgentHooksModel(integrations: HookIntegrations(home: home, resources: .bundled(resourceURL: nil)), names: [:])
     }
 
@@ -38,9 +39,8 @@ import ShellforgeDesign
         window.contentView = host
         host.layoutSubtreeIfNeeded()
         #expect(host.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua)
-        let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-        host.cacheDisplay(in: host.bounds, to: bitmap)
-        let ground = try #require(bitmap.colorAt(x: Int(host.bounds.width) - 4, y: Int(host.bounds.height) - 4)?.usingColorSpace(.sRGB))
+        let bitmap = try #require(Snapshot.bitmap(of: host))
+        let ground = try #require(bitmap.colorAt(x: Int((host.bounds.width - 4) * Snapshot.scale), y: Int((host.bounds.height - 4) * Snapshot.scale))?.usingColorSpace(.sRGB))
         #expect(ground.brightnessComponent < 0.3, "the sidebar's ground is light: \(ground)")
     }
 }

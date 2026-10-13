@@ -18,7 +18,7 @@ import Testing
     private func model(projects names: [String] = ["a", "b"], feed: FakeFeed = FakeFeed())
         throws -> (SidebarModel, FakeTerminalHost, WorkspaceDocument, [String: UUID]) {
         // A folder of its own each: two models in one test must not share a workspace.
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("shellforge-commands-\(UUID().uuidString)")
+        let folder = TestScratch.root.appendingPathComponent("shellforge-commands-\(UUID().uuidString)")
         let document = WorkspaceDocument(store: WorkspaceStore(folder: folder))
         var ids: [String: UUID] = [:]
         try document.update { workspace in

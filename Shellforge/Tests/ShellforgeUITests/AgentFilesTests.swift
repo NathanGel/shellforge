@@ -1,12 +1,13 @@
 import Foundation
 import Testing
+@testable import ShellforgeTestSupport
 @testable import ShellforgeCore
 @testable import ShellforgeUI
 
 /// The agents the app offers: the four presets, then each agent file in the agents folder (here a
 /// temporary one) — so an agent written by hand appears in New Task with no editor yet.
 @Suite struct AgentFilesTests {
-    private let folder = FileManager.default.temporaryDirectory.appendingPathComponent("shellforge-agents-\(UUID().uuidString)")
+    private let folder = TestScratch.root.appendingPathComponent("shellforge-agents-\(UUID().uuidString)")
 
     private var registry: AgentRegistry { AgentRegistry(folder: folder, trash: { _ in }) }
 

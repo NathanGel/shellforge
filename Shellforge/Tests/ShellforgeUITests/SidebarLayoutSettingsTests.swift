@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+@testable import ShellforgeTestSupport
 @testable import ShellforgeDesign
 @testable import ShellforgeUI
 
@@ -7,7 +8,7 @@ import Testing
 /// what the window and the terminal need. Each test has a defaults suite of its own.
 @Suite struct SidebarLayoutSettingsTests {
     private func defaults() -> UserDefaults {
-        UserDefaults(suiteName: "shellforge-layout-\(UUID().uuidString)")!
+        ScratchDefaults.make()
     }
 
     @Test func aNewSettingsReadsTheDefaults() {

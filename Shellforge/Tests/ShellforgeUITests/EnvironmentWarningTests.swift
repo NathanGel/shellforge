@@ -7,7 +7,7 @@ import Testing
 /// The sidebar says when Shellforge could not read the login shell's environment (PRD E6), and stops
 /// saying it once a read succeeds. Launchers are scripted: no login shell runs.
 @MainActor @Suite struct EnvironmentWarningTests {
-    private let folder = FileManager.default.temporaryDirectory.appendingPathComponent("shellforge-envwarn-\(UUID().uuidString)")
+    private let folder = TestScratch.root.appendingPathComponent("shellforge-envwarn-\(UUID().uuidString)")
 
     /// Answers a fallback until told the rc file is fixed.
     private final class Shell: @unchecked Sendable {

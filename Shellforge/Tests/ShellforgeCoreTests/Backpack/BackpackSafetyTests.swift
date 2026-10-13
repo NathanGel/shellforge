@@ -18,7 +18,7 @@ import Testing
     /// The watchdog waits on a pipe the app holds and runs its command once the pipe closes — when
     /// the app lets it go, or when the app dies however it dies.
     @Test func theWatchdogRunsItsCommandWhenItsHolderGoes() async throws {
-        let file = FileManager.default.temporaryDirectory.appendingPathComponent("sf-watchdog-\(UUID().uuidString)").path
+        let file = TestScratch.root.appendingPathComponent("sf-watchdog-\(UUID().uuidString)").path
         let watchdog = SleepWatchdog(command: ["/bin/sh", "-c", "/bin/cat >/dev/null; /usr/bin/touch '\(file)'"])
         watchdog.arm()
         try await Task.sleep(for: .milliseconds(300))

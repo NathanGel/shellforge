@@ -18,7 +18,7 @@ import Testing
         var draft = TaskDraft(baseBranch: "main", agentId: "claude", model: "opus", reasoning: nil)
         draft.promptText = "One\nTwo\n/s"
         let opus = AgentModel(id: "opus", label: "Opus", detail: nil, efforts: [], defaultEffort: nil)
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("layering-\(UUID().uuidString)")
+        let home = TestScratch.root.appendingPathComponent("layering-\(UUID().uuidString)")
         let model = NewTaskModel(project: project, agents: AgentPresets.all, available: ["claude"], draft: draft, rememberedModels: [:],
                                  catalogue: { _ in [opus] }, branches: { ["main"] }, submit: { _ in }, home: home)
         let host = NSHostingView(rootView: NewTaskSheet(model: model, dismiss: {}).seeded(step: 3))
@@ -49,8 +49,7 @@ import Testing
         let x = field.minX + completions.anchor.x + (1 + Space.tight) / 2
         #expect(top + height > field.maxY + 100, "the popup must hang well past the field to test anything")
 
-        let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let bitmap = try #require(Snapshot.bitmap(of: host))
         let scale = CGFloat(bitmap.pixelsWide) / host.bounds.width
         func pixel(_ x: CGFloat, _ y: CGFloat) throws -> NSColor {
             try #require(bitmap.colorAt(x: Int(x * scale), y: Int(y * scale))?.usingColorSpace(.sRGB))

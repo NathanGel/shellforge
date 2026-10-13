@@ -1,10 +1,11 @@
 import Foundation
 import Testing
+@testable import ShellforgeTestSupport
 @testable import ShellforgeCore
 
 @Suite struct ModelCatalogueTests {
     private func home() throws -> URL {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("shellforge-models-\(UUID().uuidString)")
+        let url = TestScratch.root.appendingPathComponent("shellforge-models-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }

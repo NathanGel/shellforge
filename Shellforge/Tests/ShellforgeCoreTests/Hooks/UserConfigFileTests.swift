@@ -1,6 +1,7 @@
 // Ported from AiTerm (app/Tests/AiTermCoreTests/UserConfigFileTests.swift), GPLv3, Laurens D'Hondt.
 import Foundation
 import Testing
+@testable import ShellforgeTestSupport
 @testable import ShellforgeCore
 
 /// The one way every driver reads and writes a file in the user's home.
@@ -8,7 +9,7 @@ import Testing
     let fm = FileManager.default
 
     func tempHome() throws -> URL {
-        let home = fm.temporaryDirectory.appendingPathComponent("sf-ucf-\(UUID().uuidString)")
+        let home = TestScratch.root.appendingPathComponent("sf-ucf-\(UUID().uuidString)")
         try fm.createDirectory(at: home.appendingPathComponent(".tool"), withIntermediateDirectories: true)
         return home
     }

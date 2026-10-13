@@ -25,7 +25,7 @@ import ShellforgeDesign
                             draft: ReviewDraft(mr: nil, agentId: "claude", model: "opus", reasoning: nil), rememberedModels: [:],
                             catalogue: { [opus] _ in [opus] }, branches: { branches }, codeHost: .gitLab,
                             searchMergeRequests: search, submit: create,
-                            home: FileManager.default.temporaryDirectory.appendingPathComponent("rv-home-\(UUID().uuidString)"))
+                            home: TestScratch.root.appendingPathComponent("rv-home-\(UUID().uuidString)"))
     }
 
     /// The connection and the remote are read once, when the sheet is prepared, and every query
@@ -211,7 +211,7 @@ import ShellforgeDesign
                                         catalogue: { _ in [opus] }, branches: { ["main", "feat-gift-card", "chore-drop-importer"] },
                                         codeHost: .gitLab, searchMergeRequests: { _ in [Self.first, Self.second] },
                                         submit: { draft in created.drafts.append(draft); throw Refused() },
-                                        home: FileManager.default.temporaryDirectory.appendingPathComponent("rv-home-\(UUID().uuidString)"))
+                                        home: TestScratch.root.appendingPathComponent("rv-home-\(UUID().uuidString)"))
         if !title.isEmpty { model.draft.setTitle(title) }
         if !branch.isEmpty { model.draft.setBranch(branch) }
         model.listOpen = mrOpen

@@ -3,6 +3,7 @@ import AppKit
 import SwiftUI
 import ShellforgeDesign
 import Testing
+@testable import ShellforgeTestSupport
 @testable import ShellforgeCore
 @testable import ShellforgeUI
 
@@ -223,8 +224,7 @@ extension SidebarFooterGeometryTests {
 
     /// `band` is in points from the top; it has to leave out every full-width rule.
     private func paintedWidth(_ host: NSHostingView<AnyView>, band points: Range<Int>) throws -> CGFloat {
-        let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let bitmap = try #require(Snapshot.bitmap(of: host))
         let scale = CGFloat(bitmap.pixelsWide) / host.bounds.width
         let band = Int(CGFloat(points.lowerBound) * scale)..<min(bitmap.pixelsHigh, Int(CGFloat(points.upperBound) * scale))
         // Sampled inside the band, past the rows' ink: the footer's middle can land on a rule.

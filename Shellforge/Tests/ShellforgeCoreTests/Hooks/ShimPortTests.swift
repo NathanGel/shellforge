@@ -2,6 +2,7 @@
 // The shims themselves are run by the daemon's tests (daemon/tests/test_*statusline_shim.py).
 import Foundation
 import Testing
+@testable import ShellforgeTestSupport
 @testable import ShellforgeCore
 
 @Suite struct ShimPortTests {
@@ -12,7 +13,7 @@ import Testing
     /// the port with space around it — the shims refuse, or might, so the driver's probe calls
     /// that install outdated and a Repair writes the file again.
     @Test func onlyWhatRecordWritesIsTheRecordedPort() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("sf-shim-\(UUID().uuidString)")
+        let home = TestScratch.root.appendingPathComponent("sf-shim-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: home) }
         try ShimPort.record(Self.port, home: home)
         #expect(ShimPort.isRecorded(Self.port, home: home))

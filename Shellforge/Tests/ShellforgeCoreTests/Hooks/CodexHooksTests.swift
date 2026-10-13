@@ -1,6 +1,7 @@
 // Ported from AiTerm (app/Tests/AiTermCoreTests/HookConfigTests.swift), GPLv3, Laurens D'Hondt.
 import Foundation
 import Testing
+@testable import ShellforgeTestSupport
 @testable import ShellforgeCore
 
 @Suite struct CodexHooksTests {
@@ -162,7 +163,7 @@ import Testing
     }
 
     @Test func testClaudeAndCodexInstallersAreIsolatedAndIdempotent() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("sf-installers-\(UUID().uuidString)")
+        let home = TestScratch.root.appendingPathComponent("sf-installers-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: home) }
         let codexURL = home.appendingPathComponent(".codex/config.toml")
         let claudeURL = home.appendingPathComponent(".claude/settings.json")
@@ -185,7 +186,7 @@ import Testing
     }
 
     @Test func testPerHarnessInstallationProbesReadOnlyTheirOwnConfiguration() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("sf-probes-\(UUID().uuidString)")
+        let home = TestScratch.root.appendingPathComponent("sf-probes-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: home) }
         let shim = "/Applications/Shellforge.app/shim.sh"
 
@@ -200,7 +201,7 @@ import Testing
     }
 
     func temporaryHome() throws -> URL {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("sf-home-\(UUID().uuidString)")
+        let home = TestScratch.root.appendingPathComponent("sf-home-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: home.appendingPathComponent(".claude"), withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: home.appendingPathComponent(".codex"), withIntermediateDirectories: true)
         return home

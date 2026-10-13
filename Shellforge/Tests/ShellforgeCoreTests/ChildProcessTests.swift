@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+@testable import ShellforgeTestSupport
 @testable import ShellforgeCore
 
 @Suite struct ChildProcessTests {
@@ -42,7 +43,7 @@ import Testing
     }
 
     @Test func aLaunchedChildWritesToTheGivenFile() async throws {
-        let file = FileManager.default.temporaryDirectory.appendingPathComponent("sf-child-\(UUID().uuidString).log")
+        let file = TestScratch.root.appendingPathComponent("sf-child-\(UUID().uuidString).log")
         FileManager.default.createFile(atPath: file.path, contents: nil)
         let handle = try FileHandle(forWritingTo: file)
         let done = Locked(false)

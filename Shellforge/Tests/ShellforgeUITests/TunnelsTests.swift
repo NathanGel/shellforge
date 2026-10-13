@@ -8,7 +8,7 @@ import Testing
 /// helper, auto-started by rule, and their ports handed to the task's shell. The SSH config is a
 /// temporary file; nothing reads `~/.ssh` and nothing reaches the network.
 @MainActor @Suite struct TunnelsTests {
-    private let folder = FileManager.default.temporaryDirectory.appendingPathComponent("shellforge-tunnels-\(UUID().uuidString)")
+    private let folder = TestScratch.root.appendingPathComponent("shellforge-tunnels-\(UUID().uuidString)")
 
     private static let config = """
         Host db
@@ -329,6 +329,28 @@ import Testing
         feed.status = .connected
         #expect(await eventually { feed.tunnelCalls == ["start db", "start db"] })
         _ = model
+    }
+
+    /// The helper refused a tunnel call: the sidebar's error banner says so.
+    @Test func aTunnelErrorShowsInTheSidebar() async throws {
+        let feed = FakeFeed()
+        let (model, _, _, _, _) = try await model(feed: feed)
+        feed.tunnelOutcomes.send(TunnelOutcome(alias: "db", error: "Couldn’t start tunnel db: no such tunnel"))
+        #expect(model.lastError == "Couldn’t start tunnel db: no such tunnel")
+    }
+
+    /// A tunnel call that then works clears its own error, and only its own.
+    @Test func aTunnelThatWorksAgainClearsItsError() async throws {
+        let feed = FakeFeed()
+        let (model, _, _, _, _) = try await model(feed: feed)
+        feed.tunnelOutcomes.send(TunnelOutcome(alias: "db", error: "Couldn’t start tunnel db: refused"))
+        feed.tunnelOutcomes.send(TunnelOutcome(alias: "web", error: nil))
+        #expect(model.lastError == "Couldn’t start tunnel db: refused", "another tunnel's success leaves it")
+        feed.tunnelOutcomes.send(TunnelOutcome(alias: "db", error: nil))
+        #expect(model.lastError == nil)
+        model.lastError = "Couldn’t save the workspace."
+        feed.tunnelOutcomes.send(TunnelOutcome(alias: "db", error: nil))
+        #expect(model.lastError == "Couldn’t save the workspace.", "an unrelated error stays")
     }
 
     @Test func startingBeforeTheConfigIsReadReadsIt() async throws {

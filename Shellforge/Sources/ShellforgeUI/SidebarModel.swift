@@ -57,6 +57,9 @@ public struct AgentNotInstalled: Error, Equatable, LocalizedError {
 public protocol SessionFeed: AnyObject {
     var statusPublisher: AnyPublisher<HelperStatus, Never> { get }
     var storePublisher: AnyPublisher<SessionStore, Never> { get }
+    /// Each tunnel call's outcome, once, as it happens: a refusal is said as the sidebar's error,
+    /// and the same tunnel's next success clears it.
+    var tunnelOutcomePublisher: AnyPublisher<TunnelOutcome, Never> { get }
     func markSeen(task: UUID)
     /// A terminal's tabs, by their sessions: they carry no task.
     func markSeen(sessions: [String])
@@ -75,7 +78,7 @@ public final class SidebarModel: ObservableObject {
     /// last refresh: published so a change to either redraws, as the tree's does.
     @Published private(set) var drawnTabId: String?
     @Published private(set) var drawnDividers: [SidebarDivider] = []
-    @Published public private(set) var selectedTaskId: UUID?
+    @Published public internal(set) var selectedTaskId: UUID?
     /// The terminal row shown, when the selected tab is a terminal's (Terminals/).
     @Published public internal(set) var selectedTerminalId: UUID?
     /// The last action's failure, in words the user can act on; cleared by the next success.
@@ -112,7 +115,7 @@ public final class SidebarModel: ObservableObject {
     /// The agents New Task offers.
     public let agents: [AgentDefinition]
     /// An agent's model list, read off the main actor.
-    private let catalogue: @Sendable (AgentDefinition) throws -> [AgentModel]
+    let catalogue: @Sendable (AgentDefinition) throws -> [AgentModel]
     /// Read the saved Jira, GitLab and GitHub connections: the Keychain and the defaults. Tests hand
     /// in their own.
     let jiraSettings: @Sendable () -> JiraConfig?
@@ -132,6 +135,8 @@ public final class SidebarModel: ObservableObject {
         get { LaunchStarts.shared(for: document).requested }
         set { LaunchStarts.shared(for: document).requested = newValue }
     }
+    /// The tunnel error the banner shows, by its tunnel: that tunnel's next success clears it.
+    private var shownTunnelError: (alias: String, message: String)?
     /// The tab selected at the last refresh: moving to another is opening it.
     private var lastSelectedTab: String?
 
@@ -167,6 +172,9 @@ public final class SidebarModel: ObservableObject {
         if let feed {
             feedSubscriptions = [
                 feed.storePublisher.sink { [weak self] store in MainActor.assumeIsolated { self?.take(store) } },
+                feed.tunnelOutcomePublisher.sink { [weak self] outcome in
+                    MainActor.assumeIsolated { self?.take(outcome) }
+                },
                 feed.statusPublisher.sink { [weak self] status in
                     MainActor.assumeIsolated {
                         guard let self else { return }
@@ -182,6 +190,18 @@ public final class SidebarModel: ObservableObject {
         refresh()
         // The first read runs a login shell: off the main actor, and said if it fell back.
         environmentChanged()
+    }
+
+    /// A tunnel's refusal shown as the error; its next success clears it, and only it — an error
+    /// set since by something else stays.
+    private func take(_ outcome: TunnelOutcome) {
+        if let error = outcome.error {
+            lastError = error
+            shownTunnelError = (outcome.alias, error)
+        } else if let shown = shownTunnelError, shown.alias == outcome.alias {
+            if lastError == shown.message { lastError = nil }
+            shownTunnelError = nil
+        }
     }
 
     /// Reads the environment as the launcher now has it — reading it first if it has not been — and
@@ -282,59 +302,6 @@ public final class SidebarModel: ObservableObject {
         let beside = draft.openSSH ? draft.paneHost.map(SSHConfig.paneCommand(alias:)) : nil
         host.openTab(in: made.0.worktreePath, taskId: made.0.id, projectId: projectId, title: made.0.title, command: made.1,
                      environment: openingTaskTab(in: projectId), beside: beside)
-    }
-
-    // -- New Review ----------------------------------------------------------------------
-
-    /// The New Review sheet for `projectId`: the agent and model New Task would open with, the
-    /// project's branches, and the search of its open merge requests — on GitLab or GitHub, as its
-    /// remote says, with the connection as it stands now. The remote and the connections are read
-    /// off the main actor: a git call and Keychain reads.
-    public func makeReviewModel(for projectId: UUID) async -> ReviewCreationModel? {
-        guard let project = document.workspace.projects.first(where: { $0.id == projectId }), !agents.isEmpty else { return nil }
-        let launcher = self.launcher, path = project.path
-        let readGitLab = gitLabSettings, readGitHub = gitHubSettings
-        let read = await BackgroundWork.run { () -> (RemoteInfo, GitLabConfig?, GitHubConfig?) in
-            let url = try? launcher.run("git", ["-C", path, "remote", "get-url", "origin"])
-            let remote = ProviderDetector.detect(remoteUrl: url?.status == 0 ? url?.stdout : nil, repoPath: path)
-            return (remote, readGitLab(), readGitHub())
-        }
-        let available = Set(agents.filter { launcher.locate($0.command) != nil }.map(\.id))
-        let last = document.workspace.lastAgentByProject[projectId]
-        let agentId = last.flatMap { available.contains($0) ? $0 : nil } ?? agents.first { available.contains($0.id) }?.id ?? agents[0].id
-        return ReviewCreationModel(project: project, agents: agents, available: available,
-                                   draft: ReviewDraft(mr: nil, agentId: agentId, model: "", reasoning: nil),
-                                   rememberedModels: document.workspace.lastModelByAgent, catalogue: catalogue,
-                                   branches: { Repository.branches(of: path, launcher: launcher) },
-                                   codeHost: MergeRequestSearch.host(for: read.0),
-                                   searchMergeRequests: ReviewCreationModel.searcher(gitLab: read.1, gitHub: read.2, remote: read.0),
-                                   submit: { [weak self] draft in try await self?.newReview(draft: draft, in: projectId) },
-                                   home: FileManager.default.homeDirectoryForCurrentUser)
-    }
-
-    /// AiTerm's review create: the merge request's branch in a worktree of its own, the agent's
-    /// command with the typed prompt, then the review saved and its tab opened running the agent.
-    public func newReview(draft: ReviewDraft, in projectId: UUID) async throws {
-        guard let project = document.workspace.projects.first(where: { $0.id == projectId }),
-              let agent = agents.first(where: { $0.id == draft.agentId }) else { return }
-        let launcher = self.launcher
-        let made = try await BackgroundWork.run { () throws -> (TaskItem, String) in
-            guard launcher.locate(agent.command) != nil else { throw AgentNotInstalled(agent: agent.name) }
-            let review = try ReviewWorktrees.create(draft: draft, in: project, launcher: launcher)
-            let command = try AgentCommand.build(agent: agent, model: draft.model, reasoning: draft.reasoning,
-                                                 prompt: draft.promptText.isEmpty ? nil : draft.promptText,
-                                                 worktreePath: review.worktreePath, launcher: launcher)
-            return (review, command)
-        }
-        try document.update { workspace in
-            workspace.tasks.append(made.0)
-            workspace.remember(draft, projectId: projectId)
-            if let i = workspace.projects.firstIndex(where: { $0.id == projectId }) { workspace.projects[i].collapsed = false }
-        }
-        selectedTaskId = made.0.id
-        selectedTerminalId = nil
-        host.openTab(in: made.0.worktreePath, taskId: made.0.id, projectId: projectId, title: made.0.title, command: made.1,
-                     environment: openingTaskTab(in: projectId))
     }
 
     /// Shows the task: its first open tab, or a new one in its worktree when none is open.
@@ -446,35 +413,6 @@ public final class SidebarModel: ObservableObject {
         }
     }
 
-    /// The footer's first row: the selected task's, else the selected tab's when it belongs to no
-    /// task (AiTerm's terminal row); nothing when neither — SYSTEM then holds the Mac alone.
-    public var footerRow: UsageTaskRow? {
-        if let id = selectedTaskId {
-            let task = document.workspace.tasks.first { $0.id == id }
-            let fallback = task?.agent.flatMap(SessionAgent.init(rawValue:)) ?? .shell
-            return UsageRows.taskRow(sessions: sessions.sessions(ofTask: id), fallback: fallback,
-                                     contexts: contexts.percents(forRow: .task(id)), preferring: host.selectedTabId)
-        }
-        guard let id = host.selectedTabId,
-              let tab = (tree.otherTabs + terminalTabs).first(where: { $0.id == id }) else { return nil }
-        return UsageRows.taskRow(sessions: sessions.sessions(ofTab: id), fallback: .shell,
-                                 contexts: contexts.percents(forRow: .tab(tab.tabId)), preferring: id)
-    }
-
-    /// USAGE's rows for this minute: Claude's and Codex's windows, as AiTerm's footer works them out.
-    public func vendorRows(now: Date, calendar: Calendar, claudeStatusLineInstalled: Bool) -> [UsageVendorRow] {
-        UsageRows.vendorRows(sessions.usage, now: now, calendar: calendar, claudeStatusLineInstalled: claudeStatusLineInstalled)
-    }
-
-    /// The agents of a task's tabs, as AiTerm's avatar group takes them: in tab order, a shell's too
-    /// (its `>_` mark). `AvatarGroup.of` turns them into the marks a row draws.
-    public func avatars(forTask id: UUID) -> [SessionAgent] { Self.agents(sessions.sessions(ofTask: id)) }
-    public func avatars(forTab id: String) -> [SessionAgent] { Self.agents(sessions.sessions(ofTab: id)) }
-
-    private static func agents(_ sessions: [SessionInfo]) -> [SessionAgent] {
-        sessions.sorted { ($0.tabIndex, $0.sessionId) < ($1.tabIndex, $1.sessionId) }.map(\.agent)
-    }
-
     /// What the sidebar draws, in order: each project, and unless it is folded its tasks — the selected
     /// task's tabs under it when it has more than one; then the tabs of no task. With no project, the
     /// empty state comes first. Exactly one row is selected: the current tab when it is listed, else
@@ -512,34 +450,6 @@ public final class SidebarModel: ObservableObject {
             rows += tree.otherTabs.map { .tab($0, selected: selectedTaskId == nil && $0.id == current) }
         }
         return rows
-    }
-
-    // -- Jira projects ----------------------------------------------------------------
-
-    /// The project as the workspace holds it now.
-    public func project(_ id: UUID) -> Project? { document.workspace.projects.first { $0.id == id } }
-
-    /// Every Jira project the account can see, for a project's Jira Projects sheet. The connection
-    /// is read off the main actor: the Keychain is slow.
-    public func loadJiraProjects() async throws -> [JiraProjectRef] {
-        let read = jiraSettings
-        guard let config = await BackgroundWork.run(read) else {
-            throw ActionUnavailable("Connect Jira in Settings to choose a Jira project.")
-        }
-        return try await JiraClient(config: config).projects()
-    }
-
-    /// Replaces the project's linked Jira projects with `jiraProjects`, each once, in their order.
-    /// An empty list unlinks them all: New Task then searches every Jira project.
-    public func setJiraProjects(_ jiraProjects: [JiraProjectRef], on projectId: UUID) {
-        let linked = jiraProjects.linkedOnce
-        guard let current = document.workspace.projects.first(where: { $0.id == projectId }),
-              current.jiraProjects != linked else { return }
-        attempt {
-            try document.update { workspace in
-                if let i = workspace.projects.firstIndex(where: { $0.id == projectId }) { workspace.projects[i].jiraProjects = linked }
-            }
-        }
     }
 
     /// Folds or unfolds a project, as AiTerm's chevron does; kept with the workspace.
@@ -595,7 +505,7 @@ public final class SidebarModel: ObservableObject {
         if explicit || changed, sessions.status(ofTask: id) == .done { feed?.markSeen(task: id) }
     }
 
-    private func attempt(_ action: () throws -> Void) {
+    func attempt(_ action: () throws -> Void) {
         do {
             try action()
             lastError = nil

@@ -2,6 +2,7 @@
 import AppKit
 import SwiftUI
 import Testing
+@testable import ShellforgeTestSupport
 @testable import ShellforgeDesign
 
 // Helpers every ShellforgeDesign suite shares: hosting a view in a window, letting it settle, reading what
@@ -27,8 +28,7 @@ import Testing
 
 /// What `view` drew, as PNG data, for comparing two renders.
 @MainActor func pixels(in view: NSView) throws -> Data {
-    let bitmap = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
-    view.cacheDisplay(in: view.bounds, to: bitmap)
+    let bitmap = try #require(Snapshot.bitmap(of: view))
     return try #require(bitmap.representation(using: .png, properties: [:]))
 }
 
@@ -40,8 +40,7 @@ import Testing
     host.appearance = NSAppearance(named: .darkAqua)
     host.frame = NSRect(origin: .zero, size: host.fittingSize)
     host.layoutSubtreeIfNeeded()
-    guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return nil }
-    host.cacheDisplay(in: host.bounds, to: bitmap)
+    guard let bitmap = Snapshot.bitmap(of: host) else { return nil }
     var best: NSColor?
     var bestLight: CGFloat = -1
     for x in 0..<bitmap.pixelsWide {

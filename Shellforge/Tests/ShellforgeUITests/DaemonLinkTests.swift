@@ -12,7 +12,7 @@ import Testing
 
     /// A folder that looks like the bundled daemon's: `shellforged/__main__.py`.
     private func daemonDir() throws -> URL {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("sf-daemon-\(UUID().uuidString)")
+        let dir = TestScratch.root.appendingPathComponent("sf-daemon-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir.appendingPathComponent("shellforged"), withIntermediateDirectories: true)
         try Data().write(to: dir.appendingPathComponent("shellforged/__main__.py"))
         return dir
@@ -168,6 +168,56 @@ import Testing
         #expect(sent("tunnels.start")?["alias"] as? String == "db")
         #expect(sent("tunnels.start")?["environment"] as? [String: String] == ["PATH": "/opt/bin", "SSH_AUTH_SOCK": "/tmp/agent"])
         #expect(sent("tunnels.stop")?["alias"] as? String == "db")
+    }
+
+    /// A daemon refusing tunnel calls: the refusal is said, not dropped.
+    private func tunnelRefusingServer() -> FakeSocketServer {
+        let server = FakeSocketServer(path: "/tmp/sf-link-\(UUID().uuidString.prefix(8)).sock")
+        server.handler = { req in
+            (req["method"] as? String).map { $0.hasPrefix("tunnels.") } == true
+                ? ["id": req["id"]!, "error": ["code": "not_found", "message": "no such tunnel"]]
+                : Self.snapshotReply(req)
+        }
+        server.start()
+        return server
+    }
+
+    @Test func aRefusedTunnelStartIsSaid() async throws {
+        let server = tunnelRefusingServer()
+        let link = DaemonLink(socketPath: server.path, daemonDir: nil, findPython: { nil }, reports: { [] }, environment: { [:] })
+        defer { link.shutdown(); server.stop() }
+        link.supervisorChanged(.listening(pid: 1))
+        #expect(await eventually { link.status == .connected })
+        link.startTunnel(alias: "db", keepRunning: false)
+        #expect(await eventually { link.tunnelError?.hasPrefix("Couldn’t start tunnel db") == true })
+    }
+
+    /// A tunnel error is an event, not state: a window opened after it hears nothing of it, so it
+    /// neither shows an old failure nor hides its own load problem behind it.
+    @Test func aWindowOpenedLaterHearsNoOldTunnelError() async throws {
+        let server = tunnelRefusingServer()
+        let link = DaemonLink(socketPath: server.path, daemonDir: nil, findPython: { nil }, reports: { [] }, environment: { [:] })
+        defer { link.shutdown(); server.stop() }
+        link.supervisorChanged(.listening(pid: 1))
+        #expect(await eventually { link.status == .connected })
+        var early: [TunnelOutcome] = []
+        let first = link.tunnelOutcomes.sink { early.append($0) }
+        link.startTunnel(alias: "db", keepRunning: false)
+        #expect(await eventually { early.count == 1 })
+        var late: [TunnelOutcome] = []
+        let second = link.tunnelOutcomes.sink { late.append($0) }
+        #expect(late.isEmpty)
+        _ = (first, second)
+    }
+
+    @Test func aRefusedStopIsSaid() async throws {
+        let server = tunnelRefusingServer()
+        let link = DaemonLink(socketPath: server.path, daemonDir: nil, findPython: { nil }, reports: { [] })
+        defer { link.shutdown(); server.stop() }
+        link.supervisorChanged(.listening(pid: 1))
+        #expect(await eventually { link.status == .connected })
+        link.stopTunnel(alias: "web")
+        #expect(await eventually { link.tunnelError?.hasPrefix("Couldn’t stop tunnel web") == true })
     }
 
     /// The daemon's answer to `sessions.update`, as a fake server gives it.

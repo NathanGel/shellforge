@@ -10,7 +10,7 @@ import Testing
 /// minute: one that changes nothing redraws nothing.
 @MainActor @Suite struct RedrawTests {
     private func model() throws -> (SidebarModel, FakeTerminalHost, FakeFeed) {
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("shellforge-redraw-\(UUID().uuidString)")
+        let folder = TestScratch.root.appendingPathComponent("shellforge-redraw-\(UUID().uuidString)")
         let document = WorkspaceDocument(store: WorkspaceStore(folder: folder))
         try document.update { $0.projects.append(Project(name: "api", path: "/api")) }
         let launcher = CommandLauncher(resolve: { ResolvedEnvironment(variables: ["PATH": "/usr/bin"], source: .loginShell("/bin/zsh")) })

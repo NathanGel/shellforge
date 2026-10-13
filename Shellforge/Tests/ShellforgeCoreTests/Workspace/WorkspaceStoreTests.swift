@@ -1,9 +1,10 @@
 import Foundation
 import Testing
+@testable import ShellforgeTestSupport
 @testable import ShellforgeCore
 
 @Suite struct WorkspaceStoreTests {
-    private let folder = FileManager.default.temporaryDirectory.appendingPathComponent("shellforge-ws-\(UUID().uuidString)")
+    private let folder = TestScratch.root.appendingPathComponent("shellforge-ws-\(UUID().uuidString)")
     private var store: WorkspaceStore { WorkspaceStore(folder: folder) }
 
     private func sample() -> Workspace {
