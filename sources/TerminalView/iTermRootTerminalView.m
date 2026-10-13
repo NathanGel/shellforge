@@ -1268,18 +1268,13 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
 // View › Show Sidebar.
 - (void)updateShellforgeShowSidebarButton {
     NSWindow *window = self.window;
-    const BOOL wanted = _shellforgeSidebar && _shellforgeSidebarHidden && window &&
-        (window.styleMask & NSWindowStyleMaskTitled);
-    const BOOL installed = _shellforgeShowSidebarAccessory &&
-        [window.titlebarAccessoryViewControllers containsObject:_shellforgeShowSidebarAccessory];
-    if (wanted == installed) {
+    if (!_shellforgeSidebar || !window) {
         return;
     }
-    if (!wanted) {
-        [_shellforgeShowSidebarAccessory removeFromParentViewController];
-        return;
-    }
-    if (!_shellforgeShowSidebarAccessory) {
+    // Through iTerm2's titlebar-accessory nanny, which keeps it across style and window changes and
+    // skips a window with no title bar.
+    const BOOL wanted = _shellforgeSidebarHidden && (window.styleMask & NSWindowStyleMaskTitled);
+    if (wanted && !_shellforgeShowSidebarAccessory) {
         NSImage *image = [NSImage imageWithSystemSymbolName:@"sidebar.left" accessibilityDescription:@"Show Sidebar"];
         NSButton *button = [NSButton buttonWithImage:image target:self action:@selector(toggleShellforgeSidebar)];
         button.bordered = NO;
@@ -1291,7 +1286,9 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
         _shellforgeShowSidebarAccessory.view = holder;
         _shellforgeShowSidebarAccessory.layoutAttribute = NSLayoutAttributeLeft;
     }
-    [window addTitlebarAccessoryViewController:_shellforgeShowSidebarAccessory];
+    if (_shellforgeShowSidebarAccessory) {
+        [(PseudoTerminal *)_delegate shellforgeShowTitlebarAccessory:_shellforgeShowSidebarAccessory shown:wanted];
+    }
 }
 
 - (void)updateShellforgeSidebarDragHandle {

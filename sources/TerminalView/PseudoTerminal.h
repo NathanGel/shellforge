@@ -507,6 +507,8 @@ extern NSString *const iTermDidCreateTerminalWindowNotification;
              nearSessionGuid:(NSString *)sessionGuid
                     vertical:(BOOL)vertical;
 
+// Shellforge: adds or removes a title-bar accessory through iTerm2's own accessory nanny.
+- (void)shellforgeShowTitlebarAccessory:(NSTitlebarAccessoryViewController *)viewController shown:(BOOL)shown;
 // Shellforge: whether a split fits in `tab`, which need not be the current tab.
 - (BOOL)canSplitPaneVertically:(BOOL)isVertical withBookmark:(Profile *)theBookmark inTab:(PTYTab *)tab;
 
