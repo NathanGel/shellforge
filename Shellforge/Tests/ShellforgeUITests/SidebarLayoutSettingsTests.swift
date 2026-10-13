@@ -62,6 +62,14 @@ import Testing
         #expect(SidebarLayoutSettings.minimumWindowWidth(beside: 250) == minimum + 250)
     }
 
+    /// iTerm2 holds the toolbelt to at most half the window: a 1000 pt toolbelt in a 1360 pt
+    /// window is 680 pt, so the window stops at 1360 pt, not 1680 pt.
+    @Test func aWideToolbeltCountsAsLayoutWillMakeIt() {
+        let base = SidebarLayoutSettings.minimumWindowWidth(beside: 0)
+        #expect(SidebarLayoutSettings.minimumWindowWidth(beside: 1000, toolbeltMaxFraction: 0.5) == base * 2)
+        #expect(SidebarLayoutSettings.minimumWindowWidth(beside: 250, toolbeltMaxFraction: 0.5) == base + 250, "within half: as it is")
+    }
+
     /// The drag handle straddles the sidebar's border, mostly outside it: the list's scroller, at
     /// the sidebar's right edge, stays clickable.
     @Test func theHandleSitsOnTheBorderClearOfTheScroller() {

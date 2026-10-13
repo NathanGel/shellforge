@@ -5697,9 +5697,6 @@ hidingToolbeltShouldResizeWindow:(BOOL)hidingToolbeltShouldResizeWindow
     // Compute new window size from tab size.
     proposedFrameSize.width = tabSize.width + decorationSize.width + internalDecorationSize.width;
     proposedFrameSize.height = tabSize.height + decorationSize.height + internalDecorationSize.height;
-    // Shellforge: no narrower than the sidebar at its minimum beside the terminal at its own; the
-    // sidebar would otherwise jump from its minimum to nothing.
-    proposedFrameSize.width = MAX(proposedFrameSize.width, [_contentView shellforgeMinimumWindowWidth]);
 
     // If snapping, reject the new size if the mouse has not moved at least
     // half the current grid size in a given direction.  This is really
@@ -5718,6 +5715,17 @@ hidingToolbeltShouldResizeWindow:(BOOL)hidingToolbeltShouldResizeWindow
       if (deltaY < floor(charHeight / 2)) {
         proposedFrameSize.height = senderSize.height;
       }
+    }
+
+    // Shellforge: a window narrowed across the sidebar's minimum beside the terminal's stops there;
+    // the sidebar would otherwise jump from its minimum to nothing. After snapping, so its dead-band
+    // still reads the pointer. Not for accessibility resizing (window managers size as they please),
+    // nor a window already narrower, which another path (tiling, a smaller screen) left so.
+    const CGFloat shellforgeMinimum = [_contentView shellforgeMinimumWindowWidth];
+    if (!self.ptyWindow.it_accessibilityResizing &&
+        senderSize.width >= shellforgeMinimum &&
+        proposedFrameSize.width < shellforgeMinimum) {
+        proposedFrameSize.width = shellforgeMinimum;
     }
 
     // If the original proposal was to fill the screen then allow it
