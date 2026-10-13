@@ -33,7 +33,7 @@ import Testing
         host.onChange?()
         model.closeTab("o1")
         #expect(host.closed == ["o1"])
-        #expect(model.tree.otherTabs.isEmpty)
+        #expect(!model.tree.otherTabs.contains { $0.id == "o1" }, "gone; the window keeps a fresh shell")
     }
 
     @Test func aTaskTabWithAnotherCloses() throws {
@@ -87,5 +87,35 @@ import Testing
         host.selectedTabId = "t2-pane"
         model.closeCurrentTab(ofTask: task)
         #expect(host.closed == ["t2"])
+    }
+
+    // -- M4e: the window stays --
+
+    /// iTerm2 closes a window with its last tab, and the sidebar with it: a shell opens first.
+    @Test func closingTheWindowsOnlyTabOpensAShellFirst() throws {
+        let (model, host, _, _) = try model()
+        host.tabs = [TabSnapshot(id: "o1", tabId: 1, title: "zsh", taskId: nil, projectId: nil)]
+        host.onChange?()
+        model.closeTab("o1")
+        #expect(host.shellsOpened == 1 && host.closed == ["o1"])
+        #expect(host.tabs.count == 1, "the window keeps a tab: the fresh shell")
+    }
+
+    @Test func aTabAmongOthersOpensNoShell() throws {
+        let (model, host, _, _) = try model()
+        host.tabs = [TabSnapshot(id: "o1", tabId: 1, title: "zsh", taskId: nil, projectId: nil),
+                     TabSnapshot(id: "o2", tabId: 2, title: "zsh", taskId: nil, projectId: nil)]
+        host.onChange?()
+        model.closeTab("o1")
+        #expect(host.shellsOpened == 0 && host.closed == ["o1"])
+    }
+
+    @Test func removingATerminalWithTheOnlyTabKeepsTheWindow() throws {
+        let (model, host, project, _) = try model()
+        model.newTerminal(name: "logs", in: project)
+        let terminal = try #require(model.tree.projects.first?.terminals.first).id
+        #expect(host.tabs.count == 1)
+        model.removeTerminal(terminal)
+        #expect(host.shellsOpened == 1 && host.tabs.count == 1)
     }
 }

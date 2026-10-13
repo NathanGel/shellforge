@@ -11,7 +11,15 @@ extension SidebarModel {
             sheetRequests.send(.closeLastTab(task: task.id, tab: id))
             return
         }
+        keepingWindow(closing: { $0.id == id })
         host.close(tab: id)
+    }
+
+    /// iTerm2 closes a window with its last tab, and the sidebar with it: when every tab of this
+    /// window is about to close, a plain shell opens first, and the window stays.
+    func keepingWindow(closing: (TabSnapshot) -> Bool) {
+        let tabs = host.tabs
+        if !tabs.isEmpty, tabs.allSatisfy(closing) { host.openShellTab() }
     }
 
     /// A task row's Close Tab: the task's tab now selected, else its first.

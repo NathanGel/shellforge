@@ -90,11 +90,19 @@ import Testing
         #expect(s.row != nil && s.sidebar.removals[s.task.id] == nil)
     }
 
+    /// The task's tab is the window's only one: a shell opens first, and the window stays.
+    @Test func removingTheWindowsOnlyTabKeepsTheWindow() async throws {
+        let s = try await setup([Self.remove])
+        #expect(s.host.tabs.count == 1)
+        #expect(await s.sidebar.confirmRemove(taskId: s.task.id))
+        #expect(s.host.shellsOpened == 1 && s.host.tabs.count == 1)
+    }
+
     @Test func removingATaskClosesItsTabsThenDeletesItsWorktreeAndRow() async throws {
         let s = try await setup([Self.remove])
         #expect(await s.sidebar.confirmRemove(taskId: s.task.id))
         #expect(s.host.closedTasks == [s.task.id])
-        #expect(s.host.tabs.isEmpty)
+        #expect(!s.host.tabs.contains { $0.taskId == s.task.id }, "its tabs closed; the window keeps a fresh shell")
         #expect(!FileManager.default.fileExists(atPath: s.task.worktreePath))
         #expect(try s.branchExists(), "the branch stays unless asked for")
         #expect(s.row == nil)

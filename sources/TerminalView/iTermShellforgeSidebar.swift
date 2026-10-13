@@ -198,6 +198,17 @@ final class iTermShellforgeHost: TerminalHost {
         return false
     }
 
+    /// iTerm2's own new tab: the default profile, in its default folder, selected.
+    func openShellTab() {
+        guard let windowController, let profile = ProfileModel.sharedInstance()?.defaultBookmark() else { return }
+        iTermSessionLauncher.launchBookmark(profile, in: windowController, style: .tab, withURL: nil,
+                                            hotkeyWindowType: .none, makeKey: true, canActivate: true,
+                                            respectTabbingMode: false, index: nil, command: nil,
+                                            makeSession: nil, didMakeSession: nil, completion: { [weak self] _, _ in
+            MainActor.assumeIsolated { self?.onChange?() }
+        })
+    }
+
     /// Every window's tabs holding a pane of the task.
     func tabCount(ofTask id: UUID) -> Int {
         let tag = id.uuidString.lowercased()
