@@ -353,7 +353,7 @@ async def test_an_exit_is_seen_without_polling(ssh_env, monkeypatch):
     real = subprocess.Popen.poll
     monkeypatch.setattr(subprocess.Popen, "poll", lambda self: (polls.append(1), real(self))[1])
     await asyncio.sleep(0.5)
-    assert len(polls) <= 2, f"{len(polls)} polls in 0.5 s"
+    assert polls == [], f"{len(polls)} polls in 0.5 s: an up tunnel's exit is watched, never polled"
     monkeypatch.setattr(subprocess.Popen, "poll", real)
     await tunnels.stop_all()
 
