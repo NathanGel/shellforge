@@ -35,6 +35,15 @@ class LaunchRecorder:
 
 
 @pytest.fixture(autouse=True)
+def temporary_files_in_the_tests_folder(tmp_path, monkeypatch):
+    """`tempfile`'s folders — a ledger-less tunnel supervisor's ssh logs — under the test's own
+    folder, which pytest removes, rather than left in the user's temporary folder."""
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    # And for a daemon a test starts as its own process.
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+
+
+@pytest.fixture(autouse=True)
 def no_real_iterm_launch(monkeypatch):
     """Stands in for `open -a iTerm` in every test, and fails the one that reaches it: a supervisor
     built without a launch_iterm of its own would otherwise open the real iTerm2. It records rather
