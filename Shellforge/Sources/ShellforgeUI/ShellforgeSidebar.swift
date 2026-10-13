@@ -160,11 +160,13 @@ struct SidebarView: View {
                         status: model.status(ofTask: node.id), removal: model.removals[node.id],
                         activate: { model.select(task: node.id) },
                         remove: { Task { await model.confirmRemove(taskId: node.id) } },
-                        rename: { showRename(.task, name: node.task.title) { model.renameTask(node.id, to: $0) } })
+                        rename: { showRename(.task, name: node.task.title) { model.renameTask(node.id, to: $0) } },
+                        closeTab: { model.closeCurrentTab(ofTask: node.id) })
                 .listRowSeparator(.hidden)
         case .tab(let tab, let selected):
             TabRowView(tab: tab, selected: selected, agents: model.avatars(forTab: tab.id),
-                       status: model.status(ofTab: tab.id), activate: { model.select(tab: tab.id) })
+                       status: model.status(ofTab: tab.id), activate: { model.select(tab: tab.id) },
+                       close: { model.closeTab(tab.id) })
                 .listRowSeparator(.hidden)
         case .otherTabsHeading:
             SidebarHeading("Other tabs")

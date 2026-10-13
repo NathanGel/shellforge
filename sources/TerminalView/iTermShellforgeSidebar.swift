@@ -183,6 +183,30 @@ final class iTermShellforgeHost: TerminalHost {
         })
     }
 
+    /// The tab holding session `id`, in any window, closed as iTerm2's Close Tab closes it: a running
+    /// job asks first.
+    @discardableResult
+    func close(tab id: String) -> Bool {
+        let windows = (iTermController.sharedInstance()?.terminals() ?? []) as [PseudoTerminal]
+        for window in windows {
+            for tab in window.tabs() where tab.sessions().contains(where: { $0.guid == id }) {
+                let closed = window.closeTabIfConfirmed(tab)
+                onChange?()
+                return closed
+            }
+        }
+        return false
+    }
+
+    /// Every window's tabs holding a pane of the task.
+    func tabCount(ofTask id: UUID) -> Int {
+        let tag = id.uuidString.lowercased()
+        let windows = (iTermController.sharedInstance()?.terminals() ?? []) as [PseudoTerminal]
+        return windows.flatMap { $0.tabs() }.filter { tab in
+            tab.sessions().contains { ($0.genericScope.value(forVariableName: ShellforgeTags.task) as? String) == tag }
+        }.count
+    }
+
     /// Every window's tabs of the terminal, closed without asking: nothing on disk goes with them.
     func closeTabs(ofTerminal id: UUID) -> Bool {
         let windows = (iTermController.sharedInstance()?.terminals() ?? []) as [PseudoTerminal]
