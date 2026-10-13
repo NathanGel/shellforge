@@ -412,3 +412,14 @@ def test_no_fake_ssh_outlives_its_test(tmp_path):
     time.sleep(0.2)
     assert kill_fake_ssh(bin_dir) >= 1
     assert child.wait(timeout=2) is not None
+
+
+async def test_an_exit_is_watched_without_a_thread(ssh_env):
+    """No thread waits on an up tunnel's ssh: its exit comes from kqueue on the event loop."""
+    import threading
+    events = Events()
+    tunnels = fast(events)
+    await tunnels.start("db", ssh_env())
+    await wait_until(lambda: "up" in events.states("db"))
+    assert not any(t.name == "shellforged-offload" and t.is_alive() for t in threading.enumerate())
+    await tunnels.stop_all()

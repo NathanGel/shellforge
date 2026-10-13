@@ -210,6 +210,15 @@ import Testing
         _ = (first, second)
     }
 
+    /// A refusal the helper never sent — the connection dropped mid-call — is said in plain words,
+    /// not as "The operation couldn't be completed".
+    @Test func aDroppedConnectionIsSaidPlainly() {
+        let dropped = NSError(domain: NSPOSIXErrorDomain, code: Int(ECONNRESET))
+        #expect(DaemonLink.tunnelMessage("start", "db", dropped) == "Couldn’t start tunnel db: the connection to Shellforge’s helper dropped.")
+        let refused = DaemonError(code: .notFound, message: "no such tunnel")
+        #expect(DaemonLink.tunnelMessage("stop", "db", refused) == "Couldn’t stop tunnel db: \(refused.localizedDescription)")
+    }
+
     @Test func aRefusedStopIsSaid() async throws {
         let server = tunnelRefusingServer()
         let link = DaemonLink(socketPath: server.path, daemonDir: nil, findPython: { nil }, reports: { [] })

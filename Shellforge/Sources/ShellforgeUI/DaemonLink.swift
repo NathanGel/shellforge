@@ -131,6 +131,13 @@ public final class DaemonLink: ObservableObject {
         tunnelCall("stop", alias, client) { _ = try await client.stopTunnel(alias: alias) }
     }
 
+    /// What the banner says of a failed tunnel call: the helper's refusal in the words its code
+    /// has, or plainly that the connection dropped — never "The operation couldn't be completed".
+    nonisolated static func tunnelMessage(_ verb: String, _ alias: String, _ error: Error) -> String {
+        let reason = error is DaemonError ? error.localizedDescription : "the connection to Shellforge’s helper dropped."
+        return "Couldn’t \(verb) tunnel \(alias): \(reason)"
+    }
+
     /// A tunnel call, its refusal said rather than dropped; a helper this app cannot speak to is a
     /// mismatch, as a refused session list is. Not retried: the next click is the retry.
     private func tunnelCall(_ verb: String, _ alias: String, _ client: DaemonClient, _ call: @escaping @MainActor () async throws -> Void) {
@@ -143,7 +150,7 @@ public final class DaemonLink: ObservableObject {
                 outcomes.send(TunnelOutcome(alias: alias, error: nil))
             } catch {
                 guard self.client === client else { return }
-                let message = "Couldn’t \(verb) tunnel \(alias): \(error.localizedDescription)"
+                let message = Self.tunnelMessage(verb, alias, error)
                 tunnelError = message
                 outcomes.send(TunnelOutcome(alias: alias, error: message))
                 if let error = error as? DaemonError, error.isMismatch {
