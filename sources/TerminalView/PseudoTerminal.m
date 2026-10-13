@@ -5697,6 +5697,9 @@ hidingToolbeltShouldResizeWindow:(BOOL)hidingToolbeltShouldResizeWindow
     // Compute new window size from tab size.
     proposedFrameSize.width = tabSize.width + decorationSize.width + internalDecorationSize.width;
     proposedFrameSize.height = tabSize.height + decorationSize.height + internalDecorationSize.height;
+    // Shellforge: no narrower than the sidebar at its minimum beside the terminal at its own; the
+    // sidebar would otherwise jump from its minimum to nothing.
+    proposedFrameSize.width = MAX(proposedFrameSize.width, [_contentView shellforgeMinimumWindowWidth]);
 
     // If snapping, reject the new size if the mouse has not moved at least
     // half the current grid size in a given direction.  This is really

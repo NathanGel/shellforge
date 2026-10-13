@@ -51,6 +51,17 @@ import Testing
         #expect(SidebarLayoutSettings.width(500, windowWidth: 2_000, beside: 0) == 500)
     }
 
+    /// Dragged narrower, a window stops where the sidebar at its minimum and the terminal at its own
+    /// both still fit: below it the sidebar would jump from 360 pt to nothing (680 pt, more with the
+    /// toolbelt).
+    @Test func aWindowStopsBeforeTheSidebarWouldJump() {
+        let minimum = SidebarLayoutSettings.minimumWindowWidth(beside: 0)
+        #expect(minimum == Size.sidebarMinWidth + SidebarLayoutSettings.terminalMinWidth)
+        #expect(SidebarLayoutSettings.width(500, windowWidth: minimum) == Size.sidebarMinWidth, "at the minimum the sidebar still shows")
+        #expect(SidebarLayoutSettings.width(500, windowWidth: minimum - 1) == 0, "one point less and it would jump")
+        #expect(SidebarLayoutSettings.minimumWindowWidth(beside: 250) == minimum + 250)
+    }
+
     /// The drag handle straddles the sidebar's border, mostly outside it: the list's scroller, at
     /// the sidebar's right edge, stays clickable.
     @Test func theHandleSitsOnTheBorderClearOfTheScroller() {
