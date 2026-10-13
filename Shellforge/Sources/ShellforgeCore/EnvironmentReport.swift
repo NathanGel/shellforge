@@ -44,7 +44,8 @@ public struct EnvironmentReport: Equatable, Sendable {
 /// - bash: `.bash_profile`, `.bash_login`, `.profile`, `.bashrc`;
 /// - fish: `~/.config/fish/config.fish`;
 /// - any other: `.profile`;
-/// - and, for every shell, `/etc/paths` and `/etc/paths.d`, where installers add their folders.
+/// - and, for every shell, `/etc/paths`, `/etc/paths.d` and each file in it, where installers add
+///   their folders.
 ///
 /// A file created or deleted counts as a change; a linked file is judged by its target. The shell
 /// and `ZDOTDIR` are read at each check, from the environment Shellforge uses.
@@ -79,7 +80,11 @@ public struct RCFiles: Sendable {
     /// Whether any of them changed since the last call; the first call only looks.
     public mutating func changed() -> Bool {
         let variables = environment()
-        let files = Self.watched(home: home, etc: etc, shell: variables["SHELL"] ?? "/bin/zsh", zdotdir: variables["ZDOTDIR"])
+        var files = Self.watched(home: home, etc: etc, shell: variables["SHELL"] ?? "/bin/zsh", zdotdir: variables["ZDOTDIR"])
+        // Each file in /etc/paths.d too: one edited in place changes its own date, not the folder's.
+        let pathsD = etc.appendingPathComponent("paths.d")
+        files += ((try? FileManager.default.contentsOfDirectory(at: pathsD, includingPropertiesForKeys: nil)) ?? [])
+            .sorted { $0.path < $1.path }
         var now: [String: Date] = [:]
         for file in files {
             // Through a link to its target: a dotfile manager's ~/.zshrc is a link, and the edit is there.

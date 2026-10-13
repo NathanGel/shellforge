@@ -100,6 +100,22 @@ import Testing
         #expect(changed)
     }
 
+    /// A file in /etc/paths.d edited in place changes only its own date, not its folder's.
+    @Test func aFileInPathsDEditedInPlaceIsAChange() throws {
+        let home = try folder("home"), etc = try folder("etc")
+        let pathsD = etc.appendingPathComponent("paths.d")
+        try FileManager.default.createDirectory(at: pathsD, withIntermediateDirectories: true)
+        let entry = pathsD.appendingPathComponent("tool")
+        try "/opt/tool/bin\n".write(to: entry, atomically: false, encoding: .utf8)
+        var files = RCFiles(home: home, etc: etc, environment: { ["SHELL": "/bin/zsh"] })
+        _ = files.changed()
+        let folderDate = try FileManager.default.attributesOfItem(atPath: pathsD.path)[.modificationDate]
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(60)], ofItemAtPath: entry.path)
+        try FileManager.default.setAttributes([.modificationDate: folderDate as Any], ofItemAtPath: pathsD.path)
+        let changed = files.changed()
+        #expect(changed)
+    }
+
     @Test func aBashrcEditIsAChangeUnderBash() throws {
         let home = try folder("home"), etc = try folder("etc")
         let rc = home.appendingPathComponent(".bashrc")

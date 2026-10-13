@@ -317,12 +317,23 @@ async def test_a_failed_ledger_write_leaves_no_temp_file(tmp_path, ssh_env):
 
 
 def test_the_ledger_is_synced_before_it_replaces_the_old(tmp_path, monkeypatch):
-    synced = []
-    real = os.fsync
-    monkeypatch.setattr(os, "fsync", lambda fd: (synced.append(fd), real(fd)))
+    calls = []
+    real_fsync, real_replace = os.fsync, os.replace
+    monkeypatch.setattr(os, "fsync", lambda fd: (calls.append("fsync"), real_fsync(fd)))
+    monkeypatch.setattr(os, "replace", lambda a, b: (calls.append("replace"), real_replace(a, b)))
     tunnels = TunnelSupervisor(Events().broadcast, ledger=tmp_path / "tunnels.json")
     tunnels._write_ledger()
-    assert synced, "fsync before os.replace"
+    assert calls == ["fsync", "replace"]
+
+
+def test_a_ledger_that_cannot_be_serialised_leaves_no_temp_file(tmp_path, monkeypatch):
+    """json.dump failing is not an OSError: the temp file still goes, and the run loop goes on."""
+    def broken(*_args, **_kwargs):
+        raise TypeError("not serialisable")
+    monkeypatch.setattr(json, "dump", broken)
+    tunnels = TunnelSupervisor(Events().broadcast, ledger=tmp_path / "tunnels.json")
+    tunnels._write_ledger()
+    assert not list(tmp_path.glob(".tunnels-*"))
 
 
 async def test_a_log_folder_that_cannot_be_made_does_not_stop_the_tunnel(tmp_path, ssh_env):

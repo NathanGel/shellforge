@@ -488,7 +488,8 @@ class TunnelSupervisor:
                 f.flush()
                 os.fsync(f.fileno())
             os.replace(temp, self.ledger)
-        except OSError:
+        except (OSError, TypeError, ValueError):
+            # A failed write or a ledger json cannot hold: the old ledger stays, and no temp file.
             log.exception("writing the tunnel ledger failed")
             with contextlib.suppress(OSError):
                 os.unlink(temp)
