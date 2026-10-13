@@ -80,6 +80,11 @@ extension SidebarModel {
         }
     }
 
+    /// The terminals whose tabs in this window wait on you: needing input, or done and unseen.
+    public var waitingTerminals: [UUID] {
+        tree.projects.flatMap(\.terminals).map(\.id).filter { [.needsInput, .done].contains(status(ofTerminal: $0)) }
+    }
+
     /// The agents in the terminal's tabs, in tab order.
     public func avatars(forTerminal id: UUID) -> [SessionAgent] {
         tabs(ofTerminal: id).flatMap { avatars(forTab: $0.id) }

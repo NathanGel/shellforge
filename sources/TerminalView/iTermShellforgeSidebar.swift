@@ -286,6 +286,15 @@ extension iTermShellforgeSidebar {
         }
     }
 
+    /// The Dock icon's badge: the rows waiting on you, once for the app, written only when it changes.
+    private static var dockBadge: String?
+    static func updateDockBadge() {
+        let label = DockBadge.label(count: DockBadge.count(across: sidebars.allObjects))
+        guard label != dockBadge else { return }
+        dockBadge = label
+        NSApp.dockTile.badgeLabel = label
+    }
+
     /// Every window's sidebar re-reads whether the environment is a fallback.
     static func environmentChanged() {
         for model in sidebars.allObjects { model.environmentChanged() }
@@ -305,7 +314,10 @@ extension iTermShellforgeSidebar {
         // jobPid and commandLine change with no notification; the tick reads them, and only a
         // changed list is sent.
         tick = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
-            MainActor.assumeIsolated { link.reportsMayHaveChanged() }
+            MainActor.assumeIsolated {
+                link.reportsMayHaveChanged()
+                updateDockBadge()
+            }
         }
         // A tool installed and put on PATH in an rc file is found without a relaunch.
         _ = rcFiles.changed()
