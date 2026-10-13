@@ -13,6 +13,9 @@ public enum SidebarCommand: Int, CaseIterable, Sendable {
 /// A command that needs one of the sidebar's sheets: the view presents it, as its "+" would.
 public enum SidebarSheetRequest: Equatable, Sendable {
     case newTask(UUID), newReview(UUID), addProject, removeTask(UUID), newTerminal(UUID), addDivider
+    /// Close Tab on a task's last tab: Remove Task's confirmation, then that tab closed as Close Tab
+    /// closes it.
+    case closeLastTab(task: UUID, tab: String)
 }
 
 extension SidebarModel {

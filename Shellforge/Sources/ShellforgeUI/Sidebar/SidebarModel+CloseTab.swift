@@ -2,13 +2,13 @@ import Foundation
 import ShellforgeCore
 
 /// Close Tab, from a tab row or a task's row. A task left with no tab anywhere closes too: its last
-/// tab asks, through Remove Task's own confirmation, which closes it with the task — or, cancelled,
-/// leaves both open.
+/// tab asks, through Remove Task's own confirmation, then closes as Close Tab does — a running job
+/// asks too — before the removal goes on; cancelled at either, both stay.
 extension SidebarModel {
     public func closeTab(_ id: String) {
         if let task = tree.projects.lazy.flatMap(\.tasks).first(where: { $0.tabs.contains { $0.id == id } }),
            host.tabCount(ofTask: task.id) <= 1 {
-            sheetRequests.send(.removeTask(task.id))
+            sheetRequests.send(.closeLastTab(task: task.id, tab: id))
             return
         }
         host.close(tab: id)

@@ -70,6 +70,26 @@ import Testing
         #expect(s.row != nil && s.host.closedTasks.isEmpty)
     }
 
+    /// Close Tab on a task's last tab: once Remove is confirmed, that tab closes as iTerm2's Close
+    /// Tab does — a running job asks — before the rest of the removal.
+    @Test func aRemoveFromCloseTabClosesThatTabAsCloseTabDoes() async throws {
+        let s = try await setup([Self.remove])
+        let tab = try #require(s.host.tabs.first).id
+        #expect(await s.sidebar.confirmRemove(taskId: s.task.id, closingFirst: tab))
+        #expect(s.host.closed == [tab])
+        #expect(s.row == nil)
+    }
+
+    /// The running job's alert answered Cancel: nothing is removed, and the row stays as it was.
+    @Test func aTabThatWillNotCloseStopsTheRemove() async throws {
+        let s = try await setup([Self.remove])
+        let tab = try #require(s.host.tabs.first).id
+        s.host.refusesClose = true
+        #expect(await s.sidebar.confirmRemove(taskId: s.task.id, closingFirst: tab) == false)
+        #expect(FileManager.default.fileExists(atPath: s.task.worktreePath))
+        #expect(s.row != nil && s.sidebar.removals[s.task.id] == nil)
+    }
+
     @Test func removingATaskClosesItsTabsThenDeletesItsWorktreeAndRow() async throws {
         let s = try await setup([Self.remove])
         #expect(await s.sidebar.confirmRemove(taskId: s.task.id))

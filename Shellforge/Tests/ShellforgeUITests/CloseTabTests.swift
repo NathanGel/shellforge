@@ -49,7 +49,7 @@ import Testing
         let (model, host, project, task) = try model()
         host.tabs = [TabSnapshot(id: "t1", tabId: 1, title: "a", taskId: task, projectId: project)]
         host.onChange?()
-        #expect(requests(model) { model.closeTab("t1") } == [.removeTask(task)])
+        #expect(requests(model) { model.closeTab("t1") } == [.closeLastTab(task: task, tab: "t1")])
         #expect(host.closed.isEmpty, "the confirmation decides; a cancel leaves the tab open")
     }
 
@@ -72,6 +72,6 @@ import Testing
         #expect(host.closed == ["t2"])
         host.selectedTabId = nil
         host.onChange?()
-        #expect(requests(model) { model.closeCurrentTab(ofTask: task) } == [.removeTask(task)], "one left: its last")
+        #expect(requests(model) { model.closeCurrentTab(ofTask: task) } == [.closeLastTab(task: task, tab: "t1")], "one left: its last")
     }
 }
