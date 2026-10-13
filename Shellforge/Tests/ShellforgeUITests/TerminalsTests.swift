@@ -92,4 +92,72 @@ import Testing
         #expect(requests == [.newTerminal(project)])
         _ = subscription
     }
+
+    // -- the final review --
+
+    @Test func focusViewKeepsAProjectWithAWaitingTerminalOpen() throws {
+        let (model, host, document, project) = try model()
+        model.newTerminal(name: "logs", in: project)
+        let tab = try #require(host.tabs.first)
+        var snapshot = DaemonSnapshot(protocolVersion: 1, connected: true, sessions: [
+            SessionInfo(sessionId: tab.id, windowId: "w", tabIndex: 0, taskId: nil, projectId: nil, agent: .claude, model: nil,
+                        state: .needsInput, title: "logs", cwd: "/api")], usage: .empty)
+        snapshot.tunnels = []
+        var store = SessionStore()
+        store.apply(.snapshot(snapshot))
+        (model.feed as? FakeFeed)?.store = store
+        model.perform(.focusView)
+        #expect(document.workspace.projects.first?.collapsed == false, "a waiting terminal keeps its project open")
+        let node = try #require(model.tree.projects.first)
+        #expect(ProjectHeaderRow.collapses(node), "a project with only terminals still folds and unfolds")
+    }
+
+    @Test func aTerminalTabHasAFooterRow() throws {
+        let (model, host, _, project) = try model()
+        model.newTerminal(name: "logs", in: project)
+        let tab = try #require(host.tabs.first)
+        var snapshot = DaemonSnapshot(protocolVersion: 1, connected: true, sessions: [
+            SessionInfo(sessionId: tab.id, windowId: "w", tabIndex: 0, taskId: nil, projectId: nil, agent: .claude, model: nil,
+                        state: .working, title: "logs", cwd: "/api")], usage: .empty)
+        snapshot.tunnels = []
+        var store = SessionStore()
+        store.apply(.snapshot(snapshot))
+        (model.feed as? FakeFeed)?.store = store
+        #expect(model.footerRow != nil, "a terminal's tab is the footer's row, as an other tab was")
+    }
+
+    @Test func oneRowIsSelectedAtATime() throws {
+        let (model, _, document, project) = try model()
+        let task = TaskItem(projectId: project, title: "Login", branch: "feat/login", worktreePath: "/wt", baseBranch: "main")
+        try document.update { $0.tasks.append(task) }
+        model.newTerminal(name: "logs", in: project)
+        #expect(model.selectedTerminalId != nil)
+        model.show(task: task.id)
+        #expect(model.selectedTaskId == task.id && model.selectedTerminalId == nil)
+        model.select(terminal: try #require(document.workspace.terminals.first).id)
+        #expect(model.selectedTaskId == nil)
+    }
+
+    @Test func aSelectedTerminalIsTheTargetProject() throws {
+        let (model, _, document, project) = try model()
+        try document.update { $0.projects.append(Project(name: "web", path: "/web")) }
+        model.newTerminal(name: "logs", in: project)
+        #expect(model.targetProject == project)
+        #expect(model.can(.newTask))
+    }
+
+    /// Saving refuses a repeated id, but a hand-edited or sync-merged file is loaded as it is.
+    @Test func aWorkspaceWithARepeatedProjectDrawsWithoutCrashing() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("shellforge-repeated-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let project = Project(name: "api", path: "/api")
+        var workspace = Workspace(projects: [project, project])
+        workspace.dividers = [SidebarDivider(name: "Work", position: 1)]
+        try JSONEncoder.workspace.encode(workspace).write(to: folder.appendingPathComponent("workspace.json"))
+        let launcher = CommandLauncher(resolve: { ResolvedEnvironment(variables: ["PATH": "/usr/bin"], source: .loginShell("/bin/zsh")) })
+        let model = SidebarModel(host: FakeTerminalHost(), document: WorkspaceDocument(store: WorkspaceStore(folder: folder)),
+                                 launcher: launcher, jiraSettings: { nil })
+        #expect(model.rows.count >= 2)
+        _ = model.canMove(.project(project.id), up: false)
+    }
 }

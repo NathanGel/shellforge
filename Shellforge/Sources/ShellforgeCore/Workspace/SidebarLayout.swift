@@ -48,8 +48,9 @@ public enum SidebarLayout {
         guard all.indices.contains(other) else { return false }
         all.swapAt(index, other)
         // Read the order back: projects as drawn, each divider at the count of projects above it.
-        let byProject = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, $0) })
-        let byDivider = Dictionary(uniqueKeysWithValues: dividers.map { ($0.id, $0) })
+        // A hand-edited workspace may repeat an id: the first is kept, never a crash.
+        let byProject = Dictionary(projects.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let byDivider = Dictionary(dividers.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var newProjects: [Project] = [], newDividers: [SidebarDivider] = []
         for item in all {
             switch item {

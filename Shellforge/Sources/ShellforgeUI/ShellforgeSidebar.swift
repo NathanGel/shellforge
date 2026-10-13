@@ -130,7 +130,7 @@ struct SidebarView: View {
             SidebarEmptyState(canAdd: true, add: addProject).listRowSeparator(.hidden)
         case .project(let node, let collapsed):
             ProjectHeaderRow(node: node, collapsed: collapsed, provider: model.providers[node.id] ?? .git,
-                             statuses: node.tasks.map { model.status(ofTask: $0.id) },
+                             statuses: node.tasks.map { model.status(ofTask: $0.id) } + node.terminals.map { model.status(ofTerminal: $0.id) },
                              toggle: { model.toggleCollapsed(node.id) },
                              newTask: { showNewTask(in: node.id) },
                              newReview: { showNewReview(in: node.id) },

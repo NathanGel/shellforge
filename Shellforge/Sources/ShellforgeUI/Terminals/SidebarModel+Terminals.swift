@@ -25,7 +25,7 @@ extension SidebarModel {
             lastError = String(describing: error)
             return
         }
-        selectedTerminalId = terminal.id
+        selectTerminalRow(terminal.id)
         host.openTab(in: project.path, terminalId: terminal.id, projectId: projectId, title: terminal.name)
     }
 
@@ -33,7 +33,7 @@ extension SidebarModel {
     public func select(terminal id: UUID) {
         guard let node = tree.projects.lazy.flatMap(\.terminals).first(where: { $0.id == id }),
               let project = project(node.terminal.projectId) else { return }
-        selectedTerminalId = id
+        selectTerminalRow(id)
         if let tab = node.tabs.first {
             if tab.id != host.selectedTabId { host.select(tab: tab.id) }
         } else {

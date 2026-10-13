@@ -20,6 +20,8 @@ extension SidebarModel {
     /// With several projects and none of their tasks selected, there is none.
     public var targetProject: UUID? {
         if let id = selectedTaskId, let task = document.workspace.tasks.first(where: { $0.id == id }) { return task.projectId }
+        // A terminal row's project, as AiTerm's target is.
+        if let id = selectedTerminalId, let terminal = document.workspace.terminals.first(where: { $0.id == id }) { return terminal.projectId }
         return tree.projects.count == 1 ? tree.projects[0].project.id : nil
     }
 
@@ -77,9 +79,13 @@ extension SidebarModel {
     /// AiTerm's Focus View: the projects with a task waiting on the user open, the rest fold, and
     /// the first such task is shown.
     private func focusView() {
-        let waiting = Set(waitingOnYou)
-        let tasks = document.workspace.tasks
-        setCollapsed { project in !tasks.contains { $0.projectId == project && waiting.contains($0.id) } }
+        let waiting = Set(waitingOnYou), waitingTerminals = Set(self.waitingTerminals)
+        let tasks = document.workspace.tasks, terminals = document.workspace.terminals
+        // A project stays open for a task or a terminal waiting in it: folded, either would be out of reach.
+        setCollapsed { project in
+            !tasks.contains { $0.projectId == project && waiting.contains($0.id) }
+                && !terminals.contains { $0.projectId == project && waitingTerminals.contains($0.id) }
+        }
         if let first = waitingOnYou.first { show(task: first) }
     }
 

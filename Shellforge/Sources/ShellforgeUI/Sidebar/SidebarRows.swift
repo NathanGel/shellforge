@@ -63,8 +63,10 @@ struct ProjectHeaderRow: View {
     var editSSHHost: () -> Void = {}
     @Environment(\.interfaceScale) private var scale
 
-    /// An empty project has nothing to fold.
-    private var collapses: Bool { !node.tasks.isEmpty }
+    /// An empty project has nothing to fold; its terminals are something.
+    private var collapses: Bool { Self.collapses(node) }
+
+    static func collapses(_ node: ProjectNode) -> Bool { !node.tasks.isEmpty || !node.terminals.isEmpty }
 
     var body: some View {
         HStack(spacing: scale(Space.base)) {

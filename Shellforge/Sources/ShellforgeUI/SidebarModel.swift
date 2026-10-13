@@ -256,6 +256,7 @@ public final class SidebarModel: ObservableObject {
             if let i = workspace.projects.firstIndex(where: { $0.id == projectId }) { workspace.projects[i].collapsed = false }
         }
         selectedTaskId = made.0.id
+        selectedTerminalId = nil
         // The pane the sheet offered, never one the config grew since it opened.
         let beside = draft.openSSH ? draft.paneHost.map(SSHConfig.paneCommand(alias:)) : nil
         host.openTab(in: made.0.worktreePath, taskId: made.0.id, projectId: projectId, title: made.0.title, command: made.1,
@@ -310,6 +311,7 @@ public final class SidebarModel: ObservableObject {
             if let i = workspace.projects.firstIndex(where: { $0.id == projectId }) { workspace.projects[i].collapsed = false }
         }
         selectedTaskId = made.0.id
+        selectedTerminalId = nil
         host.openTab(in: made.0.worktreePath, taskId: made.0.id, projectId: projectId, title: made.0.title, command: made.1,
                      environment: openingTaskTab(in: projectId))
     }
@@ -317,6 +319,7 @@ public final class SidebarModel: ObservableObject {
     /// Shows the task: its first open tab, or a new one in its worktree when none is open.
     public func select(task id: UUID) {
         guard let node = tree.projects.lazy.flatMap(\.tasks).first(where: { $0.id == id }) else { return }
+        selectedTerminalId = nil
         guard let tab = node.tabs.first else {
             selectedTaskId = id
             // A shell, as AiTerm's New Terminal: the agent ran once, in the task's first tab.
@@ -340,6 +343,7 @@ public final class SidebarModel: ObservableObject {
     public func show(task id: UUID) {
         guard let node = tree.projects.lazy.flatMap(\.tasks).first(where: { $0.id == id }) else { return }
         selectedTaskId = id
+        selectedTerminalId = nil
         if let tab = node.tabs.first, tab.id != host.selectedTabId { host.select(tab: tab.id) }
     }
 
@@ -350,7 +354,8 @@ public final class SidebarModel: ObservableObject {
     private func refresh(_ workspace: Workspace? = nil) {
         tree = SidebarTree.build(workspace ?? document.workspace, tabs: host.tabs)
         refreshSSHHosts(tree.projects.map(\.project))
-        contexts.prune(keeping: Set(tree.projects.flatMap(\.tasks).map { FooterRow.task($0.id) } + tree.otherTabs.map { FooterRow.tab($0.tabId) }))
+        contexts.prune(keeping: Set(tree.projects.flatMap(\.tasks).map { FooterRow.task($0.id) }
+                                    + (tree.otherTabs + terminalTabs).map { FooterRow.tab($0.tabId) }))
         detectProviders(tree.projects.map(\.project))
         // Follow iTerm2: whatever tab is selected decides the task shown.
         let opened = host.selectedTabId != lastSelectedTab
@@ -392,7 +397,8 @@ public final class SidebarModel: ObservableObject {
     /// a dictionary read.
     private func footerRowResolver(_ store: SessionStore) -> (SessionInfo) -> FooterRow? {
         let tasks = Set(document.workspace.tasks.map(\.id))
-        let others = Set(tree.otherTabs.map(\.tabId))
+        // Terminal tabs keep the footer row they had as other tabs: the tab's own.
+        let others = Set(tree.otherTabs.map(\.tabId) + terminalTabs.map(\.tabId))
         var byPane: [String: FooterRow] = [:]
         for tab in host.tabs {
             let row: FooterRow? = tab.taskId.flatMap { tasks.contains($0) ? FooterRow.task($0) : nil }
@@ -416,7 +422,8 @@ public final class SidebarModel: ObservableObject {
             return UsageRows.taskRow(sessions: sessions.sessions(ofTask: id), fallback: fallback,
                                      contexts: contexts.percents(forRow: .task(id)), preferring: host.selectedTabId)
         }
-        guard let id = host.selectedTabId, let tab = tree.otherTabs.first(where: { $0.id == id }) else { return nil }
+        guard let id = host.selectedTabId,
+              let tab = (tree.otherTabs + terminalTabs).first(where: { $0.id == id }) else { return nil }
         return UsageRows.taskRow(sessions: sessions.sessions(ofTab: id), fallback: .shell,
                                  contexts: contexts.percents(forRow: .tab(tab.tabId)), preferring: id)
     }
@@ -443,7 +450,8 @@ public final class SidebarModel: ObservableObject {
         var rows: [SidebarRow] = tree.projects.isEmpty ? [.empty] : []
         let current = host.selectedTabId
         let workspace = document.workspace
-        let nodes = Dictionary(uniqueKeysWithValues: tree.projects.map { ($0.id, $0) })
+        // A hand-edited workspace may repeat a project: the first is drawn, never a crash.
+        let nodes = Dictionary(tree.projects.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         for entry in SidebarLayout.entries(projects: tree.projects.map(\.project), dividers: workspace.dividers) {
             guard case .project(let id) = entry, let node = nodes[id] else {
                 if case .divider(let id) = entry, let divider = workspace.dividers.first(where: { $0.id == id }) {
@@ -531,6 +539,15 @@ public final class SidebarModel: ObservableObject {
 
     public func status(ofTask id: UUID) -> SessionState { sessions.status(ofTask: id) }
     public func status(ofTab id: String) -> SessionState { sessions.status(ofTab: id) }
+
+    /// Every terminal row's tabs in this window.
+    var terminalTabs: [TabSnapshot] { tree.projects.flatMap(\.terminals).flatMap(\.tabs) }
+
+    /// A terminal row is the one selected: no task is (Terminals/).
+    func selectTerminalRow(_ id: UUID?) {
+        selectedTerminalId = id
+        if id != nil { selectedTaskId = nil }
+    }
 
     /// The task the user is now looking at. A done one has been seen — when the user picked it or
     /// opened one of its tabs (`explicit`), or the selection moved to it; not on every refresh while
