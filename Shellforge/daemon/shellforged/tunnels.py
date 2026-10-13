@@ -65,16 +65,26 @@ def needs_input(line: str) -> bool:
 POLL = 0.05
 
 
-async def wait_for_exit(pid: int) -> None:
+async def wait_for_exit(pid: int, every: float = 1.0) -> None:
     """Returns once `pid` has exited: kqueue's NOTE_EXIT, read on the event loop — no thread blocked
-    in wait, no poll. A pid already gone returns at once. Cancelled, it leaves nothing behind."""
+    in wait, no poll. A pid already gone returns at once. Cancelled, it leaves nothing behind. With
+    no kqueue to be had (out of descriptors), it checks every `every` seconds instead of failing."""
     loop = asyncio.get_running_loop()
-    kq = select.kqueue()
+    try:
+        kq = select.kqueue()
+    except OSError:
+        while _running(pid):
+            await asyncio.sleep(every)
+        return
     try:
         try:
             kq.control([select.kevent(pid, select.KQ_FILTER_PROC, select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
                                       select.KQ_NOTE_EXIT)], 0, 0)
         except ProcessLookupError:
+            return
+        except OSError:
+            while _running(pid):
+                await asyncio.sleep(every)
             return
         exited = loop.create_future()
         loop.add_reader(kq.fileno(), lambda: exited.done() or exited.set_result(None))
@@ -84,6 +94,18 @@ async def wait_for_exit(pid: int) -> None:
             loop.remove_reader(kq.fileno())
     finally:
         kq.close()
+
+
+def _running(pid: int) -> bool:
+    """Whether `pid` still runs: signalable and no zombie (a child that exited, not yet reaped)."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    state = subprocess.run(["/bin/ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+    return bool(state) and not state.startswith("Z")
 
 
 class InspectionFailed(Exception):
@@ -422,6 +444,8 @@ class TunnelSupervisor:
                 await exited
             finally:
                 exited.cancel()
+                # Its kqueue closed now, not on a later tick the loop may never run at quit.
+                await asyncio.gather(exited, return_exceptions=True)
             popen.wait()
             tunnel.child = None
             self._write_ledger()

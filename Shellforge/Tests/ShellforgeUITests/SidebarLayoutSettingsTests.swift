@@ -77,7 +77,7 @@ import Testing
         let tight = SidebarLayoutSettings.dragHandle(edge: 260, margin: 1)
         #expect(tight.x + tight.width <= 261)
         let none = SidebarLayoutSettings.dragHandle(edge: 260, margin: 0)
-        #expect(none.x + none.width <= 260 && none.width >= 1)
+        #expect(none.x + none.width <= 260 && none.width >= 3, "no margin: still 3 pt to grab, inside the sidebar")
         let usual = SidebarLayoutSettings.dragHandle(edge: 260, margin: 5)
         #expect(usual.x + usual.width == 263, "3 pt over a usual margin")
     }

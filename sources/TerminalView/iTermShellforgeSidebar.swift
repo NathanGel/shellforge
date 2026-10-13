@@ -241,14 +241,15 @@ final class iTermShellforgeHost: TerminalHost {
         }
     }
 
-    /// The focused pane of the tab holding session `id`, closed as iTerm2's Close closes it: a
-    /// running job asks first. An unsplit tab closes as Close Tab does.
+    /// The pane of session `id` — the one focused when Close was chosen, not whichever is focused
+    /// by the time a Remove's checks are done — closed as iTerm2's Close closes it: a running job
+    /// asks first. An unsplit tab closes as Close Tab does.
     @discardableResult
     func closePane(ofTab id: String) -> Bool {
         let windows = (iTermController.sharedInstance()?.terminals() ?? []) as [PseudoTerminal]
         for window in windows {
             for tab in window.tabs() where tab.sessions().contains(where: { $0.guid == id }) {
-                guard tab.sessions().count > 1, let pane = tab.activeSession else { return close(tab: id) }
+                guard tab.sessions().count > 1, let pane = tab.sessions().first(where: { $0.guid == id }) else { return close(tab: id) }
                 let closed = window.closeSession(withConfirmation: pane)
                 onChange?()
                 return closed

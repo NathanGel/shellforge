@@ -61,8 +61,10 @@ public struct SidebarLayoutSettings {
 
     /// The drag handle across the sidebar's right `edge`: its hairline inside, and up to 3 pt over
     /// the terminal, never past its side `margin` — the list's scroller under the edge keeps its
-    /// clicks, and so does the terminal's first column.
+    /// clicks, and so does the terminal's first column. Always at least 4 pt to grab: what the
+    /// margin cannot give, it takes from inside the sidebar.
     public static func dragHandle(edge: CGFloat, margin: CGFloat) -> (x: CGFloat, width: CGFloat) {
-        (edge - 1, 1 + min(3, max(0, margin)))
+        let outside = min(3, max(0, margin))
+        return (edge - 4 + outside, 4)
     }
 }

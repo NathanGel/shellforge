@@ -33,8 +33,8 @@ public protocol TerminalHost: AnyObject {
     @discardableResult func close(tab id: String) -> Bool
     /// How many panes tagged with the task every window holds.
     func paneCount(ofTask id: UUID) -> Int
-    /// Closes the focused pane of the tab holding session `id`, as iTerm2's Close does: a running
-    /// job asks first. True once it closed.
+    /// Closes the pane of session `id` — the tab's focused pane when the row was drawn — as iTerm2's
+    /// Close does: a running job asks first. True once it closed.
     @discardableResult func closePane(ofTab id: String) -> Bool
 }
 
