@@ -47,6 +47,18 @@ public struct SidebarLayoutSettings {
         return room < Size.sidebarMinWidth ? 0 : min(clamped(preferred), room)
     }
 
+    /// The narrowest a window with the sidebar showing can be dragged: the sidebar at its minimum
+    /// and the terminal at its own, beside the toolbelt's `beside`. Narrower, the sidebar would jump
+    /// from its minimum to nothing.
+    ///
+    /// iTerm2 holds the toolbelt to at most `toolbeltMaxFraction` of the window, so a wide one counts
+    /// as the layout will make it: the window W where W = minimums + min(toolbelt, fraction × W).
+    public static func minimumWindowWidth(beside: CGFloat, toolbeltMaxFraction: CGFloat = 1) -> CGFloat {
+        let base = Size.sidebarMinWidth + Self.terminalMinWidth
+        guard toolbeltMaxFraction < 1, beside > toolbeltMaxFraction * (base + beside) else { return base + beside }
+        return base / (1 - toolbeltMaxFraction)
+    }
+
     /// The drag handle across the sidebar's right `edge`: its hairline inside, the rest over the
     /// terminal's margin, so the list's scroller under the edge keeps its clicks.
     public static func dragHandle(edge: CGFloat) -> (x: CGFloat, width: CGFloat) { (edge - 1, 4) }

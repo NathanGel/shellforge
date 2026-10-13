@@ -1230,6 +1230,15 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
                                        toolbeltWidth:toolbeltWidth];
 }
 
+// Shellforge: the narrowest the window may be dragged while the sidebar shows; 0 when hidden.
+- (CGFloat)shellforgeMinimumWindowWidth {
+    if (!_shellforgeSidebar || _shellforgeSidebarHidden) {
+        return 0;
+    }
+    const CGFloat toolbeltWidth = [self shouldShowToolbelt] ? floor(self.toolbeltWidth) : 0;
+    return [iTermShellforgeSidebar minimumWindowWidthWithToolbeltWidth:toolbeltWidth];
+}
+
 // Shellforge: what fitting the window to its tabs adds for the sidebar: the width it will have,
 // not the width a window still at its starting size gives it (as iTerm2 does for left tabs).
 - (CGFloat)shellforgeSidebarPreferredWidth {
