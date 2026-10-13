@@ -1263,10 +1263,20 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
 
 // Shellforge: a handle across the sidebar's right edge, clear of its list's scroller.
 // Shellforge: the title bar's Show Sidebar button, beside the window buttons, while the sidebar is
-// hidden. A window with no title bar (full screen) has ⌃⌘S and View › Show Sidebar.
+// hidden. Added while hidden and removed when shown: a hidden accessory still holds its room, and
+// the window's title would stay pushed aside. A window with no title bar (full screen) has ⌃⌘S and
+// View › Show Sidebar.
 - (void)updateShellforgeShowSidebarButton {
     NSWindow *window = self.window;
-    if (!_shellforgeSidebar || !window || !(window.styleMask & NSWindowStyleMaskTitled)) {
+    const BOOL wanted = _shellforgeSidebar && _shellforgeSidebarHidden && window &&
+        (window.styleMask & NSWindowStyleMaskTitled);
+    const BOOL installed = _shellforgeShowSidebarAccessory &&
+        [window.titlebarAccessoryViewControllers containsObject:_shellforgeShowSidebarAccessory];
+    if (wanted == installed) {
+        return;
+    }
+    if (!wanted) {
+        [_shellforgeShowSidebarAccessory removeFromParentViewController];
         return;
     }
     if (!_shellforgeShowSidebarAccessory) {
@@ -1274,16 +1284,14 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
         NSButton *button = [NSButton buttonWithImage:image target:self action:@selector(toggleShellforgeSidebar)];
         button.bordered = NO;
         button.toolTip = @"Show Sidebar (⌃⌘S)";
-        button.frame = NSMakeRect(0, 0, 28, 22);
         NSView *holder = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 36, 22)];
         button.frame = NSMakeRect(4, 0, 28, 22);
         [holder addSubview:button];
         _shellforgeShowSidebarAccessory = [[NSTitlebarAccessoryViewController alloc] init];
         _shellforgeShowSidebarAccessory.view = holder;
         _shellforgeShowSidebarAccessory.layoutAttribute = NSLayoutAttributeLeft;
-        [window addTitlebarAccessoryViewController:_shellforgeShowSidebarAccessory];
     }
-    _shellforgeShowSidebarAccessory.hidden = !_shellforgeSidebarHidden;
+    [window addTitlebarAccessoryViewController:_shellforgeShowSidebarAccessory];
 }
 
 - (void)updateShellforgeSidebarDragHandle {
