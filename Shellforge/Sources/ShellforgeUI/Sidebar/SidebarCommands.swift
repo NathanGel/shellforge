@@ -132,7 +132,7 @@ public enum SidebarCommandMenu {
         Item(title: "New Review…", key: "r", modifiers: keys, command: .newReview),
         Item(title: "New Terminal…", key: "t", modifiers: keys, command: .newTerminal),
         Item(title: "Add Project…", key: "p", modifiers: keys, command: .addProject),
-        Item(title: "Add Divider…", key: "d", modifiers: keys, command: .addDivider),
+        Item(title: "Add Divider…", key: "g", modifiers: keys, command: .addDivider),
         Item(title: "", key: "", modifiers: [], command: nil),
         Item(title: "Next Task", key: "]", modifiers: keys, command: .nextTask),
         Item(title: "Previous Task", key: "[", modifiers: keys, command: .previousTask),
@@ -141,6 +141,10 @@ public enum SidebarCommandMenu {
         Item(title: "Focus View", key: "a", modifiers: keys, command: .focusView),
         Item(title: "List View", key: "l", modifiers: keys, command: .listView),
     ]
+
+    /// The ⌃⌘ keys macOS acts on before any app's menu sees them: Look Up (D), Lock Screen (Q)
+    /// and the Character Viewer (Space). None of them can be one of ours.
+    public static let systemReserved: Set<String> = ["d", "q", " "]
 
     /// View › Hide Sidebar (Show Sidebar while hidden), the key Finder and Mail use.
     public static let toggleSidebar = Item(title: "Hide Sidebar", key: "s", modifiers: keys, command: nil)
