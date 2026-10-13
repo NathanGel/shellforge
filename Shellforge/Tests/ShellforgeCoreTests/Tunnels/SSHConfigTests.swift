@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+@testable import ShellforgeTestSupport
 @testable import ShellforgeCore
 
 /// What Shellforge reads of `~/.ssh/config`: the concrete hosts that forward local ports, with
@@ -8,7 +9,7 @@ import Testing
     let home: URL
 
     init() throws {
-        home = FileManager.default.temporaryDirectory.appendingPathComponent("ssh-home-\(UUID().uuidString)")
+        home = TestScratch.root.appendingPathComponent("ssh-home-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: home.appendingPathComponent(".ssh"), withIntermediateDirectories: true)
     }
 

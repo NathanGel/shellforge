@@ -7,7 +7,7 @@ import Testing
 /// Dividers in the sidebar, and projects moved past them.
 @MainActor @Suite struct DividersTests {
     private func model() throws -> (SidebarModel, WorkspaceDocument, UUID, UUID) {
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("shellforge-dividers-\(UUID().uuidString)")
+        let folder = TestScratch.root.appendingPathComponent("shellforge-dividers-\(UUID().uuidString)")
         let document = WorkspaceDocument(store: WorkspaceStore(folder: folder))
         let a = Project(name: "a", path: "/a"), b = Project(name: "b", path: "/b")
         try document.update { $0.projects += [a, b] }
@@ -56,7 +56,7 @@ import Testing
 
     /// With no projects, the empty state stands alone: no bare rules under it.
     @Test func withNoProjectsTheEmptyStateHasNoRules() throws {
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("shellforge-dividers-\(UUID().uuidString)")
+        let folder = TestScratch.root.appendingPathComponent("shellforge-dividers-\(UUID().uuidString)")
         let document = WorkspaceDocument(store: WorkspaceStore(folder: folder))
         try document.update { $0.dividers = [SidebarDivider(name: "Work", position: 0)] }
         let launcher = CommandLauncher(resolve: { ResolvedEnvironment(variables: ["PATH": "/usr/bin"], source: .loginShell("/bin/zsh")) })

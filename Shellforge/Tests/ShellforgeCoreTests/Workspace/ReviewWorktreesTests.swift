@@ -1,6 +1,7 @@
 // Ported from AiTerm (app/Tests/AiTermCoreTests/WorktreesTests.swift, review cases, and TaskCreatorTests.swift), GPLv3, Laurens D'Hondt.
 import Foundation
 import Testing
+@testable import ShellforgeTestSupport
 #if canImport(Darwin)
 import Darwin
 #endif
@@ -62,7 +63,7 @@ struct RacingGit: GitCommands {
     }
 
     init() throws {
-        let raw = FileManager.default.temporaryDirectory.appendingPathComponent("rv-\(UUID().uuidString)").path
+        let raw = TestScratch.root.appendingPathComponent("rv-\(UUID().uuidString)").path
         try FileManager.default.createDirectory(atPath: raw, withIntermediateDirectories: true)
         root = Self.realPath(raw)
         let env = ["PATH": "/usr/bin:/bin", "HOME": root, "GIT_CONFIG_NOSYSTEM": "1",

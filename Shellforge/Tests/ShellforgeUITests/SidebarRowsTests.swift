@@ -1,11 +1,12 @@
 import Foundation
 import Testing
+@testable import ShellforgeTestSupport
 @testable import ShellforgeCore
 @testable import ShellforgeUI
 
 /// The sidebar's rows, as values: what the view draws, in order (AiTerm's `SidebarProjection`).
 @MainActor @Suite struct SidebarRowsTests {
-    private let folder = FileManager.default.temporaryDirectory.appendingPathComponent("sf-rows-\(UUID().uuidString)")
+    private let folder = TestScratch.root.appendingPathComponent("sf-rows-\(UUID().uuidString)")
 
     private func model(feed: FakeFeed? = nil, host: FakeTerminalHost = FakeTerminalHost()) throws -> (SidebarModel, GitRepoForUI) {
         let repo = try GitRepoForUI()

@@ -1,10 +1,11 @@
 import Foundation
 import Testing
+@testable import ShellforgeTestSupport
 @testable import ShellforgeCore
 @testable import ShellforgeUI
 
 @MainActor @Suite struct SidebarFooterTests {
-    private let folder = FileManager.default.temporaryDirectory.appendingPathComponent("shellforge-footer-\(UUID().uuidString)")
+    private let folder = TestScratch.root.appendingPathComponent("shellforge-footer-\(UUID().uuidString)")
 
     /// A sidebar with one project and two tasks, one tab each, and a tab of no task.
     private func sidebar() async throws -> (SidebarModel, FakeTerminalHost, FakeFeed, alpha: UUID, beta: UUID) {

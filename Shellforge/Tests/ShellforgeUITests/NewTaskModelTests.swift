@@ -6,7 +6,7 @@ import Testing
 
 @MainActor @Suite struct NewTaskModelTests {
     private let opus = AgentModel(id: "opus", label: "Opus", detail: nil, efforts: ["low", "high"], defaultEffort: "high")
-    private let project = Project(name: "demo", path: FileManager.default.temporaryDirectory.appendingPathComponent("nt-\(UUID().uuidString)").path)
+    private let project = Project(name: "demo", path: TestScratch.root.appendingPathComponent("nt-\(UUID().uuidString)").path)
 
     private func model(project: Project? = nil, available: Set<String> = ["claude", "codex", "grok", "pi"],
                        searchIssues: @escaping @MainActor (String) async throws -> [JiraTicket] = { _ in [] },
@@ -15,7 +15,7 @@ import Testing
                      draft: TaskDraft(baseBranch: "main", agentId: "claude", model: "", reasoning: nil),
                      rememberedModels: [:], catalogue: { [opus] _ in [opus] }, branches: { ["main"] }, submit: submit,
                      searchIssues: searchIssues,
-                     home: FileManager.default.temporaryDirectory.appendingPathComponent("nt-home-\(UUID().uuidString)"))
+                     home: TestScratch.root.appendingPathComponent("nt-home-\(UUID().uuidString)"))
     }
 
     @Test func theFirstStepNeedsOnlyAName() async {
@@ -78,7 +78,7 @@ import Testing
 
     /// Switching agent swaps the popup's list for the new agent's, and closes an open popup.
     @Test func switchingAgentReloadsAndClosesTheCompletions() async throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("nt-skills-\(UUID().uuidString)")
+        let home = TestScratch.root.appendingPathComponent("nt-skills-\(UUID().uuidString)")
         for (path, name) in [(".claude/skills/brainstorming", "brainstorming"), (".codex/skills/imagegen", "imagegen")] {
             let folder = home.appendingPathComponent(path)
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

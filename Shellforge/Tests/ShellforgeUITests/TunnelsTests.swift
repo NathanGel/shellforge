@@ -8,7 +8,7 @@ import Testing
 /// helper, auto-started by rule, and their ports handed to the task's shell. The SSH config is a
 /// temporary file; nothing reads `~/.ssh` and nothing reaches the network.
 @MainActor @Suite struct TunnelsTests {
-    private let folder = FileManager.default.temporaryDirectory.appendingPathComponent("shellforge-tunnels-\(UUID().uuidString)")
+    private let folder = TestScratch.root.appendingPathComponent("shellforge-tunnels-\(UUID().uuidString)")
 
     private static let config = """
         Host db

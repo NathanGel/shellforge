@@ -150,7 +150,7 @@ import Testing
 }
 
 @MainActor @Suite struct SidebarModelTests {
-    private let folder = FileManager.default.temporaryDirectory.appendingPathComponent("shellforge-model-\(UUID().uuidString)")
+    private let folder = TestScratch.root.appendingPathComponent("shellforge-model-\(UUID().uuidString)")
 
     /// AiTerm's setJiraProjects: a project is linked once, in order; an empty list unlinks; it is saved.
     @Test func linkingKeepsEachJiraProjectOnceAndAnEmptyListUnlinks() async throws {
@@ -444,7 +444,7 @@ struct GitRepoForUI {
     /// `installed` are agent CLIs the launcher finds: `exit 0` scripts in a bin of the repository's
     /// own, ahead of git's folder, so what this Mac has installed never decides a test.
     init(installed: [String] = ["claude"]) throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("shellforge-uirepo-\(UUID().uuidString)").path
+        let root = TestScratch.root.appendingPathComponent("shellforge-uirepo-\(UUID().uuidString)").path
         path = "\(root)/repo"
         try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(atPath: "\(root)/bin", withIntermediateDirectories: true)
@@ -473,7 +473,7 @@ extension SidebarModel {
 }
 
 @MainActor @Suite struct NewTaskWiringTests {
-    private let folder = FileManager.default.temporaryDirectory.appendingPathComponent("shellforge-wiring-\(UUID().uuidString)")
+    private let folder = TestScratch.root.appendingPathComponent("shellforge-wiring-\(UUID().uuidString)")
 
     private func modelWithProject(installed: [String] = ["claude"]) async throws -> (SidebarModel, FakeTerminalHost, WorkspaceDocument, UUID) {
         let repo = try GitRepoForUI(installed: installed)

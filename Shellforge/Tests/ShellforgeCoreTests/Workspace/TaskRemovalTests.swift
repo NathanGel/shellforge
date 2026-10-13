@@ -1,6 +1,7 @@
 // Ported from AiTerm (app/Tests/AiTermCoreTests/TaskWorkflowTests.swift and WorktreesTests.swift), GPLv3, Laurens D'Hondt.
 import Foundation
 import Testing
+@testable import ShellforgeTestSupport
 @testable import ShellforgeCore
 
 /// Removing a task's worktree and branch, as AiTerm's `TaskWorkflow.remove` does: git's own
@@ -111,7 +112,7 @@ import Testing
         let file = task.worktreePath + "/important.txt"
         try "work in progress".write(toFile: file, atomically: true, encoding: .utf8)
         // A git that answers the first `worktree list` and fails every one after it.
-        let bin = FileManager.default.temporaryDirectory.appendingPathComponent("flaky-git-\(UUID().uuidString)").path
+        let bin = TestScratch.root.appendingPathComponent("flaky-git-\(UUID().uuidString)").path
         try FileManager.default.createDirectory(atPath: bin, withIntermediateDirectories: true)
         let script = """
         #!/bin/sh
@@ -175,7 +176,7 @@ import Testing
     /// `.worktrees` a symlink to somewhere else: nothing there is Shellforge's leftover to delete.
     @Test func aSymlinkedWorktreesFolderIsNeverDeletedThrough() throws {
         let repo = try GitRepoFixture()
-        let elsewhere = FileManager.default.temporaryDirectory.appendingPathComponent("elsewhere-\(UUID().uuidString)").path
+        let elsewhere = TestScratch.root.appendingPathComponent("elsewhere-\(UUID().uuidString)").path
         try FileManager.default.createDirectory(atPath: elsewhere + "/keep", withIntermediateDirectories: true)
         try FileManager.default.createSymbolicLink(atPath: repo.path + "/.worktrees", withDestinationPath: elsewhere)
         let stray = TaskItem(projectId: repo.project.id, title: "Keep", branch: "keep", worktreePath: repo.path + "/.worktrees/keep", baseBranch: "main")

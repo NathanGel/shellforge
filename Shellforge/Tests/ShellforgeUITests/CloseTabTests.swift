@@ -9,7 +9,7 @@ import Testing
 /// remove the task instead, through Remove Task's own confirmation, and closes nothing yet.
 @MainActor @Suite struct CloseTabTests {
     private func model() throws -> (SidebarModel, FakeTerminalHost, UUID, UUID) {
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("shellforge-close-\(UUID().uuidString)")
+        let folder = TestScratch.root.appendingPathComponent("shellforge-close-\(UUID().uuidString)")
         let document = WorkspaceDocument(store: WorkspaceStore(folder: folder))
         let project = Project(name: "api", path: "/api")
         let task = TaskItem(projectId: project.id, title: "Fix", branch: "fix", worktreePath: "/api/.worktrees/fix", baseBranch: "main")

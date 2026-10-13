@@ -26,7 +26,7 @@ import Testing
     /// Two windows over one workspace and one helper; a task waiting, and a terminal waiting in one
     /// window's tab.
     private func twoWindows() throws -> (SidebarModel, SidebarModel, FakeFeed, FakeTerminalHost, UUID, UUID) {
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("shellforge-dock-\(UUID().uuidString)")
+        let folder = TestScratch.root.appendingPathComponent("shellforge-dock-\(UUID().uuidString)")
         let document = WorkspaceDocument(store: WorkspaceStore(folder: folder))
         let project = Project(name: "api", path: "/api")
         let task = TaskItem(projectId: project.id, title: "Login", branch: "feat/login", worktreePath: "/wt", baseBranch: "main")

@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+@testable import ShellforgeTestSupport
 @testable import ShellforgeCore
 
 /// What Settings › Core shows of the environment Shellforge starts things in, and how a changed rc
@@ -7,7 +8,7 @@ import Testing
 /// temporary folders.
 @Suite struct EnvironmentReportTests {
     private func folder(_ name: String = "env") throws -> URL {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("shellforge-\(name)-\(UUID().uuidString)")
+        let url = TestScratch.root.appendingPathComponent("shellforge-\(name)-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }

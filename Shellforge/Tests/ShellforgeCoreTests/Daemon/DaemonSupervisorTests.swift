@@ -45,7 +45,7 @@ private let neverAbandoned: TimeInterval = 3600
     /// Every supervisor built here writes its daemon log into a throwaway directory: the default
     /// (`ShellforgePaths.daemonLogURL`) is the real `~/Library/Application Support/Shellforge`, which the
     /// tests must not touch.
-    let logDirectory = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("aiterm-log-\(UUID().uuidString)")
+    let logDirectory = TestScratch.root.appendingPathComponent("aiterm-log-\(UUID().uuidString)")
     var logURL: URL { logDirectory.appendingPathComponent("shellforged.log") }
     deinit { try? FileManager.default.removeItem(at: logDirectory) }
 
@@ -131,7 +131,7 @@ private let neverAbandoned: TimeInterval = 3600
     // The daemon runs from inside the signed app bundle (PYTHONPATH), so it must not be
     // allowed to write `__pycache__` there — that breaks `codesign --verify --deep --strict`.
     @Test func testSupervisorDisablesBytecodeWritingInTheDaemonEnvironment() async throws {
-        let out = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("aiterm-env-\(UUID().uuidString).txt")
+        let out = TestScratch.root.appendingPathComponent("aiterm-env-\(UUID().uuidString).txt")
         defer { try? FileManager.default.removeItem(at: out) }
         let box = StateBox()
         // A "python" that dumps the two variables we care about and then stays alive. (BSD

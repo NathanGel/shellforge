@@ -7,13 +7,13 @@ import ShellforgeDesign
 
 @MainActor @Suite struct SidebarTests {
     private func sidebarModel() throws -> SidebarModel {
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("shellforge-view-\(UUID().uuidString)")
+        let folder = TestScratch.root.appendingPathComponent("shellforge-view-\(UUID().uuidString)")
         return SidebarModel(host: FakeTerminalHost(), document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: try GitRepoForUI().launcher, jiraSettings: { nil })
     }
 
     /// An Agent hooks sheet on a scratch home: building the view reads no file.
     private func hooks() -> AgentHooksModel {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("shellforge-view-home-\(UUID().uuidString)")
+        let home = TestScratch.root.appendingPathComponent("shellforge-view-home-\(UUID().uuidString)")
         return AgentHooksModel(integrations: HookIntegrations(home: home, resources: .bundled(resourceURL: nil)), names: [:])
     }
 

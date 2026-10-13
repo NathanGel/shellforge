@@ -12,7 +12,7 @@ import Testing
 
     /// A folder that looks like the bundled daemon's: `shellforged/__main__.py`.
     private func daemonDir() throws -> URL {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("sf-daemon-\(UUID().uuidString)")
+        let dir = TestScratch.root.appendingPathComponent("sf-daemon-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir.appendingPathComponent("shellforged"), withIntermediateDirectories: true)
         try Data().write(to: dir.appendingPathComponent("shellforged/__main__.py"))
         return dir

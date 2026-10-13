@@ -1,6 +1,7 @@
 // Ported from AiTerm (app/Tests/AiTermTests/AlertPromptTests.swift and TaskRemoverTests), GPLv3, Laurens D'Hondt.
 import Foundation
 import Testing
+@testable import ShellforgeTestSupport
 @testable import ShellforgeCore
 @testable import ShellforgeUI
 
@@ -27,7 +28,7 @@ import Testing
 /// about before anything closes, the task's tabs closed before git deletes its worktree, a branch
 /// with commits its base lacks kept until the person agrees to lose them, and the row gone last.
 @MainActor @Suite(.serialized) struct TaskRemoverTests {
-    private let folder = FileManager.default.temporaryDirectory.appendingPathComponent("shellforge-remove-\(UUID().uuidString)")
+    private let folder = TestScratch.root.appendingPathComponent("shellforge-remove-\(UUID().uuidString)")
 
     @MainActor private struct Setup {
         let sidebar: SidebarModel, host: FakeTerminalHost, prompter: ScriptedPrompter

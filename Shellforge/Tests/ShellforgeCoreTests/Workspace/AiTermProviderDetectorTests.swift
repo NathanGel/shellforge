@@ -1,5 +1,6 @@
 // Ported from AiTerm (app/Tests/AiTermCoreTests/ProviderDetectorTests.swift), GPLv3, Laurens D'Hondt.
 import Testing
+@testable import ShellforgeTestSupport
 import Foundation
 @testable import ShellforgeCore
 
@@ -27,7 +28,7 @@ import Foundation
     /// Two heuristics over-match: a `git.` host name, and a path of more than two segments. Hosts
     /// known not to be GitLab are ruled out first, whatever their name or path looks like.
     @Test func knownHostsThatAreNotGitLabAreNot() throws {
-        let repo = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
+        let repo = TestScratch.root.appendingPathComponent(UUID().uuidString).path
         try FileManager.default.createDirectory(atPath: repo, withIntermediateDirectories: true)
         try Data().write(to: URL(fileURLWithPath: repo + "/.gitlab-ci.yml"))
         for url in ["git@ssh.dev.azure.com:v3/org/project/repo",
@@ -48,7 +49,7 @@ import Foundation
     }
 
     @Test func testLocalRepoWithoutRemoteIsGitAndNonRepoIsNone() throws {
-        let repo = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
+        let repo = TestScratch.root.appendingPathComponent(UUID().uuidString).path
         try FileManager.default.createDirectory(atPath: repo, withIntermediateDirectories: true)
         #expect(ProviderDetector.detect(remoteUrl: nil, repoPath: repo).provider == .git)
         try Data().write(to: URL(fileURLWithPath: repo + "/.gitlab-ci.yml"))
@@ -58,7 +59,7 @@ import Foundation
 
     /// A GitHub repository that carries a `.gitlab-ci.yml` (a mirror, say) is still GitHub's.
     @Test func gitHubWinsOverTheGitLabCheckoutHints() throws {
-        let repo = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
+        let repo = TestScratch.root.appendingPathComponent(UUID().uuidString).path
         try FileManager.default.createDirectory(atPath: repo, withIntermediateDirectories: true)
         try Data().write(to: URL(fileURLWithPath: repo + "/.gitlab-ci.yml"))
         #expect(ProviderDetector.detect(remoteUrl: "git@github.com:octocat/hello.git", repoPath: repo).provider == .github)

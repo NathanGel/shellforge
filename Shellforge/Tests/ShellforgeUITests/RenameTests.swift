@@ -7,7 +7,7 @@ import Testing
 /// AiTerm's Rename: a task's, a review's, a terminal's or a divider's name, and nothing else.
 @MainActor @Suite struct RenameTests {
     private func model() throws -> (SidebarModel, WorkspaceDocument, TaskItem) {
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("shellforge-rename-\(UUID().uuidString)")
+        let folder = TestScratch.root.appendingPathComponent("shellforge-rename-\(UUID().uuidString)")
         let document = WorkspaceDocument(store: WorkspaceStore(folder: folder))
         let project = Project(name: "api", path: "/api")
         let task = TaskItem(projectId: project.id, title: "Login", branch: "feat/login", worktreePath: "/api/.worktrees/login", baseBranch: "main")

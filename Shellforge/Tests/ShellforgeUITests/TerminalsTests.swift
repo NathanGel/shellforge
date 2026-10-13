@@ -8,7 +8,7 @@ import Testing
 /// tagged as the terminal's, kept until removed. Workspaces are written directly; tabs are fake.
 @MainActor @Suite struct TerminalsTests {
     private func model(feed: FakeFeed = FakeFeed()) throws -> (SidebarModel, FakeTerminalHost, WorkspaceDocument, UUID) {
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("shellforge-terminals-\(UUID().uuidString)")
+        let folder = TestScratch.root.appendingPathComponent("shellforge-terminals-\(UUID().uuidString)")
         let document = WorkspaceDocument(store: WorkspaceStore(folder: folder))
         let project = Project(name: "api", path: "/api")
         try document.update { $0.projects.append(project) }
@@ -148,7 +148,7 @@ import Testing
 
     /// Saving refuses a repeated id, but a hand-edited or sync-merged file is loaded as it is.
     @Test func aWorkspaceWithARepeatedProjectDrawsWithoutCrashing() throws {
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("shellforge-repeated-\(UUID().uuidString)")
+        let folder = TestScratch.root.appendingPathComponent("shellforge-repeated-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let project = Project(name: "api", path: "/api")
         var workspace = Workspace(projects: [project, project])

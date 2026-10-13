@@ -1,12 +1,13 @@
 import Foundation
 import Testing
+@testable import ShellforgeTestSupport
 @testable import ShellforgeCore
 
 @Suite struct AgentRegistryTests {
     /// A fresh `agents/` folder, and a trash that records what was put in it instead of touching
     /// the user's real Trash.
     private final class Fixture: @unchecked Sendable {
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("shellforge-agents-\(UUID().uuidString)")
+        let folder = TestScratch.root.appendingPathComponent("shellforge-agents-\(UUID().uuidString)")
         var trashed: [URL] = []
         lazy var registry = AgentRegistry(folder: folder, trash: { [unowned self] url in
             trashed.append(url)

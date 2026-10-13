@@ -21,7 +21,7 @@ import Testing
                      draft: TaskDraft(baseBranch: "main", agentId: "claude", model: "", reasoning: nil), rememberedModels: [:],
                      catalogue: { _ in [] }, branches: { ["main"] }, submit: { _ in },
                      searchIssues: { _ in tickets },
-                     home: FileManager.default.temporaryDirectory.appendingPathComponent("tickets-home-\(UUID().uuidString)"))
+                     home: TestScratch.root.appendingPathComponent("tickets-home-\(UUID().uuidString)"))
     }
 
     /// Waits by sleeping, not by running the run loop: a test holding the main actor in

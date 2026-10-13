@@ -11,7 +11,7 @@ import ShellforgeDesign
         NewTaskModel(project: Project(name: "demo", path: "/tmp/demo"), agents: AgentPresets.all, available: ["claude"],
                      draft: TaskDraft(baseBranch: "main", agentId: "claude", model: "", reasoning: nil), rememberedModels: [:],
                      catalogue: { _ in [] }, branches: { ["main"] }, submit: { _ in },
-                     home: FileManager.default.temporaryDirectory.appendingPathComponent("nts-home-\(UUID().uuidString)"))
+                     home: TestScratch.root.appendingPathComponent("nts-home-\(UUID().uuidString)"))
     }
 
     @Test func theSheetIsAiTermsSizeAndDarkInALightWindow() throws {

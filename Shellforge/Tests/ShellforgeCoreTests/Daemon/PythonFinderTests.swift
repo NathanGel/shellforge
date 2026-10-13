@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+@testable import ShellforgeTestSupport
 @testable import ShellforgeCore
 
 /// Shellforge runs its daemon with a Python 3.11 or newer found on the login shell's PATH.
@@ -7,7 +8,7 @@ import Testing
     /// A folder of fake interpreters, each answering the version check with `answer`'s lines; `$0`
     /// in an answer is the fake's own path, as `sys.executable` names a real interpreter's.
     private func folder(_ pythons: [String: String]) throws -> String {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("sf-py-\(UUID().uuidString)").path
+        let dir = TestScratch.root.appendingPathComponent("sf-py-\(UUID().uuidString)").path
         try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         for (name, answer) in pythons {
             let path = "\(dir)/\(name)"

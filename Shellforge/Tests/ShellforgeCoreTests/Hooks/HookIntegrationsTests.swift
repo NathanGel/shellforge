@@ -1,10 +1,11 @@
 import Foundation
 import Testing
+@testable import ShellforgeTestSupport
 @testable import ShellforgeCore
 
 @Suite struct HookIntegrationsTests {
     private func home() throws -> URL {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("sf-home-\(UUID().uuidString)")
+        let dir = TestScratch.root.appendingPathComponent("sf-home-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }

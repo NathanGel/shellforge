@@ -1,6 +1,7 @@
 // Ported from AiTerm (app/Tests/AiTermCoreTests/GrokHooksFileTests.swift), GPLv3, Laurens D'Hondt.
 import Foundation
 import Testing
+@testable import ShellforgeTestSupport
 @testable import ShellforgeCore
 
 @Suite struct GrokHooksFileTests {
@@ -8,7 +9,7 @@ import Testing
     let shim = "/Applications/Shellforge.app/Contents/Resources/hooks/shellforge-grok-statusline.sh"
 
     func tempHome() throws -> URL {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("aiterm-grok-\(UUID().uuidString)")
+        let home = TestScratch.root.appendingPathComponent("aiterm-grok-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
         return home
     }

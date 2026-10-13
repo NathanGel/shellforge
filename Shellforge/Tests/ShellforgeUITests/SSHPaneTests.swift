@@ -7,7 +7,7 @@ import Testing
 /// New Task's pane beside the agent: the project's SSH host, opened as a split of the task's first
 /// tab when the box is ticked — the agent on the left, `ssh <host>` on the right.
 @MainActor @Suite struct SSHPaneTests {
-    private let folder = FileManager.default.temporaryDirectory.appendingPathComponent("shellforge-sshpane-\(UUID().uuidString)")
+    private let folder = TestScratch.root.appendingPathComponent("shellforge-sshpane-\(UUID().uuidString)")
 
     private func model(host sshHost: String?) async throws -> (SidebarModel, FakeTerminalHost, WorkspaceDocument, UUID) {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

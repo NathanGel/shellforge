@@ -8,15 +8,15 @@ import ShellforgeCore
 /// writes it back there, if only as an empty dictionary, even after `removePersistentDomain` and a
 /// deleted file. The folder goes when the test process exits — at exit rather than per test, since a
 /// domain is often handed to an object that outlives the test's own scope.
-enum ScratchDefaults {
-    static func make() -> UserDefaults {
+public enum ScratchDefaults {
+    public static func make() -> UserDefaults {
         let path = folder.appendingPathComponent(UUID().uuidString).path
         return UserDefaults(suiteName: path)!
     }
 
     /// Made, and its removal registered, on first use.
     private static let folder: URL = {
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("shellforge-test-defaults-\(UUID().uuidString)")
+        let folder = TestScratch.root.appendingPathComponent("defaults-\(UUID().uuidString)")
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         created.withLock { $0 = folder }
         atexit { ScratchDefaults.removeFolder() }

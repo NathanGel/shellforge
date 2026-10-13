@@ -1,4 +1,5 @@
 import Foundation
+@testable import ShellforgeTestSupport
 @testable import ShellforgeCore
 
 /// A fresh repository with one commit on `branch`, and a launcher whose environment is a
@@ -8,7 +9,7 @@ struct GitRepoFixture {
     let launcher: CommandLauncher
 
     init(branch: String = "main") throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("shellforge-repo-\(UUID().uuidString)").path
+        let root = TestScratch.root.appendingPathComponent("shellforge-repo-\(UUID().uuidString)").path
         path = "\(root)/repo"
         try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
         let env = ["PATH": "/usr/bin:/bin", "HOME": root, "GIT_CONFIG_NOSYSTEM": "1",
