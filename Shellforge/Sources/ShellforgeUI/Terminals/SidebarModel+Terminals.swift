@@ -66,6 +66,20 @@ extension SidebarModel {
         }
     }
 
+    /// AiTerm's task rename: the title only — the branch, the worktree and the tabs keep theirs.
+    /// An empty name keeps the old one.
+    public func renameTask(_ id: UUID, to name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        do {
+            try document.update { workspace in
+                if let i = workspace.tasks.firstIndex(where: { $0.id == id }) { workspace.tasks[i].title = trimmed }
+            }
+        } catch {
+            lastError = String(describing: error)
+        }
+    }
+
     /// The agents in the terminal's tabs, in tab order.
     public func avatars(forTerminal id: UUID) -> [SessionAgent] {
         tabs(ofTerminal: id).flatMap { avatars(forTab: $0.id) }

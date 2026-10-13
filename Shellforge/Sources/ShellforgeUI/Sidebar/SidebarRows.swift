@@ -125,6 +125,7 @@ struct TaskRowView: View {
     var removal: RowRemoval? = nil
     let activate: () -> Void
     var remove: () -> Void = {}
+    var rename: () -> Void = {}
     @Environment(\.interfaceScale) private var scale
 
     var body: some View {
@@ -161,6 +162,9 @@ struct TaskRowView: View {
         .accessibilityLabel(node.task.title)
         .accessibilityValue(status.label)
         .contextMenu {
+            // Greyed while the row is being removed, as AiTerm's is.
+            Button("Rename…", action: rename).disabled(removal == .removing)
+            Divider()
             Button("Remove \(node.task.kindName)…", role: .destructive, action: remove).disabled(removal == .removing)
         }
     }

@@ -158,7 +158,8 @@ struct SidebarView: View {
             TaskRowView(node: node, selected: selected, agents: model.avatars(forTask: node.id),
                         status: model.status(ofTask: node.id), removal: model.removals[node.id],
                         activate: { model.select(task: node.id) },
-                        remove: { Task { await model.confirmRemove(taskId: node.id) } })
+                        remove: { Task { await model.confirmRemove(taskId: node.id) } },
+                        rename: { showRename(.task, name: node.task.title) { model.renameTask(node.id, to: $0) } })
                 .listRowSeparator(.hidden)
         case .tab(let tab, let selected):
             TabRowView(tab: tab, selected: selected, agents: model.avatars(forTab: tab.id),
@@ -246,7 +247,7 @@ struct SidebarView: View {
 
     private func showRenameDivider(_ divider: SidebarDivider) {
         sheet.present(over: anchor.window) { dismiss in
-            NameSheet(title: "Rename divider", subtitle: "Changes the heading over the projects under it.", fieldLabel: "Divider name",
+            NameSheet(title: RenameCopy.divider.title, subtitle: RenameCopy.divider.subtitle, fieldLabel: RenameCopy.divider.field,
                       placeholder: divider.name, confirmLabel: "Rename", initialName: divider.name,
                       submit: { model.renameDivider(divider.id, to: $0) }, dismiss: dismiss)
         }
@@ -254,9 +255,17 @@ struct SidebarView: View {
 
     private func showRenameTerminal(_ terminal: TerminalItem) {
         sheet.present(over: anchor.window) { dismiss in
-            NameSheet(title: "Rename terminal", subtitle: "Renames the row in the sidebar; its iTerm2 tabs keep their titles.",
-                      fieldLabel: "Terminal name", placeholder: terminal.name, confirmLabel: "Rename", initialName: terminal.name,
+            NameSheet(title: RenameCopy.terminal.title, subtitle: RenameCopy.terminal.subtitle,
+                      fieldLabel: RenameCopy.terminal.field, placeholder: terminal.name, confirmLabel: "Rename", initialName: terminal.name,
                       submit: { model.renameTerminal(terminal.id, to: $0) }, dismiss: dismiss)
+        }
+    }
+
+    /// AiTerm's Rename sheet with `copy`, opened on the row's current name.
+    private func showRename(_ copy: RenameCopy, name: String, submit: @escaping (String) -> Void) {
+        sheet.present(over: anchor.window) { dismiss in
+            NameSheet(title: copy.title, subtitle: copy.subtitle, fieldLabel: copy.field, placeholder: name,
+                      confirmLabel: "Rename", initialName: name, submit: submit, dismiss: dismiss)
         }
     }
 
