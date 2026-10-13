@@ -4,7 +4,8 @@ import ShellforgeDesign
 import SwiftUI
 
 /// A terminal row: the agents in its tabs, or its shell's `>_` when none is known; its name; its
-/// status. Right-clicked: Rename… and Remove Terminal.
+/// status. Right-clicked: Rename…, Open in, and Remove Terminal; VoiceOver offers Rename and
+/// Remove Terminal.
 struct TerminalRowView: View {
     let node: TerminalNode
     let selected: Bool
@@ -28,13 +29,19 @@ struct TerminalRowView: View {
         }
         .accessibilityLabel(node.terminal.name)
         .accessibilityValue(status.label)
+        .accessibilityAction(named: Text("Rename"), rename)
+        .accessibilityAction(named: Text("Remove Terminal"), remove)
         .contextMenu {
             Button("Rename…", action: rename)
+            Divider()
             menuExtras
             Divider()
             Button("Remove Terminal", role: .destructive, action: remove)
         }
     }
+
+    /// What VoiceOver offers, as the context menu does.
+    static let voiceOverActions = ["Rename", "Remove Terminal"]
 
     /// AiTerm's: its agents, or `>_` when none is known.
     static func marks(_ agents: [SessionAgent]) -> AvatarGroup { AvatarGroup.of(agents.isEmpty ? [.shell] : agents) }

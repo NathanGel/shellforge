@@ -39,10 +39,15 @@ public struct SidebarLayoutSettings {
     public static func clamped(_ width: CGFloat) -> CGFloat { min(max(width, Size.sidebarMinWidth), Self.maxWidth) }
 
     /// The width a window of `windowWidth` gives the sidebar: the preferred one, less what the
-    /// terminal needs to keep `terminalMinWidth`. When even the sidebar's minimum would leave the
-    /// terminal less than that, the sidebar steps aside: the terminal is what the window is for.
-    public static func width(_ preferred: CGFloat, windowWidth: CGFloat) -> CGFloat {
-        let room = windowWidth - Self.terminalMinWidth
+    /// terminal needs to keep `terminalMinWidth` beside the toolbelt's `beside`. When even the
+    /// sidebar's minimum would leave the terminal less than that, the sidebar steps aside: the
+    /// terminal is what the window is for.
+    public static func width(_ preferred: CGFloat, windowWidth: CGFloat, beside: CGFloat = 0) -> CGFloat {
+        let room = windowWidth - beside - Self.terminalMinWidth
         return room < Size.sidebarMinWidth ? 0 : min(clamped(preferred), room)
     }
+
+    /// The drag handle across the sidebar's right `edge`: its hairline inside, the rest over the
+    /// terminal's margin, so the list's scroller under the edge keeps its clicks.
+    public static func dragHandle(edge: CGFloat) -> (x: CGFloat, width: CGFloat) { (edge - 1, 4) }
 }

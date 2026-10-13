@@ -61,8 +61,10 @@ struct TunnelRowView: View {
     private static func bytes(_ count: Int) -> String { ByteCountFormatter.string(fromByteCount: Int64(count), countStyle: .file) }
 
     /// The ports' tooltip: which tunnel holds them, so ssh's warning in a tab is not read as a failure.
-    static func portsHelp(_ row: TunnelRowItem) -> String {
-        "Held by \(row.alias): ssh \(row.alias) in a tab warns it cannot bind \(row.ports), and still connects."
+    static func portsHelp(_ row: TunnelRowItem) -> String? {
+        // Only while something holds them: a stopped tunnel holds no port.
+        guard !row.missing, [.connecting, .up].contains(row.state) else { return nil }
+        return "Held by \(row.alias): ssh \(row.alias) in a tab warns it cannot bind \(row.ports), and still connects."
     }
 
     /// Stopped is quiet, connecting amber, up green, failed red.
@@ -85,7 +87,7 @@ struct TunnelRowView: View {
                 RowTitle(row.alias, dimmed: row.missing)
                 if !row.ports.isEmpty {
                     Text(row.ports).font(Typography.monoCode).foregroundStyle(surface.secondaryInk).lineLimit(1)
-                        .help(Self.portsHelp(row))
+                        .help(Self.portsHelp(row) ?? "")
                 }
                 if row.keepRunning {
                     Image(systemName: "pin.fill").font(Typography.micro).foregroundStyle(surface.secondaryInk)
@@ -117,7 +119,7 @@ struct TunnelRowView: View {
                 RowCaption(caption, warns: true).lineLimit(2).padding(.leading, scale(Size.avatar) + scale(Space.inset))
             }
             // Re-drawn each minute, for the uptime.
-            TimelineView(.periodic(from: .now, by: 60)) { context in
+            TimelineView(.everyMinute) { context in
                 if let detail = Self.detail(row, now: context.date) {
                     RowCaption(detail).lineLimit(1).padding(.leading, scale(Size.avatar) + scale(Space.inset))
                 }

@@ -51,8 +51,15 @@ FATAL = ("Address already in use", "forwarding failed", "cannot listen to port",
          "Host key verification failed", "Could not resolve hostname", "Bad configuration option")
 
 # ssh's lines for a prompt BatchMode refused: the tunnel can be opened in a tab to answer it.
-NEEDS_INPUT = ("Host key verification failed", "Permission denied", "passphrase", "verification code",
-               "keyboard-interactive")
+NEEDS_INPUT = ("Host key verification failed", "passphrase", "verification code", "keyboard-interactive", "password")
+
+
+def needs_input(line: str) -> bool:
+    """Whether a tab could answer what ssh refused. "Permission denied (publickey)" alone cannot:
+    without a key there is nothing to type."""
+    if any(text in line for text in NEEDS_INPUT):
+        return True
+    return "Permission denied" in line and "(publickey)" not in line
 
 POLL = 0.05
 
@@ -205,7 +212,8 @@ class TunnelSupervisor:
         await self._end_all([tunnel.child], grace=2.0)
         tunnel.child = None
         tunnel.held_by = None
-        await self._finish([tunnel])
+        # A start made while this stop ended the old ssh has its own run: "stopped" is not its word.
+        await self._finish([tunnel], broadcast=[tunnel] if self._tunnels.get(alias) is tunnel else [])
         self._write_ledger()
 
     # -- held by a tab -----------------------------------------------------------------------
@@ -392,7 +400,7 @@ class TunnelSupervisor:
                 return
             why = self._last_line(errors) or f"ssh exited with status {popen.returncode}."
             if tunnel.state != "up" or any(text in why for text in FATAL):
-                tunnel.needs_input = True if any(text in why for text in NEEDS_INPUT) else None
+                tunnel.needs_input = True if needs_input(why) else None
                 await self._set(tunnel, "failed", why)
                 return
             if loop.time() - started >= self.steady_after:
@@ -405,7 +413,11 @@ class TunnelSupervisor:
         """Where `alias`'s ssh writes its stderr: named by a hash, as an alias may hold any character."""
         if self._logs is None:
             self._logs = Path(tempfile.mkdtemp(prefix="shellforge-tunnels-"))
-        self._logs.mkdir(parents=True, exist_ok=True)
+        try:
+            self._logs.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            # Something else holds the name beside the ledger: errors still need a home.
+            self._logs = Path(tempfile.mkdtemp(prefix="shellforge-tunnels-"))
         return self._logs / f"{hashlib.sha256(alias.encode()).hexdigest()[:16]}.log"
 
     @staticmethod
@@ -465,11 +477,22 @@ class TunnelSupervisor:
         try:
             self.ledger.parent.mkdir(parents=True, exist_ok=True)
             fd, temp = tempfile.mkstemp(dir=self.ledger.parent, prefix=".tunnels-")
-            with os.fdopen(fd, "w") as f:
-                json.dump({"tunnels": entries}, f)
-            os.replace(temp, self.ledger)
         except OSError:
             log.exception("writing the tunnel ledger failed")
+            return
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump({"tunnels": entries}, f)
+                # On disk before it replaces the old: a power cut must not leave an empty ledger,
+                # and with it a kept ssh nothing would adopt or end.
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp, self.ledger)
+        except (OSError, TypeError, ValueError):
+            # A failed write or a ledger json cannot hold: the old ledger stays, and no temp file.
+            log.exception("writing the tunnel ledger failed")
+            with contextlib.suppress(OSError):
+                os.unlink(temp)
 
     # -- traffic -----------------------------------------------------------------------------
 

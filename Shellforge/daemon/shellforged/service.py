@@ -259,7 +259,13 @@ class Service:
         return {"ok": True}
 
     async def _h_mark_seen(self, p: Any) -> dict[str, Any]:
-        changed = self.status.mark_seen(param(p, "taskId", str))
+        # A task's sessions by its id, or a terminal's by theirs.
+        if (ids := optional_param(p, "sessionIds", list)) is not None:
+            if not all(isinstance(i, str) for i in ids):
+                raise RpcError(protocol.BAD_PARAMS, "sessionIds must be a list of strings")
+            changed = self.status.mark_seen_sessions(ids)
+        else:
+            changed = self.status.mark_seen(param(p, "taskId", str))
         await self.publisher.session_changed(changed)
         return {"changed": len(changed)}
 

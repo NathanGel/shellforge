@@ -303,3 +303,44 @@ async def test_an_adopted_tunnel_given_an_environment_restarts_after_a_drop(tmp_
     await wait_until(lambda: second.pid("kept") not in (None, pid) and second.list()[0]["state"] == "up", timeout=5)
     await second.stop_all()
     os.killpg(second.pid("kept"), 9)
+
+
+async def test_a_failed_ledger_write_leaves_no_temp_file(tmp_path, ssh_env):
+    """The ledger's path is a folder: the replace fails, and no .tunnels-* file is left anywhere."""
+    (tmp_path / "tunnels.json").mkdir()
+    events = Events()
+    tunnels = supervisor(events, tmp_path / "tunnels.json")
+    await tunnels.start("db", ssh_env())
+    await wait_until(lambda: "up" in events.states("db"))
+    assert not list(tmp_path.glob("**/.tunnels-*"))
+    await tunnels.stop_all()
+
+
+def test_the_ledger_is_synced_before_it_replaces_the_old(tmp_path, monkeypatch):
+    calls = []
+    real_fsync, real_replace = os.fsync, os.replace
+    monkeypatch.setattr(os, "fsync", lambda fd: (calls.append("fsync"), real_fsync(fd)))
+    monkeypatch.setattr(os, "replace", lambda a, b: (calls.append("replace"), real_replace(a, b)))
+    tunnels = TunnelSupervisor(Events().broadcast, ledger=tmp_path / "tunnels.json")
+    tunnels._write_ledger()
+    assert calls == ["fsync", "replace"]
+
+
+def test_a_ledger_that_cannot_be_serialised_leaves_no_temp_file(tmp_path, monkeypatch):
+    """json.dump failing is not an OSError: the temp file still goes, and the run loop goes on."""
+    def broken(*_args, **_kwargs):
+        raise TypeError("not serialisable")
+    monkeypatch.setattr(json, "dump", broken)
+    tunnels = TunnelSupervisor(Events().broadcast, ledger=tmp_path / "tunnels.json")
+    tunnels._write_ledger()
+    assert not list(tmp_path.glob(".tunnels-*"))
+
+
+async def test_a_log_folder_that_cannot_be_made_does_not_stop_the_tunnel(tmp_path, ssh_env):
+    """Beside the ledger is a file named like the log folder: ssh's errors go to a temporary folder."""
+    (tmp_path / "tunnel-logs").write_text("not a folder")
+    events = Events()
+    tunnels = supervisor(events, tmp_path / "tunnels.json")
+    await tunnels.start("db", ssh_env())
+    await wait_until(lambda: "up" in events.states("db"))
+    await tunnels.stop_all()

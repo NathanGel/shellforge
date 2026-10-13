@@ -23,8 +23,8 @@ checks in the running app that each key below is in the main menu once.
 Each acts on the key window's sidebar — a sheet of it may be key — and is off where its rule says.
 
 A profile given a shortcut in Settings › Profiles › General gets ⌃⌘ and that key in the Profiles
-menu. The Tasks and View menus come first in the menu bar, so a profile shortcut on N, R, P, A, L,
-S, [ or ] is shadowed by Shellforge's item: give such a profile another key. A key mapping of your
+menu. The Tasks and View menus come first in the menu bar, so a profile shortcut on N, R, T, P, D,
+A, L, S, [ or ] is shadowed by Shellforge's item: give such a profile another key. A key mapping of your
 own (Settings › Keys, or a profile's Keys) runs before any menu item, as in iTerm2.
 
 ## View menu

@@ -262,6 +262,15 @@ def test_codex_title_without_spinner_keeps_needs_input(eng):
     assert reg.get("s2").state == "needsInput"
 
 
+def test_mark_seen_by_sessions(eng):
+    """A terminal's tabs are seen by their session ids: only those, never the task's."""
+    engine, reg = eng
+    engine.apply_event("s1", hook("done"))
+    engine.apply_event("s2", hook("done"))
+    assert engine.mark_seen_sessions(["s2", "nope"]) == ["s2"]
+    assert reg.get("s2").state == "idle" and reg.get("s1").state == "done"
+
+
 def test_mark_seen_and_agent_exit(eng):
     engine, reg = eng
     engine.apply_event("s1", hook("done"))

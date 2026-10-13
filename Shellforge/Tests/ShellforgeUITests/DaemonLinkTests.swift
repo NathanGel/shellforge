@@ -18,7 +18,7 @@ import Testing
         return dir
     }
 
-    nonisolated private static func snapshotReply(_ req: [String: Any], version: Int = 1, sessions: [[String: Any]] = []) -> [String: Any] {
+    nonisolated private static func snapshotReply(_ req: [String: Any], version: Int = DaemonProtocol.version, sessions: [[String: Any]] = []) -> [String: Any] {
         ["id": req["id"]!, "result": ["protocolVersion": version, "connected": true, "sessions": sessions,
                                       "usage": ["claude": NSNull(), "codex": NSNull()]]]
     }
@@ -129,7 +129,7 @@ import Testing
     @Test func aMismatchedHelperFillsNoDots() async throws {
         let server = FakeSocketServer(path: "/tmp/sf-link-\(UUID().uuidString.prefix(8)).sock")
         nonisolated(unsafe) let session = Self.session
-        server.handler = { req in Self.snapshotReply(req, version: 2, sessions: [session]) }
+        server.handler = { req in Self.snapshotReply(req, version: 1, sessions: [session]) }
         server.start()
         let link = DaemonLink(socketPath: server.path, daemonDir: nil, findPython: { nil }, reports: { [] })
         defer { link.shutdown(); server.stop() }

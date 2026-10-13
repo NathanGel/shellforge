@@ -44,12 +44,14 @@ public struct AgentNotInstalled: Error, Equatable, LocalizedError {
 }
 
 /// What the sidebar needs from the helper: its status, what the daemon says about the sessions,
-/// and where to say a task was seen. `DaemonLink` is the app's; the tests use a fake.
+/// and where to say a task or a terminal was seen. `DaemonLink` is the app's; the tests use a fake.
 @MainActor
 public protocol SessionFeed: AnyObject {
     var statusPublisher: AnyPublisher<HelperStatus, Never> { get }
     var storePublisher: AnyPublisher<SessionStore, Never> { get }
     func markSeen(task: UUID)
+    /// A terminal's tabs, by their sessions: they carry no task.
+    func markSeen(sessions: [String])
     func startTunnel(alias: String, keepRunning: Bool)
     func stopTunnel(alias: String)
     func holdTunnel(alias: String, port: Int, bind: String?)
@@ -114,7 +116,10 @@ public final class SidebarModel: ObservableObject {
     @Published public internal(set) var sshHosts: [String: SSHHost]?
     var readingSSH = false
     /// The `.onLaunch` tunnels asked of the helper now connected; emptied when it goes.
-    var launchRequested: Set<String> = []
+    var launchRequested: Set<String> {
+        get { LaunchStarts.shared(for: document).requested }
+        set { LaunchStarts.shared(for: document).requested = newValue }
+    }
     /// The tab selected at the last refresh: moving to another is opening it.
     private var lastSelectedTab: String?
 
@@ -152,8 +157,12 @@ public final class SidebarModel: ObservableObject {
                 feed.storePublisher.sink { [weak self] store in MainActor.assumeIsolated { self?.take(store) } },
                 feed.statusPublisher.sink { [weak self] status in
                     MainActor.assumeIsolated {
-                        self?.helper = status
-                        self?.autoStartOnLaunch()
+                        guard let self else { return }
+                        // Emptied when a connection ends, not whenever this window has yet to hear
+                        // of one: a window opened later must not undo what another asked.
+                        if self.helper == .connected, status != .connected { self.launchRequested = [] }
+                        self.helper = status
+                        self.autoStartOnLaunch()
                     }
                 },
             ]
@@ -367,7 +376,11 @@ public final class SidebarModel: ObservableObject {
             } else {
                 // A tab of no task is shown: no task is — a terminal's, perhaps.
                 selectedTaskId = nil
-                selectedTerminalId = selected.terminalId.flatMap { id in document.workspace.terminals.contains { $0.id == id } ? id : nil }
+                if let id = selected.terminalId, document.workspace.terminals.contains(where: { $0.id == id }) {
+                    shown(terminal: id, explicit: opened)
+                } else {
+                    selectedTerminalId = nil
+                }
             }
         }
     }
@@ -452,10 +465,14 @@ public final class SidebarModel: ObservableObject {
         let workspace = document.workspace
         // A hand-edited workspace may repeat a project: the first is drawn, never a crash.
         let nodes = Dictionary(tree.projects.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        for entry in SidebarLayout.entries(projects: tree.projects.map(\.project), dividers: workspace.dividers) {
+        let dividers = Dictionary(workspace.dividers.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        // With no project the empty state stands alone; a rule under it would divide nothing.
+        let entries = tree.projects.isEmpty ? [] : SidebarLayout.entries(projects: tree.projects.map(\.project), dividers: workspace.dividers)
+        for (index, entry) in entries.enumerated() {
             guard case .project(let id) = entry, let node = nodes[id] else {
-                if case .divider(let id) = entry, let divider = workspace.dividers.first(where: { $0.id == id }) {
-                    rows.append(.divider(DividerRowItem(divider: divider, canMoveUp: canMove(entry, up: true), canMoveDown: canMove(entry, up: false))))
+                // Its ends from its place in the one layout drawn, not a layout rebuilt per divider.
+                if case .divider(let id) = entry, let divider = dividers[id] {
+                    rows.append(.divider(DividerRowItem(divider: divider, canMoveUp: index > 0, canMoveDown: index < entries.count - 1)))
                 }
                 continue
             }

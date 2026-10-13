@@ -211,6 +211,35 @@ import Testing
         #expect(model.lastError == "The terminal’s tab didn’t close, so its row stays. Close the tab, then remove it again.")
     }
 
+    /// A done terminal shown is seen: its tabs' sessions, never a task's — and a task seen marks
+    /// no terminal.
+    @Test func seeingATerminalMarksOnlyItsTabs() throws {
+        let feed = FakeFeed()
+        let (model, host, document, project) = try model(feed: feed)
+        model.newTerminal(name: "logs", in: project)
+        let terminal = try #require(document.workspace.terminals.first)
+        let tab = try #require(host.tabs.first).id
+        model.selectTerminalRow(nil)
+        say(feed, [(tab, .done)])
+        model.select(terminal: terminal.id)
+        #expect(feed.seenSessions == [[tab]])
+        #expect(feed.seen.isEmpty, "no task was seen")
+    }
+
+    /// Switching to a done terminal's tab in iTerm2 sees it too, as switching to a task's does.
+    @Test func openingADoneTerminalsTabSeesIt() throws {
+        let feed = FakeFeed()
+        let (model, host, _, project) = try model(feed: feed)
+        model.newTerminal(name: "logs", in: project)
+        let tab = try #require(host.tabs.first).id
+        host.selectedTabId = nil
+        model.selectTerminalRow(nil)
+        say(feed, [(tab, .done)])
+        host.selectedTabId = tab
+        host.onChange?()
+        #expect(feed.seenSessions == [[tab]])
+    }
+
     @Test func focusViewShowsAWaitingTerminalWhenNoTaskWaits() throws {
         let feed = FakeFeed()
         let (model, host, document, project) = try model(feed: feed)

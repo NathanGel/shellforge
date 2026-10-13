@@ -75,6 +75,17 @@ final class DaemonClientTests {
         #expect(try await client.markSeen(task: Self.task) == 2)
     }
 
+    /// A terminal's tabs carry no task: they are marked seen by their session ids.
+    @Test func markSeenBySessionsSendsTheirIds() async throws {
+        server.handler = { req in
+            #expect((req["params"] as? [String: Any])?["sessionIds"] as? [String] == ["A", "B"])
+            return ["id": req["id"]!, "result": ["changed": 1]]
+        }
+        try client.connect()
+        #expect(server.waitForClient(timeout: 2))
+        #expect(try await client.markSeen(sessions: ["A", "B"]) == 1)
+    }
+
     /// A tunnel is started with the app's login environment: the daemon has none of its own.
     @Test func startingATunnelSendsItsAliasAndTheEnvironment() async throws {
         server.handler = { req in
@@ -132,9 +143,11 @@ final class DaemonClientTests {
         try await client.stopTunnel(alias: "db-staging")
     }
 
+    /// Version 1 has no `sessions.markSeen` by session ids: a version-1 helper adopted after a
+    /// crash would refuse it unseen, so it is one this app cannot speak to.
     @Test func aDaemonOfAnotherProtocolVersionIsAMismatch() async throws {
         server.handler = { req in
-            ["id": req["id"]!, "result": ["protocolVersion": 2, "connected": true, "sessions": [], "usage": ["claude": NSNull(), "codex": NSNull()]]]
+            ["id": req["id"]!, "result": ["protocolVersion": 1, "connected": true, "sessions": [], "usage": ["claude": NSNull(), "codex": NSNull()]]]
         }
         try client.connect()
         #expect(server.waitForClient(timeout: 2))
@@ -399,7 +412,7 @@ time.sleep(5)
 
     @Test func snapshotAppearsInWireOrderAsAnEventBarrier() async throws {
         server.handler = { req in
-            ["id": req["id"]!, "result": ["protocolVersion": 1, "connected": true, "sessions": [], "usage": ["claude": NSNull(), "codex": NSNull()]]]
+            ["id": req["id"]!, "result": ["protocolVersion": DaemonProtocol.version, "connected": true, "sessions": [], "usage": ["claude": NSNull(), "codex": NSNull()]]]
         }
         try client.connect()
         #expect(server.waitForClient(timeout: 2))

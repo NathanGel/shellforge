@@ -507,5 +507,8 @@ extern NSString *const iTermDidCreateTerminalWindowNotification;
              nearSessionGuid:(NSString *)sessionGuid
                     vertical:(BOOL)vertical;
 
+// Shellforge: whether a split fits in `tab`, which need not be the current tab.
+- (BOOL)canSplitPaneVertically:(BOOL)isVertical withBookmark:(Profile *)theBookmark inTab:(PTYTab *)tab;
+
 @end
 

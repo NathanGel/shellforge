@@ -331,7 +331,13 @@ class StatusEngine:
         return [session_id] if self.reg.set_state(session_id, "idle") else []
 
     def mark_seen(self, task_id: str) -> list[str]:
-        sessions = self.reg.for_task(task_id)
+        return self._mark_seen(self.reg.for_task(task_id))
+
+    def mark_seen_sessions(self, session_ids: list[str]) -> list[str]:
+        """A terminal's tabs, which carry no task: seen by their session ids."""
+        return self._mark_seen([s for sid in session_ids if (s := self.reg.get(sid)) is not None])
+
+    def _mark_seen(self, sessions: list[SessionInfo]) -> list[str]:
         for s in sessions:
             # A completion seen while a prompt covers it must not come back unseen when it closes.
             if (turn := self._turns.get(s.session_id)) is not None and turn.before_prompt == "done":

@@ -44,6 +44,22 @@ import Testing
         #expect(SidebarLayoutSettings.width(500, windowWidth: 200) == 0, "a window too narrow for both: the terminal")
     }
 
+    /// The toolbelt on the right takes its width from the terminal's, not the sidebar's room.
+    @Test func theToolbeltCountsAgainstTheTerminal() {
+        #expect(SidebarLayoutSettings.width(500, windowWidth: 1_000, beside: 300) == 1_000 - 300 - SidebarLayoutSettings.terminalMinWidth)
+        #expect(SidebarLayoutSettings.width(500, windowWidth: 800, beside: 300) == 0, "no room for both minimums")
+        #expect(SidebarLayoutSettings.width(500, windowWidth: 2_000, beside: 0) == 500)
+    }
+
+    /// The drag handle straddles the sidebar's border, mostly outside it: the list's scroller, at
+    /// the sidebar's right edge, stays clickable.
+    @Test func theHandleSitsOnTheBorderClearOfTheScroller() {
+        let handle = SidebarLayoutSettings.dragHandle(edge: 260)
+        #expect(handle.x < 260 && handle.x + handle.width > 260, "on the border")
+        #expect(260 - handle.x <= 1, "no more than the hairline inside the sidebar")
+        #expect(handle.width >= 3, "as wide as the left tab bar's handle")
+    }
+
     /// A window's preferred width is its own: dragged from what it was, kept within the limits —
     /// never from the width a narrow window happened to give it.
     @Test func aDragMovesThePreferredWidth() {

@@ -290,3 +290,32 @@ async def test_keep_running_is_taken_with_the_start(tunnel_stack, ssh_env):
     assert reply["result"] == {"ok": True}
     assert svc.tunnels._tunnels["db"].keep_running is True
     await svc.tunnels.stop("db")
+
+
+async def test_a_stop_followed_by_a_start_ends_connecting(ssh_env):
+    """A start that lands while a stop is still ending the last ssh: the stop's late "stopped" must
+    not be the last word about the new run."""
+    events = Events()
+    tunnels = fast(events)
+    await tunnels.start("db", ssh_env("ignore-term"))
+    await wait_until(lambda: "up" in events.states("db"))
+    stopping = asyncio.ensure_future(tunnels.stop("db"))
+    await asyncio.sleep(0.05)
+    await tunnels.start("db", ssh_env())
+    await stopping
+    await wait_until(lambda: tunnels.list()[0]["state"] == "up", timeout=5)
+    assert events.states("db")[-1] == "up", events.states("db")
+    await tunnels.stop_all()
+
+
+async def test_a_missing_key_needs_no_tab(ssh_env):
+    """Permission denied (publickey) alone: no answer typed in a tab can help without a key."""
+    events = Events()
+    tunnels = fast(events)
+    await tunnels.start("db", ssh_env("fail", FAKE_SSH_LINE="db: Permission denied (publickey)."))
+    await wait_until(lambda: "failed" in events.states("db"))
+    assert tunnels.list()[0]["needsInput"] is None
+    await tunnels.start("web", ssh_env("fail", FAKE_SSH_LINE="web: Permission denied (publickey,keyboard-interactive)."))
+    await wait_until(lambda: "failed" in events.states("web"))
+    assert tunnels.list()[1]["needsInput"] is True
+    await tunnels.stop_all()

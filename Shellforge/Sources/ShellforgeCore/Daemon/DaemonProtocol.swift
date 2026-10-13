@@ -8,7 +8,7 @@ import Foundation
 public enum DaemonProtocol {
     /// The version `workspace.snapshot` reports. A helper that reports another is one this app
     /// cannot speak (`DaemonError.Code.incompatible`).
-    public static let version = 1
+    public static let version = 2
     /// The longest line either side reads: the daemon's request reader is limited to it, and a
     /// longer line from the daemon ends this app's connection.
     public static let maximumFrameBytes = 1 << 20

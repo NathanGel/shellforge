@@ -95,6 +95,8 @@ import Testing
     var statusPublisher: AnyPublisher<HelperStatus, Never> { $status.eraseToAnyPublisher() }
     var storePublisher: AnyPublisher<SessionStore, Never> { $store.eraseToAnyPublisher() }
     func markSeen(task: UUID) { seen.append(task) }
+    var seenSessions: [[String]] = []
+    func markSeen(sessions: [String]) { seenSessions.append(sessions) }
     var tunnelCalls: [String] = []
     func startTunnel(alias: String, keepRunning: Bool) { tunnelCalls.append("start \(alias)" + (keepRunning ? " (keep)" : "")) }
     func stopTunnel(alias: String) { tunnelCalls.append("stop \(alias)") }
@@ -230,16 +232,20 @@ import Testing
     }
 
     /// git runs a checkout and the repository's hooks; on the main thread it would freeze every window.
+    /// The first read, init's, has no git on PATH: `addProject`'s git misses, and its re-read is the
+    /// second read recorded, not one init made for it.
     @Test func gitRunsOffTheMainThread() async throws {
         let repo = try GitRepoForUI()
         let calls = MainThreadRecorder()
         let launcher = CommandLauncher {
             calls.record(Thread.isMainThread)
+            if calls.values.count == 1 { return ResolvedEnvironment(variables: ["PATH": "/nowhere"], source: .loginShell("/bin/zsh")) }
             return repo.launcher.environment
         }
         let sidebar = SidebarModel(host: FakeTerminalHost(), document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: launcher, jiraSettings: { nil })
+        #expect(await eventually { calls.values.count == 1 }, "init's read has finished")
         await sidebar.addProject(folder: repo.path)
-        #expect(calls.values == [false])
+        #expect(calls.values == [false, false])
         #expect(sidebar.tree.projects.count == 1)
     }
 

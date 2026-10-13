@@ -29,8 +29,10 @@ public enum OpenIn {
         }
     }
 
+    /// None for a row with no folder yet: Finder would open at /.
     public static func items(folder: String, vsCodeInstalled: Bool) -> [Item] {
-        [Item(title: "Open in Finder", app: .finder, folder: folder)]
+        guard !folder.isEmpty else { return [] }
+        return [Item(title: "Open in Finder", app: .finder, folder: folder)]
             + (vsCodeInstalled ? [Item(title: "Open in VS Code", app: .vsCode, folder: folder)] : [])
     }
 

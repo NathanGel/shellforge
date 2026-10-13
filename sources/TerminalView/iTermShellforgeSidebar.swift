@@ -232,7 +232,9 @@ final class iTermShellforgeHost: TerminalHost {
     /// iTerm2 can refuse a split (a tmux tab, a window too small): the task stays open, and says so.
     private func split(_ session: PTYSession, running command: String, in directory: String, base: [AnyHashable: Any], title: String) {
         let profile = iTermShellforgeSidebar.taskTabProfile(base: base, directory: directory, initialText: TabCommand.initialText(command))
-        guard let windowController, windowController.canSplitPaneVertically(true, withBookmark: profile) else {
+        // The agent's tab, which need not be the current one by now.
+        guard let windowController, let tab = windowController.tab(for: session),
+              windowController.canSplitPaneVertically(true, withBookmark: profile, in: tab) else {
             onSplitRefused?(title)
             return
         }
@@ -266,7 +268,9 @@ extension iTermShellforgeSidebar {
     private static var tick: Timer?
     private static var rcCheck: Timer?
     /// The login shell's rc files, as last seen: a change reads the environment again (PRD E9).
-    nonisolated(unsafe) private static var rcFiles = RCFiles(home: FileManager.default.homeDirectoryForCurrentUser)
+    /// The shell and `ZDOTDIR` come from the environment Shellforge uses, read off the main thread.
+    nonisolated(unsafe) private static var rcFiles = RCFiles(home: FileManager.default.homeDirectoryForCurrentUser,
+                                                             environment: { launcher.environment.variables })
 
     /// One rc check at a time: `rcFiles` is touched only by the check in flight.
     private static var checkingRC = false
@@ -287,12 +291,9 @@ extension iTermShellforgeSidebar {
     }
 
     /// The Dock icon's badge: the rows waiting on you, once for the app, written only when it changes.
-    private static var dockBadge: String?
+    private static let dockBadge = DockBadge.Setter { NSApp.dockTile.badgeLabel = $0 }
     static func updateDockBadge() {
-        let label = DockBadge.label(count: DockBadge.count(across: sidebars.allObjects))
-        guard label != dockBadge else { return }
-        dockBadge = label
-        NSApp.dockTile.badgeLabel = label
+        dockBadge.update(count: DockBadge.count(across: sidebars.allObjects))
     }
 
     /// Every window's sidebar re-reads whether the environment is a fallback.
@@ -319,8 +320,11 @@ extension iTermShellforgeSidebar {
                 updateDockBadge()
             }
         }
-        // A tool installed and put on PATH in an rc file is found without a relaunch.
-        _ = rcFiles.changed()
+        // A tool installed and put on PATH in an rc file is found without a relaunch. The first
+        // check only looks; it reads the environment, so it runs off the main thread too.
+        checkRCFiles()
+        // A command that missed read the environment again: every sidebar's warning follows.
+        launcher.onReload = { DispatchQueue.main.async { MainActor.assumeIsolated { environmentChanged() } } }
         rcCheck = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { _ in
             MainActor.assumeIsolated { checkRCFiles() }
         }
@@ -367,7 +371,8 @@ extension iTermShellforgeSidebar {
     }
 
     /// The first window's sidebar: where a tunnel's start is checked and its keep-running read.
-    fileprivate static var anySidebar: SidebarModel? { sidebars.allObjects.first }
+    /// The key window's sidebar, else the first: where a tunnel's start is checked and a problem said.
+    fileprivate static var anySidebar: SidebarModel? { keySidebar ?? sidebars.allObjects.first }
 }
 
 @MainActor
@@ -399,9 +404,11 @@ private final class TunnelMenuController: NSObject, NSMenuItemValidation {
         }
     }
 
+    /// Start or Stop by the tunnel's state now, not the one the item was built with: Open Quickly
+    /// keeps the items it listed, and a tunnel can have changed since.
     @objc func choose(_ sender: NSMenuItem) {
         guard let alias = sender.representedObject as? String, let sidebar = iTermShellforgeSidebar.anySidebar else { return }
-        if sender.tag == 1 { sidebar.startTunnel(alias) } else { sidebar.stopTunnel(alias) }
+        if [.connecting, .up].contains(sidebar.tunnelState(alias)) { sidebar.stopTunnel(alias) } else { sidebar.startTunnel(alias) }
     }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
@@ -474,9 +481,25 @@ extension iTermShellforgeSidebar {
     /// The preferred width a new window starts with: the last one dragged, in any window.
     @objc static func defaultPreferredWidth() -> CGFloat { layout.width }
 
-    /// The width a window of `windowWidth` gives a sidebar that prefers `preferred`.
-    @objc static func width(forPreferred preferred: CGFloat, windowWidth: CGFloat) -> CGFloat {
-        SidebarLayoutSettings.width(preferred, windowWidth: windowWidth)
+    /// The width a window of `windowWidth` gives a sidebar that prefers `preferred`, with a
+    /// toolbelt of `toolbeltWidth` showing on the right.
+    @objc static func width(forPreferred preferred: CGFloat, windowWidth: CGFloat, toolbeltWidth: CGFloat) -> CGFloat {
+        SidebarLayoutSettings.width(preferred, windowWidth: windowWidth, beside: toolbeltWidth)
+    }
+
+    /// The drag handle's frame for a sidebar of `frame`.
+    @objc static func dragHandleFrame(forSidebar frame: NSRect) -> NSRect {
+        let handle = SidebarLayoutSettings.dragHandle(edge: frame.maxX)
+        return NSRect(x: handle.x, y: frame.minY, width: handle.width, height: frame.height)
+    }
+
+    /// View › Hide Sidebar, built from the same list as the Tasks menu's keys.
+    @objc static func toggleSidebarItem(action: Selector, target: AnyObject) -> NSMenuItem {
+        let item = SidebarCommandMenu.toggleSidebar
+        let menuItem = NSMenuItem(title: item.title, action: action, keyEquivalent: item.key)
+        menuItem.keyEquivalentModifierMask = NSEvent.ModifierFlags(rawValue: item.modifiers.rawValue)
+        menuItem.target = target
+        return menuItem
     }
 
     /// A window's preferred width after a drag of `delta`, saved to seed new windows.

@@ -62,6 +62,31 @@ private final class ScriptedResolver: @unchecked Sendable {
         #expect(resolver.asked == 2)
     }
 
+    /// A miss re-reads the environment: the sidebars' warning and Settings › Core hear of the new read.
+    @Test func aNotFoundReReadTellsTheSidebars() throws {
+        let launcher = CommandLauncher { ResolvedEnvironment(variables: ["PATH": "/usr/bin:/bin"], source: .loginShell("/bin/zsh")) }
+        let told = Locked(0)
+        launcher.onReload = { told.withLock { $0 += 1 } }
+        _ = try launcher.run("true", [])
+        #expect(told.withLock { $0 } == 0, "a hit reads nothing again")
+        _ = try? launcher.run("not-a-tool-anywhere", [])
+        #expect(told.withLock { $0 } == 1)
+    }
+
+    /// The environment and when it was read come from one read, even with a reload landing between.
+    @Test func theSnapshotIsOneRead() {
+        let reads = Locked(0)
+        let launcher = CommandLauncher(resolve: {
+            let n = reads.withLock { (count: inout Int) -> Int in count += 1; return count }
+            return ResolvedEnvironment(variables: ["PATH": "/read-\(n)"], source: .loginShell("/bin/zsh"))
+        }, clock: { Date(timeIntervalSince1970: TimeInterval(reads.withLock { $0 })) })
+        let first = launcher.snapshot
+        #expect(first.environment.variables["PATH"] == "/read-1" && first.readAt == Date(timeIntervalSince1970: 1))
+        launcher.reload()
+        let second = launcher.snapshot
+        #expect(second.environment.variables["PATH"] == "/read-2" && second.readAt == Date(timeIntervalSince1970: 2))
+    }
+
     @Test func aToolFoundNowhereIsReportedWithThePATHSearched() throws {
         let launcher = CommandLauncher { ResolvedEnvironment(variables: ["PATH": "/usr/bin:/bin"], source: .loginShell("/bin/zsh")) }
         let error = try #require(throws: CommandNotFound.self) { try launcher.run("uv", []) }

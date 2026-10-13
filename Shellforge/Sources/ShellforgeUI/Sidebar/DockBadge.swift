@@ -7,6 +7,23 @@ import ShellforgeCore
 public enum DockBadge {
     public static func label(count: Int) -> String? { count > 0 ? String(count) : nil }
 
+    /// Writes the label through `set` — the app's `NSApp.dockTile.badgeLabel` — only when it
+    /// changes: the count is taken every second, and the Dock redraws on every write.
+    @MainActor
+    public final class Setter {
+        private let set: (String?) -> Void
+        private var last: String?
+
+        public init(set: @escaping (String?) -> Void) { self.set = set }
+
+        public func update(count: Int) {
+            let label = DockBadge.label(count: count)
+            guard label != last else { return }
+            last = label
+            set(label)
+        }
+    }
+
     /// Once for the app: a task's status is the helper's, the same in every window, and a terminal's
     /// comes from its tabs, which may be in any window — each row counts once however many show it.
     @MainActor

@@ -54,6 +54,35 @@ import Testing
         _ = document
     }
 
+    /// With no projects, the empty state stands alone: no bare rules under it.
+    @Test func withNoProjectsTheEmptyStateHasNoRules() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("shellforge-dividers-\(UUID().uuidString)")
+        let document = WorkspaceDocument(store: WorkspaceStore(folder: folder))
+        try document.update { $0.dividers = [SidebarDivider(name: "Work", position: 0)] }
+        let launcher = CommandLauncher(resolve: { ResolvedEnvironment(variables: ["PATH": "/usr/bin"], source: .loginShell("/bin/zsh")) })
+        let model = SidebarModel(host: FakeTerminalHost(), document: document, launcher: launcher, jiraSettings: { nil })
+        #expect(model.rows == [.empty])
+    }
+
+    /// Each divider's ends come from its place among everything drawn: two at the top, one between.
+    @Test func eachDividerKnowsItsEnds() throws {
+        let (model, _, _, _) = try model()
+        model.addDivider(name: "One")
+        model.addDivider(name: "Two")
+        let ends = model.rows.compactMap { if case .divider(let row) = $0 { [row.canMoveUp, row.canMoveDown] } else { nil } }
+        #expect(ends == [[true, true], [true, false]])
+    }
+
+    /// VoiceOver gets the context menu's actions, those it can take now.
+    @Test func voiceOverOffersTheMenusEnabledItems() throws {
+        let divider = SidebarDivider(name: "Work", position: 0)
+        #expect(DividerRow.voiceOverActions(DividerRowItem(divider: divider, canMoveUp: false, canMoveDown: true))
+                == ["Rename", "Move Down", "Remove Divider"])
+        #expect(DividerRow.voiceOverActions(DividerRowItem(divider: divider, canMoveUp: true, canMoveDown: true))
+                == ["Rename", "Move Up", "Move Down", "Remove Divider"])
+        #expect(TerminalRowView.voiceOverActions == ["Rename", "Remove Terminal"])
+    }
+
     @Test func addDividerIsACommand() throws {
         let (model, _, _, _) = try model()
         var requests: [SidebarSheetRequest] = []
