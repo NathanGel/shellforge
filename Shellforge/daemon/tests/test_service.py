@@ -963,7 +963,7 @@ async def test_bootstrap_snapshot_contains_live_tags_and_protocol(stack):
     svc, it, files, r, w = stack
     await svc.windows.create_task({"taskId": "stable-task", "cwd": "/wt", "title": "x", "frame": FRAME})
     result = (await call(r, w, "workspace.snapshot"))["result"]
-    assert result["protocolVersion"] == 1 and result["connected"]
+    assert result["protocolVersion"] == 2 and result["connected"]
     # Settings names the iTerm2 it is connected to, and every snapshot event would otherwise drop it.
     assert result["itermVersion"] == "3.7.2"
     assert result["sessions"][0]["taskId"] == "stable-task"

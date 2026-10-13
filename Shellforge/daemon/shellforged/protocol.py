@@ -8,7 +8,7 @@ from typing import Any
 # module and the registered methods, beside a golden frame of every event and reply.
 
 # The version of this protocol, as the `workspace.snapshot` bootstrap reports it.
-VERSION = 1
+VERSION = 2
 # The longest request line the server reads, and the longest line the app reads from it.
 MAX_FRAME_BYTES = 1 << 20
 

@@ -143,9 +143,11 @@ final class DaemonClientTests {
         try await client.stopTunnel(alias: "db-staging")
     }
 
+    /// Version 1 has no `sessions.markSeen` by session ids: a version-1 helper adopted after a
+    /// crash would refuse it unseen, so it is one this app cannot speak to.
     @Test func aDaemonOfAnotherProtocolVersionIsAMismatch() async throws {
         server.handler = { req in
-            ["id": req["id"]!, "result": ["protocolVersion": 2, "connected": true, "sessions": [], "usage": ["claude": NSNull(), "codex": NSNull()]]]
+            ["id": req["id"]!, "result": ["protocolVersion": 1, "connected": true, "sessions": [], "usage": ["claude": NSNull(), "codex": NSNull()]]]
         }
         try client.connect()
         #expect(server.waitForClient(timeout: 2))
@@ -410,7 +412,7 @@ time.sleep(5)
 
     @Test func snapshotAppearsInWireOrderAsAnEventBarrier() async throws {
         server.handler = { req in
-            ["id": req["id"]!, "result": ["protocolVersion": 1, "connected": true, "sessions": [], "usage": ["claude": NSNull(), "codex": NSNull()]]]
+            ["id": req["id"]!, "result": ["protocolVersion": DaemonProtocol.version, "connected": true, "sessions": [], "usage": ["claude": NSNull(), "codex": NSNull()]]]
         }
         try client.connect()
         #expect(server.waitForClient(timeout: 2))

@@ -5,7 +5,7 @@
     "itermAuthError": "execution error: Not authorized to send Apple events to iTerm2. (-1743)",
     "itermCookieRequest": 2,
     "itermVersion": null,
-    "protocolVersion": 1,
+    "protocolVersion": 2,
     "sessions": [],
     "tunnels": [],
     "usage": {
