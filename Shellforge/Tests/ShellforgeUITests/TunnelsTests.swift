@@ -298,6 +298,8 @@ import Testing
         let second = SidebarModel(host: FakeTerminalHost(), document: document, launcher: first.launcher, feed: feed,
                                   jiraSettings: { nil }, sshConfig: first.sshConfig)
         say(feed, [])
+        // Waits for the first start however loaded the run is, then gives a second one time to show.
+        #expect(await eventually { !feed.tunnelCalls.isEmpty })
         try await Task.sleep(for: .milliseconds(400))
         #expect(feed.tunnelCalls == ["start db"], "two windows, one start")
         _ = second
