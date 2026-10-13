@@ -162,7 +162,7 @@ final class iTermShellforgeHost: TerminalHost {
         let windows = (iTermController.sharedInstance()?.terminals() ?? []) as [PseudoTerminal]
         let closed = TaskTabs.close(taskId: id, in: windows, tabs: { $0.tabs() }, paneTags: { tab in
             tab.sessions().map { $0.genericScope.value(forVariableName: ShellforgeTags.task) as? String }
-        }, close: { window, tab in window.close(tab) })
+        }, keep: Self.keepOpen, close: { window, tab in window.close(tab) })
         onChange?()
         return closed
     }
@@ -190,7 +190,8 @@ final class iTermShellforgeHost: TerminalHost {
         let windows = (iTermController.sharedInstance()?.terminals() ?? []) as [PseudoTerminal]
         for window in windows {
             for tab in window.tabs() where tab.sessions().contains(where: { $0.guid == id }) {
-                let closed = window.closeTabIfConfirmed(tab)
+                let closed = TaskTabs.closeOne(tab, in: window, tabs: { $0.tabs() }, keep: Self.keepOpen,
+                                               close: { window, tab in _ = window.closeTabIfConfirmed(tab) })
                 onChange?()
                 return closed
             }
@@ -198,15 +199,13 @@ final class iTermShellforgeHost: TerminalHost {
         return false
     }
 
-    /// iTerm2's own new tab: the default profile, in its default folder, selected.
-    func openShellTab() {
-        guard let windowController, let profile = ProfileModel.sharedInstance()?.defaultBookmark() else { return }
-        iTermSessionLauncher.launchBookmark(profile, in: windowController, style: .tab, withURL: nil,
-                                            hotkeyWindowType: .none, makeKey: true, canActivate: true,
-                                            respectTabbingMode: false, index: nil, command: nil,
-                                            makeSession: nil, didMakeSession: nil, completion: { [weak self] _, _ in
-            MainActor.assumeIsolated { self?.onChange?() }
-        })
+    /// iTerm2 closes a window with its last tab, and the sidebar with it: the window gets iTerm2's
+    /// own new tab first — the default profile in its default folder, never the folder of a tab
+    /// about to close (a worktree being deleted). Added at once, before any close runs.
+    static func keepOpen(_ window: PseudoTerminal) -> Bool {
+        guard let profile = ProfileModel.sharedInstance()?.defaultBookmark() else { return false }
+        return window.createTab(withProfile: profile, withCommand: nil, environment: nil, tabIndex: nil,
+                                previousDirectory: nil, parent: nil, completion: nil) != nil
     }
 
     /// Every window's tabs holding a pane of the task.
@@ -223,7 +222,7 @@ final class iTermShellforgeHost: TerminalHost {
         let windows = (iTermController.sharedInstance()?.terminals() ?? []) as [PseudoTerminal]
         let closed = TaskTabs.close(taskId: id, in: windows, tabs: { $0.tabs() }, paneTags: { tab in
             tab.sessions().map { $0.genericScope.value(forVariableName: ShellforgeTags.terminal) as? String }
-        }, close: { window, tab in window.close(tab) })
+        }, keep: Self.keepOpen, close: { window, tab in window.close(tab) })
         onChange?()
         return closed
     }

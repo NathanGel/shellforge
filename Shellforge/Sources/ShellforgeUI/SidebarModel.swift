@@ -33,8 +33,6 @@ public protocol TerminalHost: AnyObject {
     @discardableResult func close(tab id: String) -> Bool
     /// How many tabs of the task every window holds.
     func tabCount(ofTask id: UUID) -> Int
-    /// iTerm2's own new tab in this window, selected: what keeps the window when its last tab closes.
-    func openShellTab()
 }
 
 extension TerminalHost {

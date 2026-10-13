@@ -56,7 +56,6 @@ extension SidebarModel {
                 guard unsaved.button == 1 else { removalBoard.removals[id] = nil; return false }
                 force = true
             }
-            keepingWindow(closing: { $0.taskId == id || $0.id == tab })
             if let tab, !host.close(tab: tab) {
                 removalBoard.removals[id] = nil
                 return false

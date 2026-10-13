@@ -26,17 +26,6 @@ import Testing
     /// Other windows' tabs, for what is a task's last tab.
     var tabsElsewhere: [TabSnapshot] = []
     var closed: [String] = []
-    /// iTerm2's own new tabs opened so a window would not close with its last.
-    var shellsOpened = 0
-    func openShellTab() {
-        shellsOpened += 1
-        nextTab += 1
-        let tab = TabSnapshot(id: "s\(nextTab)", tabId: nextTab, title: "zsh", taskId: nil, projectId: nil)
-        tabs.append(tab)
-        selectedTabId = tab.id
-        onChange?()
-    }
-
     /// iTerm2's running-job alert answered Cancel.
     var refusesClose = false
     func close(tab id: String) -> Bool {

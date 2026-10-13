@@ -46,7 +46,6 @@ extension SidebarModel {
     public func removeTerminal(_ id: UUID) {
         // A tab iTerm2 would not close stays the terminal's, row and all: dropped, it would be an
         // unowned "other tab".
-        keepingWindow(closing: { $0.terminalId == id })
         guard host.closeTabs(ofTerminal: id) else {
             lastError = "The terminal’s tab didn’t close, so its row stays. Close the tab, then remove it again."
             return
