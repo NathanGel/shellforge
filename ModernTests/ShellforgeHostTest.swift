@@ -20,6 +20,16 @@ final class ShellforgeHostTest: XCTestCase {
         XCTAssertEqual(profile[KEY_NAME] as? String, "Default")
     }
 
+    /// The agent's initial text is one-shot: PTYSession clears it from the session once read, so a
+    /// ⌘D split or a ⌘T tab, which copy the session's profile, start a plain shell.
+    func testATaskTabsInitialTextIsOneShot() {
+        let profile = iTermShellforgeSidebar.taskTabProfile(base: [:], directory: "/tmp/x", initialText: " claude")
+        XCTAssertEqual(profile[iTermShellforgeSidebar.initialTextOnceKey] as? Bool, true)
+        let plain = iTermShellforgeSidebar.taskTabProfile(base: [:], directory: "/tmp/x")
+        XCTAssertNil(plain[iTermShellforgeSidebar.initialTextOnceKey])
+        XCTAssertEqual(iTermShellforgeSidebar.initialTextOnceKey, "Shellforge Initial Text Once", "PTYSession.m reads this key")
+    }
+
     /// The agent's command reaches the tab as its initial text, exactly as handed over — the
     /// backslashes `TabCommand.initialText` doubled stay doubled for iTerm2's evaluator to undo.
     func testTheInitialTextIsSentWithItsBackslashes() {

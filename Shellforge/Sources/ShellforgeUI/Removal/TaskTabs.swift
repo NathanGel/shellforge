@@ -24,6 +24,13 @@ public enum TaskTabs {
         return !windows.contains { tabs($0).contains(where: ours) }
     }
 
+    /// The tag an untagged pane of a tab takes: its tab's, from the pane that carries one. Nil when
+    /// no pane does, or none lacks it. A pane split off a task's (⌘D) carries no tag of its own.
+    public static func joining(_ paneTags: [String?]) -> String? {
+        guard paneTags.contains(nil) else { return nil }
+        return paneTags.lazy.compactMap { $0 }.first
+    }
+
     /// One tab, closed; a window's only tab gets a fresh one beside it first. True once it closed.
     @MainActor
     public static func closeOne<Window, Tab: AnyObject>(_ tab: Tab, in window: Window, tabs: (Window) -> [Tab],

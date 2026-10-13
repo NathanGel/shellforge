@@ -31,8 +31,11 @@ public protocol TerminalHost: AnyObject {
     /// Closes the tab holding session `id`, as iTerm2's Close Tab does: a running job asks first.
     /// True once it closed.
     @discardableResult func close(tab id: String) -> Bool
-    /// How many tabs of the task every window holds.
-    func tabCount(ofTask id: UUID) -> Int
+    /// How many panes tagged with the task every window holds.
+    func paneCount(ofTask id: UUID) -> Int
+    /// Closes the focused pane of the tab holding session `id`, as iTerm2's Close does: a running
+    /// job asks first. True once it closed.
+    @discardableResult func closePane(ofTab id: String) -> Bool
 }
 
 extension TerminalHost {

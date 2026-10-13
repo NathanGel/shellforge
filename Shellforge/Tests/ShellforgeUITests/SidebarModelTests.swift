@@ -36,7 +36,16 @@ import Testing
         onChange?()
         return true
     }
-    func tabCount(ofTask id: UUID) -> Int { (tabs + tabsElsewhere).filter { $0.taskId == id }.count }
+    func paneCount(ofTask id: UUID) -> Int { (tabs + tabsElsewhere).filter { $0.taskId == id }.map(\.paneCount).reduce(0, +) }
+    /// The tabs whose focused pane was closed, by their active session.
+    var closedPanes: [String] = []
+    func closePane(ofTab id: String) -> Bool {
+        guard let i = tabs.firstIndex(where: { $0.id == id }) else { return false }
+        closedPanes.append(id)
+        tabs[i].paneCount -= 1
+        onChange?()
+        return true
+    }
 
     func openTab(in directory: String, taskId: UUID, projectId: UUID, title: String, command: String?, environment: [String: String],
                  beside: String?) {

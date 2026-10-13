@@ -135,8 +135,9 @@ struct TaskRowView: View {
     let activate: () -> Void
     var remove: () -> Void = {}
     var rename: () -> Void = {}
-    /// Its current tab's Close Tab; the last one asks to remove the task.
+    /// Its current tab's Close Tab (Close Pane when split); the last pane asks to remove the task.
     var closeTab: () -> Void = {}
+    var closeTitle = "Close Tab"
     @Environment(\.interfaceScale) private var scale
 
     var body: some View {
@@ -179,7 +180,7 @@ struct TaskRowView: View {
             Divider()
             OpenInMenuItems(folder: node.task.worktreePath)
             Divider()
-            if !node.tabs.isEmpty { Button("Close Tab", action: closeTab).disabled(removal == .removing) }
+            if !node.tabs.isEmpty { Button(closeTitle, action: closeTab).disabled(removal == .removing) }
             Button("Remove \(node.task.kindName)…", role: .destructive, action: remove).disabled(removal == .removing)
         }
     }
@@ -206,6 +207,8 @@ struct TabRowView: View {
     let status: SessionState
     let activate: () -> Void
     var close: () -> Void = {}
+    /// "Close Tab", or "Close Pane" on a tab split with ⌘D.
+    var closeTitle = "Close Tab"
     @Environment(\.interfaceScale) private var scale
 
     var body: some View {
@@ -221,8 +224,8 @@ struct TabRowView: View {
         .padding(.leading, scale(Space.section))
         .accessibilityLabel(tab.title)
         .accessibilityValue(status.label)
-        .accessibilityAction(named: Text("Close Tab"), close)
-        .contextMenu { Button("Close Tab", action: close) }
+        .accessibilityAction(named: Text(closeTitle), close)
+        .contextMenu { Button(closeTitle, action: close) }
     }
 
     /// AiTerm's terminal row: its agents, or its shell's `>_` when none is known.

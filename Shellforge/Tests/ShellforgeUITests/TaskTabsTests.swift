@@ -84,4 +84,14 @@ import Testing
         #expect(TaskTabs.closeOne(two.tabs[0], in: two, tabs: { $0.tabs }, keep: { _ in kept += 1; return true }, close: { $0.close($1) }))
         #expect(kept == 0 && two.tabs.map(\.name) == ["b"])
     }
+
+    /// A pane split off a task's (⌘D) carries no tag; it takes the tab's, so closing the agent's
+    /// pane leaves the task a pane, not an Other tab.
+    @Test func panesSplitOffATaskJoinIt() {
+        let id = task.uuidString.lowercased()
+        #expect(TaskTabs.joining([id, nil]) == id)
+        #expect(TaskTabs.joining([nil, id, nil]) == id)
+        #expect(TaskTabs.joining([id, id]) == nil, "nothing to tag")
+        #expect(TaskTabs.joining([nil, nil]) == nil, "no task's tab")
+    }
 }

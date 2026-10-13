@@ -3527,6 +3527,11 @@ webViewConfiguration:(WKWebViewConfiguration *)webViewConfiguration
     if (![initialText length]) {
         return;
     }
+    // Shellforge: a task's agent command is sent once. Cleared from this session's profile, so a
+    // split or a new tab that copies it starts a plain shell, not the agent and its prompt again.
+    if ([_profile[@"Shellforge Initial Text Once"] boolValue]) {
+        [self setSessionSpecificProfileValues:@{ KEY_INITIAL_TEXT: @"", @"Shellforge Initial Text Once": @NO }];
+    }
     DLog(@"Evaluate initial text %@", initialText);
 
     iTermExpressionEvaluator *evaluator =
