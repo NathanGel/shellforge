@@ -28,8 +28,6 @@ struct SSHHostSheet: View {
         _current = State(initialValue: current)
     }
 
-    /// A result row's alias column, as the Tunnels sheet's, so the forwards after it start on one line.
-
     private var hosts: [SSHHost] {
         get { _hosts.wrappedValue }
         nonmutating set { _hosts.wrappedValue = newValue }

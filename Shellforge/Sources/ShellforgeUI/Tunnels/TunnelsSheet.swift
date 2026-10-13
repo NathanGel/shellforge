@@ -32,7 +32,6 @@ struct TunnelsSheet: View {
         _linked = State(initialValue: linked)
     }
 
-    /// A result row's alias column, in the mono code face, so the ports after it start on one line.
     /// The auto-start menu beside a linked tunnel: wide enough for "When Shellforge opens".
     private static let autoStartWidth: CGFloat = 190
 

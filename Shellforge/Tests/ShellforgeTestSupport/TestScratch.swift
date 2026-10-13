@@ -3,7 +3,7 @@ import ShellforgeCore
 
 /// Where tests write: one folder per test run, made on first use and removed when the process exits
 /// — at exit rather than per test, since a folder is often handed to an object that outlives the
-/// test's own scope. Nothing a test makes is left in the temporary folder.
+/// test's own scope. A run that is killed or crashes skips its exit handler and leaves its root.
 public enum TestScratch {
     public static let root: URL = {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("shellforge-tests-\(getpid())")

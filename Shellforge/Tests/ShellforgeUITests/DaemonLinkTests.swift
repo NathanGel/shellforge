@@ -192,6 +192,24 @@ import Testing
         #expect(await eventually { link.tunnelError?.hasPrefix("Couldn’t start tunnel db") == true })
     }
 
+    /// A tunnel error is an event, not state: a window opened after it hears nothing of it, so it
+    /// neither shows an old failure nor hides its own load problem behind it.
+    @Test func aWindowOpenedLaterHearsNoOldTunnelError() async throws {
+        let server = tunnelRefusingServer()
+        let link = DaemonLink(socketPath: server.path, daemonDir: nil, findPython: { nil }, reports: { [] }, environment: { [:] })
+        defer { link.shutdown(); server.stop() }
+        link.supervisorChanged(.listening(pid: 1))
+        #expect(await eventually { link.status == .connected })
+        var early: [TunnelOutcome] = []
+        let first = link.tunnelOutcomes.sink { early.append($0) }
+        link.startTunnel(alias: "db", keepRunning: false)
+        #expect(await eventually { early.count == 1 })
+        var late: [TunnelOutcome] = []
+        let second = link.tunnelOutcomes.sink { late.append($0) }
+        #expect(late.isEmpty)
+        _ = (first, second)
+    }
+
     @Test func aRefusedStopIsSaid() async throws {
         let server = tunnelRefusingServer()
         let link = DaemonLink(socketPath: server.path, daemonDir: nil, findPython: { nil }, reports: { [] })

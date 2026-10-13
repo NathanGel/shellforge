@@ -9,6 +9,9 @@ public final class DaemonLink: ObservableObject {
     @Published public private(set) var status: HelperStatus = .starting
     /// The last tunnel call the helper refused, as the sidebar's error banner says it.
     @Published public private(set) var tunnelError: String?
+    /// Each tunnel call's outcome once, as it happens: a window opened later hears none of the old.
+    private let outcomes = PassthroughSubject<TunnelOutcome, Never>()
+    public var tunnelOutcomes: AnyPublisher<TunnelOutcome, Never> { outcomes.eraseToAnyPublisher() }
     @Published public private(set) var store = SessionStore()
 
     private let socketPath: String
@@ -134,10 +137,16 @@ public final class DaemonLink: ObservableObject {
         Task {
             do {
                 try await call()
+                // A reply from a helper since replaced is about a connection that is gone.
+                guard self.client === client else { return }
                 tunnelError = nil
+                outcomes.send(TunnelOutcome(alias: alias, error: nil))
             } catch {
-                tunnelError = "Couldn’t \(verb) tunnel \(alias): \(error.localizedDescription)"
-                if let error = error as? DaemonError, error.isMismatch, self.client === client {
+                guard self.client === client else { return }
+                let message = "Couldn’t \(verb) tunnel \(alias): \(error.localizedDescription)"
+                tunnelError = message
+                outcomes.send(TunnelOutcome(alias: alias, error: message))
+                if let error = error as? DaemonError, error.isMismatch {
                     refused = client
                     status = .helperMismatch
                 }
@@ -180,5 +189,5 @@ public final class DaemonLink: ObservableObject {
 extension DaemonLink: SessionFeed {
     public var statusPublisher: AnyPublisher<HelperStatus, Never> { $status.eraseToAnyPublisher() }
     public var storePublisher: AnyPublisher<SessionStore, Never> { $store.eraseToAnyPublisher() }
-    public var tunnelErrorPublisher: AnyPublisher<String?, Never> { $tunnelError.eraseToAnyPublisher() }
+    public var tunnelOutcomePublisher: AnyPublisher<TunnelOutcome, Never> { tunnelOutcomes }
 }

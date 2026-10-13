@@ -335,8 +335,22 @@ import Testing
     @Test func aTunnelErrorShowsInTheSidebar() async throws {
         let feed = FakeFeed()
         let (model, _, _, _, _) = try await model(feed: feed)
-        feed.tunnelError = "Couldn’t start tunnel db: no such tunnel"
+        feed.tunnelOutcomes.send(TunnelOutcome(alias: "db", error: "Couldn’t start tunnel db: no such tunnel"))
         #expect(model.lastError == "Couldn’t start tunnel db: no such tunnel")
+    }
+
+    /// A tunnel call that then works clears its own error, and only its own.
+    @Test func aTunnelThatWorksAgainClearsItsError() async throws {
+        let feed = FakeFeed()
+        let (model, _, _, _, _) = try await model(feed: feed)
+        feed.tunnelOutcomes.send(TunnelOutcome(alias: "db", error: "Couldn’t start tunnel db: refused"))
+        feed.tunnelOutcomes.send(TunnelOutcome(alias: "web", error: nil))
+        #expect(model.lastError == "Couldn’t start tunnel db: refused", "another tunnel's success leaves it")
+        feed.tunnelOutcomes.send(TunnelOutcome(alias: "db", error: nil))
+        #expect(model.lastError == nil)
+        model.lastError = "Couldn’t save the workspace."
+        feed.tunnelOutcomes.send(TunnelOutcome(alias: "db", error: nil))
+        #expect(model.lastError == "Couldn’t save the workspace.", "an unrelated error stays")
     }
 
     @Test func startingBeforeTheConfigIsReadReadsIt() async throws {

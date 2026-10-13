@@ -118,8 +118,8 @@ import Testing
     var seen: [UUID] = []
     var statusPublisher: AnyPublisher<HelperStatus, Never> { $status.eraseToAnyPublisher() }
     var storePublisher: AnyPublisher<SessionStore, Never> { $store.eraseToAnyPublisher() }
-    @Published var tunnelError: String?
-    var tunnelErrorPublisher: AnyPublisher<String?, Never> { $tunnelError.eraseToAnyPublisher() }
+    let tunnelOutcomes = PassthroughSubject<TunnelOutcome, Never>()
+    var tunnelOutcomePublisher: AnyPublisher<TunnelOutcome, Never> { tunnelOutcomes.eraseToAnyPublisher() }
     func markSeen(task: UUID) { seen.append(task) }
     var seenSessions: [[String]] = []
     func markSeen(sessions: [String]) { seenSessions.append(sessions) }

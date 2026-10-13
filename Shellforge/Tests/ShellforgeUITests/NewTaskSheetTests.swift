@@ -24,7 +24,7 @@ import ShellforgeDesign
         content.layoutSubtreeIfNeeded()
         #expect(content.fittingSize.width == Sheet.width)
         let bitmap = try #require(Snapshot.bitmap(of: content))
-        let ground = try #require(bitmap.colorAt(x: Int(content.bounds.width) - 6, y: Int(content.bounds.height) / 2)?.usingColorSpace(.sRGB))
+        let ground = try #require(bitmap.colorAt(x: Int((content.bounds.width - 6) * Snapshot.scale), y: Int(content.bounds.height / 2 * Snapshot.scale))?.usingColorSpace(.sRGB))
         #expect(ground.brightnessComponent < 0.3, "the sheet draws light: \(ground)")
     }
 

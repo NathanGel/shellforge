@@ -53,9 +53,12 @@ def kill_fake_ssh(bin_dir) -> int:
     import signal
     import subprocess
     found = subprocess.run(["/usr/bin/pgrep", "-f", str(bin_dir)], capture_output=True, text=True).stdout.split()
+    own = os.getpgid(0)
     for pid in map(int, found):
         try:
-            os.killpg(os.getpgid(pid), signal.SIGKILL)
+            group = os.getpgid(pid)
+            # A fake ssh started without a session of its own shares pytest's group: kill it alone.
+            os.kill(pid, signal.SIGKILL) if group == own else os.killpg(group, signal.SIGKILL)
         except (ProcessLookupError, PermissionError):
             pass
     return len(found)

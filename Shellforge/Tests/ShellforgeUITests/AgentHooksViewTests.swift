@@ -16,7 +16,7 @@ import Testing
         let content = try #require(panel.contentView)
         content.layoutSubtreeIfNeeded()
         let bitmap = try #require(Snapshot.bitmap(of: content))
-        let ground = try #require(bitmap.colorAt(x: 20, y: 20)?.usingColorSpace(.sRGB))
+        let ground = try #require(bitmap.colorAt(x: Int(20 * Snapshot.scale), y: Int(20 * Snapshot.scale))?.usingColorSpace(.sRGB))
         #expect(ground.brightnessComponent < 0.3, "the sheet draws light: \(ground)")
         #expect(parent.appearance?.name == .aqua, "the window it hangs from keeps its own")
         slot.dismiss()

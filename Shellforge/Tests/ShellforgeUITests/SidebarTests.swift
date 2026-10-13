@@ -40,7 +40,7 @@ import ShellforgeDesign
         host.layoutSubtreeIfNeeded()
         #expect(host.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua)
         let bitmap = try #require(Snapshot.bitmap(of: host))
-        let ground = try #require(bitmap.colorAt(x: Int(host.bounds.width) - 4, y: Int(host.bounds.height) - 4)?.usingColorSpace(.sRGB))
+        let ground = try #require(bitmap.colorAt(x: Int((host.bounds.width - 4) * Snapshot.scale), y: Int((host.bounds.height - 4) * Snapshot.scale))?.usingColorSpace(.sRGB))
         #expect(ground.brightnessComponent < 0.3, "the sidebar's ground is light: \(ground)")
     }
 }
