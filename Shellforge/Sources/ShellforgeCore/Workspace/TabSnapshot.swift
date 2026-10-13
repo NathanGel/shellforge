@@ -20,8 +20,11 @@ public struct TabSnapshot: Equatable, Sendable, Identifiable {
     public var projectId: UUID?
     /// The terminal row it is a tab of; nil for a task's tab or one of no row.
     public var terminalId: UUID?
+    /// Its panes: more than one once split (⌘D). Close then closes the focused pane, not the tab.
+    public var paneCount = 1
 
-    public init(id: String, tabId: Int, title: String, taskId: UUID?, projectId: UUID?, terminalId: UUID? = nil) {
+    public init(id: String, tabId: Int, title: String, taskId: UUID?, projectId: UUID?, terminalId: UUID? = nil, paneCount: Int = 1) {
+        self.paneCount = paneCount
         self.id = id
         self.tabId = tabId
         self.title = title

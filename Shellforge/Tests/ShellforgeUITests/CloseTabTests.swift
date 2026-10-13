@@ -88,4 +88,54 @@ import Testing
         model.closeCurrentTab(ofTask: task)
         #expect(host.closed == ["t2"])
     }
+
+    // -- M4f: panes --
+
+    private func split(_ id: String, _ tabId: Int, task: UUID?, project: UUID?, panes: Int) -> TabSnapshot {
+        var tab = TabSnapshot(id: id, tabId: tabId, title: "t", taskId: task, projectId: project)
+        tab.paneCount = panes
+        return tab
+    }
+
+    /// The agent and a ⌘D pane beside it: one tab, two panes. Close Pane closes the focused pane.
+    @Test func aSplitTaskTabClosesItsFocusedPane() throws {
+        let (model, host, project, task) = try model()
+        host.tabs = [split("t1", 1, task: task, project: project, panes: 2)]
+        host.onChange?()
+        #expect(requests(model) { model.closeTab("t1") }.isEmpty, "the task keeps a pane: nothing to remove")
+        #expect(host.closedPanes == ["t1"] && host.closed.isEmpty)
+    }
+
+    @Test func aTaskWithTwoPanesClosesAPaneWithoutAsking() throws {
+        let (model, host, project, task) = try model()
+        host.tabs = [split("t1", 1, task: task, project: project, panes: 2)]
+        host.onChange?()
+        #expect(requests(model) { model.closeCurrentTab(ofTask: task) }.isEmpty)
+        #expect(host.closedPanes == ["t1"])
+    }
+
+    @Test func aTasksLastPaneAsks() throws {
+        let (model, host, project, task) = try model()
+        host.tabs = [split("t1", 1, task: task, project: project, panes: 2)]
+        host.onChange?()
+        model.closeTab("t1")
+        #expect(requests(model) { model.closeTab("t1") } == [.closeLastTab(task: task, tab: "t1")], "one pane left: its last")
+    }
+
+    @Test func aSplitOtherTabClosesAPane() throws {
+        let (model, host, _, _) = try model()
+        host.tabs = [split("o1", 1, task: nil, project: nil, panes: 2)]
+        host.onChange?()
+        model.closeTab("o1")
+        #expect(host.closedPanes == ["o1"] && host.closed.isEmpty)
+    }
+
+    @Test func theMenuSaysPaneOnASplitTab() throws {
+        let (model, host, project, task) = try model()
+        host.tabs = [split("t1", 1, task: task, project: project, panes: 2)]
+        host.onChange?()
+        #expect(model.closeTitle(ofTab: "t1") == "Close Pane" && model.closeTitle(ofTask: task) == "Close Pane")
+        model.closeTab("t1")
+        #expect(model.closeTitle(ofTab: "t1") == "Close Tab")
+    }
 }

@@ -130,7 +130,10 @@ final class iTermShellforgeHost: TerminalHost {
         }
     }
 
-    private lazy var changes = ChangeCoalescer { [weak self] in self?.onChange?() }
+    private lazy var changes = ChangeCoalescer { [weak self] in
+        self?.joinPanes()
+        self?.onChange?()
+    }
     /// One for the app: every window's host signals it, and one list is read and sent.
     private static let reports = ChangeCoalescer { iTermShellforgeSidebar.link.reportsMayHaveChanged() }
 
@@ -150,7 +153,7 @@ final class iTermShellforgeHost: TerminalHost {
             })
             let terminal = TabSnapshot.terminal(ofPanes: panes.map { $0.genericScope.value(forVariableName: ShellforgeTags.terminal) as? String })
             return TabSnapshot(id: session.guid, tabId: Int(tab.uniqueId), title: session.name, taskId: tags.task, projectId: tags.project,
-                               terminalId: terminal)
+                               terminalId: terminal, paneCount: panes.count)
         }
     }
 
@@ -215,13 +218,43 @@ final class iTermShellforgeHost: TerminalHost {
                                 previousDirectory: nil, parent: nil, completion: nil) != nil
     }
 
-    /// Every window's tabs holding a pane of the task.
-    func tabCount(ofTask id: UUID) -> Int {
+    /// Every window's panes tagged with the task.
+    func paneCount(ofTask id: UUID) -> Int {
         let tag = id.uuidString.lowercased()
         let windows = (iTermController.sharedInstance()?.terminals() ?? []) as [PseudoTerminal]
-        return windows.flatMap { $0.tabs() }.filter { tab in
-            tab.sessions().contains { ($0.genericScope.value(forVariableName: ShellforgeTags.task) as? String) == tag }
-        }.count
+        return windows.flatMap { $0.tabs() }.flatMap { $0.sessions() }
+            .filter { ($0.genericScope.value(forVariableName: ShellforgeTags.task) as? String) == tag }.count
+    }
+
+    /// The focused pane of the tab holding session `id`, closed as iTerm2's Close closes it: a
+    /// running job asks first. An unsplit tab closes as Close Tab does.
+    @discardableResult
+    func closePane(ofTab id: String) -> Bool {
+        let windows = (iTermController.sharedInstance()?.terminals() ?? []) as [PseudoTerminal]
+        for window in windows {
+            for tab in window.tabs() where tab.sessions().contains(where: { $0.guid == id }) {
+                guard tab.sessions().count > 1, let pane = tab.activeSession else { return close(tab: id) }
+                let closed = window.closeSession(withConfirmation: pane)
+                onChange?()
+                return closed
+            }
+        }
+        return false
+    }
+
+    /// A pane split off a task's or a terminal's (⌘D) carries no tag: it takes its tab's, so the
+    /// tab stays the task's whichever pane closes first.
+    func joinPanes() {
+        for tab in windowController?.tabs() ?? [] {
+            let sessions: [PTYSession] = tab.sessions()
+            for name in [ShellforgeTags.task, ShellforgeTags.project, ShellforgeTags.terminal] {
+                let tags = sessions.map { $0.genericScope.value(forVariableName: name) as? String }
+                guard let tag = TaskTabs.joining(tags) else { continue }
+                for (session, existing) in zip(sessions, tags) where existing == nil {
+                    session.genericScope.setValue(tag, forVariableNamed: name)
+                }
+            }
+        }
     }
 
     /// Every window's tabs of the terminal, closed without asking: nothing on disk goes with them.
