@@ -323,6 +323,8 @@ extension iTermShellforgeSidebar {
                 updateDockBadge()
             }
         }
+        // Room for macOS to fire it with other wakeups: a job's change shows within 1.5 s.
+        tick?.tolerance = 0.5
         // A tool installed and put on PATH in an rc file is found without a relaunch. The first
         // check only looks; it reads the environment, so it runs off the main thread too.
         checkRCFiles()
@@ -331,6 +333,7 @@ extension iTermShellforgeSidebar {
         rcCheck = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { _ in
             MainActor.assumeIsolated { checkRCFiles() }
         }
+        rcCheck?.tolerance = 5
         NotificationCenter.default.addObserver(forName: NSNotification.Name(iTermApplicationWillTerminate), object: nil, queue: .main) { _ in
             MainActor.assumeIsolated {
                 tick?.invalidate()
