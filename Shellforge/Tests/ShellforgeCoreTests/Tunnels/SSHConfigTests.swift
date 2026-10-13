@@ -92,4 +92,20 @@ import Testing
         let config = try write("Host ok\nHost bad\u{15}touch${IFS}/tmp/x\nHost -oProxyCommand=x\nHost tab\u{7f}x\nHost also-ok\n")
         #expect(SSHConfig.hosts(in: config, home: home).map(\.alias) == ["ok", "also-ok"])
     }
+
+    /// OpenSSH 8.7 and later accept a comment at the end of a line, and `/` in place of `:` — the
+    /// form an IPv6 address needs without brackets. A port outside 1–65535 is no forward.
+    @Test func trailingCommentsSlashFormAndPortRanges() throws {
+        let config = try write("""
+        Host db
+          LocalForward 5432 db.internal:5432 # the database
+          LocalForward 6379 cache.internal/6379
+          LocalForward 127.0.0.1/8080 web.internal/80
+          LocalForward 70000 bad.internal:1
+          LocalForward 9000 bad.internal:0
+        """)
+        let forwards = try #require(SSHConfig.hosts(in: config, home: home).first).forwards
+        #expect(forwards.map(\.label) == ["5432 → db.internal:5432", "6379 → cache.internal:6379", "8080 → web.internal:80"])
+        #expect(forwards[2].bind == "127.0.0.1")
+    }
 }

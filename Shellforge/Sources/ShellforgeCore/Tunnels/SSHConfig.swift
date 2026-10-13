@@ -137,14 +137,18 @@ public enum SSHConfig {
             return result
         }
 
-        /// `[bind:]port host:hostport`, an IPv6 address in brackets.
+        /// `[bind:]port host:hostport`, an IPv6 address in brackets or `/` in place of `:`; a trailing
+        /// `# comment` (OpenSSH 8.7 and later) is not part of it. A port outside 1–65535 is none.
         static func forward(_ value: String) -> LocalForward? {
-            let parts = tokens(value)
+            let parts = Array(tokens(value).prefix { !$0.hasPrefix("#") })
             guard parts.count == 2, let (bind, local) = endpoint(parts[0], portOnly: true),
                   let localPort = Int(local), let (host, remote) = endpoint(parts[1], portOnly: false),
-                  let remoteHost = host, let remotePort = Int(remote) else { return nil }
+                  let remoteHost = host, let remotePort = Int(remote),
+                  Self.ports.contains(localPort), Self.ports.contains(remotePort) else { return nil }
             return LocalForward(bind: bind, localPort: localPort, remoteHost: remoteHost, remotePort: remotePort)
         }
+
+        static let ports = 1...65535
 
         /// `port`, `address:port` or `[v6]:port`: the address (nil when only a port is allowed and
         /// given) and the port.
@@ -155,7 +159,10 @@ public enum SSHConfig {
                 guard rest.hasPrefix(":") else { return nil }
                 return (address, String(rest.dropFirst()))
             }
-            guard let colon = text.lastIndex(of: ":") else { return portOnly ? (nil, text) : nil }
+            // `/` is ssh's other separator, the one an unbracketed IPv6 address needs.
+            guard let colon = text.contains("/") ? text.lastIndex(of: "/") : text.lastIndex(of: ":") else {
+                return portOnly ? (nil, text) : nil
+            }
             return (String(text[..<colon]), String(text[text.index(after: colon)...]))
         }
     }
