@@ -138,7 +138,9 @@ final class iTermShellforgeHost: TerminalHost {
                 ($0.genericScope.value(forVariableName: ShellforgeTags.task) as? String,
                  $0.genericScope.value(forVariableName: ShellforgeTags.project) as? String)
             })
-            return TabSnapshot(id: session.guid, tabId: Int(tab.uniqueId), title: session.name, taskId: tags.task, projectId: tags.project)
+            let terminal = TabSnapshot.terminal(ofPanes: panes.map { $0.genericScope.value(forVariableName: ShellforgeTags.terminal) as? String })
+            return TabSnapshot(id: session.guid, tabId: Int(tab.uniqueId), title: session.name, taskId: tags.task, projectId: tags.project,
+                               terminalId: terminal)
         }
     }
 
@@ -157,6 +159,32 @@ final class iTermShellforgeHost: TerminalHost {
         let windows = (iTermController.sharedInstance()?.terminals() ?? []) as [PseudoTerminal]
         let closed = TaskTabs.close(taskId: id, in: windows, tabs: { $0.tabs() }, paneTags: { tab in
             tab.sessions().map { $0.genericScope.value(forVariableName: ShellforgeTags.task) as? String }
+        }, close: { window, tab in window.close(tab) })
+        onChange?()
+        return closed
+    }
+
+    /// A terminal row's tab: a plain shell in `directory`, tagged with the terminal and its project.
+    func openTab(in directory: String, terminalId: UUID, projectId: UUID, title: String) {
+        guard let windowController, let base = ProfileModel.sharedInstance()?.defaultBookmark() else { return }
+        var profile = iTermShellforgeSidebar.taskTabProfile(base: base, directory: directory)
+        profile[KEY_NAME] = title
+        iTermSessionLauncher.launchBookmark(profile, in: windowController, style: .tab, withURL: nil,
+                                            hotkeyWindowType: .none, makeKey: true, canActivate: true,
+                                            respectTabbingMode: false, index: nil, command: nil,
+                                            makeSession: nil, didMakeSession: { session in
+            session.genericScope.setValue(terminalId.uuidString.lowercased(), forVariableNamed: ShellforgeTags.terminal)
+            session.genericScope.setValue(projectId.uuidString.lowercased(), forVariableNamed: ShellforgeTags.project)
+        }, completion: { [weak self] _, _ in
+            MainActor.assumeIsolated { self?.onChange?() }
+        })
+    }
+
+    /// Every window's tabs of the terminal, closed without asking: nothing on disk goes with them.
+    func closeTabs(ofTerminal id: UUID) -> Bool {
+        let windows = (iTermController.sharedInstance()?.terminals() ?? []) as [PseudoTerminal]
+        let closed = TaskTabs.close(taskId: id, in: windows, tabs: { $0.tabs() }, paneTags: { tab in
+            tab.sessions().map { $0.genericScope.value(forVariableName: ShellforgeTags.terminal) as? String }
         }, close: { window, tab in window.close(tab) })
         onChange?()
         return closed
@@ -258,6 +286,15 @@ extension iTermShellforgeSidebar {
         }
     }
 
+    /// The Dock icon's badge: the rows waiting on you, once for the app, written only when it changes.
+    private static var dockBadge: String?
+    static func updateDockBadge() {
+        let label = DockBadge.label(count: DockBadge.count(across: sidebars.allObjects))
+        guard label != dockBadge else { return }
+        dockBadge = label
+        NSApp.dockTile.badgeLabel = label
+    }
+
     /// Every window's sidebar re-reads whether the environment is a fallback.
     static func environmentChanged() {
         for model in sidebars.allObjects { model.environmentChanged() }
@@ -277,7 +314,10 @@ extension iTermShellforgeSidebar {
         // jobPid and commandLine change with no notification; the tick reads them, and only a
         // changed list is sent.
         tick = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
-            MainActor.assumeIsolated { link.reportsMayHaveChanged() }
+            MainActor.assumeIsolated {
+                link.reportsMayHaveChanged()
+                updateDockBadge()
+            }
         }
         // A tool installed and put on PATH in an rc file is found without a relaunch.
         _ = rcFiles.changed()

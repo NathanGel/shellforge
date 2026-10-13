@@ -9,6 +9,7 @@ import SwiftUI
 /// `PROJECTS`, the menu that adds a project, and the Agent hooks button.
 struct SidebarHeader: View {
     let addProject: () -> Void
+    var addDivider: () -> Void = {}
     let showHooks: () -> Void
     let showMacSettings: () -> Void
     @Environment(\.interfaceScale) private var scale
@@ -34,6 +35,7 @@ struct SidebarHeader: View {
             .accessibilityLabel("Settings")
             AddMenu(help: "Add project", enabled: true) {
                 Button("Add Project…", action: addProject)
+                Button("Add Divider…", action: addDivider)
             }
         }
         .frame(height: scale(Size.menuRow)).padding(.leading, scale(Space.base)).padding(.trailing, SidebarRowLayout.trailingInset(scale))
@@ -52,13 +54,19 @@ struct ProjectHeaderRow: View {
     let toggle: () -> Void
     let newTask: () -> Void
     let newReview: () -> Void
+    var newTerminal: () -> Void = {}
+    var canMoveUp = false
+    var canMoveDown = false
+    var move: (_ up: Bool) -> Void = { _ in }
     let editJiraProjects: () -> Void
     var editTunnels: () -> Void = {}
     var editSSHHost: () -> Void = {}
     @Environment(\.interfaceScale) private var scale
 
-    /// An empty project has nothing to fold.
-    private var collapses: Bool { !node.tasks.isEmpty }
+    /// An empty project has nothing to fold; its terminals are something.
+    private var collapses: Bool { Self.collapses(node) }
+
+    static func collapses(_ node: ProjectNode) -> Bool { !node.tasks.isEmpty || !node.terminals.isEmpty }
 
     var body: some View {
         HStack(spacing: scale(Space.base)) {
@@ -92,6 +100,11 @@ struct ProjectHeaderRow: View {
             Divider()
             Button("Jira Projects…", action: editJiraProjects)
             Button("Tunnels…", action: editTunnels)
+            Divider()
+            OpenInMenuItems(folder: node.project.path)
+            Divider()
+            Button("Move Up") { move(true) }.disabled(!canMoveUp)
+            Button("Move Down") { move(false) }.disabled(!canMoveDown)
             Button("SSH Host…", action: editSSHHost)
         }
     }
@@ -102,6 +115,7 @@ struct ProjectHeaderRow: View {
     @ViewBuilder private var newItems: some View {
         Button("New Task…", action: newTask)
         Button("New Review…", action: newReview).disabled(provider == .none)
+        Button("New Terminal…", action: newTerminal)
     }
 }
 
@@ -115,6 +129,7 @@ struct TaskRowView: View {
     var removal: RowRemoval? = nil
     let activate: () -> Void
     var remove: () -> Void = {}
+    var rename: () -> Void = {}
     @Environment(\.interfaceScale) private var scale
 
     var body: some View {
@@ -138,6 +153,7 @@ struct TaskRowView: View {
                                 Badge(request.label, icon: .brand(request.host.brand), help: request.help, style: .quiet,
                                       action: { ExternalLink.open(request.url) })
                             }
+                            VSCodeBadge(folder: node.task.worktreePath)
                             BranchLabelView(label: BranchLabel(name: node.task.branch, extra: 0, drifted: false, detail: ""))
                                 .layoutPriority(1)
                         }
@@ -151,6 +167,11 @@ struct TaskRowView: View {
         .accessibilityLabel(node.task.title)
         .accessibilityValue(status.label)
         .contextMenu {
+            // Greyed while the row is being removed, as AiTerm's is.
+            Button("Rename…", action: rename).disabled(removal == .removing)
+            Divider()
+            OpenInMenuItems(folder: node.task.worktreePath)
+            Divider()
             Button("Remove \(node.task.kindName)…", role: .destructive, action: remove).disabled(removal == .removing)
         }
     }

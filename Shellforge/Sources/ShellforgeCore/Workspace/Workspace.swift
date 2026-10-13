@@ -171,13 +171,17 @@ public struct Workspace: Codable, Equatable, Sendable {
     public var lastModelByAgent: [String: String] = [:]
     /// Whether New Task last opened each project's SSH pane: the box opens as it was left.
     public var lastOpenSSHByProject: [UUID: Bool] = [:]
+    /// The terminal rows, in the order they were made.
+    public var terminals: [TerminalItem] = []
+    /// Named rules between projects (SidebarLayout).
+    public var dividers: [SidebarDivider] = []
 
     public init(projects: [Project] = [], tasks: [TaskItem] = []) {
         self.projects = projects
         self.tasks = tasks
     }
 
-    private enum CodingKeys: String, CodingKey { case version, projects, tasks, lastAgentByProject, lastModelByAgent, lastOpenSSHByProject }
+    private enum CodingKeys: String, CodingKey { case version, projects, tasks, lastAgentByProject, lastModelByAgent, lastOpenSSHByProject, terminals, dividers }
 
     /// A file written before the remembered choices existed reads them as empty; one without its
     /// projects or tasks is not a workspace and fails, rather than reading as an empty one to be saved over.
@@ -189,6 +193,8 @@ public struct Workspace: Codable, Equatable, Sendable {
         lastAgentByProject = try c.decodeIfPresent([UUID: String].self, forKey: .lastAgentByProject) ?? [:]
         lastModelByAgent = try c.decodeIfPresent([String: String].self, forKey: .lastModelByAgent) ?? [:]
         lastOpenSSHByProject = try c.decodeIfPresent([UUID: Bool].self, forKey: .lastOpenSSHByProject) ?? [:]
+        terminals = try c.decodeIfPresent([TerminalItem].self, forKey: .terminals) ?? []
+        dividers = try c.decodeIfPresent([SidebarDivider].self, forKey: .dividers) ?? []
     }
 
     /// What the next New Task in this project opens with: this agent, and this model for it.

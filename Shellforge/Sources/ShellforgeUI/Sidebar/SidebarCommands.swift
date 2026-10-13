@@ -7,12 +7,12 @@ import ShellforgeCore
 
 /// What the sidebar's keyboard shortcuts do (Shellforge/docs/keyboard.md).
 public enum SidebarCommand: Int, CaseIterable, Sendable {
-    case newTask, newReview, addProject, nextTask, previousTask, removeTask, focusView, listView
+    case newTask, newReview, addProject, nextTask, previousTask, removeTask, focusView, listView, newTerminal, addDivider
 }
 
 /// A command that needs one of the sidebar's sheets: the view presents it, as its "+" would.
 public enum SidebarSheetRequest: Equatable, Sendable {
-    case newTask(UUID), newReview(UUID), addProject, removeTask(UUID)
+    case newTask(UUID), newReview(UUID), addProject, removeTask(UUID), newTerminal(UUID), addDivider
 }
 
 extension SidebarModel {
@@ -20,6 +20,8 @@ extension SidebarModel {
     /// With several projects and none of their tasks selected, there is none.
     public var targetProject: UUID? {
         if let id = selectedTaskId, let task = document.workspace.tasks.first(where: { $0.id == id }) { return task.projectId }
+        // A terminal row's project, as AiTerm's target is.
+        if let id = selectedTerminalId, let terminal = document.workspace.terminals.first(where: { $0.id == id }) { return terminal.projectId }
         return tree.projects.count == 1 ? tree.projects[0].project.id : nil
     }
 
@@ -38,8 +40,8 @@ extension SidebarModel {
 
     public func can(_ command: SidebarCommand) -> Bool {
         switch command {
-        case .newTask, .newReview: targetProject != nil
-        case .addProject, .focusView, .listView: true
+        case .newTask, .newReview, .newTerminal: targetProject != nil
+        case .addProject, .focusView, .listView, .addDivider: true
         case .nextTask, .previousTask: !steppableTasks.isEmpty
         case .removeTask: selectedTaskId != nil
         }
@@ -51,6 +53,8 @@ extension SidebarModel {
         case .newTask: if let project = targetProject { sheetRequests.send(.newTask(project)) }
         case .newReview: if let project = targetProject { sheetRequests.send(.newReview(project)) }
         case .addProject: sheetRequests.send(.addProject)
+        case .addDivider: sheetRequests.send(.addDivider)
+        case .newTerminal: if let project = targetProject { sheetRequests.send(.newTerminal(project)) }
         case .removeTask: if let task = selectedTaskId { sheetRequests.send(.removeTask(task)) }
         case .nextTask: step(by: 1)
         case .previousTask: step(by: -1)
@@ -75,10 +79,19 @@ extension SidebarModel {
     /// AiTerm's Focus View: the projects with a task waiting on the user open, the rest fold, and
     /// the first such task is shown.
     private func focusView() {
-        let waiting = Set(waitingOnYou)
-        let tasks = document.workspace.tasks
-        setCollapsed { project in !tasks.contains { $0.projectId == project && waiting.contains($0.id) } }
-        if let first = waitingOnYou.first { show(task: first) }
+        let waiting = Set(waitingOnYou), waitingTerminals = Set(self.waitingTerminals)
+        let tasks = document.workspace.tasks, terminals = document.workspace.terminals
+        // A project stays open for a task or a terminal waiting in it: folded, either would be out of reach.
+        setCollapsed { project in
+            !tasks.contains { $0.projectId == project && waiting.contains($0.id) }
+                && !terminals.contains { $0.projectId == project && waitingTerminals.contains($0.id) }
+        }
+        // The first task waiting, else the first terminal: Focus View shows what the Dock badge counts.
+        if let first = waitingOnYou.first {
+            show(task: first)
+        } else if let terminal = waitingTerminals.first {
+            show(terminal: terminal)
+        }
     }
 
     private func setCollapsed(_ collapsed: (UUID) -> Bool) {
@@ -117,7 +130,9 @@ public enum SidebarCommandMenu {
     public static let items: [Item] = [
         Item(title: "New Task…", key: "n", modifiers: keys, command: .newTask),
         Item(title: "New Review…", key: "r", modifiers: keys, command: .newReview),
+        Item(title: "New Terminal…", key: "t", modifiers: keys, command: .newTerminal),
         Item(title: "Add Project…", key: "p", modifiers: keys, command: .addProject),
+        Item(title: "Add Divider…", key: "d", modifiers: keys, command: .addDivider),
         Item(title: "", key: "", modifiers: [], command: nil),
         Item(title: "Next Task", key: "]", modifiers: keys, command: .nextTask),
         Item(title: "Previous Task", key: "[", modifiers: keys, command: .previousTask),

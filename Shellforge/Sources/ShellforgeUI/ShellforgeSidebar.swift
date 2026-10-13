@@ -94,7 +94,7 @@ struct SidebarView: View {
         VStack(spacing: 0) {
             SidebarBanners(model: model)
             List {
-                SidebarHeader(addProject: addProject, showHooks: showHooks, showMacSettings: showMacSettings)
+                SidebarHeader(addProject: addProject, addDivider: showAddDivider, showHooks: showHooks, showMacSettings: showMacSettings)
                 ForEach(model.rows) { row in rowView(row) }
             }
             .listStyle(.sidebar)
@@ -118,6 +118,8 @@ struct SidebarView: View {
             case .newReview(let project): showNewReview(in: project)
             case .addProject: addProject()
             case .removeTask(let task): Task { await model.confirmRemove(taskId: task) }
+            case .newTerminal(let project): showNewTerminal(in: project)
+            case .addDivider: showAddDivider()
             }
         }
     }
@@ -128,13 +130,26 @@ struct SidebarView: View {
             SidebarEmptyState(canAdd: true, add: addProject).listRowSeparator(.hidden)
         case .project(let node, let collapsed):
             ProjectHeaderRow(node: node, collapsed: collapsed, provider: model.providers[node.id] ?? .git,
-                             statuses: node.tasks.map { model.status(ofTask: $0.id) },
+                             statuses: node.tasks.map { model.status(ofTask: $0.id) } + node.terminals.map { model.status(ofTerminal: $0.id) },
                              toggle: { model.toggleCollapsed(node.id) },
                              newTask: { showNewTask(in: node.id) },
                              newReview: { showNewReview(in: node.id) },
+                             newTerminal: { showNewTerminal(in: node.id) },
+                             canMoveUp: model.canMove(.project(node.id), up: true), canMoveDown: model.canMove(.project(node.id), up: false),
+                             move: { up in model.move(.project(node.id), up: up) },
                              editJiraProjects: { showJiraProjects(for: node.id) },
                              editTunnels: { showTunnels(for: node.id) },
                              editSSHHost: { showSSHHost(for: node.id) })
+                .listRowSeparator(.hidden)
+        case .terminal(let node, let selected):
+            TerminalRowView(node: node, selected: selected, agents: model.avatars(forTerminal: node.id),
+                            status: model.status(ofTerminal: node.id), activate: { model.select(terminal: node.id) },
+                            rename: { showRenameTerminal(node.terminal) }, remove: { model.removeTerminal(node.id) },
+                            menuExtras: AnyView(OpenInMenuItems(folder: model.project(node.terminal.projectId)?.path ?? "")))
+                .listRowSeparator(.hidden)
+        case .divider(let row):
+            DividerRow(row: row, rename: { showRenameDivider(row.divider) }, move: { up in model.move(.divider(row.divider.id), up: up) },
+                       remove: { model.removeDivider(row.divider.id) })
                 .listRowSeparator(.hidden)
         case .tunnel(let tunnel):
             TunnelRowView(row: tunnel, start: { model.startTunnel(tunnel.alias) }, stop: { model.stopTunnel(tunnel.alias) },
@@ -144,7 +159,8 @@ struct SidebarView: View {
             TaskRowView(node: node, selected: selected, agents: model.avatars(forTask: node.id),
                         status: model.status(ofTask: node.id), removal: model.removals[node.id],
                         activate: { model.select(task: node.id) },
-                        remove: { Task { await model.confirmRemove(taskId: node.id) } })
+                        remove: { Task { await model.confirmRemove(taskId: node.id) } },
+                        rename: { showRename(.task, name: node.task.title) { model.renameTask(node.id, to: $0) } })
                 .listRowSeparator(.hidden)
         case .tab(let tab, let selected):
             TabRowView(tab: tab, selected: selected, agents: model.avatars(forTab: tab.id),
@@ -208,6 +224,49 @@ struct SidebarView: View {
         sheet.present(over: anchor.window) { dismiss in
             SSHHostSheet(projectName: project.name, current: project.sshHost, loadHosts: model.loadSSHHosts,
                          submit: { model.setSSHHost($0, on: id) }, dismiss: dismiss)
+        }
+    }
+
+    /// AiTerm's New terminal sheet: the row's name, prefilled with the suggestion.
+    private func showNewTerminal(in id: UUID) {
+        guard let project = model.project(id) else { return }
+        let suggested = model.suggestedTerminalName(in: id)
+        sheet.present(over: anchor.window) { dismiss in
+            NameSheet.newTerminal(projectName: project.name, suggestedName: suggested,
+                                  create: { model.newTerminal(name: $0, in: id) }, dismiss: dismiss)
+        }
+    }
+
+    /// AiTerm's Add divider: an empty name is a plain rule.
+    private func showAddDivider() {
+        sheet.present(over: anchor.window) { dismiss in
+            NameSheet(title: "Add divider", subtitle: "Groups the projects under it in the sidebar.", fieldLabel: "Divider name",
+                      placeholder: "Work", help: "Leave it empty for a plain rule.", confirmLabel: "Add Divider", initialName: "",
+                      submit: { model.addDivider(name: $0) }, dismiss: dismiss)
+        }
+    }
+
+    private func showRenameDivider(_ divider: SidebarDivider) {
+        sheet.present(over: anchor.window) { dismiss in
+            NameSheet(title: RenameCopy.divider.title, subtitle: RenameCopy.divider.subtitle, fieldLabel: RenameCopy.divider.field,
+                      placeholder: divider.name, confirmLabel: "Rename", initialName: divider.name,
+                      submit: { model.renameDivider(divider.id, to: $0) }, dismiss: dismiss)
+        }
+    }
+
+    private func showRenameTerminal(_ terminal: TerminalItem) {
+        sheet.present(over: anchor.window) { dismiss in
+            NameSheet(title: RenameCopy.terminal.title, subtitle: RenameCopy.terminal.subtitle,
+                      fieldLabel: RenameCopy.terminal.field, placeholder: terminal.name, confirmLabel: "Rename", initialName: terminal.name,
+                      submit: { model.renameTerminal(terminal.id, to: $0) }, dismiss: dismiss)
+        }
+    }
+
+    /// AiTerm's Rename sheet with `copy`, opened on the row's current name.
+    private func showRename(_ copy: RenameCopy, name: String, submit: @escaping (String) -> Void) {
+        sheet.present(over: anchor.window) { dismiss in
+            NameSheet(title: copy.title, subtitle: copy.subtitle, fieldLabel: copy.field, placeholder: name,
+                      confirmLabel: "Rename", initialName: name, submit: submit, dismiss: dismiss)
         }
     }
 
