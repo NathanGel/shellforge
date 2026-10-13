@@ -266,7 +266,9 @@ extension iTermShellforgeSidebar {
     private static var tick: Timer?
     private static var rcCheck: Timer?
     /// The login shell's rc files, as last seen: a change reads the environment again (PRD E9).
-    nonisolated(unsafe) private static var rcFiles = RCFiles(home: FileManager.default.homeDirectoryForCurrentUser)
+    /// The shell and `ZDOTDIR` come from the environment Shellforge uses, read off the main thread.
+    nonisolated(unsafe) private static var rcFiles = RCFiles(home: FileManager.default.homeDirectoryForCurrentUser,
+                                                             environment: { launcher.environment.variables })
 
     /// One rc check at a time: `rcFiles` is touched only by the check in flight.
     private static var checkingRC = false
@@ -319,8 +321,11 @@ extension iTermShellforgeSidebar {
                 updateDockBadge()
             }
         }
-        // A tool installed and put on PATH in an rc file is found without a relaunch.
-        _ = rcFiles.changed()
+        // A tool installed and put on PATH in an rc file is found without a relaunch. The first
+        // check only looks; it reads the environment, so it runs off the main thread too.
+        checkRCFiles()
+        // A command that missed read the environment again: every sidebar's warning follows.
+        launcher.onReload = { DispatchQueue.main.async { MainActor.assumeIsolated { environmentChanged() } } }
         rcCheck = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { _ in
             MainActor.assumeIsolated { checkRCFiles() }
         }

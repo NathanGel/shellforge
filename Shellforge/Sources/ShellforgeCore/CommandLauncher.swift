@@ -14,6 +14,7 @@ public final class CommandLauncher: @unchecked Sendable {
     private var read: Date?
     /// Counts the reloads begun, so an older one finishing last never replaces a newer one's read.
     private var started = 0, published = 0
+    private var reloaded: (@Sendable () -> Void)?
 
     /// `resolve` reads the environment; the default asks the user's login shell. `clock` stamps
     /// each read, for Settings › Core.
@@ -26,6 +27,25 @@ public final class CommandLauncher: @unchecked Sendable {
     /// When the environment was last read; nil before the first use.
     public var readAt: Date? { lock.withLock { read } }
 
+    /// Told, on the thread that ran the command, when a command not on `PATH` made it read the
+    /// environment again: the app redraws what it shows of the environment.
+    public var onReload: (@Sendable () -> Void)? {
+        get { lock.withLock { reloaded } }
+        set { lock.withLock { reloaded = newValue } }
+    }
+
+    /// The environment and when it was read, from the same read: a reload landing between two
+    /// separate reads would pair one read's `PATH` with another's time.
+    public var snapshot: (environment: ResolvedEnvironment, readAt: Date?) {
+        lock.withLock {
+            if let cached { return (cached, read) }
+            let fresh = resolve()
+            cached = fresh
+            read = clock()
+            return (fresh, read)
+        }
+    }
+
     /// The user's `$SHELL`, or zsh, macOS's default, asked with what this process inherited.
     public static let loginShell: @Sendable () -> ResolvedEnvironment = {
         let inherited = ProcessInfo.processInfo.environment
@@ -33,15 +53,7 @@ public final class CommandLauncher: @unchecked Sendable {
     }
 
     /// The environment children get, read now if it has not been yet.
-    public var environment: ResolvedEnvironment {
-        lock.withLock {
-            if let cached { return cached }
-            let fresh = resolve()
-            cached = fresh
-            read = clock()
-            return fresh
-        }
-    }
+    public var environment: ResolvedEnvironment { snapshot.environment }
 
     /// Reads the environment again, for Settings' Reload or after an rc file changed.
     @discardableResult
@@ -80,6 +92,7 @@ public final class CommandLauncher: @unchecked Sendable {
         var executable = Self.locate(command, in: current.variables["PATH"] ?? "")
         if executable == nil {
             current = reload()
+            onReload?()
             executable = Self.locate(command, in: current.variables["PATH"] ?? "")
         }
         guard let executable else {

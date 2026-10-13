@@ -58,6 +58,59 @@ import Testing
         #expect(report.tools.map(\.name) == ["git", "uv", "python3", "node", "ssh", "claude", "codex"])
     }
 
+    /// An agent set up with a full path is listed by its file name, and found at that path.
+    @Test func anAgentGivenByPathShowsItsFileName() throws {
+        let bin = try folder("bin")
+        try tool("claude", in: bin)
+        let launcher = CommandLauncher(resolve: { ResolvedEnvironment(variables: ["PATH": "/nowhere"], source: .loginShell("/bin/zsh")) })
+        var agent = AgentPresets.claude
+        agent.command = bin.appendingPathComponent("claude").path
+        let tool = try #require(EnvironmentReport.make(launcher: launcher, agents: [agent]).tools.last)
+        #expect(tool.name == "claude" && tool.path == bin.appendingPathComponent("claude").path)
+    }
+
+    // -- the rc files each login shell reads --
+
+    @Test func zshWatchesZDOTDIROrHome() {
+        let home = URL(fileURLWithPath: "/h"), etc = URL(fileURLWithPath: "/e")
+        #expect(RCFiles.watched(home: home, etc: etc, shell: "/bin/zsh", zdotdir: nil).map(\.path)
+                == ["/h/.zshenv", "/h/.zprofile", "/h/.zshrc", "/e/paths", "/e/paths.d"])
+        #expect(RCFiles.watched(home: home, etc: etc, shell: "/bin/zsh", zdotdir: "/z").map(\.path)
+                == ["/z/.zshenv", "/z/.zprofile", "/z/.zshrc", "/e/paths", "/e/paths.d"])
+    }
+
+    @Test func bashAndFishWatchTheirOwn() {
+        let home = URL(fileURLWithPath: "/h"), etc = URL(fileURLWithPath: "/e")
+        #expect(RCFiles.watched(home: home, etc: etc, shell: "/opt/homebrew/bin/bash", zdotdir: "/z").map(\.path)
+                == ["/h/.bash_profile", "/h/.bash_login", "/h/.profile", "/h/.bashrc", "/e/paths", "/e/paths.d"])
+        #expect(RCFiles.watched(home: home, etc: etc, shell: "/usr/local/bin/fish", zdotdir: nil).map(\.path)
+                == ["/h/.config/fish/config.fish", "/e/paths", "/e/paths.d"])
+    }
+
+    /// A file added to /etc/paths.d — a package installer's PATH entry — is a change.
+    @Test func aFileInPathsDIsAChange() throws {
+        let home = try folder("home"), etc = try folder("etc")
+        let pathsD = etc.appendingPathComponent("paths.d")
+        try FileManager.default.createDirectory(at: pathsD, withIntermediateDirectories: true)
+        var files = RCFiles(home: home, etc: etc, environment: { ["SHELL": "/bin/zsh"] })
+        _ = files.changed()
+        try "/opt/tool/bin\n".write(to: pathsD.appendingPathComponent("tool"), atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(60)], ofItemAtPath: pathsD.path)
+        let changed = files.changed()
+        #expect(changed)
+    }
+
+    @Test func aBashrcEditIsAChangeUnderBash() throws {
+        let home = try folder("home"), etc = try folder("etc")
+        let rc = home.appendingPathComponent(".bashrc")
+        try "export A=1\n".write(to: rc, atomically: true, encoding: .utf8)
+        var files = RCFiles(home: home, etc: etc, environment: { ["SHELL": "/bin/bash"] })
+        _ = files.changed()
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(60)], ofItemAtPath: rc.path)
+        let changed = files.changed()
+        #expect(changed)
+    }
+
     @Test func aReportReadsTheEnvironmentOnceWhateverIsMissing() {
         let reads = Locked(0)
         let launcher = CommandLauncher(resolve: {
@@ -76,7 +129,7 @@ import Testing
     @Test func theFirstLookIsNoChange() throws {
         let home = try folder("home")
         try "export A=1\n".write(to: home.appendingPathComponent(".zshrc"), atomically: true, encoding: .utf8)
-        var files = RCFiles(home: home)
+        var files = RCFiles(home: home, etc: home, environment: { ["SHELL": "/bin/zsh"] })
         let changed1 = files.changed()
         #expect(!changed1)
         let changed2 = files.changed()
@@ -87,7 +140,7 @@ import Testing
         let home = try folder("home")
         let rc = home.appendingPathComponent(".zprofile")
         try "export A=1\n".write(to: rc, atomically: true, encoding: .utf8)
-        var files = RCFiles(home: home)
+        var files = RCFiles(home: home, etc: home, environment: { ["SHELL": "/bin/zsh"] })
         _ = files.changed()
         try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(60)], ofItemAtPath: rc.path)
         let changed3 = files.changed()
@@ -102,7 +155,7 @@ import Testing
         let target = dotfiles.appendingPathComponent("zshrc")
         try "export A=1\n".write(to: target, atomically: true, encoding: .utf8)
         try FileManager.default.createSymbolicLink(atPath: home.appendingPathComponent(".zshrc").path, withDestinationPath: target.path)
-        var files = RCFiles(home: home)
+        var files = RCFiles(home: home, etc: home, environment: { ["SHELL": "/bin/zsh"] })
         _ = files.changed()
         try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(60)], ofItemAtPath: target.path)
         let changed = files.changed()
@@ -111,7 +164,7 @@ import Testing
 
     @Test func aCreatedOrDeletedFileIsAChange() throws {
         let home = try folder("home")
-        var files = RCFiles(home: home)
+        var files = RCFiles(home: home, etc: home, environment: { ["SHELL": "/bin/zsh"] })
         _ = files.changed()
         let rc = home.appendingPathComponent(".zshenv")
         try "export A=1\n".write(to: rc, atomically: true, encoding: .utf8)
