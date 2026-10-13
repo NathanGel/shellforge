@@ -31,6 +31,7 @@ import Testing
             case .tab(let tab, _): "tab \(tab.title)"
             case .tunnel(let row): "tunnel \(row.alias)"
             case .terminal(let node, _): "terminal \(node.terminal.name)"
+            case .divider(let row): "divider \(row.divider.name)"
             case .otherTabsHeading: "other tabs"
             }
         }

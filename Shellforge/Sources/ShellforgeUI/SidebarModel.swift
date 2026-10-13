@@ -442,7 +442,15 @@ public final class SidebarModel: ObservableObject {
     public var rows: [SidebarRow] {
         var rows: [SidebarRow] = tree.projects.isEmpty ? [.empty] : []
         let current = host.selectedTabId
-        for node in tree.projects {
+        let workspace = document.workspace
+        let nodes = Dictionary(uniqueKeysWithValues: tree.projects.map { ($0.id, $0) })
+        for entry in SidebarLayout.entries(projects: tree.projects.map(\.project), dividers: workspace.dividers) {
+            guard case .project(let id) = entry, let node = nodes[id] else {
+                if case .divider(let id) = entry, let divider = workspace.dividers.first(where: { $0.id == id }) {
+                    rows.append(.divider(DividerRowItem(divider: divider, canMoveUp: canMove(entry, up: true), canMoveDown: canMove(entry, up: false))))
+                }
+                continue
+            }
             rows.append(.project(node, collapsed: node.project.collapsed))
             guard !node.project.collapsed else { continue }
             rows += tunnelRows(of: node.project).map(SidebarRow.tunnel)

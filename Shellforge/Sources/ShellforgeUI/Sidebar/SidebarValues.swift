@@ -38,6 +38,7 @@ public enum SidebarRow: Equatable, Identifiable {
     case tab(TabSnapshot, selected: Bool)
     case tunnel(TunnelRowItem)
     case terminal(TerminalNode, selected: Bool)
+    case divider(DividerRowItem)
     case otherTabsHeading
 
     public var id: String {
@@ -48,9 +49,17 @@ public enum SidebarRow: Equatable, Identifiable {
         case .tab(let tab, _): "tab-\(tab.id)"
         case .tunnel(let row): "tunnel-\(row.projectId)-\(row.alias)"
         case .terminal(let node, _): "terminal-\(node.id)"
+        case .divider(let row): "divider-\(row.divider.id)"
         case .otherTabsHeading: "other-tabs"
         }
     }
+}
+
+/// A divider as its row draws it, with which ways it can move.
+public struct DividerRowItem: Equatable, Sendable {
+    public let divider: SidebarDivider
+    public let canMoveUp: Bool
+    public let canMoveDown: Bool
 }
 
 // Ported from AiTerm (app/Sources/AiTermCore/Sidebar/SidebarModel.swift: TaskStatus.label).

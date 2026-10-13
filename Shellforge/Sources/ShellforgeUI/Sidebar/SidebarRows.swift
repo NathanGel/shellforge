@@ -9,6 +9,7 @@ import SwiftUI
 /// `PROJECTS`, the menu that adds a project, and the Agent hooks button.
 struct SidebarHeader: View {
     let addProject: () -> Void
+    var addDivider: () -> Void = {}
     let showHooks: () -> Void
     let showMacSettings: () -> Void
     @Environment(\.interfaceScale) private var scale
@@ -34,6 +35,7 @@ struct SidebarHeader: View {
             .accessibilityLabel("Settings")
             AddMenu(help: "Add project", enabled: true) {
                 Button("Add Project…", action: addProject)
+                Button("Add Divider…", action: addDivider)
             }
         }
         .frame(height: scale(Size.menuRow)).padding(.leading, scale(Space.base)).padding(.trailing, SidebarRowLayout.trailingInset(scale))
@@ -53,6 +55,9 @@ struct ProjectHeaderRow: View {
     let newTask: () -> Void
     let newReview: () -> Void
     var newTerminal: () -> Void = {}
+    var canMoveUp = false
+    var canMoveDown = false
+    var move: (_ up: Bool) -> Void = { _ in }
     let editJiraProjects: () -> Void
     var editTunnels: () -> Void = {}
     var editSSHHost: () -> Void = {}
@@ -93,6 +98,9 @@ struct ProjectHeaderRow: View {
             Divider()
             Button("Jira Projects…", action: editJiraProjects)
             Button("Tunnels…", action: editTunnels)
+            Divider()
+            Button("Move Up") { move(true) }.disabled(!canMoveUp)
+            Button("Move Down") { move(false) }.disabled(!canMoveDown)
             Button("SSH Host…", action: editSSHHost)
         }
     }

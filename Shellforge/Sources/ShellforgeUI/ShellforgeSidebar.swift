@@ -94,7 +94,7 @@ struct SidebarView: View {
         VStack(spacing: 0) {
             SidebarBanners(model: model)
             List {
-                SidebarHeader(addProject: addProject, showHooks: showHooks, showMacSettings: showMacSettings)
+                SidebarHeader(addProject: addProject, addDivider: showAddDivider, showHooks: showHooks, showMacSettings: showMacSettings)
                 ForEach(model.rows) { row in rowView(row) }
             }
             .listStyle(.sidebar)
@@ -119,6 +119,7 @@ struct SidebarView: View {
             case .addProject: addProject()
             case .removeTask(let task): Task { await model.confirmRemove(taskId: task) }
             case .newTerminal(let project): showNewTerminal(in: project)
+            case .addDivider: showAddDivider()
             }
         }
     }
@@ -134,6 +135,8 @@ struct SidebarView: View {
                              newTask: { showNewTask(in: node.id) },
                              newReview: { showNewReview(in: node.id) },
                              newTerminal: { showNewTerminal(in: node.id) },
+                             canMoveUp: model.canMove(.project(node.id), up: true), canMoveDown: model.canMove(.project(node.id), up: false),
+                             move: { up in model.move(.project(node.id), up: up) },
                              editJiraProjects: { showJiraProjects(for: node.id) },
                              editTunnels: { showTunnels(for: node.id) },
                              editSSHHost: { showSSHHost(for: node.id) })
@@ -142,6 +145,10 @@ struct SidebarView: View {
             TerminalRowView(node: node, selected: selected, agents: model.avatars(forTerminal: node.id),
                             status: model.status(ofTerminal: node.id), activate: { model.select(terminal: node.id) },
                             rename: { showRenameTerminal(node.terminal) }, remove: { model.removeTerminal(node.id) })
+                .listRowSeparator(.hidden)
+        case .divider(let row):
+            DividerRow(row: row, rename: { showRenameDivider(row.divider) }, move: { up in model.move(.divider(row.divider.id), up: up) },
+                       remove: { model.removeDivider(row.divider.id) })
                 .listRowSeparator(.hidden)
         case .tunnel(let tunnel):
             TunnelRowView(row: tunnel, start: { model.startTunnel(tunnel.alias) }, stop: { model.stopTunnel(tunnel.alias) },
@@ -225,6 +232,23 @@ struct SidebarView: View {
         sheet.present(over: anchor.window) { dismiss in
             NameSheet.newTerminal(projectName: project.name, suggestedName: suggested,
                                   create: { model.newTerminal(name: $0, in: id) }, dismiss: dismiss)
+        }
+    }
+
+    /// AiTerm's Add divider: an empty name is a plain rule.
+    private func showAddDivider() {
+        sheet.present(over: anchor.window) { dismiss in
+            NameSheet(title: "Add divider", subtitle: "Groups the projects under it in the sidebar.", fieldLabel: "Divider name",
+                      placeholder: "Work", help: "Leave it empty for a plain rule.", confirmLabel: "Add Divider", initialName: "",
+                      submit: { model.addDivider(name: $0) }, dismiss: dismiss)
+        }
+    }
+
+    private func showRenameDivider(_ divider: SidebarDivider) {
+        sheet.present(over: anchor.window) { dismiss in
+            NameSheet(title: "Rename divider", subtitle: "Changes the heading over the projects under it.", fieldLabel: "Divider name",
+                      placeholder: divider.name, confirmLabel: "Rename", initialName: divider.name,
+                      submit: { model.renameDivider(divider.id, to: $0) }, dismiss: dismiss)
         }
     }
 
