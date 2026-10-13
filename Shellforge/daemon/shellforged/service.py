@@ -41,6 +41,9 @@ def _logged(step: str) -> Iterator[None]:
 
 
 POLL_SECONDS = 2.0
+# With no agent in any session there is nothing a poll would find every 2 s: Codex's rate limits
+# for the footer are read this often instead. A hook or a sessions.update still ticks at once.
+IDLE_POLL_SECONDS = 10.0
 # How long a tick waits for a check it runs on a worker thread: the orphan directories, the subagent
 # transcripts, the Codex rollouts.
 OFF_LOOP_CHECK_SECONDS = 1.0
@@ -97,6 +100,9 @@ class Service:
         # Ticks started so far, and the number of the last to finish without raising: a tick whose
         # caller asked before another started and finished has nothing left to read.
         self._ticks_started = 0
+        # The poll loop's current sleep, and the event that cuts it short.
+        self._sleeping_for = POLL_SECONDS
+        self._poll_sooner = asyncio.Event()
         self._last_good_tick = 0
         self._path_missing = path_missing
         self.subagent_transcripts = SubagentTranscripts()
@@ -137,13 +143,26 @@ class Service:
         await self.hooks.stop()
         await self.rpc.stop()
 
+    def poll_interval(self) -> float:
+        """2 s while any session runs an agent, else 10 s."""
+        return POLL_SECONDS if any(s.agent != "shell" for s in self.registry.all()) else IDLE_POLL_SECONDS
+
     async def _poll_forever(self) -> None:
         while True:
             try:
                 await self.tick()
             except Exception:  # noqa: BLE001
                 log.exception("tick failed")
-            await asyncio.sleep(POLL_SECONDS)
+            self._sleeping_for = self.poll_interval()
+            # Another tick that finds an agent while this one sleeps the idle 10 s ends that sleep
+            # and starts the 2 s an agent gets: the next poll comes within it, as it would have.
+            try:
+                await asyncio.wait_for(self._poll_sooner.wait(), timeout=self._sleeping_for)
+            except asyncio.TimeoutError:
+                pass
+            else:
+                self._poll_sooner.clear()
+                await asyncio.sleep(POLL_SECONDS)
 
     # -- RPC ---------------------------------------------------------------
     def _register_handlers(self) -> None:
@@ -307,6 +326,10 @@ class Service:
             number = self._ticks_started
             await self._tick()
             self._last_good_tick = number
+        # An agent found while the poll loop sleeps the idle 10 s: it polls again within 2 s.
+        if self.poll_interval() < self._sleeping_for:
+            self._sleeping_for = self.poll_interval()
+            self._poll_sooner.set()
 
     async def _tick(self) -> None:
         try:

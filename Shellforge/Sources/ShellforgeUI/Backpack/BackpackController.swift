@@ -287,8 +287,9 @@ public final class BackpackController: ObservableObject {
     public func tick() async {
         let mode = self.mode, working = agentsWorking()
         let outcome: BackpackTick? = await worker.run { mode.tick(agentsWorking: working) }
-        state = mode.state
-        if case .on(let status) = state { power = status.power }
+        // Assigned only when they changed: each assignment redraws every window's footer.
+        if mode.state != state { state = mode.state }
+        if case .on(let status) = state, status.power != power { power = status.power }
         guard case .ended? = outcome else { return }
         let restored = !mode.settings.engaged
         if !restored { toast(Self.restoreFailed) }

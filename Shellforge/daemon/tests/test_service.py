@@ -1940,3 +1940,30 @@ async def test_a_codex_rollout_read_that_hangs_costs_the_tick_its_deadline_not_t
     finally:
         release.set()
     assert elapsed < 1, "the tick gave up on the read at its deadline instead of waiting for it"
+
+
+async def test_an_idle_daemon_polls_every_ten_seconds(stack):
+    """No agent in any session: nothing to read every 2 s. Hooks and sessions.update still tick at once."""
+    from shellforged.service import IDLE_POLL_SECONDS, POLL_SECONDS
+    svc, it, files, r, w = stack
+    assert svc.poll_interval() == IDLE_POLL_SECONDS
+    wid = (await call(r, w, "window.createTask", {"taskId": "t1", "cwd": "/wt", "title": "x", "frame": FRAME}))["result"]["windowId"]
+    sid = it.windows[wid]["sessions"][0]
+    await svc.tick()
+    assert svc.poll_interval() == IDLE_POLL_SECONDS, "a shell is no agent"
+    await it.user_runs(sid, "claude", job_pid=4242)
+    await svc.tick()
+    assert svc.poll_interval() == POLL_SECONDS
+
+
+async def test_an_agent_starting_cuts_the_idle_sleep_short(stack):
+    """The poll loop asleep for 10 s, an agent appears through sessions.update: the loop's next tick
+    comes within the 2 s an agent gets, not at the end of the idle sleep."""
+    svc, it, files, r, w = stack
+    await asyncio.sleep(0.1)  # the loop has ticked once and gone to its idle sleep
+    wid = (await call(r, w, "window.createTask", {"taskId": "t1", "cwd": "/wt", "title": "x", "frame": FRAME}))["result"]["windowId"]
+    sid = it.windows[wid]["sessions"][0]
+    await it.user_runs(sid, "claude", job_pid=4242)
+    await svc.tick()
+    before = svc._ticks_started
+    await wait_until(lambda: svc._ticks_started > before, timeout=3.0)

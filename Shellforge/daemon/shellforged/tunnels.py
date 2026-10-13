@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any
 
 from . import protocol, traffic
+from .offload import run_detached
 
 log = logging.getLogger(__name__)
 
@@ -390,10 +391,13 @@ class TunnelSupervisor:
             tunnel.bytes_in = tunnel.bytes_out = None
             self._write_ledger()
             started = loop.time()
-            while popen.poll() is None:
-                if tunnel.state != "up" and loop.time() - started >= self.up_after and not tunnel.stopping:
-                    await self._set(tunnel, "up", None)
-                await asyncio.sleep(POLL)
+            # Waited on, on a thread of its own, rather than polled: an up tunnel wakes nothing.
+            # A stop ends the wait by ending ssh's process group.
+            exited = run_detached(popen.wait)
+            done, _ = await asyncio.wait({exited}, timeout=self.up_after)
+            if not done and tunnel.state != "up" and not tunnel.stopping:
+                await self._set(tunnel, "up", None)
+            await exited
             tunnel.child = None
             self._write_ledger()
             if tunnel.stopping:
@@ -508,7 +512,9 @@ class TunnelSupervisor:
             await asyncio.sleep(self.traffic_every)
             up = [t for t in self._tunnels.values() if t.state == "up" and t.child is not None]
             if not up:
-                continue
+                # Nothing of the supervisor's to count — none up, or only a tab's forward: ended
+                # until a run comes up again (`_set` starts it), rather than waking for nothing.
+                return
             try:
                 counts = await self.sample([t.child.pid for t in up if t.child is not None])
             except Exception:  # noqa: BLE001 - traffic is shown, never relied on
@@ -528,6 +534,8 @@ class TunnelSupervisor:
         tunnel.state, tunnel.error, tunnel.since = state, error, self.clock()
         if state != "up":
             tunnel.bytes_in = tunnel.bytes_out = None
+        elif tunnel.child is not None:
+            self._start_sampler()
         if state != "failed":
             tunnel.needs_input = None
         if state == "up":

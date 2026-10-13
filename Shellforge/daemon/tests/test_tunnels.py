@@ -319,3 +319,62 @@ async def test_a_missing_key_needs_no_tab(ssh_env):
     await wait_until(lambda: "failed" in events.states("web"))
     assert tunnels.list()[1]["needsInput"] is True
     await tunnels.stop_all()
+
+
+# -- M5b: wakeups --
+
+
+async def test_an_exit_is_seen_without_polling(ssh_env, monkeypatch):
+    """An up tunnel's ssh is waited on, not polled: no Popen.poll for half a second of steady state."""
+    import subprocess
+    events = Events()
+    tunnels = fast(events)
+    await tunnels.start("db", ssh_env())
+    await wait_until(lambda: "up" in events.states("db"))
+    polls = []
+    real = subprocess.Popen.poll
+    monkeypatch.setattr(subprocess.Popen, "poll", lambda self: (polls.append(1), real(self))[1])
+    await asyncio.sleep(0.5)
+    assert len(polls) <= 2, f"{len(polls)} polls in 0.5 s"
+    monkeypatch.setattr(subprocess.Popen, "poll", real)
+    await tunnels.stop_all()
+
+
+async def test_a_drop_is_still_seen_and_restarted(ssh_env):
+    events = Events()
+    tunnels = fast(events)
+    await tunnels.start("db", ssh_env("drop-after:0.4"))
+    await wait_until(lambda: events.states("db").count("up") >= 1 and events.states("db")[-1] == "connecting", timeout=5)
+    await tunnels.stop_all()
+
+
+async def test_stop_while_waiting_leaves_no_child(ssh_env):
+    import threading
+    events = Events()
+    tunnels = fast(events)
+    await tunnels.start("db", ssh_env())
+    await wait_until(lambda: "up" in events.states("db"))
+    pid = tunnels.pid("db")
+    await tunnels.stop("db")
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
+    await wait_until(lambda: not any(t.name == "shellforged-offload" and t.is_alive() for t in threading.enumerate()))
+
+
+async def test_the_sampler_stops_with_the_last_up_tunnel(ssh_env):
+    samples = []
+
+    async def sample(pids):
+        samples.append(pids)
+        return {}
+
+    events = Events()
+    tunnels = fast(events, traffic_every=0.05, sample=sample)
+    await tunnels.start("db", ssh_env())
+    await wait_until(lambda: samples)
+    await tunnels.stop("db")
+    await wait_until(lambda: tunnels._sampler is None or tunnels._sampler.done())
+    await tunnels.start("db", ssh_env())
+    before = len(samples)
+    await wait_until(lambda: len(samples) > before, timeout=5)
+    await tunnels.stop_all()

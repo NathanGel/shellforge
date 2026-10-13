@@ -186,3 +186,35 @@ async def test_hold_takes_a_bind_through_the_daemon(tunnel_stack):
     assert (await call(r, w, "tunnels.hold", {"alias": "db", "port": free_port(), "bind": "localhost"}))["result"] == {"ok": True}
     assert (await call(r, w, "tunnels.hold", {"alias": "db", "port": 22, "bind": 3}, id_=2))["error"]["code"] == "bad_params"
     await svc.tunnels.stop("db")
+
+
+
+async def test_a_held_tunnel_s_end_is_seen_within_a_second(ssh_env):
+    """A held forward is probed at `probe_every` up or not: its end is seen within it."""
+    events = Events()
+    tunnels = held(events, probe_every=1.0)
+    await tunnels.start("db", ssh_env("fail", FAKE_SSH_LINE="Host key verification failed."))
+    await wait_until(lambda: "failed" in events.states("db"))
+    port = free_port()
+    await tunnels.hold("db", port)
+    server, _ = await listener(port)
+    await wait_until(lambda: tunnels.list()[0]["state"] == "up", timeout=3)
+    server.close()
+    await server.wait_closed()
+    await wait_until(lambda: tunnels.list()[0]["heldBy"] is None, timeout=1.5)
+    await tunnels.stop_all()
+
+
+async def test_the_sampler_ends_with_only_a_held_tunnel_up(ssh_env):
+    """A tab's forward has no ssh of the supervisor's to count: nothing to sample, so no wakeups."""
+    events = Events()
+    tunnels = held(events, traffic_every=0.05)
+    await tunnels.start("db", ssh_env("fail", FAKE_SSH_LINE="Host key verification failed."))
+    await wait_until(lambda: "failed" in events.states("db"))
+    port = free_port()
+    await tunnels.hold("db", port)
+    server, _ = await listener(port)
+    await wait_until(lambda: tunnels.list()[0]["state"] == "up")
+    await wait_until(lambda: tunnels._sampler is None or tunnels._sampler.done())
+    server.close()
+    await tunnels.stop_all()

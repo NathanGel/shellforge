@@ -63,6 +63,10 @@ public protocol SessionFeed: AnyObject {
 @MainActor
 public final class SidebarModel: ObservableObject {
     @Published public private(set) var tree = SidebarTree(projects: [], otherTabs: [])
+    /// What `rows` draws beyond the tree — the current tab's highlight and the dividers — as of the
+    /// last refresh: published so a change to either redraws, as the tree's does.
+    @Published private(set) var drawnTabId: String?
+    @Published private(set) var drawnDividers: [SidebarDivider] = []
     @Published public private(set) var selectedTaskId: UUID?
     /// The terminal row shown, when the selected tab is a terminal's (Terminals/).
     @Published public internal(set) var selectedTerminalId: UUID?
@@ -361,7 +365,13 @@ public final class SidebarModel: ObservableObject {
     }
 
     private func refresh(_ workspace: Workspace? = nil) {
-        tree = SidebarTree.build(workspace ?? document.workspace, tabs: host.tabs)
+        // Assigned only when it differs: `@Published` announces every assignment, and every
+        // announcement redraws the whole sidebar.
+        let current = workspace ?? document.workspace
+        let built = SidebarTree.build(current, tabs: host.tabs)
+        if built != tree { tree = built }
+        if host.selectedTabId != drawnTabId { drawnTabId = host.selectedTabId }
+        if current.dividers != drawnDividers { drawnDividers = current.dividers }
         refreshSSHHosts(tree.projects.map(\.project))
         contexts.prune(keeping: Set(tree.projects.flatMap(\.tasks).map { FooterRow.task($0.id) }
                                     + (tree.otherTabs + terminalTabs).map { FooterRow.tab($0.tabId) }))
@@ -371,14 +381,14 @@ public final class SidebarModel: ObservableObject {
         lastSelectedTab = host.selectedTabId
         if let selected = host.tabs.first(where: { $0.id == host.selectedTabId }) {
             if let task = tree.task(owning: selected) {
-                selectedTerminalId = nil
+                if selectedTerminalId != nil { selectedTerminalId = nil }
                 shown(task.id, explicit: opened)
             } else {
                 // A tab of no task is shown: no task is — a terminal's, perhaps.
-                selectedTaskId = nil
+                if selectedTaskId != nil { selectedTaskId = nil }
                 if let id = selected.terminalId, document.workspace.terminals.contains(where: { $0.id == id }) {
                     shown(terminal: id, explicit: opened)
-                } else {
+                } else if selectedTerminalId != nil {
                     selectedTerminalId = nil
                 }
             }
@@ -394,6 +404,8 @@ public final class SidebarModel: ObservableObject {
     /// What the daemon says now: every session's fill remembered against its row first, then
     /// published.
     private func take(_ store: SessionStore) {
+        // The same store again (a resend, an event that changed nothing here): nothing to redraw.
+        guard store != sessions else { return }
         let old = sessions.sessions
         let row = footerRowResolver(store)
         for session in store.sessions.values { contexts.remember(session, replacing: old[session.sessionId], row: row) }
@@ -562,8 +574,8 @@ public final class SidebarModel: ObservableObject {
 
     /// A terminal row is the one selected: no task is (Terminals/).
     func selectTerminalRow(_ id: UUID?) {
-        selectedTerminalId = id
-        if id != nil { selectedTaskId = nil }
+        if selectedTerminalId != id { selectedTerminalId = id }
+        if id != nil, selectedTaskId != nil { selectedTaskId = nil }
     }
 
     /// The task the user is now looking at. A done one has been seen — when the user picked it or
@@ -571,7 +583,7 @@ public final class SidebarModel: ObservableObject {
     /// it stays selected.
     private func shown(_ id: UUID, explicit: Bool) {
         let changed = selectedTaskId != id
-        selectedTaskId = id
+        if changed { selectedTaskId = id }
         if explicit || changed, sessions.status(ofTask: id) == .done { feed?.markSeen(task: id) }
     }
 
