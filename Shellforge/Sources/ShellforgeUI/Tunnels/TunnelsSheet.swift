@@ -33,7 +33,6 @@ struct TunnelsSheet: View {
     }
 
     /// A result row's alias column, in the mono code face, so the ports after it start on one line.
-    private static let aliasColumnWidth: CGFloat = 120
     /// The auto-start menu beside a linked tunnel: wide enough for "When Shellforge opens".
     private static let autoStartWidth: CGFloat = 190
 
@@ -129,7 +128,7 @@ struct TunnelsSheet: View {
     }
 
     private func hostRow(_ host: SSHHost) -> some View {
-        PickerResultRow(mark: .symbol("network"), key: host.alias, keyWidth: Self.aliasColumnWidth,
+        PickerResultRow(mark: .symbol("network"), key: host.alias, keyWidth: TunnelSheetLayout.aliasColumnWidth,
                         title: host.forwards.map(\.label).joined(separator: ", "), detail: nil)
     }
 

@@ -29,9 +29,10 @@ calls `uv` fails; through `CommandLauncher` it runs.
 
 ## ShellforgeUI
 
-The sidebar at the left edge of every terminal window. In M0 it is a placeholder; the projects →
-tasks → tabs tree arrives in M1. The window code reaches it through
-`sources/TerminalView/iTermShellforgeSidebar.swift`.
+The sidebar at the left edge of every terminal window: projects → tasks → tabs, the footer, and
+the sheets and Settings they open. The window code reaches it through
+`sources/TerminalView/iTermShellforgeSidebar.swift`. Everything it does, and how to reach it, is
+in [docs/features.md](docs/features.md).
 
 ## shellforged
 

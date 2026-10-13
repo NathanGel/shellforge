@@ -29,7 +29,6 @@ struct SSHHostSheet: View {
     }
 
     /// A result row's alias column, as the Tunnels sheet's, so the forwards after it start on one line.
-    private static let aliasColumnWidth: CGFloat = 120
 
     private var hosts: [SSHHost] {
         get { _hosts.wrappedValue }
@@ -79,7 +78,7 @@ struct SSHHostSheet: View {
                     SearchPicker(placeholder: "Pick a host from ~/.ssh/config",
                                  query: _query.projectedValue, open: _open.projectedValue,
                                  items: Self.offered(hosts: hosts, query: query), selection: nil,
-                                 row: { host in PickerResultRow(mark: .symbol("terminal"), key: host.alias, keyWidth: Self.aliasColumnWidth,
+                                 row: { host in PickerResultRow(mark: .symbol("terminal"), key: host.alias, keyWidth: TunnelSheetLayout.aliasColumnWidth,
                                                                 title: host.forwards.map(\.label).joined(separator: ", "), detail: nil) },
                                  selected: { _ in EmptyView() },
                                  onPick: { current = $0.alias; open = false },
