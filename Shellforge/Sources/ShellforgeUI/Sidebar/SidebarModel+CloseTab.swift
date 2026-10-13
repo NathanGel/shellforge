@@ -17,7 +17,9 @@ extension SidebarModel {
     /// A task row's Close Tab: the task's tab now selected, else its first.
     public func closeCurrentTab(ofTask id: UUID) {
         guard let task = tree.projects.lazy.flatMap(\.tasks).first(where: { $0.id == id }) else { return }
-        guard let tab = task.tabs.first(where: { $0.id == host.selectedTabId }) ?? task.tabs.first else { return }
+        // By tab id, read from the window now: focusing another pane renames the tab's session.
+        let current = host.tabs.first { $0.id == host.selectedTabId }?.tabId
+        guard let tab = task.tabs.first(where: { $0.tabId == current }) ?? task.tabs.first else { return }
         closeTab(tab.id)
     }
 }

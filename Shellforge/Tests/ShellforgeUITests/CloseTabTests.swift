@@ -74,4 +74,18 @@ import Testing
         host.onChange?()
         #expect(requests(model) { model.closeCurrentTab(ofTask: task) } == [.closeLastTab(task: task, tab: "t1")], "one left: its last")
     }
+
+    /// Focusing another pane of the current tab changes the session iTerm2 names it by, with no
+    /// refresh: the task row still closes that tab, found by its tab id, not its first.
+    @Test func theTaskRowFindsTheCurrentTabAfterAPaneChange() throws {
+        let (model, host, project, task) = try model()
+        host.tabs = [TabSnapshot(id: "t1", tabId: 1, title: "a", taskId: task, projectId: project),
+                     TabSnapshot(id: "t2", tabId: 2, title: "b", taskId: task, projectId: project)]
+        host.selectedTabId = "t2"
+        host.onChange?()
+        host.tabs[1] = TabSnapshot(id: "t2-pane", tabId: 2, title: "b", taskId: task, projectId: project)
+        host.selectedTabId = "t2-pane"
+        model.closeCurrentTab(ofTask: task)
+        #expect(host.closed == ["t2"])
+    }
 }
