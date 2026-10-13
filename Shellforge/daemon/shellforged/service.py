@@ -41,6 +41,9 @@ def _logged(step: str) -> Iterator[None]:
 
 
 POLL_SECONDS = 2.0
+# With no agent in any session there is nothing a poll would find every 2 s: Codex's rate limits
+# for the footer are read this often instead. A hook or a sessions.update still ticks at once.
+IDLE_POLL_SECONDS = 10.0
 # How long a tick waits for a check it runs on a worker thread: the orphan directories, the subagent
 # transcripts, the Codex rollouts.
 OFF_LOOP_CHECK_SECONDS = 1.0
@@ -137,13 +140,17 @@ class Service:
         await self.hooks.stop()
         await self.rpc.stop()
 
+    def poll_interval(self) -> float:
+        """2 s while any session runs an agent, else 10 s."""
+        return POLL_SECONDS if any(s.agent != "shell" for s in self.registry.all()) else IDLE_POLL_SECONDS
+
     async def _poll_forever(self) -> None:
         while True:
             try:
                 await self.tick()
             except Exception:  # noqa: BLE001
                 log.exception("tick failed")
-            await asyncio.sleep(POLL_SECONDS)
+            await asyncio.sleep(self.poll_interval())
 
     # -- RPC ---------------------------------------------------------------
     def _register_handlers(self) -> None:

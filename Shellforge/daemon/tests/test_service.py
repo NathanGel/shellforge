@@ -1940,3 +1940,17 @@ async def test_a_codex_rollout_read_that_hangs_costs_the_tick_its_deadline_not_t
     finally:
         release.set()
     assert elapsed < 1, "the tick gave up on the read at its deadline instead of waiting for it"
+
+
+async def test_an_idle_daemon_polls_every_ten_seconds(stack):
+    """No agent in any session: nothing to read every 2 s. Hooks and sessions.update still tick at once."""
+    from shellforged.service import IDLE_POLL_SECONDS, POLL_SECONDS
+    svc, it, files, r, w = stack
+    assert svc.poll_interval() == IDLE_POLL_SECONDS
+    wid = (await call(r, w, "window.createTask", {"taskId": "t1", "cwd": "/wt", "title": "x", "frame": FRAME}))["result"]["windowId"]
+    sid = it.windows[wid]["sessions"][0]
+    await svc.tick()
+    assert svc.poll_interval() == IDLE_POLL_SECONDS, "a shell is no agent"
+    await it.user_runs(sid, "claude", job_pid=4242)
+    await svc.tick()
+    assert svc.poll_interval() == POLL_SECONDS
