@@ -112,17 +112,20 @@ final class iTermShellforgeHost: TerminalHost {
         ]
         for name in names {
             observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                // Session-created fires before the session joins a tab; read the window next turn.
-                DispatchQueue.main.async {
-                    MainActor.assumeIsolated {
-                        self?.onChange?()
-                        // A tab opened, closed or moved: the daemon hears it now, not on the next tick.
-                        iTermShellforgeSidebar.link.reportsMayHaveChanged()
-                    }
+                // Session-created fires before the session joins a tab: the window is read next turn,
+                // once for every notification of this one (titles change several times a second).
+                MainActor.assumeIsolated {
+                    self?.changes.signal()
+                    // A tab opened, closed or moved: the daemon hears it now, not on the next tick.
+                    Self.reports.signal()
                 }
             })
         }
     }
+
+    private lazy var changes = ChangeCoalescer { [weak self] in self?.onChange?() }
+    /// One for the app: every window's host signals it, and one list is read and sent.
+    private static let reports = ChangeCoalescer { iTermShellforgeSidebar.link.reportsMayHaveChanged() }
 
     deinit {
         observers.forEach(NotificationCenter.default.removeObserver)
