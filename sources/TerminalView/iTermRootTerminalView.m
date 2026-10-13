@@ -1220,7 +1220,9 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
     if (!_shellforgeSidebar || _shellforgeSidebarHidden) {
         return 0;
     }
-    const CGFloat toolbeltWidth = [self shouldShowToolbelt] ? NSWidth(_toolbelt.frame) : 0;
+    // The width this layout gives the toolbelt, as the layout calculator takes it: its frame is
+    // set later in the same pass, and on a first show still holds the last one's.
+    const CGFloat toolbeltWidth = [self shouldShowToolbelt] ? floor(self.toolbeltWidth) : 0;
     return [iTermShellforgeSidebar widthForPreferred:_shellforgeSidebarPreferredWidth
                                          windowWidth:NSWidth(self.bounds)
                                        toolbeltWidth:toolbeltWidth];

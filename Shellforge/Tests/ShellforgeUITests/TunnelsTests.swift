@@ -305,6 +305,32 @@ import Testing
         _ = second
     }
 
+    /// A window opened after the first asked: its model, not yet told the helper is connected,
+    /// must not empty the set every window shares.
+    @Test func aWindowOpenedLaterAsksNothingAgain() async throws {
+        let feed = FakeFeed()
+        let (first, _, _, document, _) = try await model(tunnels: [TunnelDefinition(alias: "db", autoStart: .onLaunch)], feed: feed)
+        say(feed, [])
+        #expect(await eventually { feed.tunnelCalls == ["start db"] })
+        let second = SidebarModel(host: FakeTerminalHost(), document: document, launcher: first.launcher, feed: feed,
+                                  jiraSettings: { nil }, sshConfig: first.sshConfig)
+        #expect(await eventually { second.sshHosts != nil })
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(feed.tunnelCalls == ["start db"], "one start for the app")
+    }
+
+    /// The helper going away and coming back is a new connection: its on-launch tunnels are asked again.
+    @Test func aReconnectedHelperIsAskedAgain() async throws {
+        let feed = FakeFeed()
+        let (model, _, _, _, _) = try await model(tunnels: [TunnelDefinition(alias: "db", autoStart: .onLaunch)], feed: feed)
+        say(feed, [])
+        #expect(await eventually { feed.tunnelCalls == ["start db"] })
+        feed.status = .starting
+        feed.status = .connected
+        #expect(await eventually { feed.tunnelCalls == ["start db", "start db"] })
+        _ = model
+    }
+
     @Test func startingBeforeTheConfigIsReadReadsIt() async throws {
         let (model, _, feed, _, _) = try await model(tunnels: [TunnelDefinition(alias: "db")])
         model.sshHosts = nil

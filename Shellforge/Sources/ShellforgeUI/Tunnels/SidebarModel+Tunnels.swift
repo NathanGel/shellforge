@@ -209,10 +209,7 @@ extension SidebarModel {
     /// launch or after one restarted — once per connection. One the helper knows, even stopped, was
     /// started already: the user stopped it, or it failed, and it is left as it is.
     func autoStartOnLaunch() {
-        guard helper == .connected else {
-            launchRequested = []
-            return
-        }
+        guard helper == .connected else { return }
         guard sessions.bootstrapped, let sshHosts else { return }
         // A keep-running tunnel this helper runs may be one it adopted from the last, with no
         // environment to restart it with after a drop: each connection hands it the app's, once.

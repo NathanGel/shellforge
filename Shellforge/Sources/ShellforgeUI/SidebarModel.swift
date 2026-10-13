@@ -157,8 +157,12 @@ public final class SidebarModel: ObservableObject {
                 feed.storePublisher.sink { [weak self] store in MainActor.assumeIsolated { self?.take(store) } },
                 feed.statusPublisher.sink { [weak self] status in
                     MainActor.assumeIsolated {
-                        self?.helper = status
-                        self?.autoStartOnLaunch()
+                        guard let self else { return }
+                        // Emptied when a connection ends, not whenever this window has yet to hear
+                        // of one: a window opened later must not undo what another asked.
+                        if self.helper == .connected, status != .connected { self.launchRequested = [] }
+                        self.helper = status
+                        self.autoStartOnLaunch()
                     }
                 },
             ]
