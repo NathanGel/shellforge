@@ -455,10 +455,14 @@ public final class SidebarModel: ObservableObject {
         let workspace = document.workspace
         // A hand-edited workspace may repeat a project: the first is drawn, never a crash.
         let nodes = Dictionary(tree.projects.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        for entry in SidebarLayout.entries(projects: tree.projects.map(\.project), dividers: workspace.dividers) {
+        let dividers = Dictionary(workspace.dividers.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        // With no project the empty state stands alone; a rule under it would divide nothing.
+        let entries = tree.projects.isEmpty ? [] : SidebarLayout.entries(projects: tree.projects.map(\.project), dividers: workspace.dividers)
+        for (index, entry) in entries.enumerated() {
             guard case .project(let id) = entry, let node = nodes[id] else {
-                if case .divider(let id) = entry, let divider = workspace.dividers.first(where: { $0.id == id }) {
-                    rows.append(.divider(DividerRowItem(divider: divider, canMoveUp: canMove(entry, up: true), canMoveDown: canMove(entry, up: false))))
+                // Its ends from its place in the one layout drawn, not a layout rebuilt per divider.
+                if case .divider(let id) = entry, let divider = dividers[id] {
+                    rows.append(.divider(DividerRowItem(divider: divider, canMoveUp: index > 0, canMoveDown: index < entries.count - 1)))
                 }
                 continue
             }

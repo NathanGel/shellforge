@@ -29,6 +29,10 @@ struct DividerRow: View {
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityLabel(name.isEmpty ? "Divider" : "\(name) divider")
+        .modifier(NamedAccessibilityAction(name: "Rename", enabled: true, action: rename))
+        .modifier(NamedAccessibilityAction(name: "Move Up", enabled: row.canMoveUp) { move(true) })
+        .modifier(NamedAccessibilityAction(name: "Move Down", enabled: row.canMoveDown) { move(false) })
+        .modifier(NamedAccessibilityAction(name: "Remove Divider", enabled: true, action: remove))
         .contextMenu {
             Button("Rename…", action: rename)
             Divider()
@@ -39,5 +43,22 @@ struct DividerRow: View {
             // No confirmation: unlike removing a project this destroys nothing but the label.
             Button("Remove Divider", role: .destructive, action: remove)
         }
+    }
+
+    /// What VoiceOver offers, as the context menu does: its items that can act now.
+    static func voiceOverActions(_ row: DividerRowItem) -> [String] {
+        ["Rename"] + (row.canMoveUp ? ["Move Up"] : []) + (row.canMoveDown ? ["Move Down"] : []) + ["Remove Divider"]
+    }
+}
+
+/// A named accessibility action that is there only while `enabled`: unlike a menu item, an action
+/// cannot be greyed, only left out.
+struct NamedAccessibilityAction: ViewModifier {
+    let name: String
+    let enabled: Bool
+    let action: () -> Void
+
+    func body(content: Content) -> some View {
+        if enabled { content.accessibilityAction(named: Text(name), action) } else { content }
     }
 }

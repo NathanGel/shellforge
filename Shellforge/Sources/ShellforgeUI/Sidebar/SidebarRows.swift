@@ -1,7 +1,8 @@
 // Ported from AiTerm (app/Sources/AiTerm/Views/SidebarRows.swift: SidebarHeader, ProjectHeaderRow,
 // TaskRowView, TerminalRowView, and SidebarView.swift: SidebarBanners, SidebarBanner),
-// GPLv3, Laurens D'Hondt. Each reads Shellforge's model where AiTerm's read its AppController; what Shellforge
-// does not have yet — reviews, terminals, VS Code badges, removal — is left out, not stubbed.
+// GPLv3, Laurens D'Hondt. Each reads Shellforge's model where AiTerm's read its AppController. The
+// terminal row is in Terminals/TerminalRowView.swift; AiTerm's Pull Default Branch and Remove
+// Project are not ported yet.
 import ShellforgeCore
 import ShellforgeDesign
 import SwiftUI
@@ -44,7 +45,8 @@ struct SidebarHeader: View {
 }
 
 /// A project: its chevron, its provider's mark, its name and Jira badge, and the "+" that starts a
-/// task; right-clicked, New Task…, Jira Projects…, Tunnels… and SSH Host….
+/// task; right-clicked, AiTerm's menu: the "+" items, Open in, Jira Projects…, Tunnels… and SSH
+/// Host…, then Move Up and Move Down.
 struct ProjectHeaderRow: View {
     let node: ProjectNode
     let collapsed: Bool
@@ -97,17 +99,18 @@ struct ProjectHeaderRow: View {
         }
         .frame(height: scale(Size.projectRow)).padding(.leading, scale(Space.base)).padding(.trailing, SidebarRowLayout.trailingInset(scale))
         .modifier(RowPill(selected: false))
+        // AiTerm's order: what the "+" offers, Open in, what the project links to, then the moves.
         .contextMenu {
             newItems
             Divider()
+            OpenInMenuItems(folder: node.project.path)
+            Divider()
             Button("Jira Projects…", action: editJiraProjects)
             Button("Tunnels…", action: editTunnels)
-            Divider()
-            OpenInMenuItems(folder: node.project.path)
+            Button("SSH Host…", action: editSSHHost)
             Divider()
             Button("Move Up") { move(true) }.disabled(!canMoveUp)
             Button("Move Down") { move(false) }.disabled(!canMoveDown)
-            Button("SSH Host…", action: editSSHHost)
         }
     }
 

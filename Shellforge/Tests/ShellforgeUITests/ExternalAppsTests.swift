@@ -21,6 +21,11 @@ import Testing
         ])
     }
 
+    /// A row with no folder offers no Open in: Finder would open at /.
+    @Test func anEmptyFolderOffersNoOpenIn() {
+        #expect(OpenIn.items(folder: "", vsCodeInstalled: true).isEmpty)
+    }
+
     @Test func vsCodeItemsAreAbsentWithoutIt() {
         #expect(OpenIn.items(folder: "/api", vsCodeInstalled: false).map(\.title) == ["Open in Finder"])
     }
