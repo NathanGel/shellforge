@@ -38,4 +38,24 @@ import Testing
         host.onChange?()
         #expect(redraws(of: model) { host.onChange?() } == 0)
     }
+
+    /// Clicking another tab of the same task in iTerm2's tab bar moves the highlight at once.
+    @Test func switchingTabsOfOneTaskRedraws() throws {
+        let (model, host, _) = try model()
+        let project = try #require(model.tree.projects.first).project.id
+        let task = UUID()
+        host.tabs = [TabSnapshot(id: "s1", tabId: 1, title: "a", taskId: task, projectId: project),
+                     TabSnapshot(id: "s2", tabId: 2, title: "b", taskId: task, projectId: project)]
+        host.selectedTabId = "s1"
+        host.onChange?()
+        host.selectedTabId = "s2"
+        #expect(redraws(of: model) { host.onChange?() } == 1)
+    }
+
+    /// A divider added, renamed or removed is drawn at once: the tree holds no dividers.
+    @Test func aNewDividerRedraws() throws {
+        let (model, _, _) = try model()
+        #expect(redraws(of: model) { model.addDivider(name: "Work") } >= 1)
+        #expect(model.rows.contains { if case .divider = $0 { true } else { false } })
+    }
 }

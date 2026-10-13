@@ -100,6 +100,9 @@ class Service:
         # Ticks started so far, and the number of the last to finish without raising: a tick whose
         # caller asked before another started and finished has nothing left to read.
         self._ticks_started = 0
+        # The poll loop's current sleep, and the event that cuts it short.
+        self._sleeping_for = POLL_SECONDS
+        self._poll_sooner = asyncio.Event()
         self._last_good_tick = 0
         self._path_missing = path_missing
         self.subagent_transcripts = SubagentTranscripts()
@@ -150,7 +153,16 @@ class Service:
                 await self.tick()
             except Exception:  # noqa: BLE001
                 log.exception("tick failed")
-            await asyncio.sleep(self.poll_interval())
+            self._sleeping_for = self.poll_interval()
+            # Another tick that finds an agent while this one sleeps the idle 10 s ends that sleep
+            # and starts the 2 s an agent gets: the next poll comes within it, as it would have.
+            try:
+                await asyncio.wait_for(self._poll_sooner.wait(), timeout=self._sleeping_for)
+            except asyncio.TimeoutError:
+                pass
+            else:
+                self._poll_sooner.clear()
+                await asyncio.sleep(POLL_SECONDS)
 
     # -- RPC ---------------------------------------------------------------
     def _register_handlers(self) -> None:
@@ -314,6 +326,10 @@ class Service:
             number = self._ticks_started
             await self._tick()
             self._last_good_tick = number
+        # An agent found while the poll loop sleeps the idle 10 s: it polls again within 2 s.
+        if self.poll_interval() < self._sleeping_for:
+            self._sleeping_for = self.poll_interval()
+            self._poll_sooner.set()
 
     async def _tick(self) -> None:
         try:

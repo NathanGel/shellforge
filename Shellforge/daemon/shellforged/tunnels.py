@@ -160,14 +160,12 @@ class TunnelSupervisor:
                  up_after: float = 2.0, backoff_start: float = 1.0, backoff_cap: float = 30.0, steady_after: float = 60.0,
                  ledger: Path | None = None, ps: Callable[[int], str | None] = ps_command, traffic_every: float = 5.0,
                  sample: Callable[[list[int]], Awaitable[dict[int, tuple[int, int]]]] = traffic.sample,
-                 probe_every: float = 1.0, hold_timeout: float = 120.0, probe_up_every: float = 5.0):
+                 probe_every: float = 1.0, hold_timeout: float = 120.0):
         self.broadcast, self.clock = broadcast, clock
         self.up_after, self.backoff_start, self.backoff_cap, self.steady_after = up_after, backoff_start, backoff_cap, steady_after
         self.ledger, self.ps = ledger, ps
         self.traffic_every, self.sample = traffic_every, sample
         self.probe_every, self.hold_timeout = probe_every, hold_timeout
-        # Once a tab's forward accepts, its end is noticed within this, not within `probe_every`.
-        self.probe_up_every = probe_up_every
         self._sampler: asyncio.Task[None] | None = None
         self._tunnels: dict[str, _Tunnel] = {}
         # Ledger entries ps could not answer for: kept as they were, for the next daemon to try.
@@ -263,7 +261,7 @@ class TunnelSupervisor:
                 await self._set(tunnel, "up", None)
             elif not accepts and (tunnel.state == "up" or loop.time() >= deadline):
                 break
-            await asyncio.sleep(self.probe_up_every if tunnel.state == "up" else self.probe_every)
+            await asyncio.sleep(self.probe_every)
         if tunnel.stopping:
             return
         tunnel.held_by = None
@@ -514,10 +512,9 @@ class TunnelSupervisor:
             await asyncio.sleep(self.traffic_every)
             up = [t for t in self._tunnels.values() if t.state == "up" and t.child is not None]
             if not up:
-                # Ended until a tunnel is up again (`_set` starts it): no wakeups with none to count.
-                if not any(t.state in ("connecting", "up") for t in self._tunnels.values()):
-                    return
-                continue
+                # Nothing of the supervisor's to count — none up, or only a tab's forward: ended
+                # until a run comes up again (`_set` starts it), rather than waking for nothing.
+                return
             try:
                 counts = await self.sample([t.child.pid for t in up if t.child is not None])
             except Exception:  # noqa: BLE001 - traffic is shown, never relied on

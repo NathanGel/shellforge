@@ -63,6 +63,10 @@ public protocol SessionFeed: AnyObject {
 @MainActor
 public final class SidebarModel: ObservableObject {
     @Published public private(set) var tree = SidebarTree(projects: [], otherTabs: [])
+    /// What `rows` draws beyond the tree — the current tab's highlight and the dividers — as of the
+    /// last refresh: published so a change to either redraws, as the tree's does.
+    @Published private(set) var drawnTabId: String?
+    @Published private(set) var drawnDividers: [SidebarDivider] = []
     @Published public private(set) var selectedTaskId: UUID?
     /// The terminal row shown, when the selected tab is a terminal's (Terminals/).
     @Published public internal(set) var selectedTerminalId: UUID?
@@ -363,8 +367,11 @@ public final class SidebarModel: ObservableObject {
     private func refresh(_ workspace: Workspace? = nil) {
         // Assigned only when it differs: `@Published` announces every assignment, and every
         // announcement redraws the whole sidebar.
-        let built = SidebarTree.build(workspace ?? document.workspace, tabs: host.tabs)
+        let current = workspace ?? document.workspace
+        let built = SidebarTree.build(current, tabs: host.tabs)
         if built != tree { tree = built }
+        if host.selectedTabId != drawnTabId { drawnTabId = host.selectedTabId }
+        if current.dividers != drawnDividers { drawnDividers = current.dividers }
         refreshSSHHosts(tree.projects.map(\.project))
         contexts.prune(keeping: Set(tree.projects.flatMap(\.tasks).map { FooterRow.task($0.id) }
                                     + (tree.otherTabs + terminalTabs).map { FooterRow.tab($0.tabId) }))

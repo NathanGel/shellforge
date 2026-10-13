@@ -14,7 +14,7 @@ from tests.test_tunnels import Events, ssh_env, tunnel_stack  # noqa: F401 - fix
 
 def held(events, **overrides):
     return TunnelSupervisor(events.broadcast, **{"up_after": 0.2, "backoff_start": 0.1, "backoff_cap": 0.4,
-                                                  "probe_every": 0.05, "probe_up_every": 0.05, "hold_timeout": 2.0, **overrides})
+                                                  "probe_every": 0.05, "hold_timeout": 2.0, **overrides})
 
 
 async def listener(port=0):
@@ -188,21 +188,33 @@ async def test_hold_takes_a_bind_through_the_daemon(tunnel_stack):
     await svc.tunnels.stop("db")
 
 
-async def test_an_up_hold_probes_less_often(ssh_env, monkeypatch):
-    """Once the tab's forward accepts, the probe slows to `probe_up_every`."""
+
+async def test_a_held_tunnel_s_end_is_seen_within_a_second(ssh_env):
+    """A held forward is probed at `probe_every` up or not: its end is seen within it."""
     events = Events()
-    tunnels = held(events, probe_up_every=10.0)
+    tunnels = held(events, probe_every=1.0)
+    await tunnels.start("db", ssh_env("fail", FAKE_SSH_LINE="Host key verification failed."))
+    await wait_until(lambda: "failed" in events.states("db"))
+    port = free_port()
+    await tunnels.hold("db", port)
+    server, _ = await listener(port)
+    await wait_until(lambda: tunnels.list()[0]["state"] == "up", timeout=3)
+    server.close()
+    await server.wait_closed()
+    await wait_until(lambda: tunnels.list()[0]["heldBy"] is None, timeout=1.5)
+    await tunnels.stop_all()
+
+
+async def test_the_sampler_ends_with_only_a_held_tunnel_up(ssh_env):
+    """A tab's forward has no ssh of the supervisor's to count: nothing to sample, so no wakeups."""
+    events = Events()
+    tunnels = held(events, traffic_every=0.05)
     await tunnels.start("db", ssh_env("fail", FAKE_SSH_LINE="Host key verification failed."))
     await wait_until(lambda: "failed" in events.states("db"))
     port = free_port()
     await tunnels.hold("db", port)
     server, _ = await listener(port)
     await wait_until(lambda: tunnels.list()[0]["state"] == "up")
-    await asyncio.sleep(0.1)  # the probe that saw it up has gone to its slower sleep
-    probes = []
-    real = TunnelSupervisor._bound
-    monkeypatch.setattr(TunnelSupervisor, "_bound", staticmethod(lambda p, a: (probes.append(1), real(p, a))[1]))
-    await asyncio.sleep(0.5)
-    assert len(probes) <= 1
+    await wait_until(lambda: tunnels._sampler is None or tunnels._sampler.done())
     server.close()
     await tunnels.stop_all()
