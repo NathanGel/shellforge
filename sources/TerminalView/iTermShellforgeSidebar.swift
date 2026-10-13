@@ -232,7 +232,9 @@ final class iTermShellforgeHost: TerminalHost {
     /// iTerm2 can refuse a split (a tmux tab, a window too small): the task stays open, and says so.
     private func split(_ session: PTYSession, running command: String, in directory: String, base: [AnyHashable: Any], title: String) {
         let profile = iTermShellforgeSidebar.taskTabProfile(base: base, directory: directory, initialText: TabCommand.initialText(command))
-        guard let windowController, windowController.canSplitPaneVertically(true, withBookmark: profile) else {
+        // The agent's tab, which need not be the current one by now.
+        guard let windowController, let tab = windowController.tab(for: session),
+              windowController.canSplitPaneVertically(true, withBookmark: profile, in: tab) else {
             onSplitRefused?(title)
             return
         }

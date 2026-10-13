@@ -10796,6 +10796,12 @@ static CGFloat iTermDimmingAmount(PSMTabBarControl *tabView) {
 }
 
 - (BOOL)canSplitPaneVertically:(BOOL)isVertical withBookmark:(Profile *)theBookmark {
+    return [self canSplitPaneVertically:isVertical withBookmark:theBookmark inTab:[self currentTab]];
+}
+
+// Shellforge: the tab a split goes into, which need not be the current one (a task's ssh pane
+// opens beside its agent after another tab may have been selected).
+- (BOOL)canSplitPaneVertically:(BOOL)isVertical withBookmark:(Profile *)theBookmark inTab:(PTYTab *)tab {
     if ([self inInstantReplay]) {
         // Things get very complicated in this case. Just disallow it.
         RLog(@"In instant replay");
@@ -10818,7 +10824,7 @@ static CGFloat iTermDimmingAmount(PSMTabBarControl *tabView) {
     NSSize newSessionSize = NSMakeSize(charSize.width * kVT100ScreenMinColumns + [iTermPreferences sideMargins] * 2,
                                        charSize.height * kVT100ScreenMinRows + [iTermPreferences topBottomMargins] * 2);
 
-    return [[self currentTab] canSplitVertically:isVertical withSize:newSessionSize];
+    return [tab canSplitVertically:isVertical withSize:newSessionSize];
 }
 
 - (void)toggleMaximizeActivePane {
