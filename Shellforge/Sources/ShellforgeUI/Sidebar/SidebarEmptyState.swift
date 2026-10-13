@@ -17,7 +17,7 @@ struct SidebarEmptyState: View {
             VStack(alignment: .leading, spacing: scale(Space.tight)) {
                 Text("Add a git repository to start.").font(Typography.body).foregroundStyle(Palette.text)
                     .fixedSize(horizontal: false, vertical: true)
-                HelpText("Each task gets its own worktree and iTerm2 window.")
+                HelpText("Each task gets its own worktree and tab.")
             }
             Button("Add Project…", action: add)
                 .buttonStyle(.bordered)

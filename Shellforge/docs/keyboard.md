@@ -32,7 +32,7 @@ own (Settings › Keys, or a profile's Keys) runs before any menu item, as in iT
 | Keys | Action | Notes |
 |---|---|---|
 | ⌘B | Backpack Mode | AiTerm's key; free in iTerm2, whose B shortcuts all carry another modifier. |
-| ⌃⌘S | Hide Sidebar / Show Sidebar | The key Finder and Mail use. New windows open as the last toggle left them. |
+| ⌃⌘S | Hide Sidebar / Show Sidebar | The key Finder and Mail use. Also the sidebar icon in the sidebar's header, and, while hidden, in the window's title bar. New windows open as the last toggle left them. |
 | — | Tunnels › Start / Stop Tunnel … | No keys; Open Quickly (⇧⌘O) finds them by name. |
 
 ## The sidebar's edge

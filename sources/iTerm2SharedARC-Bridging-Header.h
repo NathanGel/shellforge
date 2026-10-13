@@ -29,6 +29,7 @@
 #import "ThreeFingerTapGestureRecognizer.h"
 #import "WindowControllerInterface.h"
 #import "PseudoTerminal.h"
+#import "iTermRootTerminalView.h"
 #import "iTermPromptOnCloseReason.h"
 #import "PseudoTerminal+Private.h"
 #import "PseudoTerminal+WindowStyle.h"

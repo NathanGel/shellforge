@@ -139,6 +139,8 @@ NS_CLASS_AVAILABLE_MAC(10_14)
     // Shellforge: this window's own preferred width; the saved one only seeds new windows.
     CGFloat _shellforgeSidebarPreferredWidth;
     iTermDragHandleView *_shellforgeSidebarDragHandle;
+    // Shellforge: while the sidebar is hidden, the title bar's button that brings it back.
+    NSTitlebarAccessoryViewController *_shellforgeShowSidebarAccessory;
     BOOL _tabViewFrameReduced;
     BOOL _haveShownToolbelt;
     iTermStoplightHotbox *_stoplightHotbox;
@@ -1260,6 +1262,30 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
 }
 
 // Shellforge: a handle across the sidebar's right edge, clear of its list's scroller.
+// Shellforge: the title bar's Show Sidebar button, beside the window buttons, while the sidebar is
+// hidden. A window with no title bar (full screen) has ⌃⌘S and View › Show Sidebar.
+- (void)updateShellforgeShowSidebarButton {
+    NSWindow *window = self.window;
+    if (!_shellforgeSidebar || !window || !(window.styleMask & NSWindowStyleMaskTitled)) {
+        return;
+    }
+    if (!_shellforgeShowSidebarAccessory) {
+        NSImage *image = [NSImage imageWithSystemSymbolName:@"sidebar.left" accessibilityDescription:@"Show Sidebar"];
+        NSButton *button = [NSButton buttonWithImage:image target:self action:@selector(toggleShellforgeSidebar)];
+        button.bordered = NO;
+        button.toolTip = @"Show Sidebar (⌃⌘S)";
+        button.frame = NSMakeRect(0, 0, 28, 22);
+        NSView *holder = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 36, 22)];
+        button.frame = NSMakeRect(4, 0, 28, 22);
+        [holder addSubview:button];
+        _shellforgeShowSidebarAccessory = [[NSTitlebarAccessoryViewController alloc] init];
+        _shellforgeShowSidebarAccessory.view = holder;
+        _shellforgeShowSidebarAccessory.layoutAttribute = NSLayoutAttributeLeft;
+        [window addTitlebarAccessoryViewController:_shellforgeShowSidebarAccessory];
+    }
+    _shellforgeShowSidebarAccessory.hidden = !_shellforgeSidebarHidden;
+}
+
 - (void)updateShellforgeSidebarDragHandle {
     // Hidden, or stepped aside in a window too narrow for it and the terminal both.
     if (!_shellforgeSidebar || _shellforgeSidebarHidden || self.shellforgeSidebarWidth == 0) {
@@ -1741,6 +1767,7 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
         [iTermLayoutCalculator calculateLayoutWithInputs:[self layoutInputsForWindow:thisWindow]].leftPanelFrame;
     _shellforgeSidebar.hidden = _shellforgeSidebarHidden;
     [self updateShellforgeSidebarDragHandle];
+    [self updateShellforgeShowSidebarButton];
     if (@available(macOS 12.0, *)) {
         const CGFloat notchHeight = [self notchInset];
         _notchMask.hidden = (notchHeight == 0);

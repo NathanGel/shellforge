@@ -14,12 +14,13 @@ public enum ShellforgeSidebar {
     /// `hooks` is the app's Agent hooks sheet.
     /// `machine` is the app's one sampler of the Mac's readings, for the footer.
     /// `backpack` is the app's one Backpack Mode; `showBackpack` hands back how this sidebar opens
-    /// its sheet, for the View menu's ⌘B.
+    /// its sheet, for the View menu's ⌘B. `hideSidebar` is the header's Hide Sidebar button: ⌃⌘S.
     public static func makeView(model: SidebarModel, chooseFolder: @escaping @MainActor () -> String?, hooks: AgentHooksModel,
                                 machine: MachineMonitor, backpack: BackpackController,
-                                showBackpack: @escaping @MainActor (@escaping @MainActor () -> Void) -> Void = { _ in }) -> NSView {
+                                showBackpack: @escaping @MainActor (@escaping @MainActor () -> Void) -> Void = { _ in },
+                                hideSidebar: @escaping @MainActor () -> Void = {}) -> NSView {
         let host = SidebarHostingView(rootView: SidebarView(model: model, chooseFolder: chooseFolder, hooks: hooks, machine: machine,
-                                                            backpack: backpack, showBackpack: showBackpack))
+                                                            backpack: backpack, showBackpack: showBackpack, hideSidebar: hideSidebar))
         host.frame = NSRect(x: 0, y: 0, width: width, height: 400)
         // AiTerm is dark-only and forced the whole app dark; here only the sidebar is, so iTerm2's
         // own windows keep the appearance the user chose. Every colour below resolves against this.
@@ -85,6 +86,7 @@ struct SidebarView: View {
     let machine: MachineMonitor
     let backpack: BackpackController
     let showBackpack: @MainActor (@escaping @MainActor () -> Void) -> Void
+    let hideSidebar: @MainActor () -> Void
     /// The window the sidebar is drawn in, which the Agent hooks panel hangs from.
     @State private var anchor = WindowAnchor()
     @State private var sheet = PanelSlot()
@@ -94,7 +96,8 @@ struct SidebarView: View {
         VStack(spacing: 0) {
             SidebarBanners(model: model)
             List {
-                SidebarHeader(addProject: addProject, addDivider: showAddDivider, showHooks: showHooks, showMacSettings: showMacSettings)
+                SidebarHeader(addProject: addProject, addDivider: showAddDivider, showHooks: showHooks, showMacSettings: showMacSettings,
+                              hideSidebar: hideSidebar)
                 ForEach(model.rows) { row in rowView(row) }
             }
             .listStyle(.sidebar)
