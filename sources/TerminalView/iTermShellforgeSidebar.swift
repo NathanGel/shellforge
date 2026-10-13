@@ -571,6 +571,12 @@ extension iTermShellforgeSidebar {
         SidebarLayoutSettings.width(preferred, windowWidth: windowWidth, beside: toolbeltWidth)
     }
 
+    /// The narrowest a window showing the sidebar can be dragged, with a toolbelt of `toolbeltWidth`.
+    /// The toolbelt as iTerm2 will lay it out: at most half the window.
+    @objc static func minimumWindowWidth(toolbeltWidth: CGFloat) -> CGFloat {
+        SidebarLayoutSettings.minimumWindowWidth(beside: toolbeltWidth, toolbeltMaxFraction: 0.5)
+    }
+
     /// The drag handle's frame for a sidebar of `frame`.
     @objc static func dragHandleFrame(forSidebar frame: NSRect) -> NSRect {
         let handle = SidebarLayoutSettings.dragHandle(edge: frame.maxX)

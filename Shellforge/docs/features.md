@@ -14,7 +14,9 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 - **Width.** Drag the sidebar's right edge to resize it.
   - The default width is 420 pt, the minimum 360 and the maximum 720.
   - Each window keeps its own width. The last width you dragged is the starting width for new windows.
-- **Terminal space.** The terminal always keeps at least 320 pt, about 40 columns, with iTerm2's toolbelt counted. In a window too narrow for both, the sidebar steps aside.
+- **Terminal space.** The terminal always keeps at least 320 pt, about 40 columns, with iTerm2's toolbelt counted.
+  - While the sidebar shows, the window can't be dragged narrower than both minimums together: 680 pt, plus the toolbelt's width when it is open. The sidebar shrinks to its minimum, then the window stops, rather than the sidebar jumping away.
+  - A window sized some other way, such as tiling or a smaller screen, can still end up too narrow. There the sidebar steps aside.
 - **Header.** PROJECTS, then four buttons, left to right:
   - Agent hooks (the bolt);
   - Settings (the gear);
