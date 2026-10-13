@@ -83,9 +83,16 @@ final class iTermShellforgeSidebar: NSObject {
     /// The default profile changed to run the login shell in `directory`.
     /// `initialText` is typed into the shell once it starts — the task's agent — already escaped for
     /// iTerm2's interpolated-string evaluator (`TabCommand.initialText`).
+    /// A profile key PTYSession reads: its initial text is sent once, then cleared from the
+    /// session, so a split or a new tab copying the session's profile does not run the agent again.
+    @objc nonisolated static let initialTextOnceKey = "Shellforge Initial Text Once"
+
     nonisolated static func taskTabProfile(base: [AnyHashable: Any], directory: String, initialText: String? = nil) -> [AnyHashable: Any] {
         var profile = base
-        if let initialText { profile[KEY_INITIAL_TEXT] = initialText }
+        if let initialText {
+            profile[KEY_INITIAL_TEXT] = initialText
+            profile[initialTextOnceKey] = true
+        }
         profile[KEY_CUSTOM_COMMAND] = "No"
         profile[KEY_CUSTOM_DIRECTORY] = kProfilePreferenceInitialDirectoryCustomValue
         profile[KEY_WORKING_DIRECTORY] = directory
