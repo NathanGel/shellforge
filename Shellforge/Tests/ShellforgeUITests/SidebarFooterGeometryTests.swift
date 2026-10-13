@@ -223,7 +223,13 @@ extension SidebarFooterGeometryTests {
 
     /// `band` is in points from the top; it has to leave out every full-width rule.
     private func paintedWidth(_ host: NSHostingView<AnyView>, band points: Range<Int>) throws -> CGFloat {
-        let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        // At 2× whatever screens are attached: the view's own choice follows the displays (a 1×
+        // monitor beside a Retina one), and at 1× a measure lands on whole points, 2 pt off.
+        let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(host.bounds.width * 2),
+                                                   pixelsHigh: Int(host.bounds.height * 2), bitsPerSample: 8,
+                                                   samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                                   colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        bitmap.size = host.bounds.size
         host.cacheDisplay(in: host.bounds, to: bitmap)
         let scale = CGFloat(bitmap.pixelsWide) / host.bounds.width
         let band = Int(CGFloat(points.lowerBound) * scale)..<min(bitmap.pixelsHigh, Int(CGFloat(points.upperBound) * scale))
