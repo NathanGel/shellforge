@@ -19,8 +19,11 @@ public enum RowRemoval: Equatable, Sendable {
 extension SidebarModel {
     /// True when the task was removed. One removal per task at a time: a second Remove while the
     /// first is asking or running does nothing.
+    ///
+    /// `closingFirst`: the tab a Close Tab started this from. Once Remove is confirmed it closes as
+    /// Close Tab closes it — a running job asks — and a refusal stops the removal there.
     @discardableResult
-    public func confirmRemove(taskId id: UUID) async -> Bool {
+    public func confirmRemove(taskId id: UUID, closingFirst tab: String? = nil) async -> Bool {
         guard !removalBoard.asking.contains(id), removalBoard.removals[id] != .removing,
               let shown = document.workspace.tasks.first(where: { $0.id == id }),
               document.workspace.projects.contains(where: { $0.id == shown.projectId }) else { return false }
@@ -52,6 +55,10 @@ extension SidebarModel {
                     buttons: ["Keep \(task.kindName)", "Delete Changes and Remove"], escape: 0))
                 guard unsaved.button == 1 else { removalBoard.removals[id] = nil; return false }
                 force = true
+            }
+            if let tab, !host.close(tab: tab) {
+                removalBoard.removals[id] = nil
+                return false
             }
             guard host.closeTabs(ofTask: id) else {
                 removalBoard.removals[id] = .stopped("Not removed: its tabs did not close")

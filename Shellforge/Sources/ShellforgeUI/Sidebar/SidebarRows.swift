@@ -135,6 +135,8 @@ struct TaskRowView: View {
     let activate: () -> Void
     var remove: () -> Void = {}
     var rename: () -> Void = {}
+    /// Its current tab's Close Tab; the last one asks to remove the task.
+    var closeTab: () -> Void = {}
     @Environment(\.interfaceScale) private var scale
 
     var body: some View {
@@ -177,6 +179,7 @@ struct TaskRowView: View {
             Divider()
             OpenInMenuItems(folder: node.task.worktreePath)
             Divider()
+            if !node.tabs.isEmpty { Button("Close Tab", action: closeTab).disabled(removal == .removing) }
             Button("Remove \(node.task.kindName)…", role: .destructive, action: remove).disabled(removal == .removing)
         }
     }
@@ -202,6 +205,7 @@ struct TabRowView: View {
     let agents: [SessionAgent]
     let status: SessionState
     let activate: () -> Void
+    var close: () -> Void = {}
     @Environment(\.interfaceScale) private var scale
 
     var body: some View {
@@ -217,6 +221,8 @@ struct TabRowView: View {
         .padding(.leading, scale(Space.section))
         .accessibilityLabel(tab.title)
         .accessibilityValue(status.label)
+        .accessibilityAction(named: Text("Close Tab"), close)
+        .contextMenu { Button("Close Tab", action: close) }
     }
 
     /// AiTerm's terminal row: its agents, or its shell's `>_` when none is known.

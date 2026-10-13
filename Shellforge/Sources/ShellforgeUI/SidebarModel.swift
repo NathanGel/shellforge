@@ -28,6 +28,11 @@ public protocol TerminalHost: AnyObject {
     func openTab(in directory: String, terminalId: UUID, projectId: UUID, title: String)
     /// Closes every tab of the terminal, in every window. True once none is left open.
     func closeTabs(ofTerminal id: UUID) -> Bool
+    /// Closes the tab holding session `id`, as iTerm2's Close Tab does: a running job asks first.
+    /// True once it closed.
+    @discardableResult func close(tab id: String) -> Bool
+    /// How many tabs of the task every window holds.
+    func tabCount(ofTask id: UUID) -> Int
 }
 
 extension TerminalHost {

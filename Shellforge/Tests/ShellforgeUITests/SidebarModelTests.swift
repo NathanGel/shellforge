@@ -23,6 +23,21 @@ import Testing
         onChange?()
     }
 
+    /// Other windows' tabs, for what is a task's last tab.
+    var tabsElsewhere: [TabSnapshot] = []
+    var closed: [String] = []
+    /// iTerm2's running-job alert answered Cancel.
+    var refusesClose = false
+    func close(tab id: String) -> Bool {
+        guard !refusesClose else { return false }
+        closed.append(id)
+        tabs.removeAll { $0.id == id }
+        if selectedTabId == id { selectedTabId = nil }
+        onChange?()
+        return true
+    }
+    func tabCount(ofTask id: UUID) -> Int { (tabs + tabsElsewhere).filter { $0.taskId == id }.count }
+
     func openTab(in directory: String, taskId: UUID, projectId: UUID, title: String, command: String?, environment: [String: String],
                  beside: String?) {
         opened.append((directory, taskId, projectId, title, command, environment, beside))

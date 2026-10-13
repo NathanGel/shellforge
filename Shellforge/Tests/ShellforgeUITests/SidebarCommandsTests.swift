@@ -147,3 +147,13 @@ import Testing
         #expect(windows.model(for: nil) == nil)
     }
 }
+
+/// macOS acts on some ⌃⌘ keys before any app's menu sees them: ⌃⌘D looked up a word, and Add
+/// Divider never fired.
+@Suite struct SystemKeyTests {
+    @Test func noKeyIsOneMacOSKeeps() {
+        let ours = (SidebarCommandMenu.items + [SidebarCommandMenu.toggleSidebar]).filter { $0.command != nil || $0.key == "s" }.map(\.key)
+        #expect(Set(ours).isDisjoint(with: SidebarCommandMenu.systemReserved))
+        #expect(SidebarCommandMenu.items.first { $0.command == .addDivider }?.key == "g")
+    }
+}
