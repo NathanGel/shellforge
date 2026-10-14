@@ -1582,6 +1582,10 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
     return [self tabBarShouldBeVisibleEvenWhenOnLoan];
 }
 
+- (NSRect)shellforgeSidebarFrame {
+    return _shellforgeSidebar.frame;
+}
+
 - (BOOL)hasShellforgeSidebar {
     return _shellforgeSidebar != nil;
 }
@@ -1818,6 +1822,8 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
 
     // Shellforge sidebar
     inputs.leftPanelWidth = self.shellforgeSidebarWidth;
+    // Shellforge: the floating panel stands off the window's edges.
+    inputs.leftPanelInset = [iTermShellforgeSidebar floats] ? [iTermShellforgeSidebar floatingInset] : 0;
 
     // Toolbelt
     inputs.toolbeltWidth = floor(self.toolbeltWidth);
