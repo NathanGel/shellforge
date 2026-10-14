@@ -29,9 +29,9 @@ struct LogosTests {
     /// The tint a row paints a mark in is resolved once, then remembered: the same text again, and
     /// the right one.
     @Test func aTintIsResolvedToItsHexOnceAndRemembered() {
-        #expect(Icon.hexString(Palette.markPaper) == "#FFFFFF")
-        #expect(Icon.hexString(Palette.markInk) == "#000000")
-        #expect(Icon.hexString(Palette.markPaper) == "#FFFFFF")
+        #expect(Icon.hexString(Palette.markPaper, dark: true) == "#FFFFFF")
+        #expect(Icon.hexString(Palette.markInk, dark: true) == "#000000")
+        #expect(Icon.hexString(Palette.markPaper, dark: true) == "#FFFFFF")
     }
 
     /// Two brands wrongly given one name are not drawn as each other, whatever their paths: the

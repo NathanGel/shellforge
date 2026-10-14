@@ -39,6 +39,9 @@ struct VendorMark: View {
                     Rectangle().fill(Palette.markPaper).frame(width: size * 0.2, height: Self.underscoreWeight).padding(.bottom, size * 0.08)
                 }
             }
+            // The disc's edge: a white Codex disc on a light sidebar, or a black Pi disc on a dark
+            // one, would otherwise have no edge.
+            Circle().strokeBorder(Palette.border, lineWidth: 1)
         }.frame(width: size, height: size)
     }
 }
