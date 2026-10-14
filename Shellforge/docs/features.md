@@ -111,6 +111,10 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
   - needs input: amber;
   - done: green, until you look at the task.
 - **The task row** shows the agents, the title, the Jira and MR/PR badges, VS Code and the branch.
+- **Lines changed.** A task's VS Code badge shows how far its worktree has moved from its base branch, such as `+12 −3`.
+  - It counts commits, uncommitted edits and new untracked files, but not ignored or binary files.
+  - Hover it to see the base: "Open in VS Code — 12 added, 3 removed against main".
+  - A task with nothing changed shows the plain badge. The counts update within about 5 seconds.
 - **Moving between tasks.**
   - ⌃⌘] and ⌃⌘[ step through the open projects' tasks, wrapping round. They never open a tab.
   - **Focus View (⌃⌘A)** opens the projects with a task or terminal waiting on you, folds the rest, and shows the first one.
