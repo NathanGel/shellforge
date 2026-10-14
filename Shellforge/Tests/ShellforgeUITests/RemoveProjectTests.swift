@@ -126,6 +126,28 @@ import Testing
         #expect(s.document.workspace.dividers.map(\.position) == [0, 0, 1])
     }
 
+    @Test func removingAProjectForgetsItsCaches() async throws {
+        let s = try setup([Self.remove])
+        await eventually { s.model.providers[s.a.id] != nil }
+        s.model.defaultBranches[s.a.id] = "main"
+        #expect(await s.model.confirmRemove(project: s.a.id))
+        #expect(s.model.providers[s.a.id] == nil && s.model.defaultBranches[s.a.id] == nil)
+    }
+
+    /// A New Task or New Review submitted after its project went, in another window, says so
+    /// rather than closing as if it were made.
+    @Test func aCreateInARemovedProjectSaysSo() async throws {
+        let s = try setup([])
+        let gone = UUID()
+        await #expect(throws: ProjectGone()) {
+            try await s.model.newTask(draft: TaskDraft(baseBranch: "main", agentId: "claude", model: "", reasoning: nil), in: gone)
+        }
+        await #expect(throws: ProjectGone()) {
+            try await s.model.newReview(draft: ReviewDraft(mr: nil, agentId: "claude", model: "", reasoning: nil), in: gone)
+        }
+        #expect(ProjectGone().errorDescription == "The project was removed.")
+    }
+
     @Test func aFailedCreateLeavesTheProjectRemovable() async throws {
         let s = try setup([])
         await #expect(throws: (any Error).self) {

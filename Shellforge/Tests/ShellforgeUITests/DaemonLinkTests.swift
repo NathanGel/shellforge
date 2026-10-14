@@ -219,6 +219,15 @@ import Testing
         #expect(DaemonLink.tunnelMessage("stop", "db", refused) == "Couldn’t stop tunnel db: \(refused.localizedDescription)")
     }
 
+    /// Only a lost connection reads as dropped: anything else is said as what it is.
+    @Test func otherFailuresAreSaidInTheirOwnWords() {
+        #expect(DaemonLink.tunnelMessage("start", "db", CancellationError()) == "Couldn’t start tunnel db: the call was cancelled.")
+        let unreadable = DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "bad"))
+        #expect(DaemonLink.tunnelMessage("start", "db", unreadable) == "Couldn’t start tunnel db: the helper’s reply couldn’t be read.")
+        struct Worded: LocalizedError { var errorDescription: String? { "the port is taken" } }
+        #expect(DaemonLink.tunnelMessage("watch", "db", Worded()) == "Couldn’t watch tunnel db: the port is taken")
+    }
+
     @Test func aRefusedStopIsSaid() async throws {
         let server = tunnelRefusingServer()
         let link = DaemonLink(socketPath: server.path, daemonDir: nil, findPython: { nil }, reports: { [] })

@@ -235,9 +235,7 @@ final class iTermShellforgeHost: TerminalHost {
         let windows = (iTermController.sharedInstance()?.terminals() ?? []) as [PseudoTerminal]
         return windows.flatMap { $0.tabs() }.reduce(0) { count, tab in
             let sessions: [PTYSession] = tab.sessions()
-            let tags = sessions.map { $0.genericScope.value(forVariableName: ShellforgeTags.task) as? String }
-            guard tags.contains(tag) else { return count }
-            return count + tags.filter { $0 == tag || $0 == nil }.count
+            return count + TaskTabs.paneCount(of: tag, in: sessions.map { $0.genericScope.value(forVariableName: ShellforgeTags.task) as? String })
         }
     }
 

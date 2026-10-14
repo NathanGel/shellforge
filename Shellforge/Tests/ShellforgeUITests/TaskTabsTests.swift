@@ -96,6 +96,15 @@ import Testing
         #expect(TaskTabs.joining([nil, nil]) == nil, "no task's tab")
     }
 
+    /// A tab two tasks share: its untagged pane counts for the task it will join, not for both.
+    @Test func aSharedTabsUntaggedPaneCountsForOneTask() {
+        let a = "a", b = "b"
+        #expect(TaskTabs.paneCount(of: a, in: [a, b, nil]) == 2)
+        #expect(TaskTabs.paneCount(of: b, in: [a, b, nil]) == 1)
+        #expect(TaskTabs.paneCount(of: a, in: [a, nil, nil]) == 3)
+        #expect(TaskTabs.paneCount(of: a, in: [b, nil]) == 0)
+    }
+
     // -- M5e --
 
     /// The fresh tab, as the app opens iTerm2's own.

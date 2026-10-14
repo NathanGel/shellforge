@@ -51,6 +51,12 @@ public struct AgentNotInstalled: Error, Equatable, LocalizedError {
     public var errorDescription: String? { "\(agent) isn’t installed. Install it in Settings › Agents." }
 }
 
+/// A create submitted after its project was removed, in another window.
+public struct ProjectGone: Error, Equatable, LocalizedError {
+    public init() {}
+    public var errorDescription: String? { "The project was removed." }
+}
+
 /// What the sidebar needs from the helper: its status, what the daemon says about the sessions,
 /// and where to say a task or a terminal was seen. `DaemonLink` is the app's; the tests use a fake.
 @MainActor
@@ -89,6 +95,11 @@ public final class SidebarModel: ObservableObject {
     /// `noticeLifetime` (SidebarModel+PullDefault.swift).
     @Published public internal(set) var notice: String?
     var noticeLifetime: Duration = .seconds(6)
+    /// Which notice is up: a notice's timer clears only its own, not the same words said again.
+    var noticeGeneration = 0
+    /// The pull failure last said, and whose: that project's next good pull clears it while it is
+    /// still the error shown. Owned, not matched by words: two projects can fail in the same ones.
+    var shownPullError: (project: UUID, text: String)?
     /// Each project's default branch, read with its provider, for the menu's "Pull main".
     @Published var defaultBranches: [UUID: String] = [:]
     /// What the daemon says about the sessions: every dot is read from it.
@@ -280,8 +291,8 @@ public final class SidebarModel: ObservableObject {
     /// written beside it when too long or too strange to type), then the task saved and its tab
     /// opened running the agent. Throws, with nothing saved, so the sheet keeps its draft and says why.
     public func newTask(draft: TaskDraft, in projectId: UUID) async throws {
-        guard let project = document.workspace.projects.first(where: { $0.id == projectId }),
-              let agent = agents.first(where: { $0.id == draft.agentId }) else { return }
+        guard let project = document.workspace.projects.first(where: { $0.id == projectId }) else { throw ProjectGone() }
+        guard let agent = agents.first(where: { $0.id == draft.agentId }) else { return }
         let launcher = self.launcher
         // Held for Remove Project from the start of git's work until the task is saved.
         let made = try await whileCreating(in: projectId) { () async throws -> (TaskItem, String) in
@@ -485,16 +496,28 @@ public final class SidebarModel: ObservableObject {
         let launcher = self.launcher
         Task {
             let found = await BackgroundWork.run {
-                unknown.map { ($0.id, ProviderDetector.provider(ofRepositoryAt: $0.path, launcher: launcher),
-                               Repository.defaultBranch(of: $0.path, launcher: launcher)) }
+                unknown.map { project -> (UUID, Provider, String?) in
+                    let provider = ProviderDetector.provider(ofRepositoryAt: project.path, launcher: launcher)
+                    // Only a menu that offers Pull names the branch.
+                    return (project.id, provider,
+                            Self.offersPull(provider) ? Repository.defaultBranch(of: project.path, launcher: launcher) : nil)
+                }
             }
             // One publication for the batch, not one redraw per project.
             var next = providers, branches = defaultBranches
-            for (id, provider, branch) in found { next[id] = provider; branches[id] = branch }
+            for (id, provider, branch) in found { next[id] = provider; if let branch { branches[id] = branch } }
             providers = next
             defaultBranches = branches
             detecting.subtract(found.map(\.0))
         }
+    }
+
+    /// What the sidebar read about a project it no longer has.
+    func forgetCaches(of id: UUID) {
+        if providers[id] != nil { providers[id] = nil }
+        if defaultBranches[id] != nil { defaultBranches[id] = nil }
+        detecting.remove(id)
+        if shownPullError?.project == id { shownPullError = nil }
     }
 
     public func status(ofTask id: UUID) -> SessionState { sessions.status(ofTask: id) }

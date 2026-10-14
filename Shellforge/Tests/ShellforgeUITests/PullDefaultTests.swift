@@ -33,10 +33,8 @@ import Testing
     @Test func pullSaysItsOutcomeThenClearsIt() async throws {
         let (model, project, _) = try await setup(originAhead: 2)
         model.noticeLifetime = .milliseconds(50)
-        model.lastError = "an older failure"
         await model.pullDefault(project: project)
         #expect(model.notice == "main updated with 2 new commits.")
-        #expect(model.lastError == nil)
         #expect(model.defaultBranch(of: project) == "main")
         #expect(await eventually { model.notice == nil })
     }
@@ -82,6 +80,68 @@ import Testing
         #expect(model.notice == nil)
         #expect(model.lastError?.hasPrefix("Couldn’t pull the default branch.") == true)
         #expect(try repo.launcher.run("git", ["-C", repo.path, "rev-parse", "main"]).stdout == before)
+    }
+
+    /// A notice's timer clears only its own: the same words said again stay their full time.
+    @Test func aRepeatedNoticeStaysItsFullTime() async throws {
+        let (model, _, _) = try await setup(originAhead: 0)
+        model.noticeLifetime = .seconds(1)
+        model.show(notice: "main is already up to date.")
+        try await Task.sleep(for: .milliseconds(600))
+        model.show(notice: "main is already up to date.")
+        try await Task.sleep(for: .milliseconds(600))
+        #expect(model.notice == "main is already up to date.", "the first timer has fired, and left the second")
+        #expect(await eventually { model.notice == nil })
+    }
+
+    @Test func aPullKeepsAnUnrelatedError() async throws {
+        let (model, project, _) = try await setup(originAhead: 1)
+        model.lastError = "Branch fix-login kept: 1 commit not on origin."
+        await model.pullDefault(project: project)
+        #expect(model.notice == "main updated with 1 new commit.")
+        #expect(model.lastError == "Branch fix-login kept: 1 commit not on origin.")
+    }
+
+    @Test func aPullClearsItsOwnEarlierError() async throws {
+        let (model, project, repo) = try await setup(originAhead: 1)
+        try git(repo, ["commit", "-q", "--allow-empty", "-m", "mine"])
+        await model.pullDefault(project: project)
+        #expect(model.lastError?.hasPrefix("Couldn’t pull main.") == true)
+        try git(repo, ["reset", "-q", "--hard", "HEAD~1"])
+        await model.pullDefault(project: project)
+        #expect(model.lastError == nil)
+    }
+
+    /// Two projects refused in the same words: one's good pull leaves the other's error, which is
+    /// the one shown.
+    @Test func aPullClearsOnlyTheErrorItOwns() async throws {
+        let (model, a, repoA) = try await setup(originAhead: 1)
+        try git(repoA, ["commit", "-q", "--allow-empty", "-m", "mine"])
+        let (other, _, repoB) = try await setup(originAhead: 1)
+        _ = other
+        try git(repoB, ["commit", "-q", "--allow-empty", "-m", "mine"])
+        await model.addProject(folder: repoB.path)
+        let b = try #require(model.document.workspace.projects.last).id
+        await model.pullDefault(project: a)
+        await model.pullDefault(project: b)
+        let shown = try #require(model.lastError)
+        try git(repoA, ["reset", "-q", "--hard", "HEAD~1"])
+        await model.pullDefault(project: a)
+        #expect(model.lastError == shown, "B's refusal, in A's words, stays")
+    }
+
+    /// Only a project whose menu offers Pull has its default branch read at launch.
+    @Test func onlyHostedProjectsReadTheirDefaultBranch() async throws {
+        let (model, project, _) = try await setup(originAhead: 0)
+        await eventually { model.providers[project] != nil }
+        #expect(model.providers[project] == .git)
+        #expect(model.defaultBranches[project] == nil)
+        let hosted = try GitRepoForUI()
+        try git(hosted, ["remote", "add", "origin", "git@github.com:example/hosted.git"])
+        await model.addProject(folder: hosted.path)
+        let id = try #require(model.document.workspace.projects.last).id
+        #expect(await eventually { model.providers[id] == .github })
+        #expect(model.defaultBranches[id] == "main")
     }
 
     @Test func theMenuOffersItOnlyForAHostedProject() {
