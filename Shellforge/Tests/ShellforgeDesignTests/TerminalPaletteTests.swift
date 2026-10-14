@@ -72,4 +72,32 @@ import Testing
         #expect(abs(white.contrast(with: black) - 21) < 0.01)
         #expect(abs(black.contrast(with: black) - 1) < 0.0001)
     }
+
+    private let light = NSAppearance(named: .aqua)
+
+    @Test func theLightBackgroundIsAStepLighterThanTheLightSidebar() throws {
+        var surface = SRGB(red: 0, green: 0, blue: 0)
+        try #require(light).performAsCurrentDrawingAppearance {
+            surface = SRGB(TerminalSource.surface, over: SRGB(red: 0, green: 0, blue: 0))
+        }
+        let background = try #require(ShellforgeTerminalPalette.colors(in: light)[.background])
+        #expect(background == surface.lightened(by: ShellforgeTerminalPalette.backgroundStep))
+    }
+
+    @Test func everyTextColourIsReadableOnTheLightBackground() throws {
+        let colors = ShellforgeTerminalPalette.colors(in: light)
+        let background = try #require(colors[.background])
+        for role in TerminalColorRole.all where role.needsContrast {
+            let color = try #require(colors[role])
+            #expect(color.contrast(with: background) >= ShellforgeTerminalPalette.minimumContrast, "\(role)")
+        }
+    }
+
+    @Test func aLightColourIsDarkenedOnALightBackground() {
+        let background = SRGB(red: 0.97, green: 0.97, blue: 0.97)
+        let pale = SRGB(red: 0.9, green: 0.75, blue: 0.75)
+        let readable = ShellforgeTerminalPalette.readable(pale, on: background)
+        #expect(readable.contrast(with: background) >= ShellforgeTerminalPalette.minimumContrast)
+        #expect(readable.red < pale.red, "darkened, not lightened")
+    }
 }
