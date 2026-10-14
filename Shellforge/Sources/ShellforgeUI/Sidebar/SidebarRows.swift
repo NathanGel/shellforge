@@ -75,8 +75,9 @@ struct ProjectHeaderRow: View {
     let editJiraProjects: () -> Void
     var editTunnels: () -> Void = {}
     var editSSHHost: () -> Void = {}
-    /// The project's SSH host in a tab of its own; offered only when one is set.
+    /// The project's SSH host in a tab of its own; offered only while it is in ~/.ssh/config.
     var openSSHHost: () -> Void = {}
+    var canOpenSSHHost = false
     @Environment(\.interfaceScale) private var scale
 
     /// An empty project has nothing to fold; its terminals are something.
@@ -96,8 +97,11 @@ struct ProjectHeaderRow: View {
                 // The name, then its Jira badge and any `+n`, `Space.gap` apart as a task row's quiet
                 // badges and branch are. They keep their width; the name is what truncates.
                 HStack(spacing: scale(Space.gap)) {
-                    HeaderTitle(text: node.project.name)
-                        .help(node.project.sshHost.map { "SSH host: \($0)" } ?? "")
+                    if let alias = node.project.sshHost {
+                        HeaderTitle(text: node.project.name).help("SSH host: \(alias)")
+                    } else {
+                        HeaderTitle(text: node.project.name)
+                    }
                     if let badge = ProjectJiraBadge.badge(for: node.project) {
                         ProjectJiraBadgeView(badge: badge, canChangeWorkspace: true, editProjects: editJiraProjects)
                     }
@@ -123,7 +127,7 @@ struct ProjectHeaderRow: View {
             Button("Jira Projects…", action: editJiraProjects)
             Button("Tunnels…", action: editTunnels)
             Button(SidebarModel.sshHostMenuTitle(node.project.sshHost), action: editSSHHost)
-            if let alias = node.project.sshHost { Button(SidebarModel.openSSHHostTitle(alias), action: openSSHHost) }
+            if let alias = node.project.sshHost, canOpenSSHHost { Button(SidebarModel.openSSHHostTitle(alias), action: openSSHHost) }
             Divider()
             Button("Move Up") { move(true) }.disabled(!canMoveUp)
             Button("Move Down") { move(false) }.disabled(!canMoveDown)

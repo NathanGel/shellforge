@@ -83,10 +83,23 @@ extension SidebarModel {
     public nonisolated static func sshHostMenuTitle(_ alias: String?) -> String { alias.map { "SSH Host: \($0)…" } ?? "SSH Host…" }
     public nonisolated static func openSSHHostTitle(_ alias: String) -> String { "Open ssh \(alias)" }
 
+    /// Whether the project's SSH host can be opened: set, and still a host of `~/.ssh/config` as
+    /// last read. The menu offers Open only then.
+    public func canOpenSSHHost(of projectId: UUID) -> Bool {
+        guard let alias = project(projectId)?.sshHost else { return false }
+        return sshHosts?[alias] != nil
+    }
+
     /// The project's SSH host in a tab of its own, in the project's folder: the same ssh New Task
-    /// opens beside its agent, without a task. Nothing without a host.
-    public func openSSHHost(of projectId: UUID) {
+    /// opens beside its agent, without a task. The config is read first when it has not been; a
+    /// host since gone from it is said, not run.
+    public func openSSHHost(of projectId: UUID) async {
         guard let project = project(projectId), let alias = project.sshHost else { return }
+        if sshHosts == nil { _ = await loadSSHHosts() }
+        guard sshHosts?[alias] != nil else {
+            lastError = "\(alias) isn’t in ~/.ssh/config."
+            return
+        }
         host.openTab(in: project.path, title: alias, command: SSHConfig.paneCommand(alias: alias))
     }
 
