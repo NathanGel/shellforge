@@ -30,6 +30,7 @@ extension SidebarModel {
             await refuseRemoval(of: project, because: "A task was added to it while you were asked.")
             return false
         }
+        let removedTasks = document.workspace.tasks.filter { $0.projectId == id }.map(\.id)
         do {
             try document.update { workspace in
                 guard let index = workspace.projects.firstIndex(where: { $0.id == id }) else { return }
@@ -49,6 +50,8 @@ extension SidebarModel {
         }
         stopOrphaned(project.tunnels)
         forgetCaches(of: id)
+        // A task whose removal stopped left a row on the board every window shares.
+        for task in removedTasks { removalBoard.removals[task] = nil }
         return true
     }
 
