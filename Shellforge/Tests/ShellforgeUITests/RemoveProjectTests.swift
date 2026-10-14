@@ -100,6 +100,21 @@ import Testing
         #expect(s.document.workspace.projects.count == 2)
     }
 
+    /// A task made and saved while the alert was up was never listed: the removal stops, and says so.
+    @Test func aTaskAddedWhileAskingStopsTheRemoval() async throws {
+        let s = try setup([Self.remove])
+        s.prompter.hold = true
+        async let removed = s.model.confirmRemove(project: s.a.id)
+        await eventually { s.prompter.asked.count == 1 }
+        let late = TaskItem(projectId: s.a.id, title: "Late", branch: "late", worktreePath: "/api-worktrees/late", baseBranch: "main")
+        try s.document.update { $0.tasks.append(late) }
+        s.prompter.hold = false
+        s.prompter.release()
+        #expect(await removed == false)
+        #expect(s.prompter.asked.last?.detail == "A task was added to it while you were asked. Try again in a moment.")
+        #expect(s.document.workspace.projects.count == 2)
+    }
+
     /// Dividers count the projects above them: one below the removed project moves up one, one
     /// above it stays.
     @Test func dividersKeepTheirPlace() async throws {

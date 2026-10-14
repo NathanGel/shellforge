@@ -89,8 +89,6 @@ public final class SidebarModel: ObservableObject {
     /// `noticeLifetime` (SidebarModel+PullDefault.swift).
     @Published public internal(set) var notice: String?
     var noticeLifetime: Duration = .seconds(6)
-    /// Projects whose default branch is being pulled: their menu greys Pull.
-    @Published var pulling: Set<UUID> = []
     /// Each project's default branch, read with its provider, for the menu's "Pull main".
     @Published var defaultBranches: [UUID: String] = [:]
     /// What the daemon says about the sessions: every dot is read from it.

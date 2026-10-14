@@ -25,6 +25,11 @@ extension SidebarModel {
         // again — and acted on in the same turn, with nothing able to start in between.
         guard answer.confirmed, self.project(id) != nil else { return false }
         if let busy = busyReason(of: id) { await refuseRemoval(of: project, because: busy); return false }
+        // A task made and saved meanwhile, in another window, was never listed: not forgotten unseen.
+        guard document.workspace.tasks.filter({ $0.projectId == id }).map(\.worktreePath) == paths else {
+            await refuseRemoval(of: project, because: "A task was added to it while you were asked.")
+            return false
+        }
         do {
             try document.update { workspace in
                 guard let index = workspace.projects.firstIndex(where: { $0.id == id }) else { return }

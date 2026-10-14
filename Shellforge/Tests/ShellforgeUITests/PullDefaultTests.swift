@@ -60,6 +60,30 @@ import Testing
         #expect(model.notice == "main updated with 1 new commit.")
     }
 
+    /// Every window over the workspace sees the pull: its menu greys, and its Pull does nothing.
+    @Test func oneAtATimeAcrossWindows() async throws {
+        let (model, project, repo) = try await setup(originAhead: 1)
+        let other = SidebarModel(host: FakeTerminalHost(), document: model.document, launcher: repo.launcher, jiraSettings: { nil })
+        let first = Task { await model.pullDefault(project: project) }
+        await eventually { model.isPulling(project) }
+        #expect(other.isPulling(project))
+        #expect(await other.pullDefault(project: project) == false)
+        #expect(await first.value)
+        #expect(!other.isPulling(project))
+    }
+
+    /// A branch git could not name is not guessed: a guess would move the wrong branch.
+    @Test func anUnreadableDefaultBranchPullsNothing() async throws {
+        let (model, project, repo) = try await setup(originAhead: 1)
+        let before = try repo.launcher.run("git", ["-C", repo.path, "rev-parse", "main"]).stdout
+        try FileManager.default.moveItem(atPath: repo.path + "/.git", toPath: repo.path + "/.git-away")
+        await model.pullDefault(project: project)
+        try FileManager.default.moveItem(atPath: repo.path + "/.git-away", toPath: repo.path + "/.git")
+        #expect(model.notice == nil)
+        #expect(model.lastError?.hasPrefix("Couldn’t pull the default branch.") == true)
+        #expect(try repo.launcher.run("git", ["-C", repo.path, "rev-parse", "main"]).stdout == before)
+    }
+
     @Test func theMenuOffersItOnlyForAHostedProject() {
         #expect(SidebarModel.pullTitle(branch: "develop") == "Pull develop")
         #expect(SidebarModel.offersPull(.gitlab) && SidebarModel.offersPull(.github))

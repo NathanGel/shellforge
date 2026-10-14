@@ -17,29 +17,31 @@ extension SidebarModel {
         defaultBranches[projectId] ?? Repository.fallbackDefaultBranch
     }
 
-    public func isPulling(_ projectId: UUID) -> Bool { pulling.contains(projectId) }
+    public func isPulling(_ projectId: UUID) -> Bool { removalBoard.pulling.contains(projectId) }
 
-    /// True when a pull ran; false when one was already running for the project, or it is gone.
-    /// The branch is read again first: origin's HEAD may have moved since the menu was drawn.
+    /// True when a pull ran; false when one was already running for the project, in any window,
+    /// or it is gone. The branch is read again first: origin's HEAD may have moved since the menu
+    /// was drawn; a branch git cannot name is not guessed, since a guess would move the wrong one.
     @discardableResult
     public func pullDefault(project id: UUID) async -> Bool {
-        guard let project = project(id), !pulling.contains(id) else { return false }
-        pulling.insert(id)
-        defer { pulling.remove(id) }
+        guard let project = project(id), !removalBoard.pulling.contains(id) else { return false }
+        removalBoard.pulling.insert(id)
+        defer { removalBoard.pulling.remove(id) }
         let (path, launcher) = (project.path, self.launcher)
-        let result = await BackgroundWork.run { () -> (String, Result<DefaultBranchPull, Error>) in
-            let branch = Repository.defaultBranch(of: path, launcher: launcher)
+        let result = await BackgroundWork.run { () -> (String?, Result<DefaultBranchPull, Error>) in
+            let branch: String
+            do { branch = try Repository.detectDefaultBranch(of: path, launcher: launcher) } catch { return (nil, .failure(error)) }
             return (branch, Result { try GitRepository(path, launcher: launcher).pullDefaultBranch(branch) })
         }
         // Nothing is said for a project removed while git ran.
         guard self.project(id) != nil else { return true }
-        if defaultBranches[id] != result.0 { defaultBranches[id] = result.0 }
+        if let branch = result.0, defaultBranches[id] != branch { defaultBranches[id] = branch }
         switch result.1 {
         case .success(let outcome):
             lastError = nil
             show(notice: outcome.summary)
         case .failure(let error):
-            lastError = "Couldn’t pull \(result.0). " + Self.reason(of: error)
+            lastError = "Couldn’t pull \(result.0 ?? "the default branch"). " + Self.reason(of: error)
         }
         return true
     }
