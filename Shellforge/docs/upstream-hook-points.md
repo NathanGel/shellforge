@@ -21,6 +21,10 @@ this list short; new behaviour belongs in the Shellforge package.
 | `sources/TerminalView/iTermShellforgeSidebar.swift` | The app's `DaemonLink` and Agent hooks model; every session reported; the sidebar fed its statuses; a tab change sends at once | Status dots from the agents' hooks |
 | `ModernTests/ShellforgeReportsTest.swift` (new) | iTerm2's names for the session variables Shellforge reads | ModernTests cannot link ShellforgeCore, so the reading itself is tested in the package |
 | `iTerm2.xcodeproj/project.pbxproj` | Folder reference `Shellforge/hooks`, copied by a "Copy hooks" phase to `Contents/Resources/hooks` | The status-line shims and the PI extension the Agent hooks sheet installs from |
+| `plists/dev-iTerm2.plist` | `ShellforgeUpdateFeed` = `github:NathanGel/shellforge`; `ShellforgeDevBuild` = `$(SHELLFORGE_DEV_BUILD)` | Check for Updates… reads Shellforge's releases; a Development build knows it is one |
+| `iTerm2.xcodeproj/project.pbxproj` | `SHELLFORGE_DEV_BUILD = YES` in the iTerm2 target's Development configuration only; `iTermShellforgeUpdates.swift` in `iTerm2SharedARC` | Every other configuration expands the marker to nothing |
+| `sources/AppKit/iTermApplicationDelegate.m` | `checkForUpdatesFromMenu:` and the old-nightly prompt run `iTermShellforgeUpdates`; the menu item is disabled while busy; the delegate is Sparkle's and answers `updaterMayCheckForUpdates:` NO; `finishPreviousUpdate` at launch | Sparkle never checks or offers iTerm2's builds |
+| `sources/TerminalView/iTermShellforgeUpdates.swift` (new) | `@objc` bridge to `ShellforgeUI`'s `UpdateController` | Objective-C cannot import the Swift package |
 
 ## M0: verified on 9 October 2026
 
