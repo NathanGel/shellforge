@@ -17,10 +17,10 @@ struct SettingsStatus: Equatable {
     }
 }
 
-/// The one box every Settings entry is drawn in — a coding harness on the Agents tab, Jira or
-/// GitLab on Integrations. Its header is a sidebar row's anatomy: a round mark, a title with
-/// optional chips beside it, a status line under it, and the card's actions trailing. Fields sit
-/// below a divider.
+/// One row of a Settings section — the Mac, Jira, GitLab — drawn in its `SettingsSection`'s box,
+/// as a grouped form's row is: no box of its own. Its header is a sidebar row's anatomy: a round
+/// mark, a title with optional chips beside it, a status line under it, and the row's actions
+/// trailing. Fields sit under the header.
 struct SettingsCard<Mark: View, Chips: View, Actions: View, Content: View>: View {
     let title: String
     let status: SettingsStatus
@@ -50,11 +50,9 @@ struct SettingsCard<Mark: View, Chips: View, Actions: View, Content: View>: View
     var body: some View {
         VStack(alignment: .leading, spacing: Space.block) {
             header
-            Hairline()
             content
         }
         .padding(Space.block)
-        .groupChrome()
     }
 
     private var header: some View {
@@ -190,8 +188,17 @@ struct NumberedSteps: View {
     }
 }
 
-/// A heading over a tab's run of cards — Integrations' Core and Services — in
-/// `Typography.bodyEmphasis`, as Interface heads its keyboard section, `Space.block` above the cards.
+/// The rule between two rows of a Settings section, as a grouped form draws it: inset past the
+/// row's mark, so the marks run down the box's edge unbroken.
+struct SettingsRowDivider: View {
+    var body: some View {
+        Hairline().padding(.leading, Space.block + SettingsCard<EmptyView, EmptyView, EmptyView, EmptyView>.markSize + Space.inset)
+    }
+}
+
+/// A Settings section as macOS's grouped form draws one — Core, Services: a heading in
+/// `Typography.bodyEmphasis` lined up with the rows' marks, then one filled box holding the rows,
+/// a `SettingsRowDivider` between each two.
 struct SettingsSection<Content: View>: View {
     let title: String
     let content: Content
@@ -202,9 +209,12 @@ struct SettingsSection<Content: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Space.block) {
+        VStack(alignment: .leading, spacing: Space.gap) {
             Text(title).font(Typography.bodyEmphasis).foregroundStyle(Palette.text)
-            content
+                .padding(.leading, Space.block)
+            VStack(alignment: .leading, spacing: 0) { content }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: Radius.group, style: .continuous).fill(Palette.groupFill))
         }
     }
 }
