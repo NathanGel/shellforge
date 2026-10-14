@@ -11,6 +11,7 @@
 #import "NSHost+iTerm.h"
 #import "NSUserDefaults+iTerm.h"
 #import "iTermObject.h"
+#import "iTermPreferenceDidChangeNotification.h"
 #import "iTermPreferences.h"
 #import "iTermUserDefaults.h"
 #import "iTermVariableScope+Global.h"
@@ -78,6 +79,12 @@ static char iTermGlobalScopeControllerKVOContext;
                                                               block:^(id _Nonnull newValue) {
                                                                   [weakSelf themeDidChange];
                                                               }];
+        // Shellforge: the terminal match changes the theme without writing the setting, and says so.
+        [iTermPreferenceDidChangeNotification subscribe:self block:^(iTermPreferenceDidChangeNotification * _Nonnull notification) {
+            if ([notification.key isEqualToString:kPreferenceKeyTabStyle]) {
+                [weakSelf themeDidChange];
+            }
+        }];
         [[iTermVariableScope globalsScope] setValue:@(getpid()) forVariableNamed:iTermVariableKeyApplicationPID];
         _userVariables = [[iTermVariables alloc] initWithContext:iTermVariablesSuggestionContextNone
                                                            owner:self];

@@ -80,14 +80,19 @@ final class iTermShellforgeTerminalMatch: NSObject {
         NSColor(srgbRed: color.red, green: color.green, blue: color.blue, alpha: 1)
     }
 
-    /// Every open session reloads its colours from its own profile, through the hook; then iTerm2
-    /// redraws its windows as it does when its theme setting changes.
+    /// Every open session reloads its colours from its own profile, through the hook, and its Minimal
+    /// appearance; then iTerm2 redraws its windows as it does when its theme setting changes.
     private static func recolour() {
         for session in iTermController.sharedInstance()?.allSessions() ?? [] {
             if let profile = session.profile { session.loadColors(fromProfile: profile) }
+            session.themeDidChange()
         }
         (NSApp as? iTermApplication)?.updateAppearance()
         NotificationCenter.default.post(name: .refreshTerminal, object: nil)
+        // The theme's other listeners — the status bar, Profiles › Colors, the effectiveTheme
+        // variable — hear a theme change as this notification; the setting itself is not written.
+        iTermPreferenceDidChangeNotification(key: kPreferenceKeyTabStyle,
+                                             value: iTermPreferences.object(forKey: kPreferenceKeyTabStyle)).post()
         NotificationCenter.default.post(name: didChangeNotification, object: nil)
     }
 }

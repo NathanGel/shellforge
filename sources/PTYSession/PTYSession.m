@@ -6271,9 +6271,11 @@ webViewConfiguration:(WKWebViewConfiguration *)webViewConfiguration
     // Color scheme
     // ansiColorsMatchingForeground:andBackground:inBookmark does an equality comparison, so
     // iTermProfilePreferences is not used here.
-    [self setColorFgBgVariable:[self ansiColorsMatchingForeground:aDict[[self amendedColorKey:KEY_FOREGROUND_COLOR]]
-                                                    andBackground:aDict[[self amendedColorKey:KEY_BACKGROUND_COLOR]]
-                                                       inBookmark:aDict]];
+    // Shellforge: worked out from the terminal match's colours while it is on, as the session draws.
+    NSDictionary *colorDict = [iTermShellforgeTerminalMatch profileForColors:aDict keeping:_overriddenFields];
+    [self setColorFgBgVariable:[self ansiColorsMatchingForeground:colorDict[[self amendedColorKey:KEY_FOREGROUND_COLOR]]
+                                                    andBackground:colorDict[[self amendedColorKey:KEY_BACKGROUND_COLOR]]
+                                                       inBookmark:colorDict]];
 
     // transparency
     [self setTransparency:[iTermProfilePreferences floatForKey:KEY_TRANSPARENCY inProfile:aDict]];

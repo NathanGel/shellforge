@@ -1326,6 +1326,8 @@ webViewConfiguration:(nullable WKWebViewConfiguration *)webViewConfiguration
 - (void)setSessionSpecificProfileValues:(NSDictionary *)newValues;
 // Shellforge: public so the terminal match can reload every session's colours.
 - (void)loadColorsFromProfile:(Profile *)aDict;
+// Shellforge: public so the terminal match can apply its Minimal theme to every session.
+- (void)themeDidChange;
 - (void)setSessionSpecificProfileValues:(NSDictionary *)newValues reload:(BOOL)reload;
 // preserveColorBaselines:YES leaves _preEscapeSequenceColors intact for the keys
 // being written. Used by binding observers so applying a bound (i:N) color does
