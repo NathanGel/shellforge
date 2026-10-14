@@ -79,6 +79,17 @@ extension SidebarModel {
     }
 
     /// Names the project's SSH host, or none.
+    /// The project menu's item: it names the host once one is set, so the setting is seen.
+    public nonisolated static func sshHostMenuTitle(_ alias: String?) -> String { alias.map { "SSH Host: \($0)…" } ?? "SSH Host…" }
+    public nonisolated static func openSSHHostTitle(_ alias: String) -> String { "Open ssh \(alias)" }
+
+    /// The project's SSH host in a tab of its own, in the project's folder: the same ssh New Task
+    /// opens beside its agent, without a task. Nothing without a host.
+    public func openSSHHost(of projectId: UUID) {
+        guard let project = project(projectId), let alias = project.sshHost else { return }
+        host.openTab(in: project.path, title: alias, command: SSHConfig.paneCommand(alias: alias))
+    }
+
     public func setSSHHost(_ alias: String?, on projectId: UUID) {
         guard let current = project(projectId), current.sshHost != alias else { return }
         do {

@@ -75,6 +75,8 @@ struct ProjectHeaderRow: View {
     let editJiraProjects: () -> Void
     var editTunnels: () -> Void = {}
     var editSSHHost: () -> Void = {}
+    /// The project's SSH host in a tab of its own; offered only when one is set.
+    var openSSHHost: () -> Void = {}
     @Environment(\.interfaceScale) private var scale
 
     /// An empty project has nothing to fold; its terminals are something.
@@ -95,6 +97,7 @@ struct ProjectHeaderRow: View {
                 // badges and branch are. They keep their width; the name is what truncates.
                 HStack(spacing: scale(Space.gap)) {
                     HeaderTitle(text: node.project.name)
+                        .help(node.project.sshHost.map { "SSH host: \($0)" } ?? "")
                     if let badge = ProjectJiraBadge.badge(for: node.project) {
                         ProjectJiraBadgeView(badge: badge, canChangeWorkspace: true, editProjects: editJiraProjects)
                     }
@@ -119,7 +122,8 @@ struct ProjectHeaderRow: View {
             Divider()
             Button("Jira Projects…", action: editJiraProjects)
             Button("Tunnels…", action: editTunnels)
-            Button("SSH Host…", action: editSSHHost)
+            Button(SidebarModel.sshHostMenuTitle(node.project.sshHost), action: editSSHHost)
+            if let alias = node.project.sshHost { Button(SidebarModel.openSSHHostTitle(alias), action: openSSHHost) }
             Divider()
             Button("Move Up") { move(true) }.disabled(!canMoveUp)
             Button("Move Down") { move(false) }.disabled(!canMoveDown)

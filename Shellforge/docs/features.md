@@ -46,7 +46,10 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
   - Search, add, or remove a link with ✕; nothing changes until Save.
   - The header badge shows the first project's key, which opens it, and "+n" for the rest.
   - New Task searches these projects, or every Jira project when none is linked.
-- **SSH Host…** picks a `Host` from `~/.ssh/config`. New Task can then open `ssh <host>` in a pane beside the agent.
+- **SSH Host…** picks a `Host` from `~/.ssh/config` as the project's machine.
+  - Once set, the menu item reads **SSH Host: <host>…**, and the project's name shows it on hover.
+  - **Open ssh <host>** opens it in a tab of its own.
+  - New Task offers "Open ssh <host> beside the agent", a pane next to the agent.
 - **Not ported yet:** Remove Project and Pull Default Branch.
 
 ## Dividers
