@@ -32,4 +32,36 @@ import Testing
         #expect(AgentHooksView.words(state) == words)
         #expect(AgentHooksView.buttonTitle(state) == action)
     }
+
+    /// The sheet keeps every sheet's keys: ⌘↩ presses Done and ⎋ closes; a plain ↩ does neither.
+    @Test func doneAnswersCommandReturnAndEscapeButNotAPlainReturn() async throws {
+        final class Count { var dismissals = 0 }
+        let count = Count()
+        let model = AgentHooksModel(integrations: HookIntegrations(home: TestScratch.root.appendingPathComponent("keys-home-\(UUID().uuidString)"),
+                                                                   resources: .bundled(resourceURL: nil)), names: [:])
+        let host = NSHostingView(rootView: AgentHooksView(model: model, dismiss: { count.dismissals += 1 }))
+        host.frame.size = host.fittingSize
+        let window = NSWindow(contentRect: host.frame, styleMask: [], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.makeKeyAndOrderFront(nil)
+        defer { window.orderOut(nil) }
+        func press(_ characters: String, keyCode: UInt16, command: Bool = false) {
+            let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: command ? [.command] : [], timestamp: 0,
+                                         windowNumber: window.windowNumber, context: nil, characters: characters,
+                                         charactersIgnoringModifiers: characters, isARepeat: false, keyCode: keyCode)!
+            _ = window.performKeyEquivalent(with: event)
+        }
+
+        // Until the first press lands: the sheet's shortcuts arrive with its first render.
+        await eventually(describing: "⌘↩ pressed Done") {
+            if count.dismissals == 0 { press("\r", keyCode: 36, command: true) }
+            return count.dismissals == 1
+        }
+        press("\r", keyCode: 36)
+        #expect(count.dismissals == 1, "a plain ↩ is not Done")
+        press("\u{1b}", keyCode: 53)
+        await eventually(describing: "⎋ closed the sheet") { count.dismissals >= 2 }
+        #expect(count.dismissals == 2)
+    }
 }

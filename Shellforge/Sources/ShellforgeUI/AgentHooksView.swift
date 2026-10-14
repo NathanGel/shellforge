@@ -22,10 +22,13 @@ public struct AgentHooksView: View {
                 ForEach(model.rows) { row in rowView(row) }
             }
             if let error = model.lastError { HelpText(error, tone: .warning) }
+            // Every sheet's keys: ⌘↩ is Done, ⎋ closes, and a plain ↩ does neither.
             HStack {
                 Spacer()
-                Button("Done", action: dismiss).keyboardShortcut(.defaultAction)
+                SheetPrimaryButton(title: "Done", action: dismiss)
             }
+            .controlSize(.large)
+            .overlay { Button("Close", action: dismiss).keyboardShortcut(.cancelAction).hidden() }
         }
         .padding(Space.margin)
         .frame(width: Sheet.width, alignment: .leading)

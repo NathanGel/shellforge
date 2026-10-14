@@ -228,7 +228,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
   - Tokens are kept only in the Keychain, and URLs must be https.
   - Connections are tested when Settings opens and when you stop typing.
   - Disconnect takes effect on Save.
-- **Agent hooks (the bolt)** have one row per agent, with its state and one button: Install, Repair or Reinstall.
+- **Agent hooks (the bolt)** have one row per agent, with its state and one button: Install, Repair or Reinstall. ⌘↩ or ⎋ closes the sheet.
   - Files change only when you click, and each is backed up once as `.shellforge-backup`.
   - The files are `~/.claude/settings.json`, `~/.codex/config.toml`, `~/.grok/config.toml` and `~/.pi/agent/extensions/shellforge-status.ts`.
 - **Terminal.** Settings › Core › Terminal › Match the terminal to Shellforge, off by default, takes effect on Save.
