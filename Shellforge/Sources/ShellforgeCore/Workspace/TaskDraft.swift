@@ -16,6 +16,10 @@ public struct TaskDraft: Equatable, Sendable {
     /// The host New Task offered as that pane when it opened; nil when it offered none, so the box
     /// was never shown.
     public var paneHost: String?
+    /// Continue in a worktree that already exists rather than make one (ExistingWorktrees).
+    public var useExisting = false
+    /// The worktree picked to continue in, while `useExisting`.
+    public private(set) var existing: ExistingWorktree?
     private var titleEdited = false, branchEdited = false, typeEdited = false
 
     public var branch: String { "\(branchType.rawValue)/\(branchName)" }
@@ -56,6 +60,12 @@ public struct TaskDraft: Equatable, Sendable {
         if let split { branchType = split.type; typeEdited = true }
         guard (split?.name ?? b) != branchName else { return }
         branchName = split?.name ?? b; branchEdited = true
+    }
+
+    /// The worktree to continue in: the task takes its branch's name, unless one was typed.
+    public mutating func pick(existing worktree: ExistingWorktree?) {
+        existing = worktree
+        if !titleEdited, let worktree { title = worktree.branch }
     }
 
     public mutating func setBranchType(_ type: BranchType) {
