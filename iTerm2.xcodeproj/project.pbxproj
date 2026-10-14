@@ -5575,6 +5575,7 @@
 		FE12FC00AADEA00D04DE5D07 /* WorkgroupIntrospection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DD8FF2B2AC39B0DDA9E1724 /* WorkgroupIntrospection.swift */; };
 		FF762198E91EE94A792CFEC8 /* ai-models.json in Resources */ = {isa = PBXBuildFile; fileRef = DF18C01510605DB0C639038F /* ai-models.json */; };
 		364D24FC328DB1D5D49A1483 /* iTermShellforgeSidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 912AC095DBF148E3E0F01930 /* iTermShellforgeSidebar.swift */; };
+		BD4739AB0DB796D2D79ED350 /* iTermShellforgeUpdates.swift in Sources */ = {isa = PBXBuildFile; fileRef = C111E4756ED40D2D8CA7F56B /* iTermShellforgeUpdates.swift */; };
 		8E92B788E38AF1E4302C0809 /* shellforged in Copy shellforged */ = {isa = PBXBuildFile; fileRef = 41DC27B3DB848ABF8A59FF7E /* shellforged */; };
 		573DD493A7C4FB2D8E410B20 /* hooks in Copy hooks */ = {isa = PBXBuildFile; fileRef = CEC28578E1772CA7042373DF /* hooks */; };
 		D86C83673C968664A30FCE79 /* ShellforgeUI in Frameworks */ = {isa = PBXBuildFile; productRef = 45EDD04F5F06C95A90D633E0 /* ShellforgeUI */; };
@@ -10012,6 +10013,7 @@
 		FD3AD5633442A7E32AF367B3 /* iTermGitFileStatus+Diffable.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = "iTermGitFileStatus+Diffable.swift"; sourceTree = "<group>"; };
 		FDF6EB8657CCD10A7A568A61 /* iTermURLActionFactory+Testing.h */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.h; path = "iTermURLActionFactory+Testing.h"; sourceTree = "<group>"; };
 		912AC095DBF148E3E0F01930 /* iTermShellforgeSidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iTermShellforgeSidebar.swift; sourceTree = "<group>"; };
+		C111E4756ED40D2D8CA7F56B /* iTermShellforgeUpdates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iTermShellforgeUpdates.swift; sourceTree = "<group>"; };
 		41DC27B3DB848ABF8A59FF7E /* shellforged */ = {isa = PBXFileReference; lastKnownFileType = folder; name = shellforged; path = Shellforge/daemon/shellforged; sourceTree = SOURCE_ROOT; };
 		CEC28578E1772CA7042373DF /* hooks */ = {isa = PBXFileReference; lastKnownFileType = folder; name = hooks; path = Shellforge/hooks; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
@@ -14318,6 +14320,7 @@
 			children = (
 				A68ADA0429CCBE420008E092 /* CommandInfoViewController.swift */,
 				912AC095DBF148E3E0F01930 /* iTermShellforgeSidebar.swift */,
+				C111E4756ED40D2D8CA7F56B /* iTermShellforgeUpdates.swift */,
 				41DC27B3DB848ABF8A59FF7E /* shellforged */,
 				CEC28578E1772CA7042373DF /* hooks */,
 				A62A78E22F988080007CAA0B /* CommandInfoViewController.xib */,
@@ -21083,6 +21086,7 @@
 				A605943F2583305E00CACEE6 /* iTermSharedImageStore.m in Sources */,
 				A68ADA0629CCBE420008E092 /* CommandInfoViewController.swift in Sources */,
 				364D24FC328DB1D5D49A1483 /* iTermShellforgeSidebar.swift in Sources */,
+				BD4739AB0DB796D2D79ED350 /* iTermShellforgeUpdates.swift in Sources */,
 				A616E6792EA9548D000C0C18 /* PasswordManagerProtocol.swift in Sources */,
 				A602AAEA2B16A8B600E6C965 /* DraggableNSBox.swift in Sources */,
 				A608A5812797811D003525F7 /* iTermCapturedOutputMark.m in Sources */,
@@ -27128,6 +27132,7 @@
 				PRODUCT_NAME = iTerm2;
 				SDKROOT = macosx;
 				SECTORDER_FLAGS = "";
+				SHELLFORGE_DEV_BUILD = YES;
 				SWIFT_OBJC_BRIDGING_HEADER = "";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;

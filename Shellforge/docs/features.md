@@ -259,3 +259,20 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
   - the helper missing from the app;
   - the helper keeps stopping, with where its log is;
   - "Shellforge's helper is from another version": quit Shellforge, wait a minute, open it again.
+
+## Check for Updates…
+
+- **Where.** Shellforge › Check for Updates…, or Check For Updates in the status bar menu.
+- **Where updates come from.** Shellforge's own releases on GitHub (`NathanGel/shellforge`), read without a token. iTerm2's update feed is never used, and Sparkle never checks on its own.
+- **What it says.**
+  - “You’re on the latest version (x.y.z).”
+  - “Shellforge x.y.z is available.” with Update and Later. ⎋ is Later.
+  - Otherwise one line on what stopped it, such as no network, GitHub's rate limit, or a release without its image.
+- **Update.** Shellforge checks that it may replace itself, downloads `Shellforge-x.y.z.dmg` behind a small progress window, and checks the app inside. It must be Shellforge, be that version, and be signed like the running app. Shellforge then quits, the new version moves into place, and it opens.
+  - The old version is kept in `~/Library/Caches/io.github.nathangel.shellforge/Updates/previous/` until the next launch clears that folder.
+  - If the swap fails, the old version comes back, and the next launch says why.
+- **When it doesn't update.**
+  - A Development build says it is one, and never asks GitHub. So does a build whose version is not `x.y.z`, such as `3.7.dev`; only the release script stamps one.
+  - A copy run from Downloads or a disk image is asked to move to Applications first.
+  - Drafts and prereleases are never offered, and nor is a version older than the one running.
+- The menu item is disabled while a check or an update is under way.

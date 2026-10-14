@@ -387,6 +387,10 @@
         <true/>
         <key>SUEnableAutomaticChecks</key>
         <false/>
+        <key>ShellforgeUpdateFeed</key>
+        <string>github:NathanGel/shellforge</string>
+        <key>ShellforgeDevBuild</key>
+        <string>$(SHELLFORGE_DEV_BUILD)</string>
         <key>SUPublicEDKey</key>
         <string>xdqAa0KXBPhMbUrutVTe87i6U7yWf7WKaCeRG7AAZ0w=</string>
 </dict>
