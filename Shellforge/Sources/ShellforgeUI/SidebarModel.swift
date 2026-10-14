@@ -102,6 +102,11 @@ public final class SidebarModel: ObservableObject {
     var shownPullError: (project: UUID, text: String)?
     /// Each project's default branch, read with its provider, for the menu's "Pull main".
     @Published var defaultBranches: [UUID: String] = [:]
+    /// Each task's lines against its base, for its VS Code badge (SidebarModel+Diffs.swift).
+    @Published public internal(set) var diffs: [UUID: DiffStat] = [:]
+    /// Where they are read: the one every window shares, unless a test hands in its own.
+    lazy var diffStats = DiffStats.shared(launcher: launcher)
+    var readingDiffs = false
     /// What the daemon says about the sessions: every dot is read from it.
     @Published public private(set) var sessions = SessionStore()
     /// How far the chain to the helper reaches; the sidebar says it while it is a problem.

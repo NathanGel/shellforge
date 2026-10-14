@@ -64,14 +64,31 @@ struct OpenInMenuItems: View {
     }
 }
 
-/// The plain VS Code badge on a task or terminal row, when it is installed.
+/// The VS Code badge on a task or terminal row, when it is installed. A task's carries AiTerm's
+/// `+n −m`, its worktree's lines against its base, named in the help rather than the badge.
 struct VSCodeBadge: View {
     let folder: String
+    var diff: DiffStat? = nil
+    var base = ""
 
     var body: some View {
         if OpenIn.vsCodeInstalled {
-            Badge(nil, icon: .brand(Palette.vscode), help: "Open in VS Code", style: .quiet,
+            Badge(nil, icon: .brand(Palette.vscode), help: Self.help(diff: diff, base: base),
+                  diff: Self.shown(diff, base: base).map { Badge.Diff(added: $0.added, removed: $0.removed) }, style: .quiet,
                   action: { OpenIn.open(OpenIn.Item(title: "Open in VS Code", app: .vsCode, folder: folder)) })
         }
+    }
+
+    /// A diff worth drawing: a base to measure against, and something changed.
+    private static func shown(_ diff: DiffStat?, base: String) -> DiffStat? {
+        guard !base.isEmpty, let diff, !diff.isEmpty else { return nil }
+        return diff
+    }
+
+    /// AiTerm's `BaseDiff.help`: "Open in VS Code — 12 added, 3 removed against main".
+    static func help(diff: DiffStat?, base: String) -> String {
+        guard let stat = shown(diff, base: base) else { return "Open in VS Code" }
+        let counts = (stat.added > 0 ? ["\(stat.added) added"] : []) + (stat.removed > 0 ? ["\(stat.removed) removed"] : [])
+        return "Open in VS Code \u{2014} " + counts.joined(separator: ", ") + " against " + base
     }
 }
