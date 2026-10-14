@@ -81,7 +81,21 @@ import Testing
             surface = SRGB(TerminalSource.surface, over: SRGB(red: 0, green: 0, blue: 0))
         }
         let background = try #require(ShellforgeTerminalPalette.colors(in: light)[.background])
-        #expect(background == surface.lightened(by: ShellforgeTerminalPalette.backgroundStep))
+        #expect(background == ShellforgeTerminalPalette.background(beside: surface))
+        #expect(background != surface, "the terminal reads apart from the light sidebar")
+    }
+
+    /// Review fix: on macOS 26 the light sidebar is pure white, which lightening cannot move.
+    @Test func aWhiteSidebarStillGetsAStep() {
+        let white = SRGB(red: 1, green: 1, blue: 1)
+        let background = ShellforgeTerminalPalette.background(beside: white)
+        #expect(background != white)
+        #expect(background.contrast(with: white) < 1.2, "a step, not a different colour")
+    }
+
+    @Test func aLightGreySidebarGetsALighterTerminal() {
+        let grey = SRGB(red: 0.92, green: 0.92, blue: 0.92)
+        #expect(ShellforgeTerminalPalette.background(beside: grey) == grey.lightened(by: ShellforgeTerminalPalette.backgroundStep))
     }
 
     @Test func everyTextColourIsReadableOnTheLightBackground() throws {

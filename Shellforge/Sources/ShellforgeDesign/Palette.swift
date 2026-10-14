@@ -142,7 +142,7 @@ public enum Palette {
     /// GitHub's mark, in white: GitHub's mark is monochrome, and the app is dark-only. A brand
     /// mark, not a UI colour; reserved for the GitHub logo/badge only. A light ground — the
     /// Integrations disc — tints it `markInk`.
-    public static let github = Brand("github", 0xFFFFFF, path: Logos.githubPath, fallbackSymbol: "chevron.left.forwardslash.chevron.right")
+    public static let github = Brand("github", 0xFFFFFF, path: Logos.githubPath, fallbackSymbol: "chevron.left.forwardslash.chevron.right", followsAppearance: true)
     /// Microsoft's vendor colour for the VS Code mark — a brand mark, not a UI colour; used only
     /// where the VS Code badge appears.
     public static let vscode = Brand("vscode", 0x23A9F2, path: Logos.vscodePath, fallbackSymbol: "chevron.left.forwardslash.chevron.right")
@@ -242,6 +242,9 @@ public struct Brand: Sendable, Hashable {
     /// opt-in, since most vendor marks are already correct under SVG's default nonzero winding rule.
     /// Only Grok's mark sets this.
     public let evenOdd: Bool
+    /// Whether the mark is drawn in the text colour rather than its own: GitHub's mark is white on
+    /// dark and black on light, by GitHub's own rules, so on a light sheet it is not lost.
+    public let followsAppearance: Bool
 
     /// The brand's colour as a faint wash, behind a label in the brand's own ink: a ticket's or a
     /// merge request's lane in a picker — neutral information in the vendor's colour, not a warning.
@@ -250,9 +253,11 @@ public struct Brand: Sendable, Hashable {
     public static func == (lhs: Brand, rhs: Brand) -> Bool { lhs.name == rhs.name }
     public func hash(into hasher: inout Hasher) { hasher.combine(name) }
 
-    public init(_ name: String, _ value: UInt32, path: String, fallbackSymbol: String, evenOdd: Bool = false) {
+    public init(_ name: String, _ value: UInt32, path: String, fallbackSymbol: String, evenOdd: Bool = false,
+                followsAppearance: Bool = false) {
         self.name = name
-        color = Palette.hex(value)
+        color = followsAppearance ? Palette.text : Palette.hex(value)
+        self.followsAppearance = followsAppearance
         hex = String(format: "#%06X", value)
         self.path = path
         self.fallbackSymbol = fallbackSymbol

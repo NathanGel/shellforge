@@ -50,7 +50,7 @@ public struct Icon: View {
                 .font(.system(size: size))
                 .foregroundStyle(tint ?? surface.ink)
         case let .brand(brand):
-            LogoGlyph(brand: brand, fill: tint.map { Self.hexString($0, dark: colorScheme == .dark) } ?? brand.hex, size: size)
+            LogoGlyph(brand: brand, fill: Self.fill(for: brand, tint: tint, dark: colorScheme == .dark), size: size)
         case let .artwork(svg, fallback):
             if let image = Logos.image(svg: svg) {
                 Image(nsImage: image).resizable().interpolation(.high).frame(width: size, height: size)
@@ -72,6 +72,14 @@ public struct Icon: View {
     ///
     /// Remembered per colour and appearance: a body asks again each time it runs, and the resolve
     /// costs an appearance switch and a string format, for the handful of tints there are.
+    /// A brand mark's SVG fill: the tint when there is one, else the text colour for a brand that
+    /// follows the appearance (GitHub), else the brand's own colour.
+    @MainActor
+    static func fill(for brand: Brand, tint: Color?, dark: Bool) -> String {
+        if let tint { return hexString(tint, dark: dark) }
+        return brand.followsAppearance ? hexString(brand.color, dark: dark) : brand.hex
+    }
+
     @MainActor
     static func hexString(_ color: Color, dark: Bool) -> String {
         let key = HexKey(color: color, dark: dark)

@@ -43,4 +43,16 @@ import Testing
         #expect(dark != light)
         #expect(Icon.hexString(Palette.text, dark: true) == dark, "remembered per appearance")
     }
+
+    /// Review fix: GitHub's white mark vanished on a light sheet. Its brand follows the appearance.
+    @Test func theGitHubMarkFollowsTheAppearance() {
+        #expect(ColorProbe.hex(Palette.github.color, in: .aqua) != "#FFFFFF")
+        #expect(Icon.fill(for: Palette.github, tint: nil, dark: false) == Icon.hexString(Palette.text, dark: false))
+        #expect(Icon.fill(for: Palette.github, tint: nil, dark: true) == Icon.hexString(Palette.text, dark: true))
+    }
+
+    @Test func otherBrandsKeepTheirColour() {
+        #expect(Icon.fill(for: Palette.gitlab, tint: nil, dark: false) == Palette.gitlab.hex)
+        #expect(Icon.fill(for: Palette.gitlab, tint: Palette.text, dark: false) == Icon.hexString(Palette.text, dark: false))
+    }
 }

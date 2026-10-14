@@ -105,10 +105,7 @@ public enum ShellforgeTerminalPalette {
         }
         draw {
             let opaqueBlack = SRGB(red: 0, green: 0, blue: 0)
-            let surface = SRGB(TerminalSource.surface, over: opaqueBlack)
-            // A step off the sidebar: darker beside a dark sidebar, lighter beside a light one, so
-            // the terminal is the panel the eye rests on.
-            let background = surface.luminanceIsLight ? surface.lightened(by: backgroundStep) : surface.darkened(by: backgroundStep)
+            let background = background(beside: SRGB(TerminalSource.surface, over: opaqueBlack))
             func read(_ color: NSColor) -> SRGB { SRGB(color, over: background) }
             colors[.background] = background
             colors[.foreground] = read(TerminalSource.text)
@@ -130,6 +127,15 @@ public enum ShellforgeTerminalPalette {
             }
         }
         return colors
+    }
+
+    /// The terminal's background beside a sidebar of `surface`: a step off it, so the two read
+    /// apart. Darker beside a dark sidebar; lighter beside a light one, unless the sidebar is too
+    /// near white for lightening to show (macOS 26's light sidebar is pure white), then darker.
+    public static func background(beside surface: SRGB) -> SRGB {
+        guard surface.luminanceIsLight else { return surface.darkened(by: backgroundStep) }
+        let lighter = surface.lightened(by: backgroundStep)
+        return lighter.contrast(with: surface) >= 1.005 ? lighter : surface.darkened(by: backgroundStep)
     }
 
     /// `color`, moved in 5 % steps until it reaches `minimumContrast` on `background`: lightened on a
