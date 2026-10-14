@@ -1363,6 +1363,8 @@ void TurnOnDebugLoggingAutomatically(void) {
 }
 
 - (void)applicationWillFinishLaunching:(NSNotification *)aNotification {
+    // Shellforge: no tab inherits the markers of an agent session that started the app.
+    [iTermShellforgeSidebar scrubInheritedEnvironment];
     DLog(@"Begin");
     [[iTermApplication sharedApplication] updateAppearance];
     [[iTermUserDefaults userDefaults] it_addObserverForKey:kPreferenceKeyTabStyle
