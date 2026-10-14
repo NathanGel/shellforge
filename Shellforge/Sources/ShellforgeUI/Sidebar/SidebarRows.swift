@@ -171,6 +171,8 @@ struct TaskRowView: View {
     /// Its current tab's Close Tab (Close Pane when split); the last pane asks to remove the task.
     var closeTab: () -> Void = {}
     var closeTitle = "Close Tab"
+    /// Its worktree's lines against its base, for the VS Code badge; nil until read.
+    var diff: DiffStat? = nil
     @Environment(\.interfaceScale) private var scale
 
     var body: some View {
@@ -194,7 +196,7 @@ struct TaskRowView: View {
                                 Badge(request.label, icon: .brand(request.host.brand), help: request.help, style: .quiet,
                                       action: { ExternalLink.open(request.url) })
                             }
-                            VSCodeBadge(folder: node.task.worktreePath)
+                            VSCodeBadge(folder: node.task.worktreePath, diff: diff, base: node.task.baseBranch)
                             BranchLabelView(label: BranchLabel(name: node.task.branch, extra: 0, drifted: false, detail: ""))
                                 .layoutPriority(1)
                         }

@@ -409,6 +409,8 @@ extension iTermShellforgeSidebar {
             MainActor.assumeIsolated {
                 link.reportsMayHaveChanged()
                 updateDockBadge()
+                // Each task's +n −m: DiffStats keeps an answer 5 s, so this costs git that often.
+                for model in sidebars.allObjects { Task { await model.refreshDiffs() } }
             }
         }
         // Room for macOS to fire it with other wakeups: a job's change shows within 1.5 s.
