@@ -148,6 +148,27 @@ import Testing
         #expect(ProjectGone().errorDescription == "The project was removed.")
     }
 
+    /// A task whose removal stopped leaves a row on the board every window shares; its project's
+    /// removal takes that row too.
+    @Test func removingAProjectClearsItsRemovalRows() async throws {
+        let s = try setup([Self.remove])
+        s.model.removalBoard.removals[s.task.id] = .stopped("Not removed")
+        #expect(await s.model.confirmRemove(project: s.a.id))
+        #expect(s.model.removalBoard.removals[s.task.id] == nil)
+    }
+
+    /// Another window over the same workspace forgets the project as its list redraws.
+    @Test func everyWindowForgetsARemovedProject() async throws {
+        let s = try setup([Self.remove])
+        let launcher = CommandLauncher(resolve: { ResolvedEnvironment(variables: ["PATH": "/usr/bin"], source: .loginShell("/bin/zsh")) })
+        let other = SidebarModel(host: FakeTerminalHost(), document: s.document, launcher: launcher, jiraSettings: { nil })
+        await eventually { other.providers[s.a.id] != nil }
+        other.defaultBranches[s.a.id] = "main"
+        #expect(await s.model.confirmRemove(project: s.a.id))
+        #expect(await eventually { other.providers[s.a.id] == nil })
+        #expect(other.defaultBranches[s.a.id] == nil)
+    }
+
     @Test func aFailedCreateLeavesTheProjectRemovable() async throws {
         let s = try setup([])
         await #expect(throws: (any Error).self) {

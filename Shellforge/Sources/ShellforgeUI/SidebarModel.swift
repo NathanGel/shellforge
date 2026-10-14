@@ -378,6 +378,9 @@ public final class SidebarModel: ObservableObject {
         contexts.prune(keeping: Set(tree.projects.flatMap(\.tasks).map { FooterRow.task($0.id) }
                                     + (tree.otherTabs + terminalTabs).map { FooterRow.tab($0.tabId) }))
         detectProviders(tree.projects.map(\.project))
+        // A project removed, in this window or another, leaves nothing read about it behind.
+        let present = Set(current.projects.map(\.id))
+        for gone in Set(providers.keys).union(defaultBranches.keys).subtracting(present) { forgetCaches(of: gone) }
         // Follow iTerm2: whatever tab is selected decides the task shown.
         let opened = host.selectedTabId != lastSelectedTab
         lastSelectedTab = host.selectedTabId
@@ -510,7 +513,11 @@ public final class SidebarModel: ObservableObject {
             }
             // One publication for the batch, not one redraw per project.
             var next = providers, branches = defaultBranches
-            for (id, provider, branch) in found { next[id] = provider; if let branch { branches[id] = branch } }
+            // A project removed while git ran is not written back.
+            for (id, provider, branch) in found where project(id) != nil {
+                next[id] = provider
+                if let branch { branches[id] = branch }
+            }
             providers = next
             defaultBranches = branches
             detecting.subtract(found.map(\.0))
