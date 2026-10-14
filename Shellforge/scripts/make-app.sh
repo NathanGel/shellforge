@@ -38,6 +38,10 @@ if [[ -n "${SHELLFORGE_VERSION:-}" ]]; then
     /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $SHELLFORGE_VERSION" "$PLIST"
     /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${SHELLFORGE_BUILD:-1}" "$PLIST"
 fi
+# Stamped here, not left to plists/iTerm2.plist: that file is a local, gitignored copy of
+# dev-iTerm2.plist, and an old copy lacks the feed — a release without it could never update.
+/usr/libexec/PlistBuddy -c 'Delete :ShellforgeUpdateFeed' "$PLIST" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c 'Add :ShellforgeUpdateFeed string github:NathanGel/shellforge' "$PLIST"
 /usr/libexec/PlistBuddy -c 'Delete :ShellforgeDevBuild' "$PLIST" 2>/dev/null || true
 if [[ "${SHELLFORGE_RELEASE:-}" != 1 ]]; then
     /usr/libexec/PlistBuddy -c 'Add :ShellforgeDevBuild bool true' "$PLIST"
