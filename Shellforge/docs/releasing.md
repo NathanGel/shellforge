@@ -9,7 +9,7 @@ Releases are numbered `major.minor.patch`: `0.1.0` is the first.
 - **minor:** new features.
 - **major:** a change that breaks a saved setup.
 
-The tag is `v<version>`. The build number is one more than the number of `v*` tags, so it grows
+The tag is `v<version>`. The build number is one more than the number of Shellforge releases on GitHub, so it grows
 with every release. Builds from source keep iTerm2's version string, such as `3.7.dev`, and are
 marked as development builds: they never offer or install an update.
 

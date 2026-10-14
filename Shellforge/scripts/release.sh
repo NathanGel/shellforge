@@ -25,16 +25,19 @@ origin="$(git remote get-url origin)"
 git fetch --quiet --tags origin master
 [[ "$(git rev-parse master)" == "$(git rev-parse origin/master)" ]] || die "master is not the same as origin/master"
 git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null && die "v$VERSION already exists"
-latest="$(git tag -l 'v[0-9]*' --sort=-v:refname | head -1)"
-if [[ -n "$latest" ]]; then
-    newest="$(printf '%s\n%s\n' "${latest#v}" "$VERSION" | sort -V | tail -1)"
-    [[ "$newest" == "$VERSION" ]] || die "$VERSION is not newer than $latest"
-fi
 gh auth status --hostname github.com >/dev/null 2>&1 || die "gh is not logged in to github.com (gh auth login)"
+# Shellforge's versions are its GitHub releases: the repository also holds iTerm2's own tags
+# (v3.7.4, v20261013-nightly), which are no Shellforge version.
+released="$(gh release list --repo "$REPO" --limit 1000 --json tagName -q '.[].tagName' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true)"
+latest="$(print -r -- "$released" | sed -n 's/^v//p' | sort -V | tail -1)"
+if [[ -n "$latest" ]]; then
+    newest="$(printf '%s\n%s\n' "$latest" "$VERSION" | sort -V | tail -1)"
+    [[ "$newest" == "$VERSION" && "$latest" != "$VERSION" ]] || die "$VERSION is not newer than $latest"
+fi
 security find-identity -p codesigning | grep -q "\"$IDENTITY\"" || die "no \"$IDENTITY\" code-signing certificate in the keychain (see Shellforge/docs/releasing.md)"
 
-# One more than the releases so far: every install sees the number grow.
-BUILD=$(( $(git tag -l 'v[0-9]*' | wc -l) + 1 ))
+# One more than Shellforge's releases so far: every install sees the number grow.
+BUILD=$(( $(print -r -- "$released" | grep -c . || true) + 1 ))
 SHELLFORGE_RELEASE=1 SHELLFORGE_VERSION="$VERSION" SHELLFORGE_BUILD="$BUILD" SIGN_IDENTITY="$IDENTITY" "$ROOT/Shellforge/scripts/make-app.sh"
 /usr/libexec/PlistBuddy -c 'Print :ShellforgeDevBuild' "$APP/Contents/Info.plist" >/dev/null 2>&1 && die "the bundle is marked as a dev build"
 codesign -d -r- "$APP" 2>/dev/null | grep -q '^designated => .*certificate leaf' || die "the bundle is not certificate-signed"
