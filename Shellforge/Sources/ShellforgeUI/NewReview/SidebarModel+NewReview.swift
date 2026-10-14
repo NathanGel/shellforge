@@ -35,18 +35,22 @@ extension SidebarModel {
         guard let project = document.workspace.projects.first(where: { $0.id == projectId }),
               let agent = agents.first(where: { $0.id == draft.agentId }) else { return }
         let launcher = self.launcher
-        let made = try await BackgroundWork.run { () throws -> (TaskItem, String) in
-            guard launcher.locate(agent.command) != nil else { throw AgentNotInstalled(agent: agent.name) }
-            let review = try ReviewWorktrees.create(draft: draft, in: project, launcher: launcher)
-            let command = try AgentCommand.build(agent: agent, model: draft.model, reasoning: draft.reasoning,
-                                                 prompt: draft.promptText.isEmpty ? nil : draft.promptText,
-                                                 worktreePath: review.worktreePath, launcher: launcher)
-            return (review, command)
-        }
-        try document.update { workspace in
-            workspace.tasks.append(made.0)
-            workspace.remember(draft, projectId: projectId)
-            if let i = workspace.projects.firstIndex(where: { $0.id == projectId }) { workspace.projects[i].collapsed = false }
+        // Held for Remove Project from the start of git's work until the task is saved.
+        let made = try await whileCreating(in: projectId) { () async throws -> (TaskItem, String) in
+            let made = try await BackgroundWork.run { () throws -> (TaskItem, String) in
+                guard launcher.locate(agent.command) != nil else { throw AgentNotInstalled(agent: agent.name) }
+                let review = try ReviewWorktrees.create(draft: draft, in: project, launcher: launcher)
+                let command = try AgentCommand.build(agent: agent, model: draft.model, reasoning: draft.reasoning,
+                                                     prompt: draft.promptText.isEmpty ? nil : draft.promptText,
+                                                     worktreePath: review.worktreePath, launcher: launcher)
+                return (review, command)
+            }
+            try document.update { workspace in
+                workspace.tasks.append(made.0)
+                workspace.remember(draft, projectId: projectId)
+                if let i = workspace.projects.firstIndex(where: { $0.id == projectId }) { workspace.projects[i].collapsed = false }
+            }
+            return made
         }
         selectedTaskId = made.0.id
         selectedTerminalId = nil

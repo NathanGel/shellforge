@@ -58,7 +58,7 @@ struct SidebarHeader: View {
 
 /// A project: its chevron, its provider's mark, its name and Jira badge, and the "+" that starts a
 /// task; right-clicked, AiTerm's menu: the "+" items, Open in, Jira Projects…, Tunnels… and SSH
-/// Host…, then Move Up and Move Down.
+/// Host…, then Move Up and Move Down, and Remove Project… last.
 struct ProjectHeaderRow: View {
     let node: ProjectNode
     let collapsed: Bool
@@ -78,6 +78,8 @@ struct ProjectHeaderRow: View {
     /// The project's SSH host in a tab of its own; offered only while it is in ~/.ssh/config.
     var openSSHHost: () -> Void = {}
     var canOpenSSHHost = false
+    /// Remove Project…: asks, then forgets the project; files and tabs stay.
+    var remove: () -> Void = {}
     @Environment(\.interfaceScale) private var scale
 
     /// An empty project has nothing to fold; its terminals are something.
@@ -118,7 +120,7 @@ struct ProjectHeaderRow: View {
         }
         .frame(height: scale(Size.projectRow)).padding(.leading, scale(Space.base)).padding(.trailing, SidebarRowLayout.trailingInset(scale))
         .modifier(RowPill(selected: false))
-        // AiTerm's order: what the "+" offers, Open in, what the project links to, then the moves.
+        // AiTerm's order: what the "+" offers, Open in, what the project links to, the moves, then Remove.
         .contextMenu {
             newItems
             Divider()
@@ -131,6 +133,8 @@ struct ProjectHeaderRow: View {
             Divider()
             Button("Move Up") { move(true) }.disabled(!canMoveUp)
             Button("Move Down") { move(false) }.disabled(!canMoveDown)
+            Divider()
+            Button("Remove Project…", role: .destructive, action: remove)
         }
     }
 

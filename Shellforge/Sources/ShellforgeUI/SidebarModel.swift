@@ -277,24 +277,28 @@ public final class SidebarModel: ObservableObject {
         guard let project = document.workspace.projects.first(where: { $0.id == projectId }),
               let agent = agents.first(where: { $0.id == draft.agentId }) else { return }
         let launcher = self.launcher
-        let made = try await BackgroundWork.run { () throws -> (TaskItem, String) in
-            // Looked for again here: the sheet read what was installed when it opened, and a tab
-            // whose first line is "command not found" is worse than a refusal.
-            guard launcher.locate(agent.command) != nil else { throw AgentNotInstalled(agent: agent.name) }
-            let task = try TaskWorktrees.create(draft: draft, in: project, launcher: launcher)
-            let command = try AgentCommand.build(agent: agent, model: draft.model, reasoning: draft.reasoning,
-                                                 prompt: AgentCommand.composePrompt(userText: draft.promptText, ticket: draft.ticket,
-                                                                                    appendTicket: draft.appendTicket),
-                                                 worktreePath: task.worktreePath, launcher: launcher)
-            return (task, command)
-        }
-        try document.update { workspace in
-            workspace.tasks.append(made.0)
-            workspace.remember(draft, projectId: projectId)
-            // Only a box the sheet showed is a choice to remember.
-            if draft.paneHost != nil { workspace.lastOpenSSHByProject[projectId] = draft.openSSH }
-            // A task made in a folded project is shown: the project unfolds for it.
-            if let i = workspace.projects.firstIndex(where: { $0.id == projectId }) { workspace.projects[i].collapsed = false }
+        // Held for Remove Project from the start of git's work until the task is saved.
+        let made = try await whileCreating(in: projectId) { () async throws -> (TaskItem, String) in
+            let made = try await BackgroundWork.run { () throws -> (TaskItem, String) in
+                // Looked for again here: the sheet read what was installed when it opened, and a tab
+                // whose first line is "command not found" is worse than a refusal.
+                guard launcher.locate(agent.command) != nil else { throw AgentNotInstalled(agent: agent.name) }
+                let task = try TaskWorktrees.create(draft: draft, in: project, launcher: launcher)
+                let command = try AgentCommand.build(agent: agent, model: draft.model, reasoning: draft.reasoning,
+                                                     prompt: AgentCommand.composePrompt(userText: draft.promptText, ticket: draft.ticket,
+                                                                                        appendTicket: draft.appendTicket),
+                                                     worktreePath: task.worktreePath, launcher: launcher)
+                return (task, command)
+            }
+            try document.update { workspace in
+                workspace.tasks.append(made.0)
+                workspace.remember(draft, projectId: projectId)
+                // Only a box the sheet showed is a choice to remember.
+                if draft.paneHost != nil { workspace.lastOpenSSHByProject[projectId] = draft.openSSH }
+                // A task made in a folded project is shown: the project unfolds for it.
+                if let i = workspace.projects.firstIndex(where: { $0.id == projectId }) { workspace.projects[i].collapsed = false }
+            }
+            return made
         }
         selectedTaskId = made.0.id
         selectedTerminalId = nil

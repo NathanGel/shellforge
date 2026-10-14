@@ -147,7 +147,8 @@ struct SidebarView: View {
                              editTunnels: { showTunnels(for: node.id) },
                              editSSHHost: { showSSHHost(for: node.id) },
                              openSSHHost: { Task { await model.openSSHHost(of: node.id) } },
-                             canOpenSSHHost: model.canOpenSSHHost(of: node.id))
+                             canOpenSSHHost: model.canOpenSSHHost(of: node.id),
+                             remove: { Task { await model.confirmRemove(project: node.id) } })
                 .listRowSeparator(.hidden)
         case .terminal(let node, let selected):
             TerminalRowView(node: node, selected: selected, agents: model.avatars(forTerminal: node.id),
