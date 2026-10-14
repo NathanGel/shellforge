@@ -9,7 +9,6 @@ import Foundation
 import UserNotifications
 import WebKit
 
-@available(macOS 11.0, *)
 @MainActor
 class iTermBrowserPermissionManager: NSObject {
     private let user: iTermBrowserUser
@@ -19,7 +18,6 @@ class iTermBrowserPermissionManager: NSObject {
     }
 }
 
-@available(macOS 11.0, *)
 @MainActor
 extension iTermBrowserPermissionManager {
     // MARK: - Permission Management
@@ -95,7 +93,6 @@ extension iTermBrowserPermissionManager {
     
     // MARK: - iTermBrowserWebView Integration
 
-    @available(macOS 12.0, *)
     func handleMediaCapturePermissionRequest(
         from webView: iTermBrowserWebView,
         origin: WKSecurityOrigin,
@@ -216,15 +213,16 @@ extension iTermBrowserPermissionManager {
     }
     
     private func showPermissionDialog(for permissionType: BrowserPermissionType, origin: String) async -> BrowserPermissionDecision {
-        let alert = NSAlert()
-        alert.messageText = "Allow \(permissionType.displayName)"
-        alert.informativeText = "The website \(origin) wants to access \(permissionType.displayName.lowercased())."
-        alert.addButton(withTitle: "Allow")
-        alert.addButton(withTitle: "Block")
-        alert.alertStyle = .informational
-        
-        let response = alert.runModal()
-        return response == .alertFirstButtonReturn ? .granted : .denied
+        let warning = iTermWarning()
+        warning.heading = permissionType.permissionDialogTitle
+        warning.title = permissionType.accessRequestMessage(forOrigin: origin)
+        warning.actionLabels = [
+            String(localized: "BrowserPermissionManager.Allow", defaultValue: "Allow", comment: "Button to allow a website permission request"),
+            String(localized: "BrowserPermissionManager.Block", defaultValue: "Block", comment: "Button to block a website permission request")]
+        warning.warningType = .kiTermWarningTypePersistent
+
+        let selection = warning.runModal()
+        return selection == .kiTermWarningSelection0 ? .granted : .denied
     }
     
     // MARK: - Tab Reloading for Permission Revocation

@@ -550,6 +550,16 @@ NSString* ScreenCharArrayToString(const screen_char_t *screenChars,
                                   unichar** backingStorePtr,
                                   int** deltasPtr);
 
+// Like ScreenCharArrayToString, but if interiorNulsAsSpaces is set then nul cells that
+// precede the last non-nul cell (e.g., ones the cursor moved over without writing)
+// become spaces. Trailing nuls are unaffected.
+NSString* ScreenCharArrayToStringWithInteriorNulsAsSpaces(const screen_char_t *screenChars,
+                                                          int start,
+                                                          int end,
+                                                          unichar** backingStorePtr,
+                                                          int** deltasPtr,
+                                                          BOOL interiorNulsAsSpaces);
+
 // Number of chars before a sequence of nuls at the end of the line.
 int EffectiveLineLength(screen_char_t* theLine, int totalLength);
 
@@ -646,6 +656,17 @@ void ScreenCharClearProvisionalFlagForImageWithCode(int code);
 
 NSString *ScreenCharDescription(screen_char_t c);
 void ScreenCharInvert(screen_char_t *c);
+
+// Returns a heap copy (caller must free) of the first `count` cells of `line`
+// with the .bold bit set on the cursor cell at `cursorX` and, when `doubleWidth`
+// is set, its right half at `cursorX + 1`. Writes are bounded by `count`; the
+// caller passes a `count` that does not exceed the source buffer's length. Used
+// by both the legacy and Metal cursor paths to draw the HDR cursor glyph bold so
+// it stays legible over the much-brighter-than-white block.
+screen_char_t *ScreenCharLineCopyWithBoldCursorCell(const screen_char_t *line,
+                                                    size_t count,
+                                                    int cursorX,
+                                                    BOOL doubleWidth);
 
 // Returns true if any RTL was found. Sets the rtlState on all characters in c.
 BOOL AnnotateRightToLeftInScreenChars(screen_char_t *c, int len);

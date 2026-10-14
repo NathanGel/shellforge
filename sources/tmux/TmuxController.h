@@ -18,6 +18,7 @@
 @class iTermVariableScope;
 @class PTYSession;
 @class PTYTab;
+@class VT100Token;
 @class PseudoTerminal;
 @class EquivalenceClassSet;
 
@@ -71,6 +72,44 @@ extern NSString *const kTmuxControllerDidChangeHiddenWindows;
 @property(nonatomic, readonly) BOOL variableWindowSize;
 @property(nonatomic, readonly) BOOL shouldSetTitles;
 @property(nonatomic, readonly) BOOL serverIsLocal;
+// Identity of the tmux server this controller is attached to, as reported by the server
+// itself. Together with sessionId these are the three fields of $TMUX, which is how a
+// process running in a pane names its server and session. Both are nil/0 until the
+// response to loadServerPID arrives, and serverSocketPath stays nil on tmux < 2.2, which
+// has no #{socket_path}.
+@property(nonatomic, readonly) NSString *serverSocketPath;
+@property(nonatomic, readonly) pid_t serverPid;
+// Whether the serverIsLocal determination has ever actually succeeded, as opposed to the lookup
+// failing. serverIsLocal is NO in both the settled-remote and the not-yet-determined case, and
+// callers that report on the difference need to tell them apart.
+@property(nonatomic, readonly) BOOL serverLocalityKnown;
+
+// Which machine this controller's tmux server runs on, for pane addressing: nil for this Mac,
+// otherwise the clientUniqueID of the SSH-integration conductor carrying the gateway session.
+// Forwarded from the gateway's delegate rather than read from a session directly, so this file
+// keeps no dependency on PTYSession.
+@property(nonatomic, readonly) NSString *serverOriginIdentifier;
+
+// How an attached controller tells `it2` in a pane how to reach it: one global user option per
+// attacher, @it2_client_<hex of tmux client name> = c_<hex of JSON record>. Exposed for tests;
+// see advertiseIT2Client for the design.
++ (NSString *)it2ClientOptionNameForTmuxClientName:(NSString *)clientName;
++ (NSString *)commandAdvertisingIT2ClientRecord:(NSDictionary<NSString *, NSString *> *)record
+                                 tmuxClientName:(NSString *)clientName;
++ (NSString *)commandWithdrawingIT2ClientRecordForTmuxClientName:(NSString *)clientName;
+
+// Remove this controller's own it2 client record from the server. Call before a clean detach,
+// while the gateway can still send.
+- (void)withdrawIT2ClientRecord;
+
+// Re-run the serverIsLocal determination if it has never actually succeeded. Reading serverIsLocal
+// does this for you; call it directly only to refresh without reading. That test asks the
+// kernel for the name of the process with the server's pid, and a miss is indistinguishable from
+// "remote": sysctl can return zero bytes for a pid that is momentarily unreferenceable (see
+// +[iTermLSOF nameFailureDiagnosisForPid:]). Because the answer was computed once at connect time
+// and cached, a single unlucky lookup used to mark a local server remote for the life of the
+// connection. Cheap and a no-op once the answer is known.
+- (void)refreshServerLocalityIfUnknown;
 @property(nonatomic, readonly) NSString *defaultTerminal;
 @property(nonatomic) NSRect initialWindowHint;
 @property(nonatomic, readonly) BOOL detached;
@@ -243,6 +282,22 @@ extern NSString *const kTmuxControllerDidChangeHiddenWindows;
 - (void)savePerTabSettings;
 
 - (void)swapPane:(int)pane1 withPane:(int)pane2;
+// Floating panes (tmux 3.8 and later). Each change comes back as a layout change.
+// Whether the server sends layouts that include floating panes.
+@property (nonatomic, readonly) BOOL supportsFloatingPanes;
+// Whether the pane has pane-border-lines none, so tmux draws no border around it.
+- (BOOL)paneIsBorderless:(int)wp;
+- (void)moveFloatingPane:(int)wp byColumns:(int)columns rows:(int)rows;
+- (void)resizeFloatingPane:(int)wp
+              moveByColumns:(int)dx
+                       rows:(int)dy
+            growingByColumns:(int)dw
+                       rows:(int)dh;
+- (void)newFloatingPaneNearPane:(int)wp;
+// Calls completion with the new float's session once it exists, or nil if tmux refused.
+- (void)newFloatingPaneNearPane:(int)wp completion:(void (^)(PTYSession *))completion;
+- (void)tileFloatingPane:(int)wp;
+- (void)raiseFloatingPane:(int)wp toFront:(BOOL)toFront;
 - (void)toggleZoomForPane:(int)pane;
 - (void)setPartialWindowIdOrder:(NSArray *)partialOrder;
 - (void)setCurrentWindow:(int)windowId;
@@ -268,8 +323,26 @@ extern NSString *const kTmuxControllerDidChangeHiddenWindows;
                          value:(NSString *)value
                           pane:(int)paneID;
 - (NSDictionary<NSString *, NSString *> *)userVarsForPane:(int)paneID;
+
+// Called with output for a pane that has no session, such as while its window is being opened.
+// Control sequences whose effect would otherwise be lost are remembered. See issue 13006.
+- (void)didDropOutput:(NSData *)data forPane:(int)wp;
+
+// Returns the control sequences remembered by -didDropOutput:forPane: and forgets them. User
+// variables they set are applied to this controller and saved in tmux.
+- (NSArray<VT100Token *> *)takeDeferredTokensForPane:(int)wp;
+
+// A window opener calls these around fetching the state of panes that will get new sessions.
+// Only those panes' dropped output is remembered.
+- (void)willOpenPane:(int)wp;
+- (void)didFinishOpeningPanes:(NSArray<NSNumber *> *)panes;
+
+// Call with every window layout received from tmux, including those of hidden windows.
+- (void)didLearnLayout:(NSString *)layout forWindow:(int)windowId;
 - (void)activeWindowPaneDidChangeInWindow:(int)windowID toWindowPane:(int)paneID;
 - (void)activeWindowDidChangeTo:(int)windowID;
+// Whether tmux last reported this window as the attached session's current window.
+- (BOOL)windowIsCurrentInTmux:(int)windowId;
 - (void)setCurrentLatency:(NSTimeInterval)latency forPane:(int)wp;
 - (void)copyBufferToLocalPasteboard:(NSString *)bufferName;
 - (void)restoreWindowFrame:(PseudoTerminal *)term;

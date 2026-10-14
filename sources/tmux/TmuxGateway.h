@@ -61,6 +61,25 @@ extern NSString * const kTmuxGatewayErrorDomain;
 - (void)tmuxDidOpenInitialWindows;
 - (void)tmuxDoubleAttachForSessionGUID:(NSString *)sessionGUID;
 - (NSString *)tmuxOwningSessionGUID;
+// Identifies the connection this gateway's tmux server is reached over, for pane addressing.
+//
+// nil means this Mac. Non-nil is the clientUniqueID of the SSH-integration conductor the gateway
+// session runs over, which names one ssh connection. A pane address ($TMUX) collected on some
+// machine is only comparable with a server on that same machine: socket paths are byte-identical
+// across hosts sharing a uid, and pids collide freely, so without this a remote address could
+// match a local server by coincidence. The comparison is by connection rather than by host, which
+// only works because tmuxGatewayIT2ClientRecord steers a pane's it2 call onto the connection that
+// attached most recently. See TmuxPaneLocator.
+- (NSString *)tmuxGatewayOriginIdentifier;
+
+// What `it2` in one of this server's panes needs to reach iTerm2 over this gateway's connection.
+// The controller publishes it as a per-client user option on the server (see
+// TmuxController's advertiseIT2Client), where it2 looks before its own environment: a pane's own
+// copy is frozen when the server starts and names a connection that a reattach from elsewhere,
+// or an iTerm2 relaunch, may have replaced. {sock, nonce} over SSH integration, {suite}
+// otherwise, nil when there is nothing to advertise yet. Keep the keys in step with it2.py and
+// it2cli's TmuxOwnership.swift, which read them.
+- (NSDictionary<NSString *, NSString *> *)tmuxGatewayIT2ClientRecord;
 - (BOOL)tmuxGatewayShouldForceDetach;
 - (void)tmuxGatewayDidTimeOutDuringInitialization:(BOOL)duringInitialization;
 - (void)tmuxActiveWindowPaneDidChangeInWindow:(int)windowID toWindowPane:(int)paneID;
@@ -70,6 +89,10 @@ extern NSString * const kTmuxGatewayErrorDomain;
 // Client tracking for OSC query support (tmux 3.6+)
 - (void)tmuxClientSessionChanged:(NSString *)clientName;
 - (void)tmuxClientDetached:(NSString *)clientName;
+// Called once the server version is known. mayOmit is YES only for tmux 1.8, which could send
+// %exit inside a %begin/%end block; the delegate forwards it to the parser so a %exit line inside
+// a block from a newer server is treated as response data. See VT100TmuxParser.
+- (void)tmuxServerMayOmitEndGuardBeforeExit:(BOOL)mayOmit;
 @end
 
 typedef NS_ENUM(NSInteger, ControlCommand) {
@@ -98,6 +121,8 @@ typedef NS_ENUM(NSInteger, ControlCommand) {
 - (instancetype)init NS_UNAVAILABLE;
 
 - (BOOL)versionAtLeastDecimalNumberWithString:(NSString *)string;
+// YES until the server is known to be 1.9 or later. See the delegate method of the same name.
+- (BOOL)serverMayOmitEndGuardBeforeExit;
 
 // Returns any unconsumed data if tmux mode is exited.
 // The token must be TMUX_xxx.
@@ -146,6 +171,11 @@ typedef NS_ENUM(NSInteger, ControlCommand) {
 // YES if the server is new enough (tmux 3.2+) that send-keys by name is
 // re-encoded through extended-keys rather than collapsed by legacy input_key.
 - (BOOL)serverSupportsExtendedKeys;
+
+// YES if the server encodes every key for the pane's own mode, including the Kitty
+// keyboard protocol, so every keystroke should be sent to it by name. See
+// iTermTmuxControlModeKeyName.
+- (BOOL)serverEncodesAllKeys;
 - (void)detach;
 - (void)forceDetach;
 - (void)doubleAttachDetectedForSessionGUID:(NSString *)sessionGuid;
@@ -156,6 +186,9 @@ typedef NS_ENUM(NSInteger, ControlCommand) {
                                              block:(void (^)(NSString *, NSArray<NSString *> *))block;
 - (void)unsubscribe:(iTermTmuxSubscriptionHandle *)handle;
 - (BOOL)supportsSubscriptions;
+// Follows every window's layout through a subscription, for changes tmux sends no %layout-change
+// for. Each change reaches the delegate as a layout change.
+- (void)subscribeToWindowLayouts;
 - (void)enableWritesAfterDelay;
 
 @end

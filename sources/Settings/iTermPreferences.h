@@ -225,10 +225,21 @@ extern NSString *const kPreferenceKeyAIManualModelConfigurations;  // NSArray of
 // Name of the manual model the user designated as the "economy" model: a
 // cheaper model used for frequent, low-stakes background judgements (command
 // safety, screen-idle detection). Empty string means none; the catalog's
-// per-model economy pointer is then used instead. See ScreenWatchPoller.
+// per-model economy pointer is then used instead. Resolved by
+// LLMMetadata.economyModel(); consumed by ScreenWatchPoller and
+// AISafetyClassifierBackend.
 extern NSString *const kPreferenceKeyAIEconomyModelName;
 extern NSString *const kPreferenceKeyUseRecommendedAIModel;
 extern NSString *const kPreferenceKeyAIVendor;  // iTermAIVendor
+// When the built-in Ollama vendor is the default, its models are discovered from
+// the local server rather than a static catalog, so there is no sane automatic
+// choice of which discovered tag to use. These hold the user's explicit picks.
+// Empty string means "not chosen": the regular model then falls back to the
+// lexicographically-first discovered tag, and the economy model falls back to
+// the regular model. See LLMMetadata.recommendedModel(for:) and
+// LLMMetadata.ollamaVendorEconomyModel().
+extern NSString *const kPreferenceKeyAIOllamaRegularModel;
+extern NSString *const kPreferenceKeyAIOllamaEconomyModel;
 extern NSString *const kPreferenceKeyAISafetyCheck;  // boolean
 extern NSString *const kPreferenceKeyAIModelUpdatesEnabled;  // boolean: periodically download the AI model catalog from iterm2.com
 
@@ -280,6 +291,8 @@ extern NSString *const kPreferenceKeyPerPaneBackgroundImage;
 extern NSString *const kPreferenceKeyHideMenuBarInFullscreen;
 extern NSString *const kPreferenceKeyUIElement;
 extern NSString *const kPreferenceKeyUIElementRequiresHotkeys;
+extern NSString *const kPreferenceKeyShowMenuBarItem;
+extern NSString *const kPreferenceKeyMenuBarItemString;
 extern NSString *const kPreferenceKeyFlashTabBarInFullscreen;
 extern NSString *const kPreferenceKeyStretchTabsToFillBar;
 extern NSString *const kPreferenceKeyScrollableSideTabBar;
@@ -346,6 +359,8 @@ extern NSString *const kPreferenceKeyRightClickClickBypassesContextMenu;
 extern NSString *const kPreferenceKeyOptionClickMovesCursor;
 extern NSString *const kPreferenceKeyThreeFingerEmulatesMiddle;
 extern NSString *const kPreferenceKeyFocusFollowsMouse;
+// Focus follows mouse also moves focus between the terminal and views in a pane, like the find bar.
+extern NSString *const kPreferenceKeyFocusFollowsMouseIncludingSubviews;
 extern NSString *const kPreferenceKeyTripleClickSelectsFullWrappedLines;
 extern NSString *const kPreferenceKeyDoubleClickPerformsSmartSelection;
 extern NSString *const kPreferenceKeyEnterCopyModeAutomatically;

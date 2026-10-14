@@ -25,7 +25,7 @@ NS_ASSUME_NONNULL_BEGIN
 @protocol PTYMouseHandlerDelegate<NSObject>
 - (BOOL)mouseHandlerViewHasFocus:(PTYMouseHandler *)handler;
 - (void)mouseHandlerMakeFirstResponder:(PTYMouseHandler *)handler;
-- (void)mouseHandlerWillBeginDragPane:(PTYMouseHandler *)handler;
+- (void)mouseHandler:(PTYMouseHandler *)handler willBeginDragPaneWithEvent:(NSEvent *)event;
 - (BOOL)mouseHandlerSessionIsLocked:(PTYMouseHandler *)handler;
 - (BOOL)mouseHandlerIsInKeyWindow:(PTYMouseHandler *)handler;
 
@@ -55,6 +55,12 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)mouseHandlerIsScrolledToBottom:(PTYMouseHandler *)handler;
 - (VT100GridCoord)mouseHandlerCoordForPointInWindow:(NSPoint)point;
 - (VT100GridCoord)mouseHandlerCoordForPointInView:(NSPoint)point;
+// Converts a visual grid coordinate (where the mouse physically is) to the
+// logical coordinate the selection model uses. A no-op unless the line is
+// bidi-reordered, so left-to-right text is unaffected.
+- (VT100GridCoord)mouseHandler:(PTYMouseHandler *)handler
+        logicalCoordForVisualCoord:(VT100GridCoord)visualCoord;
+
 - (NSPoint)mouseHandlerReportablePointForPointInView:(NSPoint)point;
 - (void)mouseHandlerMoveCursorToCoord:(VT100GridCoord)coord
                              forEvent:(NSEvent *)event;

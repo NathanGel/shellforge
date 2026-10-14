@@ -8,6 +8,7 @@
 #import "iTermAlertBuiltInFunction.h"
 
 #import "iTermController.h"
+#import "iTermWarning.h"
 #import "NSAlert+iTerm.h"
 #import "NSObject+iTerm.h"
 #import "PTYSession.h"
@@ -34,6 +35,7 @@
                              optionalArguments:[NSSet setWithObject:window_id]
                                  defaultValues:@{ window_id: @"" }
                                        context:iTermVariablesSuggestionContextNone
+                        // Localization unneeded
                         sideEffectsPlaceholder:@"[alert]"
                                          block:
      ^(NSDictionary * _Nonnull parameters, iTermBuiltInFunctionCompletionBlock  _Nonnull completion) {
@@ -89,6 +91,7 @@
                              optionalArguments:[NSSet setWithObject:window_id]
                                  defaultValues:@{ }
                                        context:iTermVariablesSuggestionContextNone
+                        // Localization unneeded
                         sideEffectsPlaceholder:@"[get_string]"
                                          block:
      ^(NSDictionary * _Nonnull parameters, iTermBuiltInFunctionCompletionBlock  _Nonnull completion) {
@@ -115,22 +118,20 @@
     textField.stringValue = defaultValue;
     textField.placeholderString = placeholder;
 
-    NSAlert *alert = [[NSAlert alloc] init];
-    alert.messageText = title;
-    alert.informativeText = subtitle;
-    alert.accessoryView = textField;
-    [alert layout];
-    [[alert window] makeFirstResponder:textField];
-
-    NSWindow *window = [[[iTermController sharedInstance] terminalWithGuid:windowID] window];
-    if (window) {
-        [alert beginSheetModalForWindow:window completionHandler:^(NSModalResponse returnCode) {
-            completion(textField.stringValue ?: @"", nil);
-        }];
-    } else {
-        [alert runModal];
+    iTermWarning *warning = [[iTermWarning alloc] init];
+    warning.heading = title;
+    warning.title = subtitle;
+    warning.actionLabels = @[ iTermLocalizedOK() ];
+    warning.warningType = kiTermWarningTypePersistent;
+    warning.accessory = textField;
+    // Localization unneeded
+    warning.remoteInputs = @[ [iTermWarningRemoteInput textInputWithIdentifier:@"string" label:nil textField:textField] ];
+    warning.initialFirstResponder = textField;
+    // With a window this is a sheet that does not block. Without one it is app-modal.
+    warning.window = [[[iTermController sharedInstance] terminalWithGuid:windowID] window];
+    [warning runModalAsync:^(iTermWarningSelection selection, iTermWarning *shownWarning) {
         completion(textField.stringValue ?: @"", nil);
-    }
+    }];
 }
 
 @end
@@ -223,6 +224,7 @@
                              optionalArguments:[NSSet setWithObject:window_id]
                                  defaultValues:@{ window_id: @"" }
                                        context:iTermVariablesSuggestionContextNone
+                        // Localization unneeded
                         sideEffectsPlaceholder:@"[get_poly_modal_alert]"
                                          block:
      ^(NSDictionary * _Nonnull parameters, iTermBuiltInFunctionCompletionBlock  _Nonnull completion) {
@@ -277,7 +279,7 @@
     }
     if ([checkboxes count] != [checkboxDefaults count]) {
         if (completion) {
-            NSString *errorMessage = @"Number of checkboxes does not match number of defaults";
+            NSString *errorMessage = NSLocalizedStringWithDefaultValue(@"PolyModalAlert.CheckboxDefaultsMismatch", nil, [NSBundle mainBundle], @"Number of checkboxes does not match number of defaults", @"Error when the checkboxes and checkboxDefaults arrays have different lengths");
             NSError *error = [NSError errorWithDomain:@"iTermPolyModalAlertError"
                                                  code:1
                                              userInfo:@{NSLocalizedDescriptionKey: errorMessage}];

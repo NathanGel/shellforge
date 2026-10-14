@@ -17,6 +17,7 @@ NS_ASSUME_NONNULL_BEGIN
 @protocol VT100ScreenMarkReading;
 @protocol iTermFoldMarkReading;
 @protocol iTermImageInfoReading;
+@class ITMRPCRegistrationRequest;
 @class iTermOffscreenCommandLine;
 @class iTermSelection;
 @class iTermSelectionReplacement;
@@ -116,6 +117,10 @@ hasOpenAnnotationInRange:(VT100GridCoordRange)coordRange;
 - (void)contextMenuRestartSession:(iTermTextViewContextMenuHelper *)contextMenu;
 - (BOOL)contextMenuCanBurySession:(iTermTextViewContextMenuHelper *)contextMenu;
 - (void)contextMenuBurySession:(iTermTextViewContextMenuHelper *)contextMenu;
+- (BOOL)contextMenuSessionIsFloating:(iTermTextViewContextMenuHelper *)contextMenu;
+- (BOOL)contextMenuCanDockFloatingPane:(iTermTextViewContextMenuHelper *)contextMenu;
+- (void)contextMenuDockFloatingPane:(iTermTextViewContextMenuHelper *)contextMenu;
+- (void)contextMenu:(iTermTextViewContextMenuHelper *)contextMenu raiseFloatingPaneToFront:(BOOL)toFront;
 - (void)contextMenu:(iTermTextViewContextMenuHelper *)contextMenu amend:(NSMenu *)menu;
 - (NSControlStateValue)contextMenu:(iTermTextViewContextMenuHelper *)contextMenu
      terminalStateForMenuItem:(NSMenuItem *)item;
@@ -215,6 +220,14 @@ runCommandInBackground:(NSString *)command;
 
 // May leave placeholders
 - (NSString *)evaluateCustomActionDictionary:(NSDictionary *)dict;
+
+// Builds the top-level items for API-registered context menu providers,
+// omitting those whose visible_when is false in scope and grouping those that
+// share a submenu title. Visible for testing.
++ (NSArray<NSMenuItem *> *)menuItemsForAPIRegistrationRequests:(NSArray<ITMRPCRegistrationRequest *> *)reqs
+                                                         scope:(iTermVariableScope * _Nullable)scope
+                                                        target:(id _Nullable)target
+                                                        action:(SEL _Nullable)action;
 
 @end
 

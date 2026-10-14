@@ -90,6 +90,8 @@ NSString *const kTerminalStateWraparoundModeKey = @"Wraparound Mode";
 NSString *const kTerminalStateReverseWraparoundModeKey = @"Reverse Wraparound Mode";
 NSString *const kTerminalStateIsAnsiKey = @"Is ANSI";
 NSString *const kTerminalStateAutorepeatModeKey = @"Autorepeat Mode";
+NSString *const kTerminalStateBidiSupportModeKey = @"Bidi Support Mode";
+NSString *const kTerminalStateBidiDirectionHintKey = @"Bidi Direction Hint";
 NSString *const kTerminalStateInsertModeKey = @"Insert Mode";
 NSString *const kTerminalStateSendReceiveModeKey = @"Send/Receive Mode";
 NSString *const kTerminalStateCharsetKey = @"Charset";
@@ -149,6 +151,8 @@ typedef NS_ENUM(NSUInteger, VT100TerminalCopyMode) {
 @property(nonatomic, assign) BOOL moreFix;
 @property(nonatomic, assign) BOOL isAnsi;
 @property(nonatomic, assign) BOOL autorepeatMode;
+@property(nonatomic, assign) BOOL bidiSupportMode;
+@property(nonatomic, assign) iTermBidiDirection bidiDirectionHint;
 @property(nonatomic, assign) int charset;
 @property(nonatomic, assign) BOOL allowColumnMode;
 @property(nonatomic, assign) BOOL columnMode;  // YES=132 Column, NO=80 Column
@@ -251,6 +255,8 @@ static const int kMaxScreenRows = 4096;
         _wraparoundMode = YES;
         _reverseWraparoundMode = NO;
         _autorepeatMode = YES;
+        _bidiSupportMode = YES;
+        _bidiDirectionHint = iTermBidiDirectionDefault;
         VT100GraphicRenditionInitialize(&graphicRendition_);
         _mouseMode = MOUSE_REPORTING_NONE;
         _previousMouseMode = MOUSE_REPORTING_NORMAL;
@@ -392,6 +398,8 @@ static const int kMaxScreenRows = 4096;
     self.wraparoundMode = YES;
     self.reverseWraparoundMode = NO;
     self.autorepeatMode = YES;
+    self.bidiSupportMode = YES;
+    self.bidiDirectionHint = iTermBidiDirectionDefault;
     self.keypadMode = NO;
     self.sixelDisplayMode = NO;
     self.reportKeyUp = NO;
@@ -430,9 +438,21 @@ static const int kMaxScreenRows = 4096;
     [self.delegate terminalDidReset];
 }
 
+- (void)resetKeyReportingModeLocally {
+    DLog(@"reset key reporting mode locally");
+    [self resetSendModifiersWithSideEffects:NO];
+    [self.delegate terminalDidChangeSendModifiers];
+    [self.delegate terminalDidResetKeyReportingLocally];
+}
+
 - (void)resetSendModifiersWithSideEffects:(BOOL)sideEffects {
     DLog(@"reset send modifiers with side effects=%@", @(sideEffects));
     self.dirty = YES;
+    // CSI >m and CSI >4m with no parameters land here, so this is the same sequence family as the
+    // parameterized branches in -executeToken: and needs the same before/after test. Resetting a
+    // mode that is already off changes nothing, and reporting it anyway would be read as the shell
+    // writing the mode. See 13032.
+    const VT100TerminalKeyReportingFlags beforeReset = self.keyReportingFlags;
     for (int i = 0; i < NUM_MODIFIABLE_RESOURCES; i++) {
         _sendModifiers[i] = @-1;
     }
@@ -442,6 +462,9 @@ static const int kMaxScreenRows = 4096;
     [_alternateKeyReportingModeStack removeAllObjects];
     if (sideEffects) {
         [self.delegate terminalDidChangeSendModifiers];
+        if (beforeReset != self.keyReportingFlags) {
+            [self.delegate terminalKeyReportingFlagsDidChange:YES];
+        }
     }
 }
 
@@ -459,6 +482,9 @@ static const int kMaxScreenRows = 4096;
                   resetParser:userInitiated
                   preserveSSH:userInitiated || controlSequence
                 modifyContent:YES];
+    if (userInitiated || controlSequence) {
+        [_delegate terminalRemoveProgramStatusRecords];
+    }
 }
 
 - (void)resetForSSH {
@@ -657,10 +683,28 @@ static const int kMaxScreenRows = 4096;
     } else {
         _keyReportingFlags ^= flag;
     }
-    [self.delegate terminalKeyReportingFlagsDidChange];
+    [self.delegate terminalKeyReportingFlagsDidChange:NO];
+}
+
+- (void)setTmuxMode:(BOOL)tmuxMode {
+    if (tmuxMode == _tmuxMode) {
+        return;
+    }
+    _tmuxMode = tmuxMode;
+    // keyReportingFlags depends on tmux mode. This is not a write from the data
+    // stream, so it says nothing about whether the shell cleaned up after itself.
+    [self.delegate terminalKeyReportingFlagsDidChange:NO];
 }
 
 - (VT100TerminalKeyReportingFlags)keyReportingFlags {
+    if (_tmuxMode) {
+        // We never encode keys with the Kitty keyboard protocol for a tmux pane.
+        // Either tmux encodes them itself (see -[TmuxGateway serverEncodesAllKeys])
+        // or it does not support the protocol. This also covers flags carried in
+        // from a restored arrangement or from output parsed before tmux mode was
+        // turned on. Issue 13076.
+        return 0;
+    }
     if (self.currentKeyReportingModeStack.count) {
         return self.currentKeyReportingModeStack.lastObject.intValue;
     }
@@ -1260,7 +1304,12 @@ static const int kMaxScreenRows = 4096;
 }
 
 - (void)handleDeviceStatusReportWithToken:(VT100Token *)token withQuestion:(BOOL)withQuestion {
-    if ([_delegate terminalShouldSendReport:NO]) {
+    // Coalescible: every DSR reply below reads either a constant (status, printer,
+    // locator, macro space) or mutation-thread-owned, always-current state (the
+    // grid cursor for CSI 6 n active-position). None read the main-thread config
+    // snapshot, so a pipelined burst of these can share one pause+sync instead of
+    // paying one per query. See issue 13035 and -terminalShouldSendCoalescibleReport:.
+    if ([_delegate terminalShouldSendCoalescibleReport:NO]) {
         switch (token.csi->p[0]) {
             case 3: // response from VT100 -- Malfunction -- retry
                 break;
@@ -2262,6 +2311,14 @@ static BOOL VT100TokenIsTmux(VT100Token *token) {
                     case 4:
                         self.insertMode = mode;
                         break;
+                    case 8:  // BDSM
+                        if ([iTermAdvancedSettingsModel honorBidiSupportModeEscapeSequence]) {
+                            DLog(@"BDSM: %@ mode", mode ? @"implicit" : @"explicit");
+                            self.bidiSupportMode = mode;
+                        } else {
+                            DLog(@"Ignoring BDSM because the advanced setting is off");
+                        }
+                        break;
                     case 12:
                         self.sendReceiveMode = !mode;
                         break;
@@ -2296,6 +2353,10 @@ static BOOL VT100TokenIsTmux(VT100Token *token) {
 
         case VT100CSI_DECSTR:
             [self softReset];
+            break;
+
+        case VT100CSI_SCP:
+            [self executeSelectCharacterPath:token.csi->p[0]];
             break;
 
         case VT100CSI_DECSCUSR:
@@ -2518,6 +2579,28 @@ static BOOL VT100TokenIsTmux(VT100Token *token) {
             break;
 
         case VT100CSI_SET_KEY_REPORTING_MODE:
+            // In tmux mode the application's terminal is tmux, not us. tmux forwards a
+            // pane's raw output to control clients verbatim (window_pane_read_callback
+            // writes to both control_write_output and input_parse_pane), so we see the
+            // app's kitty keyboard requests even though they were addressed to tmux.
+            //
+            // Acting on them leaves us holding key reporting state that tmux does not
+            // model and cannot report back, which is then silently lost on detach: the
+            // pane's terminal is reset on attach, there is no tmux format variable to
+            // restore the flags from, and CSI ? u is answered by the terminal rather
+            // than the application, so there is nothing to re-derive it from either.
+            // The result was a pane that encoded keys one way before a detach and
+            // another way after. Issue 13076.
+            //
+            // So we never encode keys with the Kitty protocol in a tmux pane. A tmux
+            // that supports the protocol tracks it per pane (keeping it across a
+            // detach), answers CSI ? u, and encodes each key we send it by name for
+            // the pane's current mode. An older tmux ignores CSI ? u, so an app that
+            // negotiates properly gets no reply and falls back to modifyOtherKeys.
+            if (_tmuxMode) {
+                DLog(@"Ignore set key reporting mode in tmux mode");
+                break;
+            }
             self.dirty = YES;
             {
                 VT100TerminalKeyReportingFlags effective;
@@ -2543,15 +2626,24 @@ static BOOL VT100TokenIsTmux(VT100Token *token) {
                 } else {
                     _keyReportingFlags = effective;
                 }
+                // Mode 1 assigns the whole value; 2 and 3 only set or clear the named bits.
+                [self.delegate terminalKeyReportingFlagsDidChange:(token.csi->p[1] == 1)];
             }
-            [self.delegate terminalKeyReportingFlagsDidChange];
             break;
 
         case VT100CSI_PUSH_KEY_REPORTING_MODE:
+            if (_tmuxMode) {
+                DLog(@"Ignore push key reporting mode in tmux mode");
+                break;
+            }
             [self pushKeyReportingFlags:token.csi->p[0]];
             break;
 
         case VT100CSI_POP_KEY_REPORTING_MODE:
+            if (_tmuxMode) {
+                DLog(@"Ignore pop key reporting mode in tmux mode");
+                break;
+            }
             [self popKeyReportingModes:token.csi->p[0]];
             break;
 
@@ -2844,6 +2936,23 @@ static BOOL VT100TokenIsTmux(VT100Token *token) {
             [_delegate terminalSendReport:[s dataUsingEncoding:NSUTF8StringEncoding]];
             break;
         }
+        case XTERMCC_REPORT_CELL_SIZE_PIX: {
+            // Report the cell size in points, not backing-store pixels. This
+            // matches xterm.js (and therefore VS Code and Cursor), which report
+            // CSS pixels for both this and CSI 14 t, and it is consistent with
+            // iTerm2's own CSI 14 t, which reports the text area in points. (It
+            // differs from Ghostty, which reports device pixels for both; but
+            // matching Ghostty would require also changing CSI 14 t, and would
+            // make a client that computes columns = 14t-width / 16t-width get the
+            // wrong answer here since our 14 t is in points.)
+            double scale = 0;
+            const NSSize cellSize = [_delegate terminalCellSizeInPoints:&scale];
+            NSString *s = [NSString stringWithFormat:@"\033[6;%d;%dt",
+                           (int)round(cellSize.height),
+                           (int)round(cellSize.width)];
+            [_delegate terminalSendReport:[s dataUsingEncoding:NSUTF8StringEncoding]];
+            break;
+        }
         case XTERMCC_REPORT_WIN_SIZE: {
             const VT100GridSize size = [_delegate terminalSizeInCells];
             NSString *s = [NSString stringWithFormat:@"\033[8;%d;%dt",
@@ -2958,8 +3067,14 @@ static BOOL VT100TokenIsTmux(VT100Token *token) {
             if (resource >= 0 && resource <= NUM_MODIFIABLE_RESOURCES) {
                 _sendModifiers[resource] = @-1;
                 self.dirty = YES;
+                // Emptying the stack changes the effective flags whenever it was non-empty, so
+                // compare the getter across the change rather than assuming. See 13032.
+                const VT100TerminalKeyReportingFlags before = self.keyReportingFlags;
                 [self.currentKeyReportingModeStack removeAllObjects];
                 [self.delegate terminalDidChangeSendModifiers];
+                if (before != self.keyReportingFlags) {
+                    [self.delegate terminalKeyReportingFlagsDidChange:NO];
+                }
             }
             self.dirty = YES;
             break;
@@ -2984,6 +3099,9 @@ static BOOL VT100TokenIsTmux(VT100Token *token) {
             }
             self.dirty = YES;
             _sendModifiers[resource] = @(value);
+            // Zeroing the flags and emptying the stack below both change what the getter returns.
+            // Compare across the whole change and notify once. See 13032.
+            const VT100TerminalKeyReportingFlags beforeSetModifiers = self.keyReportingFlags;
             _keyReportingFlags = 0;
             // The protocol described here:
             // https://sw.kovidgoyal.net/kitty/keyboard-protocol/#progressive-enhancement
@@ -2993,6 +3111,9 @@ static BOOL VT100TokenIsTmux(VT100Token *token) {
             self.dirty = YES;
             [self.currentKeyReportingModeStack removeAllObjects];
             [self.delegate terminalDidChangeSendModifiers];
+            if (beforeSetModifiers != self.keyReportingFlags) {
+                [self.delegate terminalKeyReportingFlagsDidChange:YES];
+            }
             break;
         }
 
@@ -3042,6 +3163,10 @@ static BOOL VT100TokenIsTmux(VT100Token *token) {
 
         case XTERMCC_SET_TAB_STATUS:
             [self executeSetTabStatus:token];
+            break;
+
+        case XTERMCC_PROGRAM_STATUS:
+            [self executeProgramStatus:token];
             break;
 
         case XTERMCC_SET_PALETTE:
@@ -3197,7 +3322,7 @@ static BOOL VT100TokenIsTmux(VT100Token *token) {
     [self.currentKeyReportingModeStack addObject:@(flags)];
     [self pruneKeyReportingModeStack:self.currentKeyReportingModeStack];
     DLog(@"Stack:\n%@", self.currentKeyReportingModeStack);
-    [self.delegate terminalKeyReportingFlagsDidChange];
+    [self.delegate terminalKeyReportingFlagsDidChange:NO];
 }
 
 - (void)popKeyReportingModes:(int)count {
@@ -3211,7 +3336,7 @@ static BOOL VT100TokenIsTmux(VT100Token *token) {
         [self.currentKeyReportingModeStack removeLastObject];
     }
     DLog(@"Stack:\n%@", self.currentKeyReportingModeStack);
-    [self.delegate terminalKeyReportingFlagsDidChange];
+    [self.delegate terminalKeyReportingFlagsDidChange:NO];
 }
 
 - (void)executeRequestTermcapTerminfo:(VT100Token *)token {
@@ -3937,7 +4062,7 @@ static BOOL VT100TokenIsTmux(VT100Token *token) {
                 // Use tmux-aware method for OSC 4 queries (tmux 3.6+). Coalescible
                 // because the value is read from the mutation-thread colorMap, so a
                 // burst of queries can share one sync (issue 13013).
-                if ([_delegate terminalShouldSendColorReport:YES]) {
+                if ([_delegate terminalShouldSendCoalescibleReport:YES]) {
                       [_delegate terminalSendOSC4Report:[self.output reportColor:theColor atIndex:theIndex prefix:@"4;"]];
                 }
             }
@@ -4005,7 +4130,7 @@ static BOOL VT100TokenIsTmux(VT100Token *token) {
 
     NSString *name = [dict[@"name"] stringByBase64DecodingStringWithEncoding:NSUTF8StringEncoding];
     if (!name) {
-        name = @"Unnamed file";
+        name = NSLocalizedStringWithDefaultValue(@"VT100Terminal.UnnamedFile", nil, [NSBundle mainBundle], @"Unnamed file", @"Fallback name shown for a file transferred with no name.");
     }
 
     const BOOL forceWide = [dict[@"mode"] isEqualToString:@"wide"];
@@ -4189,6 +4314,10 @@ static NSString *VT100GetURLParamForKey(NSString *params, NSString *key) {
         }
     }
     [self updateExternalAttributes];
+}
+
+static NSString *VT100TerminalCompactFloat(CGFloat value) {
+    return [[NSString stringWithFormat:@"%0.2f", value] stringByCompactingFloatingPointString];
 }
 
 - (void)executeXtermSetKvp:(VT100Token *)token {
@@ -4386,6 +4515,40 @@ static NSString *VT100GetURLParamForKey(NSString *params, NSString *key) {
                            height, width, scale];
             [_delegate terminalSendReport:[s dataUsingEncoding:NSUTF8StringEncoding]];
         }
+    } else if ([key isEqualToString:@"SetWindowFrame"]) {
+        NSArray<NSString *> *parts = [value componentsSeparatedByString:@";"];
+        if (parts.count == 4) {
+            const NSRect frame = NSMakeRect([parts[0] doubleValue],
+                                            [parts[1] doubleValue],
+                                            [parts[2] doubleValue],
+                                            [parts[3] doubleValue]);
+            [_delegate terminalSetWindowFrame:frame];
+        }
+    } else if ([key isEqualToString:@"ReportWindowFrame"]) {
+        if ([_delegate terminalShouldSendReport:YES]) {
+            const NSRect f = [_delegate terminalWindowFrameInPoints];
+            NSString *s = [NSString stringWithFormat:@"\033]1337;WindowFrame=%@;%@;%@;%@\033\\",
+                           VT100TerminalCompactFloat(NSMinX(f)),
+                           VT100TerminalCompactFloat(NSMinY(f)),
+                           VT100TerminalCompactFloat(NSWidth(f)),
+                           VT100TerminalCompactFloat(NSHeight(f))];
+            [_delegate terminalSendReport:[s dataUsingEncoding:NSUTF8StringEncoding]];
+        }
+    } else if ([key isEqualToString:@"ReportScreenFrames"]) {
+        if ([_delegate terminalIsTrusted] && [_delegate terminalShouldSendReport:YES]) {
+            NSMutableArray<NSString *> *frames = [NSMutableArray array];
+            for (NSValue *boxed in [_delegate terminalScreenFramesInPoints]) {
+                const NSRect f = boxed.rectValue;
+                [frames addObject:[NSString stringWithFormat:@"%@,%@,%@,%@",
+                                   VT100TerminalCompactFloat(NSMinX(f)),
+                                   VT100TerminalCompactFloat(NSMinY(f)),
+                                   VT100TerminalCompactFloat(NSWidth(f)),
+                                   VT100TerminalCompactFloat(NSHeight(f))]];
+            }
+            NSString *s = [NSString stringWithFormat:@"\033]1337;ScreenFrames=%@\033\\",
+                           [frames componentsJoinedByString:@";"]];
+            [_delegate terminalSendReport:[s dataUsingEncoding:NSUTF8StringEncoding]];
+        }
     } else if ([key isEqualToString:@"UnicodeVersion"]) {
         if ([value hasPrefix:@"push"]) {
             [self pushUnicodeVersion:value];
@@ -4534,6 +4697,25 @@ static NSString *VT100GetURLParamForKey(NSString *params, NSString *key) {
     return [uid rangeOfCharacterFromSet:illegalCharacters].location == NSNotFound;
 }
 
+// OSC 7501: Program Status Protocol
+- (void)executeProgramStatus:(VT100Token *)token {
+    NSString *body = token.string;
+    if (!body) {
+        return;
+    }
+    if ([iTermProgramStatusReport isFeatureQuery:body]) {
+        // The reply is a constant, so it reads no state that could be stale.
+        if ([_delegate terminalShouldSendCoalescibleReport:YES]) {
+            [_delegate terminalSendReport:iTermProgramStatusReport.featureQueryReply];
+        }
+        return;
+    }
+    iTermProgramStatusReport *report = [iTermProgramStatusReport reportFromBody:body];
+    if (report) {
+        [_delegate terminalReportProgramStatus:report];
+    }
+}
+
 // OSC 21337: Tab status
 // Payload is semicolon-delimited key=value pairs with \; and \\ escaping.
 - (void)executeSetTabStatus:(VT100Token *)token {
@@ -4541,6 +4723,10 @@ static NSString *VT100GetURLParamForKey(NSString *params, NSString *key) {
     if (!payload) {
         return;
     }
+    [_delegate terminalSetTabStatus:[self tabStatusUpdateForOSC21337Payload:payload]];
+}
+
+- (VT100TabStatusUpdate *)tabStatusUpdateForOSC21337Payload:(NSString *)payload {
 
     // Parse the payload into tokens split on unescaped semicolons.
     VT100TabStatusUpdate *status = [[VT100TabStatusUpdate alloc] init];
@@ -4567,6 +4753,8 @@ static NSString *VT100GetURLParamForKey(NSString *params, NSString *key) {
     }
     [tokens addObject:[currentToken copy]];
 
+    static NSString *const thenPrefix = @"then-";
+    VT100TabStatusUpdate *fallback = nil;
     for (NSString *kvString in tokens) {
         NSRange eqRange = [kvString rangeOfString:@"="];
         NSString *key;
@@ -4579,47 +4767,95 @@ static NSString *VT100GetURLParamForKey(NSString *params, NSString *key) {
             value = [kvString substringFromIndex:eqRange.location + 1];
         }
 
-        if ([key isEqualToString:@"indicator"]) {
-            if (value.length == 0) {
-                status.indicatorPresence = VT100TabStatusUpdateFieldCleared;
-            } else {
-                NSArray<NSNumber *> *components = [self xtermParseColorArgument:value];
-                if (components) {
-                    status.indicatorPresence = VT100TabStatusUpdateFieldSet;
-                    iTermSRGBColor c = { components[0].doubleValue, components[1].doubleValue, components[2].doubleValue };
-                    status.indicator = c;
-                }
+        if ([key isEqualToString:@"expires-on"]) {
+            // The status is only true while some operation is; say which one.
+            if ([value isEqualToString:@"progress-end"]) {
+                status.expiresOn = VT100TabStatusExpirationReasonProgressEnd;
+            } else if (value.length == 0) {
+                status.expiresOn = VT100TabStatusExpirationReasonNever;
             }
-        } else if ([key isEqualToString:@"status"]) {
-            if (value.length > 0) {
-                status.statusPresence = VT100TabStatusUpdateFieldSet;
-                status.status = value;
-            } else {
-                status.statusPresence = VT100TabStatusUpdateFieldCleared;
-            }
-        } else if ([key isEqualToString:@"status-color"]) {
-            if (value.length == 0) {
-                status.statusColorPresence = VT100TabStatusUpdateFieldCleared;
-            } else {
-                NSArray<NSNumber *> *components = [self xtermParseColorArgument:value];
-                if (components) {
-                    status.statusColorPresence = VT100TabStatusUpdateFieldSet;
-                    iTermSRGBColor c = { components[0].doubleValue, components[1].doubleValue, components[2].doubleValue };
-                    status.statusColor = c;
-                }
-            }
-        } else if ([key isEqualToString:@"detail"]) {
-            if (value.length > 0) {
-                status.detailPresence = VT100TabStatusUpdateFieldSet;
-                status.detail = value;
-            } else {
-                status.detailPresence = VT100TabStatusUpdateFieldCleared;
-            }
+            continue;
         }
+
+        // then-* names the status to leave behind when this one expires. The
+        // fields are the same ones, so they parse the same way. An
+        // unrecognized then- key is ignored like any other unknown key, and
+        // must not conjure an empty fallback: that would turn “expire and
+        // clear” into “expire and do nothing,” making a typo worse than
+        // leaving the key out.
+        if ([key hasPrefix:thenPrefix]) {
+            VT100TabStatusUpdate *candidate = fallback ?: [[VT100TabStatusUpdate alloc] init];
+            if ([self setTabStatusField:[key substringFromIndex:thenPrefix.length]
+                                  value:value
+                                     on:candidate]) {
+                fallback = candidate;
+            }
+            continue;
+        }
+
         // Unknown keys are silently ignored
+        [self setTabStatusField:key value:value on:status];
     }
 
-    [_delegate terminalSetTabStatus:status];
+    if (status.expiresOn != VT100TabStatusExpirationReasonNever) {
+        // No then-* fields means the status just goes away.
+        status.expirationFallback = fallback ?: [VT100TabStatusUpdate clear];
+    }
+
+    return status;
+}
+
+// Applies one key=value pair from an OSC 21337 payload to `update`. An empty
+// value clears the field. Returns whether the pair set anything: NO for a key
+// that is not a status field, and NO for a value that could not be parsed.
+// Recognizing the key is not enough, because the caller decides from this
+// whether a then-* fallback exists at all, and a fallback that sets no field
+// would turn “expire and clear” into “expire and do nothing.”
+- (BOOL)setTabStatusField:(NSString *)key
+                    value:(NSString *)value
+                       on:(VT100TabStatusUpdate *)update {
+    if ([key isEqualToString:@"indicator"]) {
+        if (value.length == 0) {
+            update.indicatorPresence = VT100TabStatusUpdateFieldCleared;
+        } else {
+            NSArray<NSNumber *> *components = [self xtermParseColorArgument:value];
+            if (!components) {
+                return NO;
+            }
+            update.indicatorPresence = VT100TabStatusUpdateFieldSet;
+            iTermSRGBColor c = { components[0].doubleValue, components[1].doubleValue, components[2].doubleValue };
+            update.indicator = c;
+        }
+    } else if ([key isEqualToString:@"status"]) {
+        if (value.length > 0) {
+            update.statusPresence = VT100TabStatusUpdateFieldSet;
+            update.status = value;
+        } else {
+            update.statusPresence = VT100TabStatusUpdateFieldCleared;
+        }
+    } else if ([key isEqualToString:@"status-color"]) {
+        if (value.length == 0) {
+            update.statusColorPresence = VT100TabStatusUpdateFieldCleared;
+        } else {
+            NSArray<NSNumber *> *components = [self xtermParseColorArgument:value];
+            if (!components) {
+                return NO;
+            }
+            update.statusColorPresence = VT100TabStatusUpdateFieldSet;
+            iTermSRGBColor c = { components[0].doubleValue, components[1].doubleValue, components[2].doubleValue };
+            update.statusColor = c;
+        }
+    } else if ([key isEqualToString:@"detail"]) {
+        if (value.length > 0) {
+            update.detailPresence = VT100TabStatusUpdateFieldSet;
+            update.detail = value;
+        } else {
+            update.detailPresence = VT100TabStatusUpdateFieldCleared;
+        }
+    } else {
+        return NO;
+    }
+    return YES;
 }
 
 // This is based on a misbegotten linux console control sequence:
@@ -5035,6 +5271,26 @@ typedef NS_ENUM(int, iTermDECRPMSetting)  {
 
 - (void)backIndex {
     [self.delegate terminalBackIndex];
+}
+
+// SCP. The second parameter (how to apply the change to existing content) is
+// accepted and ignored, as the terminal-wg recommendation allows.
+- (void)executeSelectCharacterPath:(int)direction {
+    if (![iTermAdvancedSettingsModel honorBidiSupportModeEscapeSequence]) {
+        DLog(@"Ignoring SCP because the advanced setting is off");
+        return;
+    }
+    switch (direction) {
+        case iTermBidiDirectionDefault:
+        case iTermBidiDirectionLeftToRight:
+        case iTermBidiDirectionRightToLeft:
+            DLog(@"SCP: direction %d", direction);
+            self.bidiDirectionHint = (iTermBidiDirection)direction;
+            break;
+        default:
+            DLog(@"Ignoring SCP with unknown direction %d", direction);
+            break;
+    }
 }
 
 - (void)executeANSIRequestMode:(int)mode {
@@ -5534,6 +5790,14 @@ static iTermPromise<NSNumber *> *VT100TerminalPromiseOfDECRPMSettingFromBoolean(
     switch (mode) {
         case 4:
             return VT100TerminalDECRPMSettingFromBoolean(self.insertMode);
+        case 8:  // BDSM
+            // With right-to-left support off nothing is ever reordered, which
+            // is permanently explicit mode.
+            if ([iTermPreferences bidiEnabled] &&
+                [iTermAdvancedSettingsModel honorBidiSupportModeEscapeSequence]) {
+                return VT100TerminalDECRPMSettingFromBoolean(self.bidiSupportMode);
+            }
+            break;
         case 12:
             return VT100TerminalDECRPMSettingFromBoolean(self.sendReceiveMode);
     }
@@ -5866,6 +6130,8 @@ static iTermPromise<NSNumber *> *VT100TerminalPromiseOfDECRPMSettingFromBoolean(
            kTerminalStateReverseWraparoundModeKey: @(self.reverseWraparoundMode),
            kTerminalStateIsAnsiKey: @(self.isAnsi),
            kTerminalStateAutorepeatModeKey: @(self.autorepeatMode),
+           kTerminalStateBidiSupportModeKey: @(self.bidiSupportMode),
+           kTerminalStateBidiDirectionHintKey: @(self.bidiDirectionHint),
            kTerminalStateInsertModeKey: @(self.insertMode),
            kTerminalStateSendReceiveModeKey: @(self.sendReceiveMode),
            kTerminalStateCharsetKey: @(self.charset),
@@ -5936,6 +6202,10 @@ static iTermPromise<NSNumber *> *VT100TerminalPromiseOfDECRPMSettingFromBoolean(
     self.reverseWraparoundMode = [dict[kTerminalStateReverseWraparoundModeKey] boolValue];
     self.isAnsi = [dict[kTerminalStateIsAnsiKey] boolValue];
     self.autorepeatMode = [dict[kTerminalStateAutorepeatModeKey] boolValue];
+    // Older state dictionaries lack the key; the default is implicit mode.
+    NSNumber *bidiSupportMode = dict[kTerminalStateBidiSupportModeKey];
+    self.bidiSupportMode = bidiSupportMode ? bidiSupportMode.boolValue : YES;
+    self.bidiDirectionHint = (iTermBidiDirection)[dict[kTerminalStateBidiDirectionHintKey] intValue];
     self.insertMode = [dict[kTerminalStateInsertModeKey] boolValue];
     self.sendReceiveMode = [dict[kTerminalStateSendReceiveModeKey] boolValue];
     self.charset = [dict[kTerminalStateCharsetKey] intValue];

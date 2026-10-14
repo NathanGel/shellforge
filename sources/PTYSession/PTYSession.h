@@ -61,6 +61,9 @@ extern NSString *const PTYCommandDidExitUserInfoKeyStartLine;
 extern NSString *const PTYCommandDidExitUserInfoKeyLineCount;
 extern NSString *const PTYCommandDidExitUserInfoKeyURL;
 extern NSString *const PTYSessionArrangementOptionsForDuplication;
+// Transient launch option (not serialized): when set, restoration starts the session in its saved
+// working directory exactly once, rather than via a persistent Custom Directory profile override.
+extern NSString *const PTYSessionArrangementOptionsForceOldCWD;
 extern NSString *const PTYSessionArrangementOptionsUnlimitedHistory;
 extern NSString *const PTYSessionArrangementOptionsArchive;
 extern NSString *const PTYSessionArrangementOptionsLargeContentProvider;
@@ -75,6 +78,7 @@ extern NSString *const PTYSessionArrangementOptionsInhibitRelaunch;
 @class FakeWindow;
 @class PTYSessionSwiftState;
 @class iTermAction;
+@class iTermFloatingPaneView;
 @class iTermAnnouncementViewController;
 @class iTermAutomaticProfileSwitcher;
 @class iTermAutomaticProfileSwitchingSession;
@@ -91,6 +95,7 @@ extern NSString *const PTYSessionArrangementOptionsInhibitRelaunch;
 @class iTermSSHReconnectionInfo;
 @class iTermScriptHistoryEntry;
 @class iTermSessionTabStatus;
+@class iTermProgramStatusController;
 @class iTermSessionModeHandler;
 @class iTermStatusBarViewController;
 @class iTermSwiftyStringGraph;
@@ -162,8 +167,35 @@ typedef enum {
 // given tab.
 - (int)tabNumberForItermSessionId;
 
-// Sibling sessions in this tab.
+// Sibling sessions in this tab: tiled first, then floating.
 - (NSArray<PTYSession *> *)sessions;
+
+// Sibling sessions in the tab's tiled layout.
+- (NSArray<PTYSession *> *)tiledSessions;
+
+// Is the session a floating pane in this tab?
+- (BOOL)sessionIsFloating:(PTYSession *)session;
+
+@optional
+// How many of the tab's floating panes are hidden.
+- (NSInteger)sessionNumberOfHiddenFloatingPanes;
+
+// What has happened in the hidden floats (ended, bell, new output, idle) as a small image, or nil.
+- (nullable NSImage *)sessionHiddenFloatingPanesBadge;
+
+// For a native floating pane, the largest grid that fits in its tab, as (columns, rows). Zero
+// otherwise.
+- (NSSize)sessionMaximumFloatingGridSize:(PTYSession *)session;
+
+// Hides the tab's floats, or shows them again, without changing the hide toggle.
+- (void)sessionSetFloatingPanesTemporarilyHidden:(BOOL)hidden;
+
+// The floating pane holding the session, or nil if it is tiled.
+- (nullable iTermFloatingPaneView *)sessionFloatingPane:(PTYSession *)session;
+
+// Brings a floating pane to the front of the tab's floats, or sends it to the back.
+- (void)sessionRaiseFloatingPane:(PTYSession *)session toFront:(BOOL)toFront;
+@required
 
 // Remove aSession from the tab.
 // Remove a dead session. This should be called from [session terminate] only.
@@ -199,8 +231,10 @@ typedef enum {
 // Do two or more panes in this tab have different (non-nil) tab colors?
 - (BOOL)sessionTabHasMultipleDistinctTabColors;
 
-// Session-initiated name change.
-- (void)nameOfSession:(PTYSession *)session didChangeTo:(NSString *)newName;
+// Session-initiated name change. Nullable so implementations cope with a session
+// that has no computed name yet; -[PTYTab updateTabTitleForCurrentSessionName:],
+// which the implementation forwards to, is reached that way from -updateTabTitle.
+- (void)nameOfSession:(PTYSession *)session didChangeTo:(nullable NSString *)newName;
 
 // Session-initiated font size. May cause window size to adjust.
 - (void)sessionDidChangeFontSize:(PTYSession *)session
@@ -296,6 +330,11 @@ typedef enum {
 
 // Whether metal is allowed has changed
 - (void)sessionUpdateMetalAllowed;
+
+// The session's metal framebuffer pixel format changed (its HDR-cursor setting
+// flipped), so the metal driver must be torn down and rebuilt with the new
+// format. Implemented by bouncing metal for the tab.
+- (void)sessionRebuildMetal;
 - (void)sessionDidChangeMetalViewAlphaValue:(PTYSession *)session to:(CGFloat)newValue;
 
 // Amount of transparency changed (perhaps to none!)
@@ -343,7 +382,6 @@ backgroundColor:(nullable NSColor *)backgroundColor;
 - (void)sessionDidChangeDesiredToolbarItems:(PTYSession *)session;
 - (nullable id<iTermSwipeHandler>)sessionSwipeHandler;
 - (BOOL)sessionIsInSelectedTab:(PTYSession *)session;
-- (void)sessionDisableFocusFollowsMouseAtCurrentLocation;
 - (void)sessionDidResize:(PTYSession *)session;
 - (BOOL)sessionPasswordManagerWindowIsOpen;
 - (BOOL)sessionShouldDragWindowByPaneTitleBar:(PTYSession *)session;
@@ -606,6 +644,9 @@ backgroundColor:(nullable NSColor *)backgroundColor;
 @property(nonatomic, readonly, nullable) NSString *badgeLabel;
 @property(nonatomic, readonly, nullable) NSString *subtitle;
 @property(nonatomic, readonly, nullable) iTermSessionTabStatus *tabStatus;
+// The session's OSC 7501 records, or nil if the program never reported any.
+// Never creates one, so views can ask about every session cheaply.
+@property(nonatomic, readonly, nullable) iTermProgramStatusController *programStatusControllerIfPresent;
 - (void)clearTabStatus;
 
 // Commands issued, directories entered, and hosts connected to during this session.
@@ -632,6 +673,8 @@ backgroundColor:(nullable NSColor *)backgroundColor;
 
 // Has it been at least a second since isProcessing became false?
 @property(nonatomic, readonly) BOOL isIdle;
+// When output last arrived, ignoring output caused by resizing. Seconds since the reference date.
+@property(nonatomic, readonly) NSTimeInterval lastOutputTime;
 
 // Tries to return the current local working directory without resolving symlinks (possible if
 // shell integration is on). If that can't be done then the current local working directory with
@@ -748,6 +791,19 @@ backgroundColor:(nullable NSColor *)backgroundColor;
 // Autodetected dominant color, otherwise configured bg color
 @property(nonatomic, readonly, nullable) NSColor *effectiveUnprocessedBackgroundColor;
 @property(nonatomic, readonly, nullable) NSColor *effectiveProcessedBackgroundColor;
+
+// For browser sessions: the page's background color (from the web view's
+// underPageBackgroundColor). When set, it overrides the profile background color
+// for the minimal theme's light/dark decision and tab tint. Setting it is rate
+// limited internally because propagation triggers a relayout.
+@property(nonatomic, strong, nullable) NSColor *browserBackgroundColor;
+
+// The page background color to use for the minimal-theme browser tint, or nil to use
+// the profile color. Non-nil only for a browser session that has reported a page color
+// while the minimal tab style is active. Single source of the minimal-browser tint
+// decision shared by effectiveUnprocessedBackgroundColor, colorMapShouldBeInDarkMode,
+// and minimalThemeTextColor.
+@property(nonatomic, readonly, nullable) NSColor *minimalBrowserTintColor;
 @property(nonatomic, readonly) BOOL abortBury;
 @property(nonatomic, readonly) BOOL isArchive;
 @property(nonatomic, copy, nullable) NSString *browserTarget;
@@ -774,6 +830,16 @@ backgroundColor:(nullable NSColor *)backgroundColor;
                   settingCustomLocale:(NSString *)lang;
 + (NSDictionary *)repairedArrangement:(NSDictionary *)arrangement
                        profileMutator:(Profile *(^)(Profile *))profileMutator;
+
+// Variables persisted into a saved arrangement, excluding the AI tab title (which
+// is re-derived on restore, so persisting it is dead data and would leak a model
+// summary of the screen into the plist). Exposed for testing.
+- (NSDictionary *)encodableArrangementVariables;
+
+// Whether the auto-composer drop-down is visible and active - i.e. the running command
+// is captured in the prompt-mark history (recentCommands.last) rather than only recorded
+// at command end. Used by the AI-title context to decide the running-command dedup.
+- (BOOL)haveAutoComposer;
 
 + (BOOL)handleShortcutWithoutTerminal:(NSEvent*)event;
 
@@ -854,6 +920,13 @@ backgroundColor:(nullable NSColor *)backgroundColor;
                          workingDirectory:(NSString *)workingDirectory
                                      size:(VT100GridSize)size;
 + (nullable NSString *)guidInArrangement:(NSDictionary *)arrangement;
+// The grid a session had when its arrangement was saved, or 0x0 if it doesn't say.
++ (VT100GridSize)gridSizeInArrangement:(NSDictionary *)arrangement;
+// Returns a copy of the arrangement of a session archived at `path` that is
+// restored as an archive even when no archive option is given. A tab
+// arrangement containing it can be restored without a live session for it.
++ (NSDictionary *)arrangement:(NSDictionary *)arrangement markedAsArchiveAtPath:(NSString *)path;
++ (BOOL)arrangementIsMarkedAsArchive:(NSDictionary *)arrangement;
 
 // The canonicalized stableID stored in an arrangement, or nil if the
 // arrangement predates the stableID (or carries a malformed one).
@@ -894,6 +967,16 @@ webViewConfiguration:(nullable WKWebViewConfiguration *)webViewConfiguration
 // Tries to revive a terminated session. Returns YES on success. It should be re-added to a tab if
 // after reviving.
 - (BOOL)revive;
+
+// Make a terminated session stop being revivable now rather than when its
+// undo window runs out.
+- (void)hardStop;
+
+// Pause/resume the countdown that makes a terminated-but-restorable session stop
+// being restorable, so a modal alert can be shown without the session expiring.
+// The remaining time is preserved across the pause.
+- (void)pauseTerminationTimer;
+- (void)resumeTerminationTimer;
 
 // Preferences
 - (void)setPreferencesFromAddressBookEntry: (NSDictionary *)aePrefs;
@@ -940,6 +1023,12 @@ webViewConfiguration:(nullable WKWebViewConfiguration *)webViewConfiguration
 // suppression.
 - (void)injectSynthesizedKeyEvent:(NSEvent *)event literalText:(nullable NSString *)literalText
     NS_SWIFT_NAME(injectSynthesizedKeyEvent(_:literalText:));
+
+// Records that the user just sent input to this session. Broadcastable writes
+// call this themselves; call it explicitly only for a user-initiated write that
+// deliberately does not broadcast, such as password entry. Drives the cursor
+// movement animation gate.
+- (void)noteUserInput;
 
 // Inject a mouse scroll-wheel report into the session as if the user
 // scrolled the wheel `lines` notches over the middle of the screen.
@@ -1011,6 +1100,10 @@ webViewConfiguration:(nullable WKWebViewConfiguration *)webViewConfiguration
 
 // Change the size of the session and its tty.
 - (void)setSize:(VT100GridSize)size;
+
+// Gives the session's floating pane, if it has one, the outline color for when it is active: the
+// border around the active pane if the profile asks for one.
+- (void)updateFloatingPaneOutlineColor;
 
 // Resize the grid the way a terminal-initiated resize does, honoring the same
 // window-fitting logic. Note the unusual argument convention: proposedSize.width
@@ -1232,6 +1325,12 @@ webViewConfiguration:(nullable WKWebViewConfiguration *)webViewConfiguration
 // Set a value in the session's dictionary without affecting the backing profile.
 - (void)setSessionSpecificProfileValues:(NSDictionary *)newValues;
 - (void)setSessionSpecificProfileValues:(NSDictionary *)newValues reload:(BOOL)reload;
+// preserveColorBaselines:YES leaves _preEscapeSequenceColors intact for the keys
+// being written. Used by binding observers so applying a bound (i:N) color does
+// not clear the Edit-Session baseline a later reset restores.
+- (void)setSessionSpecificProfileValues:(NSDictionary *)newValues
+                                 reload:(BOOL)reload
+                  preserveColorBaselines:(BOOL)preserveColorBaselines;
 - (NSString *)amendedColorKey:(NSString *)baseKey;
 
 - (void)useTransparencyDidChange;
@@ -1248,8 +1347,8 @@ webViewConfiguration:(nullable WKWebViewConfiguration *)webViewConfiguration
 
 - (void)jumpToLocationWhereCurrentStatusChanged;
 - (void)updateMetalDriver;
-- (id)temporarilyDisableMetal NS_AVAILABLE_MAC(10_11);
-- (void)drawFrameAndRemoveTemporarilyDisablementOfMetalForToken:(nullable id)token NS_AVAILABLE_MAC(10_11);
+- (id)temporarilyDisableMetal;
+- (void)drawFrameAndRemoveTemporarilyDisablementOfMetalForToken:(nullable id)token;
 
 - (BOOL)willEnableMetal;
 - (BOOL)metalAllowed:(out nullable iTermMetalUnavailableReason *)reason;
@@ -1262,6 +1361,10 @@ webViewConfiguration:(nullable WKWebViewConfiguration *)webViewConfiguration
 // title or already shows the name) so a programmatically assigned name becomes
 // visible in the tab title even when the profile's title shows only the job.
 - (void)enableSessionNameTitleComponentIfPossible;
+
+// Whether a program-set OSC 0/1/2 title should enable TemporarySessionName.
+// Exposed for testing.
++ (BOOL)programOSCTitleShouldEnableTemporaryNameForComponents:(NSUInteger)components;
 - (void)profileNameDidChangeTo:(NSString *)name;
 - (void)profileDidChangeToProfileWithName:(NSString *)name;
 - (void)updateStatusBarStyle;
@@ -1300,7 +1403,6 @@ webViewConfiguration:(nullable WKWebViewConfiguration *)webViewConfiguration
 - (CGFloat)desiredPanelReservation;
 + (CGFloat)desiredPanelReservationForProfile:(Profile *)profile
                                      session:(nullable PTYSession *)session;
-- (void)refuseFirstResponderAtCurrentMouseLocation;
 - (void)showError:(NSString *)message suppressionKey:(NSString *)key identifier:(NSString *)identifier;
 - (void)dismissAnnouncementWithIdentifier:(NSString *)identifier;
 - (void)sync;
@@ -1314,6 +1416,14 @@ webViewConfiguration:(nullable WKWebViewConfiguration *)webViewConfiguration
 // and its iTermExternalAttribute. Exposed as a class method for unit testing.
 + (ITMCellStyle *)protoStyleForCharacter:(screen_char_t)c
                        externalAttributes:(iTermExternalAttribute *)ea;
+
+// Pure transformation: produces the text of a line plus its run-length-encoded
+// code-point counts and cell styles. Exposed as a class method for unit testing.
++ (NSString *)stringForLine:(const screen_char_t *)screenChars
+                     length:(int)length
+                    eaIndex:(iTermExternalAttributeIndex * _Nullable)eaIndex
+                  cppsArray:(NSMutableArray<ITMCodePointsPerCell *> *)cppsArray
+                stylesArray:(NSMutableArray<ITMCellStyle *> *)styleArray;
 
 - (nullable ITMGetBufferResponse *)handleGetBufferRequest:(ITMGetBufferRequest *)request;
 - (void)handleGetPromptRequest:(ITMGetPromptRequest *)request
@@ -1335,6 +1445,14 @@ webViewConfiguration:(nullable WKWebViewConfiguration *)webViewConfiguration
                     origin:(NSString *)origin;
 - (void)setParentScope:(nullable iTermVariableScope *)parentScope;
 - (void)setOrAppendComposerString:(nullable NSString *)string;
+
+// Posts a notification for a tab status change if the status priority
+// settings ask for one. Exposed so tests can observe which changes reach it.
+- (void)maybePostTabStatusNotificationWithPreviousStatusText:(nullable NSString *)previousStatusText;
+
+// Shows a notification about one OSC 7501 record. Exposed so tests can observe
+// which record changes reach it.
+- (void)postProgramStatusNotificationWithDescription:(NSString *)description;
 
 @end
 

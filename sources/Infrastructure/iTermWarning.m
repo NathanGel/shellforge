@@ -12,9 +12,14 @@
 
 static const NSTimeInterval kTemporarySilenceTime = 600;
 static const NSTimeInterval kOneMonthTime = 30 * 24 * 60 * 60;
-static NSString *const kCancel = @"Cancel";
+// The default Cancel label. Localized so that the label-array API's implicit cancel action matches
+// callers that pass the same localized "Cancel" (General.Cancel), rather than an English literal.
+static NSString *iTermWarningDefaultCancelLabel(void) {
+    return iTermLocalizedCancel();
+}
 static id<iTermWarningHandler> gWarningHandler;
 static BOOL gShowingWarning;
+static NSArray<NSString *> *(^gSessionGuidResolver)(NSWindow *);
 BOOL gShowRememberedAlerts = NO;
 
 @interface iTermWarningAction()
@@ -31,9 +36,197 @@ BOOL gShowRememberedAlerts = NO;
     return warningAction;
 }
 
++ (instancetype)localOnlyActionWithLabel:(NSString *)label {
+    iTermWarningAction *warningAction = [self warningActionWithLabel:label block:nil];
+    warningAction.notOfferedRemotely = YES;
+    return warningAction;
+}
+
 - (NSString *)description {
     return [NSString stringWithFormat:@"<%@: %p label=%@>",
             NSStringFromClass([self class]), self, _label];
+}
+
+@end
+
+// Stands in for an alert's modal session when warnings run headless (see
+// +[iTermWarning setRunsHeadlessModals:]). The alert is never shown. Its buttons are pointed here,
+// so clicking one programmatically ends the wait with that button's return code, as it would end a
+// real modal session.
+@interface iTermHeadlessModalSession : NSObject
+@property (nonatomic, readonly) BOOL finished;
+@property (nonatomic, readonly) NSModalResponse response;
+@end
+
+static BOOL gRunsHeadlessModals;
+static NSMutableArray<iTermHeadlessModalSession *> *gHeadlessModalSessions;
+
+@implementation iTermHeadlessModalSession {
+    // Set for a sheet, which reports its result later instead of blocking.
+    void (^_completion)(NSModalResponse);
+}
+
+- (instancetype)initWithAlert:(NSAlert *)alert completion:(void (^)(NSModalResponse))completion {
+    self = [super init];
+    if (self) {
+        _completion = [completion copy];
+        [alert.buttons enumerateObjectsUsingBlock:^(NSButton *button, NSUInteger idx, BOOL *stop) {
+            button.tag = NSAlertFirstButtonReturn + idx;
+            button.target = self;
+            button.action = @selector(buttonPressed:);
+        }];
+        if (!gHeadlessModalSessions) {
+            gHeadlessModalSessions = [NSMutableArray array];
+        }
+        [gHeadlessModalSessions addObject:self];
+    }
+    return self;
+}
+
+- (void)buttonPressed:(NSButton *)sender {
+    [self finishWithResponse:sender.tag];
+}
+
+- (void)finishWithResponse:(NSModalResponse)response {
+    if (_finished) {
+        return;
+    }
+    _finished = YES;
+    _response = response;
+    [gHeadlessModalSessions removeObject:self];
+    if (_completion) {
+        void (^completion)(NSModalResponse) = _completion;
+        _completion = nil;
+        completion(response);
+    } else {
+        // Wake the nested run loop in -runUntilFinished.
+        CFRunLoopStop(CFRunLoopGetMain());
+    }
+}
+
+// The sheet's parent window closed. Like a real sheet in that case, the completion never runs.
+- (void)abandon {
+    if (_finished) {
+        return;
+    }
+    _finished = YES;
+    _completion = nil;
+    [gHeadlessModalSessions removeObject:self];
+}
+
+// Blocks like -[NSAlert runModal]: a nested run loop in the modal panel mode. Started from a
+// main-queue callout it freezes the main dispatch queue, exactly as a real alert would.
+- (NSModalResponse)runUntilFinished {
+    while (!_finished) {
+        CFRunLoopRunInMode((__bridge CFStringRef)NSModalPanelRunLoopMode, 60, false);
+    }
+    return _response;
+}
+
+@end
+
+@implementation iTermWarningRemoteInput {
+    NSString *(^_get)(void);
+    void (^_set)(NSString *);
+}
+
+- (instancetype)initWithIdentifier:(NSString *)identifier
+                             label:(NSString *)label
+                         isInteger:(BOOL)isInteger
+                           minimum:(NSInteger)minimum
+                           maximum:(NSInteger)maximum
+                               get:(NSString *(^)(void))get
+                               set:(void (^)(NSString *))set {
+    self = [super init];
+    if (self) {
+        _identifier = [identifier copy];
+        _label = [label copy];
+        _isInteger = isInteger;
+        _minimum = minimum;
+        _maximum = maximum;
+        _get = [get copy];
+        _set = [set copy];
+    }
+    return self;
+}
+
++ (instancetype)textInputWithIdentifier:(NSString *)identifier
+                                  label:(NSString *)label
+                              textField:(NSTextField *)textField {
+    // Weak: the warning's caller owns the control and may outlive or predecease this object.
+    __weak NSTextField *weakTextField = textField;
+    return [[self alloc] initWithIdentifier:identifier
+                                      label:label
+                                  isInteger:NO
+                                    minimum:0
+                                    maximum:0
+                                        get:^NSString *{
+        return weakTextField.stringValue ?: @"";
+    }
+                                        set:^(NSString *value) {
+        weakTextField.stringValue = value;
+    }];
+}
+
++ (instancetype)secretInputWithIdentifier:(NSString *)identifier
+                                    label:(NSString *)label
+                                textField:(NSTextField *)textField {
+    __weak NSTextField *weakTextField = textField;
+    iTermWarningRemoteInput *input = [[self alloc] initWithIdentifier:identifier
+                                                                label:label
+                                                            isInteger:NO
+                                                              minimum:0
+                                                              maximum:0
+                                                                  get:^NSString *{
+        // What the field holds stays on this Mac.
+        return @"";
+    }
+                                                                  set:^(NSString *value) {
+        weakTextField.stringValue = value;
+    }];
+    input->_isSecret = YES;
+    return input;
+}
+
++ (instancetype)integerInputWithIdentifier:(NSString *)identifier
+                                     label:(NSString *)label
+                                   minimum:(NSInteger)minimum
+                                   maximum:(NSInteger)maximum
+                                    getter:(NSInteger (^)(void))getter
+                                    setter:(void (^)(NSInteger))setter {
+    return [[self alloc] initWithIdentifier:identifier
+                                      label:label
+                                  isInteger:YES
+                                    minimum:minimum
+                                    maximum:maximum
+                                        get:^NSString *{
+        return [@(getter()) stringValue];
+    }
+                                        set:^(NSString *value) {
+        setter(value.integerValue);
+    }];
+}
+
+- (NSString *)currentValue {
+    return _get();
+}
+
+- (BOOL)acceptsValue:(NSString *)value {
+    if (!_isInteger) {
+        return YES;
+    }
+    // The whole string must be a number: "12abc" and "" are not.
+    NSScanner *scanner = [NSScanner scannerWithString:value];
+    scanner.charactersToBeSkipped = nil;
+    NSInteger number = 0;
+    if (![scanner scanInteger:&number] || !scanner.isAtEnd) {
+        return NO;
+    }
+    return number >= _minimum && number <= _maximum;
+}
+
+- (void)applyValue:(NSString *)value {
+    _set(value);
 }
 
 @end
@@ -49,6 +242,24 @@ BOOL gShowRememberedAlerts = NO;
 
 + (id<iTermWarningHandler>)warningHandler {
     return gWarningHandler;
+}
+
++ (void)setSessionGuidResolver:(NSArray<NSString *> *(^)(NSWindow *))resolver {
+    gSessionGuidResolver = [resolver copy];
+}
+
++ (void)setRunsHeadlessModals:(BOOL)headless {
+    gRunsHeadlessModals = headless;
+}
+
++ (BOOL)runsHeadlessModals {
+    return gRunsHeadlessModals;
+}
+
++ (void)cancelHeadlessModals {
+    for (iTermHeadlessModalSession *session in [gHeadlessModalSessions copy]) {
+        [session finishWithResponse:NSModalResponseAbort];
+    }
 }
 
 + (iTermWarningSelection)showWarningWithTitle:(NSString *)title
@@ -112,7 +323,7 @@ BOOL gShowRememberedAlerts = NO;
                            identifier:identifier
                           silenceable:warningType
                               heading:heading
-                          cancelLabel:kCancel
+                          cancelLabel:iTermWarningDefaultCancelLabel()
                                window:window];
 }
 
@@ -125,11 +336,53 @@ BOOL gShowRememberedAlerts = NO;
                                       heading:(NSString *)heading
                                   cancelLabel:(NSString *)cancelLabel
                                        window:(NSWindow *)window {
+    return [self showWarningWithTitle:title
+                              actions:actions
+                        actionMapping:actionToSelectionMap
+                            accessory:accessory
+                         remoteInputs:nil
+                           identifier:identifier
+                          silenceable:warningType
+                              heading:heading
+                          cancelLabel:cancelLabel
+                               window:window];
+}
+
++ (iTermWarningSelection)showWarningWithTitle:(NSString *)title
+                                      actions:(NSArray *)actions
+                                    accessory:(NSView *)accessory
+                                 remoteInputs:(NSArray<iTermWarningRemoteInput *> *)remoteInputs
+                                   identifier:(NSString *)identifier
+                                  silenceable:(iTermWarningType)warningType
+                                       window:(NSWindow *)window {
+    return [self showWarningWithTitle:title
+                              actions:actions
+                        actionMapping:nil
+                            accessory:accessory
+                         remoteInputs:remoteInputs
+                           identifier:identifier
+                          silenceable:warningType
+                              heading:nil
+                          cancelLabel:iTermWarningDefaultCancelLabel()
+                               window:window];
+}
+
++ (iTermWarningSelection)showWarningWithTitle:(NSString *)title
+                                      actions:(NSArray *)actions
+                                actionMapping:(NSArray<NSNumber *> *)actionToSelectionMap
+                                    accessory:(NSView *)accessory
+                                 remoteInputs:(NSArray<iTermWarningRemoteInput *> *)remoteInputs
+                                   identifier:(NSString *)identifier
+                                  silenceable:(iTermWarningType)warningType
+                                      heading:(NSString *)heading
+                                  cancelLabel:(NSString *)cancelLabel
+                                       window:(NSWindow *)window {
     iTermWarning *warning = [[iTermWarning alloc] init];
     warning.title = title;
-    warning.actionLabels = actions;
+    [warning setActionsFromLabelsOrActions:actions];
     warning.actionToSelectionMap = actionToSelectionMap;
     warning.accessory = accessory;
+    warning.remoteInputs = remoteInputs;
     warning.identifier = identifier;
     warning.warningType = warningType;
     warning.heading = heading;
@@ -154,7 +407,7 @@ BOOL gShowRememberedAlerts = NO;
                        completion:(void (^)(iTermWarningSelection, iTermWarning *))completion {
     iTermWarning *warning = [[iTermWarning alloc] init];
     warning.title = title;
-    warning.actionLabels = actions;
+    [warning setActionsFromLabelsOrActions:actions];
     warning.actionToSelectionMap = actionToSelectionMap;
     warning.accessory = accessory;
     warning.identifier = identifier;
@@ -171,7 +424,15 @@ BOOL gShowRememberedAlerts = NO;
 
 - (NSString *)description {
     return [NSString stringWithFormat:@"<%@: %p title=%@ heading=%@ actions=%@ identifier=%@>",
-            NSStringFromClass([self class]), self, _title, _heading, _warningActions, _identifier];
+            NSStringFromClass([self class]), self, _titleIsSecret ? @"(secret)" : _title, _heading, _warningActions, _identifier];
+}
+
+// For the class methods, whose `actions` may mix labels and iTermWarningAction objects.
+- (void)setActionsFromLabelsOrActions:(NSArray *)actions {
+    self.warningActions = [[actions mapWithBlock:^id(id element) {
+        iTermWarningAction *action = [iTermWarningAction castFrom:element];
+        return action ?: [iTermWarningAction warningActionWithLabel:element block:nil];
+    }] mutableCopy];
 }
 
 - (void)setActionLabels:(NSArray<NSString *> *)actionLabels {
@@ -200,6 +461,7 @@ BOOL gShowRememberedAlerts = NO;
 }
 
 - (void)runModalAsync:(void (^)(iTermWarningSelection result, iTermWarning *warning))completion {
+    [self resolveActionRoles];
     iTermWarningSelection preemptedSelection;
     if ([self preempt:&preemptedSelection]) {
         completion(preemptedSelection, self);
@@ -213,17 +475,57 @@ BOOL gShowRememberedAlerts = NO;
         result = [gWarningHandler warningWouldShowAlert:alert identifier:_identifier];
     } else {
         DLog(@"Show warning %@\n%@", self, [NSThread callStackSymbols]);
-        gShowingWarning = YES;
         if (self.window) {
-            [alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse result) {
-                DLog(@"Result for %@ is %@", self, @(result));
-                gShowingWarning = NO;
-                completion([self handleResult:result alert:alert], self);
+            // A sheet shown this way does not block, so it is not app-modal. It does not count
+            // as showingWarning either: that pauses redraws in every window and keeps the hotkey
+            // window from hiding, and a sheet only concerns its own window.
+            iTermModalAlertRegistration *sheetRegistration = [self registerAlert:alert appModal:NO];
+            // AppKit does not call a sheet's completion handler if the parent window closes before
+            // the sheet is answered, so the completion alone cannot be relied on to unregister.
+            // Without this the alert would stay published (and unanswerable) until relaunch.
+            NSWindow *parent = self.window;
+            __block id parentCloseObserver = nil;
+            __block iTermHeadlessModalSession *headlessSession = nil;
+            void (^stopObservingParent)(void) = ^{
+                if (parentCloseObserver) {
+                    [[NSNotificationCenter defaultCenter] removeObserver:parentCloseObserver];
+                    parentCloseObserver = nil;
+                }
+            };
+            parentCloseObserver =
+                [[NSNotificationCenter defaultCenter] addObserverForName:NSWindowWillCloseNotification
+                                                                  object:parent
+                                                                   queue:nil
+                                                              usingBlock:^(NSNotification *notification) {
+                DLog(@"Parent window of sheet warning %@ closed before it was answered", self);
+                stopObservingParent();
+                [sheetRegistration unregister];
+                [headlessSession abandon];
+                headlessSession = nil;
             }];
+            void (^sheetCompletion)(NSModalResponse) = ^(NSModalResponse result) {
+                stopObservingParent();
+                headlessSession = nil;
+                [sheetRegistration unregister];
+                DLog(@"Result for %@ is %@", self, @(result));
+                completion([self handleResult:result alert:alert], self);
+            };
+            if (gRunsHeadlessModals) {
+                // Kept alive by gHeadlessModalSessions until a button is clicked.
+                headlessSession = [[iTermHeadlessModalSession alloc] initWithAlert:alert completion:sheetCompletion];
+            } else {
+                [alert beginSheetModalForWindow:parent completionHandler:sheetCompletion];
+            }
             return;
+        }
+        gShowingWarning = YES;
+        iTermModalAlertRegistration *registration = [self registerAlert:alert appModal:YES];
+        if (gRunsHeadlessModals) {
+            result = [[[iTermHeadlessModalSession alloc] initWithAlert:alert completion:nil] runUntilFinished];
         } else {
             result = [alert runModal];
         }
+        [registration unregister];
         DLog(@"Result for %@ is %@", self, @(result));
         gShowingWarning = NO;
     }
@@ -322,12 +624,12 @@ BOOL gShowRememberedAlerts = NO;
 
 - (NSAlert *)makeAlert {
     NSAlert *alert = [[NSAlert alloc] init];
-    alert.messageText = _heading ?: @"Warning";
+    alert.messageText = _heading ?: NSLocalizedStringWithDefaultValue(@"Warning.DefaultHeading", nil, [NSBundle mainBundle], @"Warning", @"Default title for a warning alert");
 
     // If this warning is being shown due to the "always show alerts with remembered
     // selections" mode, prepend explanatory text.
     if (_shownDueToRememberedAlertsMode && _savedSelectionLabel) {
-        alert.informativeText = [NSString stringWithFormat:@"%@\n\nThis alert had a saved selection of “%@”. It is being shown because “Always show alerts with remembered selections” is turned on in iTerm2 > Suppressed Alerts.", _title, _savedSelectionLabel];
+        alert.informativeText = [NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"Warning.RememberedSelectionExplanation", nil, [NSBundle mainBundle], @"%1$@\n\nThis alert had a saved selection of “%2$@”. It is being shown because “Always show alerts with remembered selections” is turned on in iTerm2 > Suppressed Alerts.", @"Explanation shown when a suppressed alert is displayed anyway; first %@ is the original message, second %@ is the saved selection label"), _title, _savedSelectionLabel];
     } else {
         alert.informativeText = _title;
     }
@@ -335,9 +637,7 @@ BOOL gShowRememberedAlerts = NO;
     for (iTermWarningAction *action in _warningActions) {
         [alert addButtonWithTitle:action.label];
         NSButton *button = alert.buttons.lastObject;
-        if (@available(macOS 11, *)) {
-            button.hasDestructiveAction = action.destructive;
-        }
+        button.hasDestructiveAction = action.destructive;
         if (action.keyEquivalent) {
             button.keyEquivalent = action.keyEquivalent;
         } else {
@@ -364,12 +664,12 @@ BOOL gShowRememberedAlerts = NO;
 
     // Add "Permanently Forget Saved Selection" button when in remembered alerts mode.
     if (_shownDueToRememberedAlertsMode && _identifier) {
-        [alert addButtonWithTitle:@"Permanently Forget Saved Selection"];
+        [alert addButtonWithTitle:NSLocalizedStringWithDefaultValue(@"Warning.PermanentlyForgetSavedSelection", nil, [NSBundle mainBundle], @"Permanently Forget Saved Selection", @"Button to forget a warning's remembered selection")];
     }
 
     int numNonCancelActions = [_warningActions count];
     for (iTermWarningAction *warningAction in _warningActions) {
-        if ([warningAction.label isEqualToString:_cancelLabel]) {
+        if (warningAction.isCancel) {
             --numNonCancelActions;
         }
     }
@@ -378,25 +678,27 @@ BOOL gShowRememberedAlerts = NO;
     if (_warningType == kiTermWarningTypeTemporarilySilenceable) {
         assert(_identifier);
         if (numNonCancelActions == 1) {
-            alert.suppressionButton.title = @"Suppress this message for ten minutes";
+            // Not a count plural: the wording depends on whether the warning has one action (suppress)
+            // or several (remember which one), and “ten minutes” is a fixed duration.
+            alert.suppressionButton.title = NSLocalizedStringWithDefaultValue(@"Warning.SuppressTenMinutes", nil, [NSBundle mainBundle], @"Suppress this message for ten minutes", @"Suppression checkbox for a single-action warning, temporary (ten minutes)");
         } else if (numNonCancelActions > 1) {
-            alert.suppressionButton.title = @"Remember my choice for ten minutes";
+            alert.suppressionButton.title = NSLocalizedStringWithDefaultValue(@"Warning.RememberTenMinutes", nil, [NSBundle mainBundle], @"Remember my choice for ten minutes", @"Suppression checkbox for a multi-action warning, temporary (ten minutes)");
         }
         alert.showsSuppressionButton = YES;
     } else if (_warningType == kiTermWarningTypeSilenceableForOneMonth) {
         assert(_identifier);
         if (numNonCancelActions == 1) {
-            alert.suppressionButton.title = @"Suppress this message for 30 days";
+            alert.suppressionButton.title = NSLocalizedStringWithDefaultValue(@"Warning.SuppressThirtyDays", nil, [NSBundle mainBundle], @"Suppress this message for 30 days", @"Suppression checkbox for a single-action warning, for 30 days");
         } else if (numNonCancelActions > 1) {
-            alert.suppressionButton.title = @"Remember my choice for 30 days";
+            alert.suppressionButton.title = NSLocalizedStringWithDefaultValue(@"Warning.RememberThirtyDays", nil, [NSBundle mainBundle], @"Remember my choice for 30 days", @"Suppression checkbox for a multi-action warning, for 30 days");
         }
         alert.showsSuppressionButton = YES;
     } else if (_warningType == kiTermWarningTypePermanentlySilenceable) {
         assert(_identifier);
         if (numNonCancelActions == 1) {
-            alert.suppressionButton.title = @"Suppress this message permanently";
+            alert.suppressionButton.title = NSLocalizedStringWithDefaultValue(@"Warning.SuppressPermanently", nil, [NSBundle mainBundle], @"Suppress this message permanently", @"Suppression checkbox for a single-action warning, permanent");
         } else if (numNonCancelActions > 1) {
-            alert.suppressionButton.title = @"Remember my choice";
+            alert.suppressionButton.title = NSLocalizedStringWithDefaultValue(@"Warning.RememberChoice", nil, [NSBundle mainBundle], @"Remember my choice", @"Suppression checkbox for a multi-action warning, permanent");
         }
         alert.showsSuppressionButton = YES;
     }
@@ -425,30 +727,14 @@ BOOL gShowRememberedAlerts = NO;
     return alert;
 }
 
-- (NSString *)labelForSelection:(iTermWarningSelection)selection {
-    if (_actionToSelectionMap) {
-        // Find which action index maps to this selection
-        for (NSUInteger i = 0; i < _actionToSelectionMap.count && i < _warningActions.count; i++) {
-            if (_actionToSelectionMap[i].integerValue == selection) {
-                return _warningActions[i].label;
-            }
-        }
-    } else {
-        // No mapping, selection index equals action index
-        if (selection >= 0 && selection < _warningActions.count) {
-            return _warningActions[selection].label;
-        }
-    }
-    return nil;
-}
-
 - (BOOL)preempt:(out iTermWarningSelection *)selectionPtr {
     if (!gWarningHandler &&
         _warningType != kiTermWarningTypePersistent &&
         [self.class identifierIsSilenced:_identifier]) {
         const iTermWarningSelection selection = [self.class savedSelectionForIdentifier:_identifier];
-        NSString *label = [self labelForSelection:selection];
-        if (!label || ![self shouldRememberLabel:label]) {
+        iTermWarningAction *action = [self actionForSelection:selection];
+        NSString *label = action.label;
+        if (!action || ![self shouldRememberAction:action]) {
             RLog(@"%@ has saved selection %@ but label %@ should not be remembered", self, @(selection), label);
             return NO;
         }
@@ -471,7 +757,184 @@ BOOL gShowRememberedAlerts = NO;
 }
 
 // Does not invoke the warning action's block
+// Resolve each action's structural role once, from the caller's own (already-localized) cancelLabel
+// and doNotRememberLabels, so the runtime never string-matches against a hardcoded @"Cancel". Only
+// sets flags; object-API callers that set isCancel/neverRemember directly are preserved.
+- (void)resolveActionRoles {
+    for (iTermWarningAction *action in _warningActions) {
+        if (_cancelLabel.length && [action.label isEqualToString:_cancelLabel]) {
+            action.isCancel = YES;
+        }
+        if (_doNotRememberLabels.count && [_doNotRememberLabels containsObject:action.label]) {
+            action.neverRemember = YES;
+        }
+        if (_notOfferedRemotelyLabels.count && [_notOfferedRemotelyLabels containsObject:action.label]) {
+            action.notOfferedRemotely = YES;
+        }
+    }
+}
+
+- (iTermWarningAction *)actionForSelection:(iTermWarningSelection)selection {
+    if (_actionToSelectionMap) {
+        for (NSUInteger i = 0; i < _actionToSelectionMap.count && i < _warningActions.count; i++) {
+            if (_actionToSelectionMap[i].integerValue == selection) {
+                return _warningActions[i];
+            }
+        }
+    } else if (selection >= 0 && selection < _warningActions.count) {
+        return _warningActions[selection];
+    }
+    return nil;
+}
+
+- (instancetype)init {
+    self = [super init];
+    if (self) {
+        _remotelyAnswerable = YES;
+    }
+    return self;
+}
+
+#pragma mark - Remote answering
+
+- (iTermModalAlertDescriptor *)modalAlertDescriptorWhenAppModal:(BOOL)appModal {
+    if (!_remotelyAnswerable) {
+        return nil;
+    }
+    return [self modalAlertDescriptorForAlert:[self makeAlertForRemoteAnswer] appModal:appModal];
+}
+
+// Describes `alert` for iTermModalAlertRegistry. The buttons are exactly this warning's actions:
+// the "Permanently Forget Saved Selection" button that remembered-alerts mode appends after them is
+// left out, so a button's index is always an index into _warningActions. Accessory views and the
+// help button are not described.
+- (iTermModalAlertDescriptor *)modalAlertDescriptorForAlert:(NSAlert *)alert appModal:(BOOL)appModal {
+    NSArray<iTermModalAlertButton *> *buttons = [_warningActions mapWithBlock:^id(iTermWarningAction *action) {
+        iTermModalAlertButton *button =
+            [[iTermModalAlertButton alloc] initWithTitle:action.label
+                                                isCancel:action.isCancel
+                                           isDestructive:action.destructive
+                                            rememberable:[self shouldRememberAction:action]];
+        button.offered = !action.notOfferedRemotely;
+        return button;
+    }];
+    NSArray<iTermModalAlertInput *> *inputs = [_remoteInputs mapWithBlock:^id(iTermWarningRemoteInput *input) {
+        iTermModalAlertInput *descriptorInput =
+            [[iTermModalAlertInput alloc] initWithIdentifier:input.identifier
+                                                       label:input.label
+                                                   isInteger:input.isInteger
+                                                     minimum:input.minimum
+                                                     maximum:input.maximum
+                                                       value:[input currentValue]];
+        descriptorInput.isSecret = input.isSecret;
+        return descriptorInput;
+    }];
+    // Remote inputs stand for everything in the accessory that matters to the answer, so with them
+    // there is nothing more to see on the Mac.
+    const BOOL hasUndescribedAccessory = _accessory != nil && inputs.count == 0;
+    // The warning's own box, or failing that a checkbox in the accessory that stands in for one.
+    NSButton *remoteCheckbox = alert.showsSuppressionButton ? nil : _remoteCheckbox;
+    NSString *suppressionLabel = alert.showsSuppressionButton ? alert.suppressionButton.title : remoteCheckbox.title;
+    iTermModalAlertDescriptor *descriptor =
+        [[iTermModalAlertDescriptor alloc] initWithHeading:alert.messageText
+                                                      body:alert.informativeText
+                                                   buttons:buttons ?: @[]
+                                          suppressionLabel:suppressionLabel
+                                                    inputs:inputs ?: @[]
+                                              hasAccessory:hasUndescribedAccessory
+                                                isAppModal:appModal];
+    descriptor.sessionGuids = [self sessionGuidsForRemoteAnswer];
+    descriptor.suppressionDefault = remoteCheckbox.state == NSControlStateValueOn;
+    return descriptor;
+}
+
+// The sessions this warning is about: the one its creator named, or else those in its window.
+- (NSArray<NSString *> *)sessionGuidsForRemoteAnswer {
+    if (_sessionGuid) {
+        return @[ _sessionGuid ];
+    }
+    if (_window && gSessionGuidResolver) {
+        return gSessionGuidResolver(_window) ?: @[];
+    }
+    return @[];
+}
+
+// Publishes `alert`, which is about to be shown, so the companion app can show it and press a
+// button. Returns nil if this warning opted out. The caller unregisters when the alert is gone.
+- (iTermModalAlertRegistration *)registerAlert:(NSAlert *)alert appModal:(BOOL)appModal {
+    if (!_remotelyAnswerable) {
+        return nil;
+    }
+    // A headless alert (tests) runs no real modal session, so there is no window for the registry
+    // to compare against the one in front.
+    NSWindow *window = gRunsHeadlessModals ? nil : alert.window;
+    return [[iTermModalAlertRegistry shared] registerAlert:[self modalAlertDescriptorForAlert:alert appModal:appModal]
+                                                    window:window
+                                                     press:[self modalAlertPressBlockForAlert:alert]];
+}
+
+- (NSAlert *)makeAlertForRemoteAnswer {
+    [self resolveActionRoles];
+    return [self makeAlert];
+}
+
+- (BOOL (^)(NSInteger, BOOL, NSDictionary<NSString *, NSString *> *))modalAlertPressBlockForAlert:(NSAlert *)alert {
+    __weak NSAlert *weakAlert = alert;
+    __weak __typeof(self) weakSelf = self;
+    return ^BOOL(NSInteger buttonIndex, BOOL suppress, NSDictionary<NSString *, NSString *> *inputs) {
+        NSAlert *strongAlert = weakAlert;
+        iTermWarning *strongSelf = weakSelf;
+        if (!strongAlert || !strongSelf) {
+            return NO;
+        }
+        NSArray<iTermWarningAction *> *actions = strongSelf.warningActions;
+        if (buttonIndex < 0 || buttonIndex >= actions.count || buttonIndex >= strongAlert.buttons.count) {
+            return NO;
+        }
+        if (actions[buttonIndex].notOfferedRemotely) {
+            return NO;
+        }
+        // A click on a disabled button does nothing. Reporting it as a press would leave the
+        // other end waiting for an alert that is not going away. Nor may a hidden button be
+        // pressed: the user at this Mac could not.
+        NSButton *button = strongAlert.buttons[buttonIndex];
+        if (!button.isEnabled || button.isHidden) {
+            return NO;
+        }
+        // Check every value before changing any control, so a refused press changes nothing.
+        NSArray<iTermWarningRemoteInput *> *remoteInputs = strongSelf.remoteInputs;
+        for (iTermWarningRemoteInput *input in remoteInputs) {
+            NSString *value = inputs[input.identifier];
+            if (value && ![input acceptsValue:value]) {
+                return NO;
+            }
+        }
+        for (iTermWarningRemoteInput *input in remoteInputs) {
+            NSString *value = inputs[input.identifier];
+            if (value) {
+                [input applyValue:value];
+            }
+        }
+        // -handleResult:alert: reads the box's state when it handles the click, and would persist
+        // the choice even for a warning that shows no box. So touch it only when the warning has
+        // one, and tick it only when this action may be remembered. Set it both ways: someone may
+        // have ticked the box at this Mac, and the other end, which always starts with it
+        // unticked, did not ask for the choice to be remembered.
+        if (strongAlert.showsSuppressionButton) {
+            const BOOL remember = suppress && [strongSelf shouldRememberAction:actions[buttonIndex]];
+            strongAlert.suppressionButton.state = remember ? NSControlStateValueOn : NSControlStateValueOff;
+        }
+        if (!strongAlert.showsSuppressionButton && strongSelf.remoteCheckbox) {
+            strongSelf.remoteCheckbox.state = suppress ? NSControlStateValueOn : NSControlStateValueOff;
+        }
+        // The same as a mouse click: ends the modal session (or sheet) with this button's code.
+        [button performClick:nil];
+        return YES;
+    };
+}
+
 - (iTermWarningSelection)runModalImpl {
+    [self resolveActionRoles];
     iTermWarningSelection preemptedSelection;
     if ([self preempt:&preemptedSelection]) {
         return preemptedSelection;
@@ -485,11 +948,17 @@ BOOL gShowRememberedAlerts = NO;
     } else {
         DLog(@"Show warning %@\n%@", self, [NSThread callStackSymbols]);
         gShowingWarning = YES;
-        if (self.window) {
+        // Registered just before the modal loop starts and unregistered as soon as it ends, before
+        // -handleResult:alert: (which may show this warning again, registering anew).
+        iTermModalAlertRegistration *registration = [self registerAlert:alert appModal:YES];
+        if (gRunsHeadlessModals) {
+            result = [[[iTermHeadlessModalSession alloc] initWithAlert:alert completion:nil] runUntilFinished];
+        } else if (self.window) {
             result = [alert runSheetModalForWindow:self.window];
         } else {
             result = [alert runModal];
         }
+        [registration unregister];
         DLog(@"Result for %@ is %@", self, @(result));
         gShowingWarning = NO;
     }
@@ -497,11 +966,10 @@ BOOL gShowRememberedAlerts = NO;
     return [self handleResult:result alert:alert];
 }
 
-- (BOOL)shouldRememberLabel:(NSString *)label {
-    if ([label isEqualToString:_cancelLabel]) {
-        return NO;
-    }
-    if ([_doNotRememberLabels containsObject:label]) {
+- (BOOL)shouldRememberAction:(iTermWarningAction *)action {
+    // Cancel choices and explicitly-not-remembered actions are never persisted. Uses structural
+    // flags (resolved once in -resolveActionRoles) rather than comparing localized label strings.
+    if (action.isCancel || action.neverRemember) {
         return NO;
     }
     return YES;
@@ -528,31 +996,31 @@ BOOL gShowRememberedAlerts = NO;
     switch (result) {
         case NSAlertFirstButtonReturn:
             selection = [self.class remapSelection:kiTermWarningSelection0 withMapping:_actionToSelectionMap];
-            remember = [self shouldRememberLabel:_warningActions[0].label];
+            remember = [self shouldRememberAction:_warningActions[0]];
             break;
         case NSAlertSecondButtonReturn:
             selection = [self.class remapSelection:kiTermWarningSelection1 withMapping:_actionToSelectionMap];
-            remember = [self shouldRememberLabel:_warningActions[1].label];
+            remember = [self shouldRememberAction:_warningActions[1]];
             break;
         case NSAlertThirdButtonReturn:
             selection = [self.class remapSelection:kiTermWarningSelection2 withMapping:_actionToSelectionMap];
-            remember = [self shouldRememberLabel:_warningActions[2].label];
+            remember = [self shouldRememberAction:_warningActions[2]];
             break;
         case NSAlertThirdButtonReturn + 1:
             selection = [self.class remapSelection:kiTermWarningSelection3 withMapping:_actionToSelectionMap];
-            remember = [self shouldRememberLabel:_warningActions[3].label];
+            remember = [self shouldRememberAction:_warningActions[3]];
             break;
         case NSAlertThirdButtonReturn + 2:
             selection = [self.class remapSelection:kiTermWarningSelection4 withMapping:_actionToSelectionMap];
-            remember = [self shouldRememberLabel:_warningActions[4].label];
+            remember = [self shouldRememberAction:_warningActions[4]];
             break;
         case NSAlertThirdButtonReturn + 3:
             selection = [self.class remapSelection:kiTermWarningSelection5 withMapping:_actionToSelectionMap];
-            remember = [self shouldRememberLabel:_warningActions[5].label];
+            remember = [self shouldRememberAction:_warningActions[5]];
             break;
         case NSAlertThirdButtonReturn + 4:
             selection = [self.class remapSelection:kiTermWarningSelection6 withMapping:_actionToSelectionMap];
-            remember = [self shouldRememberLabel:_warningActions[6].label];
+            remember = [self shouldRememberAction:_warningActions[6]];
             break;
         default:
             selection = kItermWarningSelectionError;

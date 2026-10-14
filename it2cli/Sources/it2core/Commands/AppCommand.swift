@@ -8,7 +8,7 @@ struct App: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "app",
         abstract: "Control iTerm2 application.",
-        subcommands: [
+        subcommands: sortedSubcommands([
             Activate.self,
             Hide.self,
             Quit.self,
@@ -16,7 +16,7 @@ struct App: ParsableCommand {
             Theme.self,
             GetFocus.self,
             Broadcast.self,
-        ]
+        ])
     )
 }
 
@@ -298,11 +298,11 @@ extension App {
         static let configuration = CommandConfiguration(
             commandName: "broadcast",
             abstract: "Control input broadcasting.",
-            subcommands: [
+            subcommands: sortedSubcommands([
                 On.self,
                 Off.self,
                 Add.self,
-            ]
+            ])
         )
     }
 }
@@ -337,7 +337,7 @@ extension App.Broadcast {
                 for win in windows {
                     if let tabs = win.tabsArray as? [ITMListSessionsResponse_Tab] {
                         for tab in tabs {
-                            let tabSessionIds = collectSessionIds(from: tab.root)
+                            let tabSessionIds = collectSessionIds(in: tab)
                             if tabSessionIds.contains(currentSessionId) {
                                 sessionIds = tabSessionIds
                                 break
@@ -409,7 +409,7 @@ extension App.Broadcast {
             for win in windows {
                 if let tabs = win.tabsArray as? [ITMListSessionsResponse_Tab] {
                     for tab in tabs {
-                        for id in collectSessionIds(from: tab.root) {
+                        for id in collectSessionIds(in: tab) {
                             knownIds.insert(id)
                         }
                     }

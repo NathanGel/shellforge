@@ -13,6 +13,8 @@
 #import "VT100ScreenState+RCDataSource.h"
 #import "VT100ScreenMutableState+RCDataSource.h"
 
+#import <stdatomic.h>
+
 @implementation iTermSavedTreeRCDataSource
 - (instancetype)initWithGuid:(NSString *)guid
                      backing:(id<iTermResilientCoordinateDataSource>)backing {
@@ -91,6 +93,18 @@ static const int64_t VT100ScreenMutableStateSideEffectFlagLineBufferDidDropLines
     // the tree's last-line host, so the main-thread hostname variable can be
     // refreshed if didFinishInitialization seeded it from a stale gethostname().
     NSString *_lastPushedHostname;
+    // Locality and verification most recently pushed alongside _lastPushedHostname.
+    // A change to either must reach the session even when user@host is the same,
+    // since that's what decides whether a paste can upload. See issue 13117.
+    VT100RemoteHostLocality _lastPushedLocality;
+    BOOL _lastPushedLocalityVerified;
+    // Open from a verified OSC 7 (one carrying a machineID verdict) until the
+    // first of 133;B, 133;C, or input written to the pty. A tokenless OSC 7 in
+    // that window is a third-party precmd hook (e.g. oh-my-zsh's
+    // omz_termsupport_cwd) reporting the same prompt, possibly with a stale
+    // $HOST, and must not override the verified host. Atomic because the main
+    // thread reads it to skip notifying us on every write. See issue 13117.
+    atomic_bool _verifiedOSC7WindowOpen;
 }
 
 // Implemented by the superclass (VT100ScreenState), which owns the backing
@@ -105,6 +119,30 @@ static const int64_t VT100ScreenMutableStateSideEffectFlagLineBufferDidDropLines
 
 + (void)setPerformingJoinedBlock:(BOOL)value {
     [iTermGCD setPerformingJoinedBlock:value];
+}
+
+// Process-wide one-shot for the "AcceptOSC7 is off" warning, so restoring N
+// sessions that each report OSC 7 doesn't stack N modal alerts. Synchronized
+// because sessions run on separate mutation queues.
+static BOOL sOSC7DisabledWarningShown;
+
+// Returns YES for the first caller per app run. Called at presentation time,
+// after the AcceptOSC7 re-check, so the token is spent only when an alert is
+// actually about to be shown.
++ (BOOL)consumeOSC7DisabledWarning {
+    @synchronized (self) {
+        if (sOSC7DisabledWarningShown) {
+            return NO;
+        }
+        sOSC7DisabledWarningShown = YES;
+        return YES;
+    }
+}
+
++ (void)resetOSC7DisabledWarningForTesting {
+    @synchronized (self) {
+        sOSC7DisabledWarningShown = NO;
+    }
 }
 
 - (instancetype)initWithSideEffectPerformer:(id<VT100ScreenSideEffectPerforming>)performer {
@@ -293,22 +331,6 @@ static const int64_t VT100ScreenMutableStateSideEffectFlagLineBufferDidDropLines
     }];
 }
 
-// Paused variant of addReportSideEffect:: pauses like addPausedSideEffect: but
-// schedules via addReportSideEffect so it does not disarm skip-sync.
-- (void)addPausedReportSideEffect:(void (^)(id<VT100ScreenDelegate> delegate, iTermTokenExecutorUnpauser *unpauser))sideEffect
-                             name:(NSString *)name {
-    DLog(@"[side effects] %@ Add paused report side effect %@", self.config.sessionGuid, name);
-    iTermTokenExecutorUnpauser *unpauser = [_tokenExecutor pause];
-    __weak __typeof(self) weakSelf = self;
-    [_tokenExecutor addReportSideEffect:^{
-        if (!weakSelf) {
-            [unpauser unpause];
-            return;
-        }
-        [weakSelf performPausedSideEffect:unpauser block:sideEffect name:name];
-    }];
-}
-
 - (void)addUrgentSideEffect:(void (^)(id<VT100ScreenDelegate> delegate))sideEffect
                        name:(NSString *)name {
     DLog(@"[side effects] %@ Add urgent side effect %@", self.config.sessionGuid, name);
@@ -325,6 +347,22 @@ static const int64_t VT100ScreenMutableStateSideEffectFlagLineBufferDidDropLines
     iTermTokenExecutorUnpauser *unpauser = [_tokenExecutor pause];
     __weak __typeof(self) weakSelf = self;
     [_tokenExecutor addUrgentSideEffect:^{
+        if (!weakSelf) {
+            [unpauser unpause];
+            return;
+        }
+        [weakSelf performPausedSideEffect:unpauser block:sideEffect name:name];
+    }];
+}
+
+// Paused variant of addReportSideEffect:: pauses like addPausedSideEffect: but
+// schedules via addReportSideEffect so it does not disarm skip-sync.
+- (void)addPausedReportSideEffect:(void (^)(id<VT100ScreenDelegate> delegate, iTermTokenExecutorUnpauser *unpauser))sideEffect
+                             name:(NSString *)name {
+    DLog(@"[side effects] %@ Add paused report side effect %@", self.config.sessionGuid, name);
+    iTermTokenExecutorUnpauser *unpauser = [_tokenExecutor pause];
+    __weak __typeof(self) weakSelf = self;
+    [_tokenExecutor addReportSideEffect:^{
         if (!weakSelf) {
             [unpauser unpause];
             return;
@@ -868,8 +906,15 @@ static const int64_t VT100ScreenMutableStateSideEffectFlagLineBufferDidDropLines
     VT100Grid *grid = self.currentGrid;
     VT100LineInfo *lineInfo = [grid lineInfoAtLineNumber:grid.cursorY];
     iTermMetadata md = lineInfo.metadata;
+    const iTermLineAttribute oldLineAttribute = md.lineAttribute;
     md.lineAttribute = lineAttribute;
     lineInfo.metadata = md;
+    if (oldLineAttribute != lineAttribute) {
+        // lineAttribute is serialized in per-line metadata; when length == 0 nothing
+        // else dirties this line. markLineDidChange: dirties it (so copyDirtyFromGrid:
+        // copies the metadata into the immutable grid) and bumps the content generation.
+        [grid markLineDidChange:grid.cursorY];
+    }
 
     const screen_char_t *chars = line;
     int len = length;
@@ -963,7 +1008,9 @@ static const int64_t VT100ScreenMutableStateSideEffectFlagLineBufferDidDropLines
     screen_char_t *buffer = pre->buffer;
     len = pre->length;
     BOOL dwc = pre->foundDwc;
-    BOOL rtlFound = pre->rtlFound;
+    // In BDSM explicit mode the app laid the text out visually, so the line
+    // must not be flagged for reordering. This is the per-line snapshot of the mode.
+    BOOL rtlFound = pre->rtlFound && [self bidiReorderingAllowedByTerminal];
 
     if (needColorFixup) {
         // Medium path: character codes and DWC_RIGHT markers are correct but colors differ.
@@ -993,9 +1040,13 @@ static const int64_t VT100ScreenMutableStateSideEffectFlagLineBufferDidDropLines
         // merged into the predecessor cell. The parser thread cannot tell -- the predecessor
         // is what it cannot see -- so it recorded what the space absorbed and the comparison
         // happens here.
+        //
+        // Both sides segment with -enumerateComposedCharacters:, as StringToScreenChars does,
+        // not with Apple's grapheme clusters. They can disagree: Apple attaches an emoji
+        // modifier to a space and to U+1F44D alike, but only the latter keeps it in the same
+        // cell (issue 13079), so comparing Apple's clusters would miss the difference.
         NSString *predecessorAugmented = [predecessorString stringByAppendingString:string];
-        const NSRange mergedFirstCluster =
-            [predecessorAugmented rangeOfComposedCharacterSequenceAtIndex:0];
+        const NSRange mergedFirstCluster = [predecessorAugmented rangeOfFirstComposedCharacter];
         const NSInteger absorbedByPredecessor =
             (NSInteger)mergedFirstCluster.length - (NSInteger)predecessorString.length;
         if (absorbedByPredecessor < 0 ||
@@ -1052,9 +1103,7 @@ static const int64_t VT100ScreenMutableStateSideEffectFlagLineBufferDidDropLines
             [self appendStringAtCursorSlowly:string];
             return;
         }
-        if (rtlFound) {
-            [[self.currentGrid lineInfoAtLineNumber:pred.y] setRTLFound:YES];
-        }
+        [self applyRTLUpdateForWriteWithRTLFound:rtlFound toLine:pred.y];
         const screen_char_t current = [self.currentGrid characterAt:pred];
         if (current.code != predecessorCode || current.complexChar != predecessorComplexChar) {
             [self.currentGrid mutateCharactersInRange:VT100GridCoordRangeMake(pred.x, pred.y, pred.x + 1, pred.y)
@@ -1099,8 +1148,8 @@ static const int64_t VT100ScreenMutableStateSideEffectFlagLineBufferDidDropLines
     screen_char_t staticBuffer[kStaticBufferElements];
     string = [string normalized:self.normalization];
 
-// `predecessorIsDoubleWidth` will be true if the cursor is over a double-width character
-// but NOT if it's over a DWC_RIGHT.
+    // `predecessorIsDoubleWidth` will be true if the cursor is over a double-width character
+    // but NOT if it's over a DWC_RIGHT.
     BOOL predecessorIsDoubleWidth = NO;
     const VT100GridCoord pred = [self.currentGrid coordinateBefore:self.currentGrid.cursor
                                           movedBackOverDoubleWidth:&predecessorIsDoubleWidth];
@@ -1144,6 +1193,10 @@ static const int64_t VT100ScreenMutableStateSideEffectFlagLineBufferDidDropLines
                         self.config.unicodeVersion,
                         self.terminal.softAlternateScreenMode,
                         &rtlFound);
+    if (rtlFound && ![self bidiReorderingAllowedByTerminal]) {
+        // BDSM explicit mode: the app laid the text out visually. See the fast path.
+        rtlFound = NO;
+    }
     ssize_t bufferOffset = 0;
     if (augmented && len > 0) {
         // Whether the merged character is wider than the predecessor was. `buffer` holds the
@@ -1175,17 +1228,14 @@ static const int64_t VT100ScreenMutableStateSideEffectFlagLineBufferDidDropLines
             buffer[0] = merged;
             buffer[1] = merged;
             ScreenCharSetDWC_RIGHT(&buffer[1]);
-            // The character lands on the next line, so that is where RTL was found.
-            if (rtlFound) {
-                [[self.currentGrid lineInfoAtLineNumber:MIN(pred.y + 1, self.currentGrid.size.height - 1)] setRTLFound:YES];
-            }
+            // The character lands on the next line, so that is the line this write touches.
+            [self applyRTLUpdateForWriteWithRTLFound:rtlFound
+                                              toLine:MIN(pred.y + 1, self.currentGrid.size.height - 1)];
             // bufferOffset stays 0 so buffer[0] (the merged character) is what gets
             // written, starting at the predecessor's column.
             self.currentGrid.cursorX = pred.x;
         } else {
-            if (rtlFound) {
-                [[self.currentGrid lineInfoAtLineNumber:pred.y] setRTLFound:YES];
-            }
+            [self applyRTLUpdateForWriteWithRTLFound:rtlFound toLine:pred.y];
             const screen_char_t current = [self.currentGrid characterAt:pred];
             if (current.code != buffer[0].code || current.complexChar != buffer[0].complexChar) {
                 // This handles the rare case where we receive a combining mark at the beginning of
@@ -1217,7 +1267,17 @@ static const int64_t VT100ScreenMutableStateSideEffectFlagLineBufferDidDropLines
             // above, which is not a representable grid state.
             const BOOL predecessorAdjoinsCursor = (pred.y == self.currentGrid.cursorY &&
                                                    pred.x + 1 == self.currentGrid.cursorX);
-            if ((predecessorIsDoubleWidth || !predecessorAdjoinsCursor) && mergedIsDoubleWidth) {
+            // The cursor can also sit on the predecessor's own DWC_RIGHT (issue 9852). Stepping
+            // back from there does not cross a DWC_RIGHT, so predecessorIsDoubleWidth is NO
+            // even though the spacer already exists on the grid at the cursor. Skip the merged
+            // buffer's spacer in that case too; writing at the cursor then replaces the spacer
+            // and erases the orphaned left half, as an overwrite of a DWC_RIGHT always does.
+            const BOOL cursorIsOnPredecessorsDWCRight =
+                (predecessorAdjoinsCursor &&
+                 ScreenCharIsDWC_RIGHT([self.currentGrid characterAt:self.currentGrid.cursor]));
+            if ((predecessorIsDoubleWidth ||
+                 cursorIsOnPredecessorsDWCRight ||
+                 !predecessorAdjoinsCursor) && mergedIsDoubleWidth) {
                 // Skip a DWC_RIGHT that already exists on the grid, or one we cannot place.
                 bufferOffset++;
             }
@@ -1311,7 +1371,8 @@ static const int64_t VT100ScreenMutableStateSideEffectFlagLineBufferDidDropLines
                                                                    ansi:self.ansi
                                                                  insert:self.insert
                                                  externalAttributeIndex:actualExternalAttributes
-                                                               rtlFound:rtlFound
+                                                              rtlUpdate:[self rtlUpdateForWriteWithRTLFound:rtlFound]
+                                                          bidiDirection:self.terminal.bidiDirectionHint
                                                                 dwcFree:dwcFree]];
 
         if (self.config.publishing) {
@@ -1398,6 +1459,57 @@ static const int64_t VT100ScreenMutableStateSideEffectFlagLineBufferDidDropLines
                                rtlFound:NO
                                 dwcFree:YES];
     STOPWATCH_LAP(appendAsciiDataAtCursor);
+}
+
+// NO while the terminal is in BDSM explicit mode (CSI 8 l): text written then is
+// never flagged as RTL, so neither the grid nor the line buffer reorders it. A
+// missing terminal means no app could have asked for explicit mode.
+- (BOOL)bidiReorderingAllowedByTerminal {
+    VT100Terminal *terminal = self.terminal;
+    return terminal == nil || terminal.bidiSupportMode;
+}
+
+// What a write does to the RTL state of the lines it touches. `rtlFound` is
+// whether the written text contains right-to-left characters. In explicit mode
+// every write clears the state, RTL text or not, because the flag is sticky and
+// a line that held RTL text in implicit mode would otherwise still be reordered.
+- (VT100GridRTLUpdate)rtlUpdateForWriteWithRTLFound:(BOOL)rtlFound {
+    if (![self bidiReorderingAllowedByTerminal]) {
+        return VT100GridRTLUpdateClear;
+    }
+    return rtlFound ? VT100GridRTLUpdateFound : VT100GridRTLUpdateNone;
+}
+
+// For a write that edits a line without going through the grid's append: a
+// combining mark merged into its predecessor.
+- (void)applyRTLUpdateForWriteWithRTLFound:(BOOL)rtlFound toLine:(int)line {
+    VT100Grid *grid = self.currentGrid;
+    switch ([self rtlUpdateForWriteWithRTLFound:rtlFound]) {
+        case VT100GridRTLUpdateNone:
+            break;
+        case VT100GridRTLUpdateFound:
+            // Only when something changed: the flag and direction are serialized
+            // in per-line metadata, and markLineDidChange: dirties the whole line
+            // and bumps the content generation. Guarding avoids doing that per
+            // append while RTL text streams over an already-RTL line.
+            if ([grid setRTLFoundInLine:line bidiDirection:self.terminal.bidiDirectionHint]) {
+                [grid markLineDidChange:line];
+            }
+            break;
+        case VT100GridRTLUpdateClear:
+            [grid clearRTLStateInLine:line];
+            break;
+    }
+}
+
+// Drops a grid line's bidi info. The per-cell RTL status is only meaningful
+// alongside a reorder table, so it goes too; left behind, the renderer would
+// still force a right-to-left writing direction on those cells.
+- (void)dropBidiInfoForLine:(int)line inGrid:(VT100Grid *)grid {
+    [grid setBidiInfo:nil forLine:line];
+    if ([grid resetRTLStatusInLine:line]) {
+        [grid markLineDidChange:line];
+    }
 }
 
 - (BOOL)shouldConvertCharactersToGraphicsCharacterSetInTerminal:(VT100Terminal *)terminal {
@@ -1723,11 +1835,51 @@ static const int64_t VT100ScreenMutableStateSideEffectFlagLineBufferDidDropLines
             self.protectedMode = VT100TerminalProtectedModeNone;
         }
     } else {
+        // Before the cells go, because setCharsFrom: preserves the DWL_SPACER
+        // layout of a line it still believes is double-width.
+        [self resetLineAttributesForEraseInDisplayBefore:before after:after];
         [self.currentGrid setCharsInRun:theRun
                                  toChar:0
                      externalAttributes:nil];
     }
     [self clearTriggerLine];
+}
+
+// DEC's ED says "when you erase complete lines, they become single-height,
+// single-width lines, with all visual character attributes cleared." xterm
+// implements that in ClearBufRows ("clearing the whole row resets the doublesize
+// characters"), with three wrinkles we match: ED 0 from the home position and
+// ED 1 from the last cell are promoted to ED 2, so they reset every line; the
+// cursor's own line is otherwise left alone even when the erase happens to blank
+// it entirely (xterm's ClearBelow/ClearAbove use ClearRight/ClearLeft there,
+// which never reset); and a selective erase resets nothing, because xterm falls
+// back to per-line ClearInLine when protected mode is on.
+- (void)resetLineAttributesForEraseInDisplayBefore:(BOOL)before after:(BOOL)after {
+    const int height = self.currentGrid.size.height;
+    const int width = self.currentGrid.size.width;
+    const int cursorX = self.currentGrid.cursorX;
+    const int cursorY = self.currentGrid.cursorY;
+    int firstLine;
+    int lastLine;
+
+    if (before && after) {
+        firstLine = 0;
+        lastLine = height - 1;
+    } else if (after) {
+        const BOOL atHome = (cursorX == 0 && cursorY == 0);
+        firstLine = atHome ? 0 : cursorY + 1;
+        lastLine = height - 1;
+    } else if (before) {
+        const BOOL atLastCell = (cursorX >= width - 1 && cursorY == height - 1);
+        firstLine = 0;
+        lastLine = atLastCell ? height - 1 : cursorY - 1;
+    } else {
+        return;
+    }
+
+    [self.currentGrid setLineAttribute:iTermLineAttributeSingleWidth
+                           onLinesFrom:firstLine
+                                    to:lastLine];
 }
 
 - (void)eraseLineBeforeCursor:(BOOL)before afterCursor:(BOOL)after decProtect:(BOOL)dec {
@@ -1892,11 +2044,12 @@ void VT100ScreenEraseCell(screen_char_t *sct,
     [self addSideEffect:^(id<VT100ScreenDelegate>  _Nonnull delegate) {
         [delegate screenRemoveSelection];
     } name:@"erase screen and remove selection"];
-    [self.currentGrid setCharsFrom:VT100GridCoordMake(0, 0)
-                                to:VT100GridCoordMake(self.currentGrid.size.width - 1,
-                                                      self.currentGrid.size.height - 1)
-                            toChar:[self.currentGrid defaultChar]
-                externalAttributes:nil];
+    // clearAllWithChar: rather than setCharsFrom: because the alt grid outlives a
+    // trip through the primary buffer (showAltBuffer only allocates it when it is
+    // nil, and showPrimaryBuffer never clears it), so a line left double-width by
+    // a previous visit would otherwise still be double-width when an app enters
+    // the alternate screen again.
+    [self.currentGrid clearAllWithChar:[self.currentGrid defaultChar]];
 }
 
 - (int)numberOfLinesToPreserveWhenClearingScreen {
@@ -1972,6 +2125,7 @@ void VT100ScreenEraseCell(screen_char_t *sct,
     [self invalidateCommandStartCoordWithoutSideEffects];
     [self addSideEffect:^(id<VT100ScreenDelegate>  _Nonnull delegate) {
         [delegate screenSetTabStatus:[VT100TabStatusUpdate clear]];
+        [delegate screenDidClearTabStatusForReset];
         [delegate screenSetCursorVisible:YES];
     } name:@"finish resetting"];
     [self.currentGrid markCharDirty:YES at:self.currentGrid.cursor updateTimestamp:NO];
@@ -2264,11 +2418,10 @@ void VT100ScreenEraseCell(screen_char_t *sct,
     // removeLastRawLine below can shift fold coordinates (this is a grid->buffer->grid reshuffle, not a
     // plain line move), so the cached bottommost-fold line must be recomputed.
     _foldCacheDirty = YES;
-    [self.currentGrid setCharsFrom:VT100GridCoordMake(0, 0)
-                                to:VT100GridCoordMake(self.width - 1,
-                                                      self.height - 1)
-                            toChar:self.currentGrid.defaultChar
-                externalAttributes:nil];
+    // clearAllWithChar: because restoreScreenFromLineBuffer: below sets metadata
+    // only on the lines it restores, and numberOfLinesToPop can be smaller than
+    // the number appended.
+    [self.currentGrid clearAllWithChar:self.currentGrid.defaultChar];
     [self.linebuffer removeLastRawLine];
     const int postHocNumberOfLines = [self.linebuffer numberOfWrappedLinesWithWidth:self.width];
     const int numberOfLinesToPop = MAX(0, postHocNumberOfLines - preHocNumberOfLines);
@@ -2427,7 +2580,7 @@ void VT100ScreenEraseCell(screen_char_t *sct,
     [self invalidateCommandStartCoordWithoutSideEffects];
     // currentGrid selects which key-reporting stack contributes the effective flags.
     if (oldKeyReportingFlags != self.terminalKeyReportingFlags) {
-        [self terminalKeyReportingFlagsDidChange];
+        [self terminalKeyReportingFlagsDidChange:NO];
     }
     [self addPausedSideEffect:^(id<VT100ScreenDelegate> delegate, iTermTokenExecutorUnpauser *unpauser) {
         [delegate screenRemoveSelection];
@@ -2452,7 +2605,7 @@ void VT100ScreenEraseCell(screen_char_t *sct,
 
     [self.currentGrid markAllCharsDirty:YES updateTimestamps:NO];
     if (oldKeyReportingFlags != self.terminalKeyReportingFlags) {
-        [self terminalKeyReportingFlagsDidChange];
+        [self terminalKeyReportingFlagsDidChange:NO];
     }
     [self addPausedSideEffect:^(id<VT100ScreenDelegate> delegate, iTermTokenExecutorUnpauser *unpauser) {
         [delegate screenRemoveSelection];
@@ -2809,7 +2962,10 @@ void VT100ScreenEraseCell(screen_char_t *sct,
 - (void)convertHardNewlineToSoftOnGridLine:(int)line {
     screen_char_t *aLine = [self.currentGrid screenCharsAtLineNumber:line];
     if (aLine[self.currentGrid.size.width].code == EOL_HARD) {
-        aLine[self.currentGrid.size.width].code = EOL_SOFT;
+        // Go through setContinuationMarkOnLine:to: (rather than a raw write) so the
+        // line is dirtied and the content generation bumped, keeping the EOL change
+        // in saved state without relying on the caller to move the cursor.
+        [self.currentGrid setContinuationMarkOnLine:line to:EOL_SOFT];
     }
 }
 
@@ -3611,6 +3767,25 @@ void VT100ScreenEraseCell(screen_char_t *sct,
     count += 1;
     return count;
 }
+// Removes the excluded subranges of the prompt mark on lastPromptLine if its command hasn't been
+// recorded yet. Mutates only when there is something to clear so shells that redraw their prompt
+// on every keystroke without non-initial prompts pay nothing.
+- (void)clearExcludedSubrangesOfPromptMarkBeingBuilt {
+    const long long relativeLine = self.lastPromptLine - self.cumulativeScrollbackOverflow;
+    if (self.lastPromptLine < 0 || relativeLine < 0 || relativeLine > INT_MAX) {
+        return;
+    }
+    id<VT100ScreenMarkReading> mark = [self screenMarkOnLine:(int)relativeLine];
+    if (!mark || mark.firstLineOfCommand != nil || mark.excludedSubranges.count == 0) {
+        return;
+    }
+    DLog(@"Clearing %@ excluded subranges on redrawn prompt", @(mark.excludedSubranges.count));
+    [self.mutableIntervalTree mutateObject:mark block:^(id<IntervalTreeObject> _Nonnull obj) {
+        VT100ScreenMark *screenMark = (VT100ScreenMark *)obj;
+        screenMark.excludedSubranges = nil;
+    }];
+}
+
 // FTCS A
 - (VT100ScreenMark *)promptDidStartAt:(VT100GridAbsCoord)initialCoord
                          wasInCommand:(BOOL)wasInCommand
@@ -3641,6 +3816,10 @@ void VT100ScreenEraseCell(screen_char_t *sct,
         // We want to avoid running a side effect in that case because it is very slow.
         // Issue 10963.
         DLog(@"Re-setting prompt mark. Short circuit.");
+        // The redraw replaces any right or continuation prompts drawn before, so their
+        // excluded subranges no longer describe what's on screen. nushell, for example,
+        // draws a "::: " continuation indicator while typing and drops it on submit.
+        [self clearExcludedSubrangesOfPromptMarkBeingBuilt];
         return nil;
     }
     self.shellIntegrationInstalled = YES;
@@ -3938,11 +4117,30 @@ void VT100ScreenEraseCell(screen_char_t *sct,
            user:(NSString *)user
  viaSSHIntegration:(BOOL)viaSSHIntegration
      completion:(void (^)(void))completion {
+    // No machine-identity assertion: locality is computed from the hostname.
+    [self setHost:host
+             user:user
+viaSSHIntegration:viaSSHIntegration
+  machineLocality:VT100RemoteHostLocalityUnknown
+   lastRemoteHost:[self lastRemoteHost]
+       completion:completion];
+}
+
+// machineLocality is an authoritative verdict from an OSC 7 ?machineID token, or
+// .Unknown to mean "no assertion; decide locality from the hostname". It cannot
+// override an ssh/conductor boundary, which is structurally remote.
+- (void)setHost:(NSString *)host
+           user:(NSString *)user
+ viaSSHIntegration:(BOOL)viaSSHIntegration
+ machineLocality:(VT100RemoteHostLocality)machineLocality
+ lastRemoteHost:(id<VT100RemoteHostReading>)lastRemoteHost
+     completion:(void (^)(void))completion {
     // Whether the caller actually reported a hostname (vs. a trigger that
     // supplied only a username and relies on backfill). This decides whether
-    // locality is computed fresh or carried forward.
+    // locality is computed fresh or carried forward. lastRemoteHost is passed in
+    // (not re-fetched) so the OSC 7 path resolves it once for both this and
+    // -normalizeOSC7Host:.
     const BOOL hostWasProvided = (host != nil);
-    id<VT100RemoteHostReading> lastRemoteHost = [self lastRemoteHost];
     if (!host) {
         // A trigger can set the user alone (e.g. "user@"); preserve the
         // previous hostname. The empty string stands in if there's none.
@@ -3957,19 +4155,39 @@ void VT100ScreenEraseCell(screen_char_t *sct,
     // to compare: the machine's names drift over time (mDNS can renumber
     // MacBook-Pro-3.local to -2 tomorrow), so a frozen verdict must not be
     // recomputed from names later. Precedence: an ssh/conductor boundary is
-    // structurally remote and outranks any name comparison.
+    // structurally remote and outranks any name comparison or machine-identity
+    // assertion.
     VT100RemoteHostLocality locality;
+    // Whether the verdict was proven, not inferred from the hostname.
+    BOOL localityVerified;
     if (viaSSHIntegration) {
         // Reached via ssh integration / conductor: structurally remote, even if
         // the far end reports a name that looks local (e.g. `ssh localhost`, or
         // a container that shares our hostname). We can't prove the filesystem
         // is shared across a real transport, so treat it as remote.
         locality = VT100RemoteHostLocalityRemote;
+        localityVerified = YES;
+    } else if (machineLocality != VT100RemoteHostLocalityUnknown) {
+        // An OSC 7 ?machineID token proved same-machine (or not) by comparing a
+        // machine identity both ends compute independently. Trust it over the
+        // hostname, which is exactly what breaks for VPN / Tailscale / mDNS names.
+        locality = machineLocality;
+        localityVerified = YES;
+        if (locality == VT100RemoteHostLocalityLocalhost && hostWasProvided && host.length > 0) {
+            // Remember the name so hostname-only consumers (click-to-open of
+            // file:// URLs, status bar components) recognize it too, even when it
+            // matches none of the live local names. Only when the hostname was
+            // actually reported: a name backfilled from the previous host is not
+            // what the token vouches for, and remembering it would misclassify a
+            // genuinely remote host as local for the rest of the app run.
+            [NSHost it_rememberVerifiedLocalHostname:host];
+        }
     } else if (!hostWasProvided) {
         // Only a username was reported; the hostname was carried over from the
         // previous host, so its locality carries over too rather than being
         // recomputed against a backfilled name.
         locality = lastRemoteHost ? lastRemoteHost.localityState : VT100RemoteHostLocalityUnknown;
+        localityVerified = lastRemoteHost.localityVerified;
     } else if ([NSHost it_hostnameIsThisMachine:host]) {
         // One of this machine's names. Matching is robust to the machine
         // answering to several at once (.local vs the DHCP FQDN) and to names it
@@ -3977,6 +4195,7 @@ void VT100ScreenEraseCell(screen_char_t *sct,
         // stays recognized after the live names drift too (a no-op unless it
         // matches the live names now).
         locality = VT100RemoteHostLocalityLocalhost;
+        localityVerified = NO;
         [NSHost it_rememberLocalHostname:host];
     } else {
         // A different machine, as of this contemporaneous comparison. Freeze it:
@@ -3984,9 +4203,15 @@ void VT100ScreenEraseCell(screen_char_t *sct,
         // worse than a stale remote, could turn a real remote into a false
         // localhost if our own name later collides with it.
         locality = VT100RemoteHostLocalityRemote;
+        localityVerified = NO;
     }
 
-    [self setHost:host user:user viaSSHIntegration:viaSSHIntegration locality:locality completion:completion];
+    [self setHost:host
+             user:user
+viaSSHIntegration:viaSSHIntegration
+         locality:locality
+ localityVerified:localityVerified
+       completion:completion];
 }
 
 // Core of setHost: host/user are already resolved and locality already
@@ -3998,21 +4223,33 @@ void VT100ScreenEraseCell(screen_char_t *sct,
            user:(NSString *)user
  viaSSHIntegration:(BOOL)viaSSHIntegration
        locality:(VT100RemoteHostLocality)locality
+localityVerified:(BOOL)localityVerified
      completion:(void (^)(void))completion {
-    DLog(@"setHost:%@ user:%@ viaSSHIntegration:%@ locality:%@ %@", host, user, @(viaSSHIntegration), @(locality), self);
+    DLog(@"setHost:%@ user:%@ viaSSHIntegration:%@ locality:%@ verified:%@ %@",
+         host, user, @(viaSSHIntegration), @(locality), @(localityVerified), self);
     id<VT100RemoteHostReading> currentHost = [self remoteHostOnLine:self.numberOfLines];
     const int cursorLine = self.numberOfLines - self.height + self.currentGrid.cursorY;
-    id<VT100RemoteHostReading> remoteHostObj = [[self setRemoteHost:host user:user locality:locality onLine:cursorLine] doppelganger];
+    id<VT100RemoteHostReading> remoteHostObj = [[self setRemoteHost:host
+                                                                user:user
+                                                            locality:locality
+                                                    localityVerified:localityVerified
+                                                              onLine:cursorLine] doppelganger];
 
     const BOOL hostChangedInTree = ![remoteHostObj isEqualToRemoteHost:currentHost];
     // Also fire on first push or when the value differs from what we last pushed,
     // so a stale hostname variable seeded by didFinishInitialization gets corrected
-    // even when the new OSC matches the tree's last-line host.
+    // even when the new OSC matches the tree's last-line host. Locality counts
+    // too: isEqualToRemoteHost: treats a remote and a local user@host with the
+    // same name as equal, but the session must learn of the new verdict.
     NSString *newHostname = remoteHostObj.hostname ?: @"";
     const BOOL pushedValueDiffers = (_lastPushedHostname == nil ||
-                                     ![_lastPushedHostname isEqualToString:newHostname]);
+                                     ![_lastPushedHostname isEqualToString:newHostname] ||
+                                     _lastPushedLocality != locality ||
+                                     _lastPushedLocalityVerified != localityVerified);
     if (hostChangedInTree || pushedValueDiffers) {
         _lastPushedHostname = [newHostname copy];
+        _lastPushedLocality = locality;
+        _lastPushedLocalityVerified = localityVerified;
         const int line = [self numberOfScrollbackLines] + self.cursorY;
         NSString *pwd = [self workingDirectoryOnLine:line];
         dispatch_queue_t queue = _queue;
@@ -4032,10 +4269,12 @@ void VT100ScreenEraseCell(screen_char_t *sct,
 - (id<VT100RemoteHostReading>)setRemoteHost:(NSString *)host
                                        user:(NSString *)user
                                    locality:(VT100RemoteHostLocality)locality
+                           localityVerified:(BOOL)localityVerified
                                      onLine:(int)line {
     VT100RemoteHost *remoteHostObj = [[VT100RemoteHost alloc] initWithUsername:user
                                                                      hostname:host
-                                                                     locality:locality];
+                                                                     locality:locality
+                                                             localityVerified:localityVerified];
     VT100GridCoordRange range = VT100GridCoordRangeMake(0, line, self.width, line);
     DLog(@"setRemoteHost:%@", remoteHostObj);
     [self.mutableIntervalTree addObject:remoteHostObj
@@ -4359,36 +4598,222 @@ void VT100ScreenEraseCell(screen_char_t *sct,
     } name:@"reload mark cache"];
 }
 
+static int iTermHexDigitValue(unsigned char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+// Percent-decode `encoded` to raw bytes and interpret them as ISO Latin-1 (a 1:1
+// byte->codepoint map). Fallback for -[NSURLComponents path], which returns @""
+// when any %-escape isn't valid UTF-8 - and Linux filenames are arbitrary byte
+// strings, so a non-UTF-8 directory must still track rather than be dropped. The
+// result is best-effort and will NOT round-trip to the on-disk bytes; treat it as
+// a display value.
+static NSString *iTermLatin1StringFromPercentEncodedPath(NSString *encoded) {
+    NSData *asciiData = [encoded dataUsingEncoding:NSUTF8StringEncoding];
+    if (!asciiData) {
+        return nil;
+    }
+    const unsigned char *bytes = asciiData.bytes;
+    const NSUInteger length = asciiData.length;
+    NSMutableData *decoded = [NSMutableData dataWithCapacity:length];
+    for (NSUInteger i = 0; i < length; i++) {
+        int hi, lo;
+        if (bytes[i] == '%' &&
+            i + 2 < length &&
+            (hi = iTermHexDigitValue(bytes[i + 1])) >= 0 &&
+            (lo = iTermHexDigitValue(bytes[i + 2])) >= 0) {
+            const unsigned char value = (unsigned char)((hi << 4) | lo);
+            [decoded appendBytes:&value length:1];
+            i += 2;
+        } else {
+            [decoded appendBytes:&bytes[i] length:1];
+        }
+    }
+    return [[NSString alloc] initWithData:decoded encoding:NSISOLatin1StringEncoding];
+}
+
+// The reported directory, falling back to an 8-bit decode for a path
+// NSURLComponents refuses to decode.
+static NSString *iTermOSC7PathFromComponents(NSURLComponents *components) {
+    NSString *path = components.path;
+    if (path.length > 0 || components.percentEncodedPath.length == 0) {
+        return path;
+    }
+    NSString *latin1Path = iTermLatin1StringFromPercentEncodedPath(components.percentEncodedPath);
+    if (latin1Path.length == 0) {
+        return path;
+    }
+    DLog(@"OSC 7 path %@ was not valid UTF-8; decoded as ISO Latin-1: %@",
+         components.percentEncodedPath, latin1Path);
+    return latin1Path;
+}
+
+// The ?machineID=<version>:<value> token, or nil if absent. It lets us decide
+// localhost by machine identity rather than by matching hostnames, which break for
+// VPN / Tailscale / mDNS names.
+static NSString *iTermOSC7MachineIDFromComponents(NSURLComponents *components) {
+    for (NSURLQueryItem *item in components.queryItems) {
+        if ([item.name isEqualToString:@"machineID"]) {
+            return item.value ?: @"";
+        }
+    }
+    return nil;
+}
+
 - (void)setWorkingDirectoryFromURLString:(NSString *)URLString {
     DLog(@"terminalSetWorkingDirectoryURL:%@", URLString);
 
-    if (![iTermAdvancedSettingsModel acceptOSC7]) {
-        return;
-    }
     NSURL *URL = [NSURL URLWithString:URLString];
     if (!URL || URLString.length == 0) {
+        // A hostname illegal in a URL authority (e.g. a space in a user-supplied
+        // iterm2_hostname) makes NSURL nil and discards the whole host+cwd report.
+        // Log it so it's diagnosable from a field log rather than silently stale.
+        DLog(@"OSC 7 URL did not parse; dropping report: %@", URLString);
         return;
     }
     NSURLComponents *components = [[NSURLComponents alloc] initWithURL:URL resolvingAgainstBaseURL:NO];
     NSString *host = components.host;
     NSString *user = components.user;
-    NSString *path = components.path;
+    NSString *path = iTermOSC7PathFromComponents(components);
+    NSString *machineID = iTermOSC7MachineIDFromComponents(components);
 
-    if (host.length > 0 || user.length > 0) {
-        __weak __typeof(self) weakSelf = self;
-        [self setHost:host user:user viaSSHIntegration:NO completion:^{
-            [weakSelf setPathFromURL:path];
-        }];
+    if (![iTermAdvancedSettingsModel acceptOSC7]) {
+        [self warnOSC7DisabledIfNeededForMachineID:machineID];
+        return;
+    }
+    _queuedOSC7DisabledWarning = NO;
+
+    // An authoritative same-machine verdict, or Unknown to fall back to the
+    // hostname compare inside -setHost:.
+    const VT100RemoteHostLocality machineLocality = [iTermMachineIdentity localityForMachineIDToken:machineID];
+
+    // A machineID token is present iff this OSC 7 came from iTerm2 shell
+    // integration, which also sends OSC 133;A. 133;A owns the prompt, so ours stays
+    // a pure location report; a third-party OSC 7 is the only prompt signal there
+    // is, so it still establishes one. (Our scripts always emit at least "1:", so a
+    // bare "?machineID=" counts as third-party.)
+    const BOOL fromShellIntegration = (machineID.length > 0);
+
+    if (machineLocality != VT100RemoteHostLocalityUnknown) {
+        atomic_store(&_verifiedOSC7WindowOpen, true);
+    } else if (!fromShellIntegration && atomic_load(&_verifiedOSC7WindowOpen)) {
+        // A third-party hook reporting the prompt shell integration just reported
+        // with proof. Its host may come from a stale $HOST (zsh fixes it at shell
+        // start), so ignore it rather than let it override the verified one.
+        // Nothing can have reached another machine since: that would take input
+        // or a command start, either of which closes the window. The verified
+        // report already carried the directory, and 133;A owns the prompt. See
+        // issue 13117.
+        DLog(@"Ignoring tokenless OSC 7 %@ in the same prompt as a verified report", URLString);
+        return;
+    }
+
+    // Resolve once and thread it into both normalize and setHost (lastRemoteHost is
+    // cache-backed and can rescan the interval tree).
+    id<VT100RemoteHostReading> lastRemoteHost = [self lastRemoteHost];
+    [self normalizeOSC7Host:&host user:&user machineLocality:machineLocality lastRemoteHost:lastRemoteHost];
+
+    __weak __typeof(self) weakSelf = self;
+    void (^completion)(void) = ^{
+        [weakSelf setPathFromURL:path fromShellIntegration:fromShellIntegration];
+    };
+    if (host.length > 0 || user != nil || machineLocality != VT100RemoteHostLocalityUnknown) {
+        [self setHost:host
+                 user:user
+    viaSSHIntegration:NO
+      machineLocality:machineLocality
+       lastRemoteHost:lastRemoteHost
+           completion:completion];
     } else {
-        [self setPathFromURL:path];
+        completion();
     }
 }
 
-- (void)setPathFromURL:(NSString *)path {
+// Applies OSC 7's two carry-forward rules, in the order they depend on: the user
+// rule reads the reported host, so it must run before the host rule may replace it
+// with nil. On return nil means "carry the previous value forward" and @"" means
+// "record no value" - the distinction -setHost: makes with `if (!user)`.
+- (void)normalizeOSC7Host:(NSString *__autoreleasing *)hostPtr
+                     user:(NSString *__autoreleasing *)userPtr
+          machineLocality:(VT100RemoteHostLocality)machineLocality
+           lastRemoteHost:(id<VT100RemoteHostReading>)lastRemoteHost {
+    NSString *host = *hostPtr;
+    NSString *user = *userPtr;
+
+    // Inherit an omitted username only from the SAME host (fish's built-in
+    // file://host/path drops the user) or from a hostless, pure-path report. A
+    // report for a DIFFERENT host (VTE-style file://remotebox/path after
+    // `ssh remotebox`) must not inherit ours, or the remote host mark would be
+    // labeled with the local user.
+    if (user.length == 0) {
+        if (host.length == 0 ||
+            [host caseInsensitiveCompare:lastRemoteHost.hostname ?: @""] == NSOrderedSame) {
+            user = nil;
+        } else {
+            user = @"";
+        }
+    }
+
+    // NSURLComponents.host is @"" (not nil) for both "no authority" (file:///path)
+    // and "empty authority" (file://@/path). With a verdict, that @"" would reach
+    // -setHost: as a *provided* hostname and overwrite the known one, so carry it
+    // forward instead. Without a verdict, leave it as @"" so the hostname compare
+    // still forces Remote.
+    if (host.length == 0 && machineLocality != VT100RemoteHostLocalityUnknown) {
+        host = nil;
+    }
+
+    *hostPtr = host;
+    *userPtr = user;
+}
+
+// OSC 7 arrived while AcceptOSC7 is off. A machineID token marks it as iTerm2's
+// own shell integration, which reports location via OSC 7 instead of the
+// proprietary RemoteHost/CurrentDir codes, so if we've never seen those codes this
+// session the setting is silently breaking shell integration.
+- (void)warnOSC7DisabledIfNeededForMachineID:(NSString *)machineID {
+    if (machineID.length == 0 || _sawProprietaryLocationCode || _queuedOSC7DisabledWarning) {
+        return;
+    }
+    _queuedOSC7DisabledWarning = YES;
+    [self addSideEffect:^(id<VT100ScreenDelegate> delegate) {
+        // Re-check and spend the process-wide one-shot here, at presentation time:
+        // the setting may have been turned back on since this was queued, and the
+        // token must not be spent on a warning that then gets dropped. The
+        // delegate's only job is to present.
+        if ([iTermAdvancedSettingsModel acceptOSC7]) {
+            return;
+        }
+        if (![VT100ScreenMutableState consumeOSC7DisabledWarning]) {
+            return;
+        }
+        [delegate screenDidReceiveOSC7WhileDisabled];
+    } name:@"warn OSC 7 disabled"];
+}
+
+- (void)setPathFromURL:(NSString *)path fromShellIntegration:(BOOL)fromShellIntegration {
+    if (path.length == 0) {
+        // A pathless OSC 7 (file://user@host, or a peer that dropped the path)
+        // carries no directory. Don't fall into currentDirectoryDidChangeTo:'s
+        // empty-dir branch, which polls the local child process for its cwd: over
+        // a plain ssh remote that records the LOCAL directory against the remote
+        // host. Leave the working directory unchanged instead.
+        return;
+    }
     __weak __typeof(self) weakSelf = self;
     [self currentDirectoryDidChangeTo:path completion:^{
         __strong __typeof(self) strongSelf = weakSelf;
         if (!strongSelf) {
+            return;
+        }
+        if (fromShellIntegration) {
+            // 133;A owns the prompt mark, the line-style newline injection, and the
+            // auto-composer placement, so a first-party OSC 7 must stay a pure
+            // location report; establishing the prompt here too would inject a
+            // redundant newline and re-reveal the composer for every OSC 7.
             return;
         }
         [strongSelf insertNewlinesBeforeAddingPromptMarkAfterPrompt:YES];
@@ -4457,6 +4882,18 @@ void VT100ScreenEraseCell(screen_char_t *sct,
 - (void)didSendCommand {
     DLog(@"didSendCommand (trigger-detected prompt path)");
     [self commandDidEnd];
+}
+
+- (void)inputWasWrittenToTask {
+    [self closeVerifiedOSC7Window];
+}
+
+- (BOOL)verifiedOSC7WindowIsOpen {
+    return atomic_load(&_verifiedOSC7WindowOpen);
+}
+
+- (void)closeVerifiedOSC7Window {
+    atomic_store(&_verifiedOSC7WindowOpen, false);
 }
 
 // FTCS B
@@ -5314,11 +5751,9 @@ void VT100ScreenEraseCell(screen_char_t *sct,
     // 4 |
     // 5 |
 
-    [self.currentGrid setCharsFrom:VT100GridCoordMake(0, 0)
-                                to:VT100GridCoordMake(self.currentGrid.size.width - 1,
-                                                      self.currentGrid.size.height - 1)
-                            toChar:self.currentGrid.defaultChar
-                externalAttributes:nil];
+    // clearAllWithChar: because restoreScreenFromLineBuffer: sets metadata only on
+    // the lines it restores, which can be fewer than the grid's height.
+    [self.currentGrid clearAllWithChar:self.currentGrid.defaultChar];
     [self.currentGrid restoreScreenFromLineBuffer:self.linebuffer
                                   withDefaultChar:self.currentGrid.defaultChar
                                 maxLinesToRestore:gridSize.height];
@@ -5963,7 +6398,7 @@ lengthExcludingInBandSignaling:data.length
 }
 
 - (BOOL)shouldPopulateRTLState {
-    if (self.terminal.softAlternateScreenMode && !iTermAdvancedSettingsModel.alternateScreenBidi) {
+    if (self.terminal.softAlternateScreenMode && iTermAdvancedSettingsModel.disableBidiInAlternateScreen) {
         return NO;
     }
     return self.linebuffer.lastRawLine.metadata.rtlFound || self.currentGrid.mayContainRTL;
@@ -5983,6 +6418,15 @@ lengthExcludingInBandSignaling:data.length
         [prefix makeSafe];
     }
     VT100Grid *grid = self.currentGrid;
+    if (grid == self.altGrid && [iTermAdvancedSettingsModel disableBidiInAlternateScreen]) {
+        // Full-screen apps (editors, some CLIs) position their own text and may
+        // already order it for display. Reordering it again fights their layout,
+        // so leave alternate-screen lines unreordered. Clear any stale bidi info.
+        for (int i = 0; i < grid.size.height; i++) {
+            [self dropBidiInfoForLine:i inGrid:grid];
+        }
+        return;
+    }
     const BOOL updateDirtyLinesOnly = ![grid eraseBidiInfoInDirtyLines];
     [grid enumerateParagraphs:^(int line, NSArray<MutableScreenCharArray *> *scas) {
         if (updateDirtyLinesOnly && ![grid anyLineDirtyInRange:NSMakeRange(line, scas.count)]) {
@@ -5990,7 +6434,7 @@ lengthExcludingInBandSignaling:data.length
         }
         if (![grid mayContainRTLInRange:NSMakeRange(line, scas.count)]) {
             for (int i = 0; i < scas.count; i++) {
-                [grid setBidiInfo:nil forLine:line + i];
+                [self dropBidiInfoForLine:line + i inGrid:grid];
             }
             return;
         }
@@ -6248,7 +6692,9 @@ lengthExcludingInBandSignaling:data.length
                    reattached:(BOOL)reattached
                     isArchive:(BOOL)isArchive
          largeContentProvider:(id<iTermLargeContentProvider>)largeContentProvider {
-    const BOOL newFormat = (dictionary[@"PrimaryGrid"] != nil);
+    // "…V2" is the current grid node key; "PrimaryGrid" is the pre-upgrade key,
+    // still read so old saves restore their grid contents.
+    const BOOL newFormat = (dictionary[@"PrimaryGridV2"] != nil || dictionary[@"PrimaryGrid"] != nil);
     if (!newFormat) {
         return;
     }
@@ -6396,14 +6842,14 @@ lengthExcludingInBandSignaling:data.length
 }
 
 - (void)appendArchiveRestoredBanner {
-    [self appendRestoredBanner:@"Archive Restored"];
+    [self appendRestoredBanner:NSLocalizedStringWithDefaultValue(@"ScreenRestore.ArchiveRestoredBanner", nil, [NSBundle mainBundle], @"Archive Restored", @"Banner shown when an archived session is restored")];
 }
 
 - (void)appendSessionRestoredBanner {
     NSDateFormatter *dateFormatter = [[NSDateFormatter alloc] init];
     dateFormatter.dateStyle = NSDateFormatterMediumStyle;
     dateFormatter.timeStyle = NSDateFormatterShortStyle;
-    NSString *message = [NSString stringWithFormat:@"Session Contents Restored on %@", [dateFormatter stringFromDate:[NSDate date]]];
+    NSString *message = [NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"ScreenRestore.SessionRestoredBanner", nil, [NSBundle mainBundle], @"Session Contents Restored on %@", @"Banner shown when session contents are restored; %@ is the date"), [dateFormatter stringFromDate:[NSDate date]]];
     [self appendRestoredBanner:message];
 }
 
@@ -6743,16 +7189,22 @@ lengthExcludingInBandSignaling:data.length
     self.altGrid.delegate = nil;
     self.altGrid = nil;
 
-    self.primaryGrid = [[VT100Grid alloc] initWithDictionary:dictionary[@"PrimaryGrid"]
+    // Prefer the current "…V2" key; fall back to the pre-upgrade "PrimaryGrid" key.
+    // The content generation is restored from the grid's own POD. A pre-upgrade save
+    // lacks that key; such a grid starts at generation 0 and is re-saved under the
+    // "…V2" key as a fresh node, so no migration fallback is needed.
+    NSString *primaryGridKey = dictionary[@"PrimaryGridV2"] ? @"PrimaryGridV2" : @"PrimaryGrid";
+    self.primaryGrid = [[VT100Grid alloc] initWithDictionary:dictionary[primaryGridKey]
                                                     delegate:self];
     self.primaryGrid.defaultChar = self.terminal.defaultChar;
     if (!self.primaryGrid) {
         // This is to prevent a crash if the dictionary is bad (i.e., non-backward compatible change in a future version).
         self.primaryGrid = [[VT100Grid alloc] initWithSize:VT100GridSizeMake(2, 2) delegate:self];
     }
-    NSDictionary *altGrid = dictionary[@"AltGrid"];
+    NSString *altGridKey = dictionary[@"AltGridV2"] ? @"AltGridV2" : @"AltGrid";
+    NSDictionary *altGrid = dictionary[altGridKey];
     if ([altGrid count]) {
-        self.altGrid = [[VT100Grid alloc] initWithDictionary:dictionary[@"AltGrid"]
+        self.altGrid = [[VT100Grid alloc] initWithDictionary:dictionary[altGridKey]
                                                     delegate:self];
     }
     if (!self.altGrid) {
@@ -6808,6 +7260,7 @@ lengthExcludingInBandSignaling:data.length
                  user:remoteHost.username
     viaSSHIntegration:YES
              locality:remoteHost.localityState
+     localityVerified:remoteHost.localityVerified
            completion:^{}];
     } else {
         // No saved remote host: fall back to the resolving path, which backfills
@@ -6816,7 +7269,9 @@ lengthExcludingInBandSignaling:data.length
     }
     NSString *path = [NSString castFrom:terminalState[VT100ScreenTerminalStateKeyPath]];
     if (path) {
-        [self setPathFromURL:path];
+        // A restore (conductor unhook), not a live shell-integration OSC 7: no
+        // 133;A follows, so establish the prompt as before.
+        [self setPathFromURL:path fromShellIntegration:NO];
     }
 }
 
@@ -6980,10 +7435,11 @@ lengthExcludingInBandSignaling:data.length
     }
 
     // Initialize alternate screen to be empty
-    [self.altGrid setCharsFrom:VT100GridCoordMake(0, 0)
-                            to:VT100GridCoordMake(self.altGrid.size.width - 1, self.altGrid.size.height - 1)
-                        toChar:[self.altGrid defaultChar]
-            externalAttributes:nil];
+    // altGrid is either a fresh copy of primaryGrid (copying a line copies its
+    // metadata, lineAttribute included) or the grid left over from a previous
+    // alternate-screen session. Either way it can carry line attributes that the
+    // raw cells restored below know nothing about, so clear them.
+    [self.altGrid clearAllWithChar:[self.altGrid defaultChar]];
     // Copy the lines back over it
     int o = 0;
     for (int i = 0; o < self.altGrid.size.height && i < MIN(lines.count, self.altGrid.size.height); i++) {
@@ -7146,20 +7602,28 @@ lengthExcludingInBandSignaling:data.length
     // Gracefully degrades to NO on tmux versions that lack bracket_paste_flag.
     [self.terminal setBracketedPasteMode:[state[kStateDictBracketedPasteMode] boolValue]];
 
-    // pane_key_mode is exposed by tmux 3.5+ and reports the per-pane modifyOtherKeys
-    // state of whatever application is running inside the pane. Older tmux versions
-    // return an empty string, which we leave alone.
-    NSString *paneKeyMode = [NSString castFrom:state[kStateDictPaneKeyMode]];
-    int modifyOtherKeysValue = -1;
-    if ([paneKeyMode isEqualToString:@"Ext 1"]) {
-        modifyOtherKeysValue = 1;
-    } else if ([paneKeyMode isEqualToString:@"Ext 2"]) {
-        modifyOtherKeysValue = 2;
-    } else if ([paneKeyMode isEqualToString:@"VT10x"]) {
-        modifyOtherKeysValue = 0;
+    // pane_key_mode is exposed by tmux 3.5+ and reports how the application running
+    // in the pane has asked for keys to be encoded. Older tmux versions return an
+    // empty string, which we leave alone.
+    [self applyTmuxPaneKeyMode:[NSString castFrom:state[kStateDictPaneKeyMode]]];
+
+    // These arrived before the pane had a session and change state the snapshot above can't
+    // restore, like user variables. Execute them after the cursor is restored so anything they
+    // record lands on the cursor's line.
+    NSArray<VT100Token *> *deferredTokens = [NSArray castFrom:state[kTmuxWindowOpenerStateDeferredTokens]];
+    for (VT100Token *token in deferredTokens) {
+        DLog(@"Execute deferred tmux token %@", token);
+        [self.terminal executeToken:token];
     }
-    if (modifyOtherKeysValue >= 0 && self.terminal.sendModifiers.count > 4) {
-        self.terminal.sendModifiers[4] = @(modifyOtherKeysValue);
+}
+
+- (void)applyTmuxPaneKeyMode:(NSString *)paneKeyMode {
+    // Only the modifyOtherKeys level is applied. We never encode keys with the
+    // Kitty keyboard protocol in a tmux pane (see -[VT100Terminal keyReportingFlags]),
+    // so a Kitty value, which carries no modifyOtherKeys level, changes nothing.
+    iTermTmuxPaneKeyMode *mode = [iTermTmuxPaneKeyMode modeForString:paneKeyMode];
+    if (mode && mode.modifyOtherKeys >= 0 && self.terminal.sendModifiers.count > 4) {
+        self.terminal.sendModifiers[4] = @(mode.modifyOtherKeys);
         [self terminalDidChangeSendModifiers];
     }
 }
@@ -7665,6 +8129,14 @@ launchCoprocessWithCommand:(NSString *)command
     [self addSideEffect:^(id<VT100ScreenDelegate>  _Nonnull delegate) {
         [delegate triggerSideEffectSetValue:value forVariableNamed:name];
     } name:@"trigger set variable"];
+}
+
+- (void)triggerSession:(Trigger *)trigger
+    setSessionSpecificProfileBool:(BOOL)value
+                           forKey:(NSString *)profileKey {
+    [self addSideEffect:^(id<VT100ScreenDelegate>  _Nonnull delegate) {
+        [delegate triggerSideEffectSetSessionSpecificProfileBool:value forKey:profileKey];
+    } name:@"trigger set profile bool"];
 }
 
 - (void)triggerSession:(Trigger *)trigger setTabStatus:(VT100TabStatusUpdate *)status {

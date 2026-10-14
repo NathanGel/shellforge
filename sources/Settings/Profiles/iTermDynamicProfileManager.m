@@ -179,11 +179,10 @@
 
 - (void)reallyReportError:(NSString *)error file:(NSString *)file {
     NSString *message =
-    [NSString stringWithFormat:@"There was a problem with one of your Dynamic Profiles:\n\n%@", error];
+    [NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"DynamicProfiles.ProblemWithProfile", nil, [NSBundle mainBundle], @"There was a problem with one of your Dynamic Profiles:\n\n%@", @"Error shown when there is a problem with a dynamic profile"), error];
     if (_pendingErrors > 1) {
         const NSInteger count = _pendingErrors - 1;
-        message = [message stringByAppendingFormat:@"\n\n%@ additional error%@ may be seen in the log.",
-                   @(count), count == 1 ? @"" : @"s"];
+        message = [message stringByAppendingFormat:@"\n\n%@", [NSString localizedStringWithFormat:NSLocalizedStringWithDefaultValue(@"DynamicProfiles.AdditionalErrors", nil, [NSBundle mainBundle], @"%ld additional errors may be seen in the log.", @"Note appended after a dynamic-profile error; %ld is the number of additional errors"), (long)count]];
     }
     _pendingErrors = 0;
     iTermAlertAccessoryButtonUnfucker *container = nil;
@@ -191,7 +190,7 @@
         NSButton *button = [[NSButton alloc] init];
         button.buttonType = NSButtonTypeMomentaryPushIn;
         button.bezelStyle = NSBezelStyleRounded;
-        button.title = @"Reveal in Finder";
+        button.title = NSLocalizedStringWithDefaultValue(@"DynamicProfiles.RevealInFinder", nil, [NSBundle mainBundle], @"Reveal in Finder", @"Button that reveals a file in Finder");
         [button setAction:@selector(reveal:)];
         [button setTarget:self];
         [button setIdentifier:file];
@@ -202,12 +201,15 @@
     // "View Log" is a one-time navigation action and shouldn't be remembered.
     iTermWarning *warning = [[iTermWarning alloc] init];
     warning.title = message;
-    warning.actionLabels = @[ @"OK", @"View Log" ];
+    NSString *viewLog = NSLocalizedStringWithDefaultValue(@"DynamicProfiles.ViewLog", nil, [NSBundle mainBundle], @"View Log", @"Button that opens the script console log");
+    warning.actionLabels = @[ iTermLocalizedOK(), viewLog ];
     warning.accessory = container;
     warning.identifier = @"NoSyncDynamicProfilesWarning";
     warning.warningType = kiTermWarningTypeTemporarilySilenceable;
-    warning.heading = @"Dynamic Profiles Error";
-    warning.doNotRememberLabels = @[ @"View Log" ];
+    warning.heading = NSLocalizedStringWithDefaultValue(@"DynamicProfiles.ErrorHeading", nil, [NSBundle mainBundle], @"Dynamic Profiles Error", @"Heading of the dynamic profiles error alert");
+    warning.doNotRememberLabels = @[ viewLog ];
+    // Opens the Script Console window.
+    warning.notOfferedRemotelyLabels = @[ viewLog ];
     const iTermWarningSelection selection = [warning runModal];
     if (selection == 1) {
         [[iTermScriptConsole sharedInstance] revealTailOfHistoryEntry:[iTermScriptHistoryEntry dynamicProfilesEntry]];
@@ -307,7 +309,7 @@
         }
         NSString *fullName = [path stringByAppendingPathComponent:file];
         if (![self loadDynamicProfilesFromFile:fullName intoArray:newProfiles guids:guids]) {
-            [self reportError:[NSString stringWithFormat:@"Ignoring dynamic profiles in “%@” because of an error.", fullName]
+            [self reportError:[NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"DynamicProfiles.IgnoringProfiles", nil, [NSBundle mainBundle], @"Ignoring dynamic profiles in “%@” because of an error.", @"Error shown when dynamic profiles in a file are ignored due to an error"), fullName]
                          file:fullName];
         }
     }
@@ -359,7 +361,7 @@
         NSError *error = nil;
         NSData *data = [NSData dataWithContentsOfFile:filename options:0 error:&error];
         if (!data) {
-            [self reportError:[NSString stringWithFormat:@"Could not read Dynamic Profile from file %@: %@",
+            [self reportError:[NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"DynamicProfiles.CouldNotRead", nil, [NSBundle mainBundle], @"Could not read Dynamic Profile from file %1$@: %2$@", @"Error shown when a dynamic profile file cannot be read"),
                                filename, error.localizedDescription]
                          file:filename];
             return nil;
@@ -368,13 +370,13 @@
                                                options:0
                                                  error:&error];
         if (!dict) {
-            [self reportError:[NSString stringWithFormat:@"Dynamic Profiles file %@ contains invalid JSON: %@", filename, error.localizedDescription]
+            [self reportError:[NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"DynamicProfiles.InvalidJSON", nil, [NSBundle mainBundle], @"Dynamic Profiles file %1$@ contains invalid JSON: %2$@", @"Error shown when a dynamic profiles file has invalid JSON"), filename, error.localizedDescription]
                          file:filename];
             return nil;
         }
         dict = [NSDictionary castFrom:dict];
         if (!dict) {
-            [self reportError:[NSString stringWithFormat:@"Dynamic Profiles file %@ does not have an Object (i.e., a dictionary) as its root element", filename]
+            [self reportError:[NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"DynamicProfiles.RootNotObject", nil, [NSBundle mainBundle], @"Dynamic Profiles file %@ does not have an Object (i.e., a dictionary) as its root element", @"Error shown when a dynamic profiles file root is not a dictionary"), filename]
                          file:filename];
             return nil;
         }
@@ -387,11 +389,11 @@
     if (!entries) {
         XLog(@"Property list in %@ has no array of entries: %@", filename, dict[@"Profiles"]);
         if (dict[@"Profiles"]) {
-            [self reportError:[NSString stringWithFormat:@"In Dynamic Profiles file %@, the value of “Profiles” must be an array.",
+            [self reportError:[NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"DynamicProfiles.ProfilesNotArray", nil, [NSBundle mainBundle], @"In Dynamic Profiles file %@, the value of “Profiles” must be an array.", @"Error shown when the Profiles value of a dynamic profiles file is not an array; %@ is the file name"),
                                filename]
                          file:filename];
         } else {
-            [self reportError:[NSString stringWithFormat:@"Dynamic Profiles file %@ does not have a “Profiles” key at the root.",
+            [self reportError:[NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"DynamicProfiles.NoProfilesKey", nil, [NSBundle mainBundle], @"Dynamic Profiles file %@ does not have a “Profiles” key at the root.", @"Error shown when a dynamic profiles file lacks a Profiles key"),
                                filename]
                          file:filename];
         }
@@ -402,24 +404,24 @@
     for (id entry in entries) {
         Profile *profile = [NSDictionary castFrom:entry];
         if (!profile) {
-            [self reportError:[NSString stringWithFormat:@"In Dynamic Profiles file %@, an entry in “Profiles” is not an object (i.e., a dictionary), so it was ignored.",
+            [self reportError:[NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"DynamicProfiles.EntryNotObject", nil, [NSBundle mainBundle], @"In Dynamic Profiles file %@, an entry in “Profiles” is not an object (i.e., a dictionary), so it was ignored.", @"Error shown when an entry in a dynamic profiles file is not a dictionary; %@ is the file name"),
                                filename]
                          file:filename];
             continue;
         }
         profile = [self profileBySanitizingDynamicProfile:profile file:filename];
         if (![profile[KEY_GUID] isKindOfClass:[NSString class]]) {
-            [self reportError:[NSString stringWithFormat:@"Dynamic profile is missing the Guid field in file %@", filename]
+            [self reportError:[NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"DynamicProfiles.MissingGuid", nil, [NSBundle mainBundle], @"Dynamic profile is missing the Guid field in file %@", @"Error shown when a dynamic profile has no Guid field"), filename]
                          file:filename];
             continue;
         }
         if (![profile[KEY_NAME] isKindOfClass:[NSString class]]) {
-            [self reportError:[NSString stringWithFormat:@"Dynamic profile with Guid %@ is missing the “name” field", profile[KEY_GUID]]
+            [self reportError:[NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"DynamicProfiles.MissingName", nil, [NSBundle mainBundle], @"Dynamic profile with Guid %@ is missing the “name” field", @"Error shown when a dynamic profile has no name field"), profile[KEY_GUID]]
                          file:filename];
             continue;
         }
         if ([self nonDynamicProfileHasGuid:profile[KEY_GUID]]) {
-            [self reportError:[NSString stringWithFormat:@"Dynamic profile with Guid %@ conflicts with non-dynamic profile with same Guid",
+            [self reportError:[NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"DynamicProfiles.GuidConflict", nil, [NSBundle mainBundle], @"Dynamic profile with Guid %@ conflicts with non-dynamic profile with same Guid", @"Error shown when a dynamic profile Guid conflicts with a non-dynamic profile"),
                  profile[KEY_GUID]]
                          file:filename];
             continue;
@@ -434,7 +436,7 @@
                 const BOOL needed = [profiles anyWithBlock:^BOOL(Profile *profile) {
                     return [iTermMigrationHelper keyMappingsByRemovingDeprecatedKeyMappingsFrom:profile[KEY_KEYBOARD_MAP]] != nil;
                 }];
-                if (!needed || ![iTermMigrationHelper askToRemoveDeprecatedKeyMappings:@"A dynamic profile was found with a now-deprecated key mapping that interferes with window tiling shortcuts added in macOS Sequoia. Remove the key mappings? It shouldn’t break anything."]) {
+                if (!needed || ![iTermMigrationHelper askToRemoveDeprecatedKeyMappings:NSLocalizedStringWithDefaultValue(@"DynamicProfiles.DeprecatedKeyMapping", nil, [NSBundle mainBundle], @"A dynamic profile was found with a now-deprecated key mapping that interferes with window tiling shortcuts added in macOS Sequoia. Remove the key mappings? It shouldn’t break anything.", @"Prompt asking whether to remove deprecated key mappings from a dynamic profile")]) {
                     return profiles;
                 }
                 // Fall through
@@ -495,7 +497,7 @@ static id iTermDynamicProfileByRemovingNulls(id object) {
     NSMutableDictionary *result = [iTermDynamicProfileByRemovingNulls(profile) mutableCopy];
     id keyboardMap = result[KEY_KEYBOARD_MAP];
     if (keyboardMap && ![keyboardMap isKindOfClass:[NSDictionary class]]) {
-        [self reportError:[NSString stringWithFormat:@"In Dynamic Profiles file %@, the “Keyboard Map” of a profile is not an object (i.e., a dictionary), so it was ignored.",
+        [self reportError:[NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"DynamicProfiles.KeyboardMapNotObject", nil, [NSBundle mainBundle], @"In Dynamic Profiles file %@, the “Keyboard Map” of a profile is not an object (i.e., a dictionary), so it was ignored.", @"Error shown when a dynamic profile's Keyboard Map is not a dictionary; %@ is the file name"),
                            filename]
                      file:filename];
         [result removeObjectForKey:KEY_KEYBOARD_MAP];
@@ -520,7 +522,7 @@ static id iTermDynamicProfileByRemovingNulls(id object) {
             continue;
         }
         if ([guids containsObject:profile[KEY_GUID]]) {
-            [self reportError:[NSString stringWithFormat:@"Two dynamic profiles have the same Guid: %@", profile[KEY_GUID]]
+            [self reportError:[NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"DynamicProfiles.DuplicateGuid", nil, [NSBundle mainBundle], @"Two dynamic profiles have the same Guid: %@", @"Error shown when two dynamic profiles share a Guid"), profile[KEY_GUID]]
                          file:filename];
             continue;
         }
@@ -663,18 +665,18 @@ static id iTermDynamicProfileByRemovingNulls(id object) {
         return prototype;
     }
 
-    // Failed. Show an error.
-    NSString *feature;
-    NSString *value;
+    // Failed. Show an error. Use a complete localized sentence chosen by whether the parent is
+    // referenced by GUID or by name, rather than injecting the translated word "GUID"/"name"; the id
+    // itself is a self-contained value, so interpolating it is fine.
+    NSString *message;
     if (parentGUID) {
-        value = parentGUID;
-        feature = @"GUID";
+        message = [NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"DynamicProfiles.UnknownParentByGUID", nil, [NSBundle mainBundle], @"Dynamic profile %1$@ references unknown parent GUID %2$@. Using default profile as parent.", @"Error shown when a dynamic profile references a parent GUID that cannot be found; %1$@ is the profile name and %2$@ is the GUID"),
+                   profile[KEY_NAME], parentGUID];
     } else {
-        value = parentName;
-        feature = @"name";
+        message = [NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"DynamicProfiles.UnknownParentByName", nil, [NSBundle mainBundle], @"Dynamic profile %1$@ references unknown parent name %2$@. Using default profile as parent.", @"Error shown when a dynamic profile references a parent name that cannot be found; %1$@ is the profile name and %2$@ is the parent name"),
+                   profile[KEY_NAME], parentName];
     }
-    [self reportError:[NSString stringWithFormat:@"Dynamic profile %@ references unknown parent %@ %@. Using default profile as parent.",
-                       profile[KEY_NAME], feature, value]
+    [self reportError:message
                  file:profile[KEY_DYNAMIC_PROFILE_FILENAME]];
     return nil;
 }

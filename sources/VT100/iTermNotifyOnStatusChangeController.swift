@@ -233,40 +233,39 @@ class NotifyOnStatusChangeController: NSObject {
                               from: String?,
                               to: String?,
                               window: NSWindow?) {
-        let name = sessionName ?? "A session"
-        let fromText = from ?? "none"
-        let toText = to ?? "none"
+        let name = sessionName ?? String(localized: "StatusChange.DefaultSessionName", defaultValue: "A session", comment: "Fallback name used when a session has no name")
+        // Change detection above compares raw stored values; only the display
+        // strings are localized so a canonical wire status reads in the user's
+        // language.
+        let fromText = SetTabStatusTrigger.localizedStatusForDisplay(from) ?? String(localized: "StatusChange.None", defaultValue: "none", comment: "Placeholder for an absent session status value")
+        let toText = SetTabStatusTrigger.localizedStatusForDisplay(to) ?? String(localized: "StatusChange.None", defaultValue: "none", comment: "Placeholder for an absent session status value")
         // Present asynchronously so the modal alert doesn't run
         // reentrantly while the status-change notification is still
         // being dispatched.
         DispatchQueue.main.async {
-            let alert = NSAlert()
-            alert.messageText = "Session status changed"
-            alert.informativeText = "\(name) changed from “\(fromText)” to “\(toText)”."
-            alert.addButton(withTitle: "OK")
+            let warning = iTermWarning()
+            warning.heading = String(localized: "StatusChange.Title", defaultValue: "Session status changed", comment: "Alert title shown when a session's status changes")
+            warning.title = String(localized: "StatusChange.Body", defaultValue: "\(name) changed from “\(fromText)” to “\(toText)”.", comment: "Alert body; name is the session name, fromText and toText are the old and new status")
+            var actions = [iTermLocalizedOK()]
             // Offer Reveal only when the session can still be resolved; it may
             // have gone away between the change and the alert being shown.
             let canReveal = sessionGuid.flatMap {
                 iTermController.sharedInstance()?.anySession(withGUID: $0)
             } != nil
+            var localOnlyLabels = [String]()
             if canReveal {
-                alert.addButton(withTitle: "Reveal")
+                let reveal = String(localized: "StatusChange.Reveal", defaultValue: "Reveal", comment: "Button to reveal the session whose status changed")
+                actions.append(reveal)
+                localOnlyLabels.append(reveal)
             }
-            let reveal: () -> Void = {
-                if let sessionGuid {
+            warning.actionLabels = actions
+            warning.notOfferedRemotelyLabels = localOnlyLabels
+            warning.warningType = .kiTermWarningTypePersistent
+            // A sheet if there is a window, otherwise app-modal.
+            warning.window = window
+            warning.runModalAsync { selection, _ in
+                if selection == .kiTermWarningSelection1, let sessionGuid {
                     iTermController.sharedInstance()?.anySession(withGUID: sessionGuid)?.reveal()
-                }
-            }
-            if let window {
-                alert.beginSheetModal(for: window) { response in
-                    if response == .alertSecondButtonReturn {
-                        reveal()
-                    }
-                }
-            } else {
-                let response = alert.runModal()
-                if response == .alertSecondButtonReturn {
-                    reveal()
                 }
             }
         }

@@ -222,20 +222,20 @@ class TokenExecutor: NSObject {
         impl.addSideEffect(task)
     }
 
-    // Any queue. Schedules an outbound report-send side effect without
-    // invalidating reportsMaySkipSync.
-    @objc
-    func addReportSideEffect(_ task: @escaping TokenExecutorTask) {
-        if gDebugLogging.boolValue { DLog("add report side effect") }
-        impl.addReportSideEffect(task)
-    }
-
     // Any queue. Exempt from background batching; see
     // TokenExecutorImpl.addUrgentSideEffect(_:) for when that is warranted.
     @objc
     func addUrgentSideEffect(_ task: @escaping TokenExecutorTask) {
         if gDebugLogging.boolValue { DLog("add urgent side effect") }
         impl.addUrgentSideEffect(task)
+    }
+
+    // Any queue. Schedules an outbound report-send side effect without
+    // invalidating reportsMaySkipSync.
+    @objc
+    func addReportSideEffect(_ task: @escaping TokenExecutorTask) {
+        if gDebugLogging.boolValue { DLog("add report side effect") }
+        impl.addReportSideEffect(task)
     }
 
     // Any queue
@@ -552,15 +552,6 @@ private class TokenExecutorImpl {
         sideEffectScheduler.markNeedsUpdate()
     }
 
-    // Like addSideEffect but does NOT invalidate reportsMaySkipSync. Use this only
-    // for purely outbound report-send side effects, which never mutate state a
-    // later report reads.
-    func addReportSideEffect(_ task: @escaping TokenExecutorTask) {
-        sideEffects.append(task)
-        if gDebugLogging.boolValue { DLog("addReportSideEffect()") }
-        sideEffectScheduler.markNeedsUpdate()
-    }
-
     // Like addSideEffect but exempt from the batching a background session applies to its
     // side effects. Use it only where a batching period would stall a protocol or hold a
     // pause, not merely delay output.
@@ -578,9 +569,19 @@ private class TokenExecutorImpl {
     // actually delayed only when it is the tail with no urgent sibling behind it.
     // Issue 13013.
     func addUrgentSideEffect(_ task: @escaping TokenExecutorTask) {
+        noteStateSideEffectScheduled()
         sideEffects.append(task)
         if gDebugLogging.boolValue { DLog("addUrgentSideEffect()") }
         sideEffectScheduler.markNeedsUpdate(within: Self.urgentSideEffectMaximumDelay)
+    }
+
+    // Like addSideEffect but does NOT invalidate reportsMaySkipSync. Use this only
+    // for purely outbound report-send side effects, which never mutate state a
+    // later report reads.
+    func addReportSideEffect(_ task: @escaping TokenExecutorTask) {
+        sideEffects.append(task)
+        if gDebugLogging.boolValue { DLog("addReportSideEffect()") }
+        sideEffectScheduler.markNeedsUpdate()
     }
 
     func addDeferredSideEffect(_ task: @escaping TokenExecutorTask) {

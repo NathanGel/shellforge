@@ -7,6 +7,7 @@
 
 #import "iTermEditSnippetWindowController.h"
 #import "NSStringITerm.h"
+#import "iTermWarning.h"
 
 @interface iTermEditSnippetWindowController ()<NSTokenFieldDelegate>
 
@@ -41,7 +42,7 @@
                 _title = [pasteboardString ellipsizedDescriptionNoLongerThan:40];
                 _value = pasteboardString;
             } else {
-                _title = @"Untitled";
+                _title = NSLocalizedStringWithDefaultValue(@"EditSnippet.Untitled", nil, [NSBundle mainBundle], @"Untitled", @"Default title for a new snippet with no title");
                 _value = @"";
             }
             _guid = [[NSUUID UUID] UUIDString];
@@ -100,13 +101,19 @@
 }
 
 - (IBAction)help:(id)sender {
-    NSAlert *alert = [[NSAlert alloc] init];
-    alert.messageText = @"Escaping";
-    alert.informativeText =
+    NSString *const heading = NSLocalizedStringWithDefaultValue(@"EditSnippet.EscapingTitle", nil, [NSBundle mainBundle], @"Escaping", @"Title of the snippet escaping help alert");
+    NSString *const title =
+    NSLocalizedStringWithDefaultValue(@"EditSnippet.EscapingHelp", nil, [NSBundle mainBundle],
     @"C-Style Backslash Escaping supports: \\a (bell), \\b (backspace), \\e (escape), \\n (newline), \\r (carriage return), \\t (tab), \\\\ (backslash), and \\x followed by two hex digits giving a single byte of UTF-8.\n\n"
     @"Unescaped Literal Text does not have any special characters.\n\n"
-    @"Backward Compatibility Escaping, which is not recommended for new snippets, supports: \\n (newline), \\e (escape), \\a (bell), and \\t (tab).\n\n";
-    [alert runModal];
+    @"Backward Compatibility Escaping, which is not recommended for new snippets, supports: \\n (newline), \\e (escape), \\a (bell), and \\t (tab).\n\n", @"Explanation of snippet escaping modes shown in a help alert");
+    [iTermWarning showWarningWithTitle:title
+                               actions:@[ iTermLocalizedOK() ]
+                             accessory:nil
+                            identifier:nil
+                           silenceable:kiTermWarningTypePersistent
+                               heading:heading
+                                window:nil];
 }
 
 #pragma mark - NSTokenFieldDelegate

@@ -82,6 +82,7 @@
 
 // WindowControllerInterface protocol
 - (void)windowSetFrameTopLeftPoint:(NSPoint)point;
+- (void)windowSetFrame:(NSRect)frame;
 - (void)windowPerformMiniaturize:(id)sender;
 - (void)windowDeminiaturize:(id)sender;
 - (void)windowOrderFront:(id)sender;
@@ -101,6 +102,10 @@
 // The full interface for a window controller, as seen by objects that treat it
 // like a delegate.
 @protocol iTermWindowController <WindowControllerInterface, PTYTabDelegate>
+
+// Whether a floating pane can move into the tab's split pane layout now, and doing it.
+- (BOOL)canDockFloatingSession:(PTYSession *)session;
+- (void)dockFloatingSession:(PTYSession *)session;
 
 // Is the toolbelt visible for this window?
 @property(nonatomic, readonly) BOOL shouldShowToolbelt;
@@ -389,12 +394,13 @@
 - (NSArray *)uniqueTmuxControllers;
 
 // Opens a new tmux tab. window gives the tmux window id. name gives the new
-// window title.
+// window title. If openInBackground is set, the new tab does not take focus.
 - (void)loadTmuxLayout:(NSMutableDictionary *)parseTree
          visibleLayout:(NSMutableDictionary *)visibleParseTree
                 window:(int)window
         tmuxController:(TmuxController *)tmuxController
-                  name:(NSString *)name;
+                  name:(NSString *)name
+      openInBackground:(BOOL)openInBackground;
 
 #pragma mark - Splits
 

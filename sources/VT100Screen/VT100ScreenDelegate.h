@@ -1,6 +1,7 @@
 #import <Cocoa/Cocoa.h>
 #import "iTermColorMap.h"
 #import "PTYTextViewDataSource.h"
+#import "VT100ScreenProgress.h"
 #import "VT100Terminal.h"
 #import "VT100TerminalDelegate.h"
 #import "VT100Token.h"
@@ -22,6 +23,7 @@ typedef NS_ENUM(NSInteger, iTermLinesShiftedReason) {
 @protocol VT100ScreenMarkReading;
 @class VT100Screen;
 @class VT100ScreenMutableState;
+@class iTermProgramStatusReport;
 @class iTermBackgroundCommandRunnerPool;
 @class iTermColorMap;
 @class iTermConductorRecovery;
@@ -73,6 +75,8 @@ typedef NS_ENUM(NSInteger, iTermLinesShiftedReason) {
 - (void)triggerSessionSetBufferInput:(BOOL)shouldBuffer;
 - (void)triggerSideEffectEnterWorkgroupWithIdentifier:(NSString * _Nonnull)workgroupUniqueIdentifier;
 - (void)triggerSideEffectExitWorkgroupLeaderOnly:(BOOL)leaderOnly;
+- (void)triggerSideEffectSetSessionSpecificProfileBool:(BOOL)value
+                                                forKey:(NSString * _Nonnull)profileKey;
 
 @end
 
@@ -104,6 +108,12 @@ typedef NS_ENUM(NSUInteger, VT100ScreenWorkingDirectoryPushType) {
 
 // Called when the screen and terminal's attributes are reset
 - (void)screenDidReset;
+
+// Present the warning that the AcceptOSC7 advanced setting is silently breaking
+// shell integration, and offer to turn it back on. The screen has already decided
+// that a warning is warranted and spent the once-per-app-run token, so
+// implementations should just present.
+- (void)screenDidReceiveOSC7WhileDisabled;
 
 // Terminal can change title
 - (BOOL)screenAllowTitleSetting;
@@ -170,6 +180,10 @@ typedef NS_ENUM(NSUInteger, PTYSessionResizePermission) {
 
 // Delegate should move the window's top left point to the given screen coordinate.
 - (void)screenMoveWindowTopLeftPointTo:(NSPoint)point;
+
+// Delegate should set the window's frame to the given global AppKit coordinate
+// rect (points).
+- (void)screenSetWindowFrame:(NSRect)frame;
 
 // If flag is set, the window should be miniaturized; otherwise, deminiaturize.
 - (void)screenMiniaturizeWindow:(BOOL)flag;
@@ -334,6 +348,12 @@ typedef NS_ENUM(NSUInteger, PTYSessionResizePermission) {
 - (void)screenSetTabColorBlueComponentTo:(CGFloat)color;
 - (BOOL)screenSetColor:(NSColor * _Nullable)color
             profileKey:(NSString * _Nullable)profileKey;
+
+// Binds a color setting to an expression (for example "colors.ansi.yellow") so
+// it tracks the live palette. profileKey is the base color key (KEY_BADGE_COLOR,
+// KEY_TAB_COLOR, an ANSI key, etc.).
+- (void)screenSetColorBinding:(NSString * _Nonnull)expression
+                forProfileKey:(NSString * _Nonnull)profileKey;
 - (NSDictionary<NSNumber *, id> * _Nonnull)screenResetColorWithColorMapKey:(int)key
                                                                 profileKey:(NSString * _Nonnull)profileKey
                                                                       dark:(BOOL)dark;
@@ -411,7 +431,10 @@ typedef NS_ENUM(NSUInteger, PTYSessionResizePermission) {
 - (void)screenPushKeyLabels:(NSString * _Nonnull)value;
 - (void)screenPopKeyLabels:(NSString * _Nonnull)value;
 - (void)screenSendModifiersDidChange;
-- (void)screenKeyReportingFlagsDidChange;
+- (void)screenKeyReportingFlagsDidChange:(BOOL)wholeValueReplaced;
+
+// iTerm2 reset the key reporting mode itself. See terminalDidResetKeyReportingLocally.
+- (void)screenDidResetKeyReportingLocally;
 
 - (void)screenTerminalAttemptedPasteboardAccess;
 - (void)screenReportFocusWillChangeTo:(BOOL)reportFocus;
@@ -540,5 +563,29 @@ typedef NS_ENUM(NSUInteger, PTYSessionResizePermission) {
                                                 guid:(NSString * _Nonnull)savedTreeMainGuid;
 
 - (void)screenSetTabStatus:(VT100TabStatusUpdate * _Nonnull)status;
+
+// The program reported its status through OSC 7501.
+- (void)screenReportProgramStatus:(iTermProgramStatusReport * _Nonnull)report;
+
+// A reset cleared the tab status. OSC 7501 records survive every reset but RIS
+// (see screenRemoveProgramStatusRecords), so they are shown again.
+- (void)screenDidClearTabStatusForReset;
+
+// A full reset (RIS, or one the user asked for) removes every OSC 7501 record.
+- (void)screenRemoveProgramStatusRecords;
+
+// A reset of any kind stopped the progress bar. OSC 7501 records that survive
+// the reset put theirs back. The generation is
+// VT100ScreenMutableState.progressGeneration as of the reset.
+- (void)screenProgressWasResetWithGeneration:(NSInteger)generation;
+
+// The program used the progress protocol (OSC 9;4) to report the state of an
+// operation. Unlike the screen's progress property, which also changes when
+// the terminal is reset, this fires only for what the program itself said, so
+// it can be trusted to mean that an operation the program announced has
+// started or ended. The generation is VT100ScreenMutableState.progressGeneration
+// as of the report.
+- (void)screenProgressProtocolDidReportProgress:(VT100ScreenProgress)progress
+                                     generation:(NSInteger)generation;
 
 @end

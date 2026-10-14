@@ -18,51 +18,115 @@ enum AIConnectionTestOutcome: Int {
 
 // Drives a one-shot "does this configuration actually work?" probe for the
 // manual AI model editor's Test button. Given the in-progress form values, it
-// resolves the vendor exactly as request time would, obtains that vendor's
-// stored API key (prompting for one via the normal registration sheet if none
-// is configured), sends a minimal non-streaming completion through the same
-// plugin path a real chat uses, and classifies the outcome into a
-// success/failure message the caller shows in an alert.
+// resolves the vendor exactly as request time would, obtains the API key that
+// request time would send (the placeholder when the model's credential or a
+// local endpoint withholds the key, the key typed for the model when it has its
+// own, otherwise the chosen vendor's stored key, prompting for one via the
+// normal registration sheet if none is configured), sends a minimal non-streaming
+// completion through the same plugin path a real chat uses, and classifies the
+// outcome into a success/failure message the caller shows in an alert.
 @objc(iTermAIConnectionTester)
 class AIConnectionTester: NSObject {
     // Sends the probe. `completion` is always called on the main thread.
-    @objc(testModelName:url:api:functionCalling:inWindow:completion:)
+    // `credential` is the editor's AIModelCredential.storedValue and
+    // `modelAPIKey` the key typed for this model, which may not be saved yet.
+    @objc(testModelName:url:api:credential:modelAPIKey:functionCalling:supportsTemperature:customHeaders:inWindow:completion:)
     static func test(modelName: String,
                      url: String,
                      api: iTermAIAPI,
+                     credential storedCredential: String?,
+                     modelAPIKey: String?,
                      functionCalling: Bool,
+                     supportsTemperature: Bool,
+                     customHeaders: [[String: String]],
                      inWindow window: NSWindow,
                      completion: @escaping (AIConnectionTestOutcome, String) -> Void) {
+        let credential = AIModelCredential(storedValue: storedCredential)
         let vendor = LLMMetadata.objcManualVendor(api: api, url: url, modelName: modelName)
+        let keyVendor: iTermAIVendor
+        if case .vendorKey(let chosen) = credential {
+            keyVendor = chosen
+        } else {
+            keyVendor = vendor
+        }
+        let send = { (apiKey: String) in
+            Self.send(modelName: modelName,
+                      url: url,
+                      api: api,
+                      functionCalling: functionCalling,
+                      supportsTemperature: supportsTemperature,
+                      customHeaders: customHeaders,
+                      apiKey: apiKey,
+                      vendor: vendor,
+                      credential: credential,
+                      completion: completion)
+        }
+        // The App Review key wins over the placeholder policy, exactly as it
+        // does in AITermController.registration: send() answers locally for it
+        // and contacts nothing, which must not be pre-empted by substituting
+        // the placeholder and probing a real endpoint.
+        let storedKey = AITermControllerObjC.apiKey(for: keyVendor)
+        if storedKey != AITermController.reviewPlaceholderAPIKey {
+            // A self-hosted endpoint gets the placeholder key at request time, so the
+            // probe must use it too. Sending the stored vendor key here made the test
+            // pass against an authenticated local server that every real request then
+            // 401'd (issue 13021). There is also nothing to prompt for: a key the user
+            // typed would never be sent.
+            if let apiKey = unpromptedAPIKey(url: url, api: api, credential: credential) {
+                send(apiKey)
+                return
+            }
+            if credential == .modelKey {
+                guard let modelAPIKey,
+                      !modelAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    completion(.failure, String(localized: "AIConnectionTester.MissingModelAPIKey",
+                                                defaultValue: "Enter this model’s API key before testing the connection.",
+                                                comment: "Result of the AI connection test when the model is set to use its own API key but the key field is empty"))
+                    return
+                }
+                send(modelAPIKey.trimmingCharacters(in: .whitespacesAndNewlines))
+                return
+            }
+        }
         // requestRegistration returns the stored key immediately when present,
         // otherwise presents the registration sheet on `window` and stores what
         // the user enters. A nil result means the user cancelled.
-        AITermControllerRegistrationHelper.instance.requestRegistration(in: window, for: vendor) { registration in
+        AITermControllerRegistrationHelper.instance.requestRegistration(in: window, for: keyVendor) { registration in
             guard let registration else {
                 completion(.cancelled, "")
                 return
             }
-            send(modelName: modelName,
-                 url: url,
-                 api: api,
-                 functionCalling: functionCalling,
-                 apiKey: registration.apiKey,
-                 vendor: vendor,
-                 completion: completion)
+            send(registration.apiKey)
         }
+    }
+
+    // The key to probe with when it needs no input from the user, or nil when a
+    // stored key applies (which may mean prompting for one).
+    static func unpromptedAPIKey(url: String,
+                                 api: iTermAIAPI,
+                                 credential: AIModelCredential = .automatic) -> String? {
+        guard AITermController.usesPlaceholderAPIKey(url: url, api: api, credential: credential) else {
+            return nil
+        }
+        return AITermController.selfHostedPlaceholderAPIKey
     }
 
     private static func send(modelName: String,
                              url: String,
                              api: iTermAIAPI,
                              functionCalling: Bool,
+                             supportsTemperature: Bool,
+                             customHeaders: [[String: String]],
                              apiKey: String,
                              vendor: iTermAIVendor,
+                             credential: AIModelCredential,
                              completion: @escaping (AIConnectionTestOutcome, String) -> Void) {
         // The reviewer placeholder key contacts no service, so a live probe would
         // fail. Report success and explain, matching the runtime short-circuit.
         if apiKey == AITermController.reviewPlaceholderAPIKey {
-            completion(.success, "Placeholder key in use: AI responses are simulated for App Review and no external service is contacted.")
+            completion(.success, String(localized: "AIConnectionTester.ReviewPlaceholder",
+                                        defaultValue: "Placeholder key in use: AI responses are simulated for App Review and no external service is contacted.",
+                                        comment: "Result of the AI connection test when the App Review placeholder key is configured"))
             return
         }
         var features = Set<AIMetadata.Model.Feature>()
@@ -71,7 +135,7 @@ class AIConnectionTester: NSObject {
         }
         // Probe non-streaming with a tiny response cap: the whole point is to
         // confirm auth + endpoint reachability, not to exercise streaming.
-        let model = AIMetadata.Model(name: modelName,
+        var model = AIMetadata.Model(name: modelName,
                                      contextWindowTokens: 8_192,
                                      maxResponseTokens: 64,
                                      url: url,
@@ -79,9 +143,20 @@ class AIConnectionTester: NSObject {
                                      features: features,
                                      vectorStoreConfig: .disabled,
                                      vendor: vendor)
+        // Honor the editor's "Supports temperature" toggle so the probe omits
+        // the temperature field for endpoints that 400 on it, matching what a
+        // real chat request does for the saved model.
+        model.supportsTemperature = supportsTemperature
+        // Include the editor's custom headers so the probe carries the same
+        // auth header a real request to the saved model would (issue 12975):
+        // otherwise an endpoint gated by a custom Authorization header always
+        // 401s the test even though real requests would succeed.
+        model.customHeaders = customHeaders
         let provider = LLMProvider(model: model)
         guard provider.urlIsValid else {
-            completion(.failure, "The URL is not valid.")
+            completion(.failure, String(localized: "AIConnectionTester.InvalidURL",
+                                        defaultValue: "The URL is not valid.",
+                                        comment: "Result of the AI connection test when the configured URL cannot be parsed"))
             return
         }
         let builder = LLMRequestBuilder(provider: provider,
@@ -93,16 +168,46 @@ class AIConnectionTester: NSObject {
         do {
             request = try builder.webRequest()
         } catch {
-            completion(.failure, "Could not build a request: \(error.localizedDescription)")
+            completion(.failure, String(localized: "AIConnectionTester.CouldNotBuildRequest",
+                                        defaultValue: "Could not build a request: \(error.localizedDescription)",
+                                        comment: "Result of the AI connection test when the request could not be constructed; the placeholder is an error description"))
             return
         }
         _ = iTermAIClient.instance.request(webRequest: request, stream: nil) { result in
             switch result {
             case .success(let response):
                 let (result, message) = outcome(for: response, provider: provider)
-                completion(result, message)
+                // The withheld-key advice only belongs on a refusal the server
+                // itself sent back over credentials. Appending it to every
+                // failure told someone whose Ollama server was merely down to
+                // go configure authentication it does not even use.
+                //
+                // response.error is passed separately because outcome() prefers
+                // a parsed error body, which discards the "status 401" the
+                // plugin reported: a gateway that answers 401 with structured
+                // JSON would otherwise lose the advice entirely.
+                guard result == .failure else {
+                    completion(result, message)
+                    return
+                }
+                completion(.failure,
+                           AIWithheldKeyAdvice.amended(message: message,
+                                                       statusText: response.error ?? "",
+                                                       url: url,
+                                                       api: api,
+                                                       credential: credential,
+                                                       customHeaders: customHeaders))
             case .failure(let error):
-                completion(.failure, error.reason)
+                // Same treatment as a WebResponse failure: if the plugin ever
+                // reports an HTTP refusal this way, the explanation must not be
+                // lost. looksLikeAuthFailure gates whether anything is added.
+                completion(.failure,
+                           AIWithheldKeyAdvice.amended(message: error.reason,
+                                                       statusText: error.reason,
+                                                       url: url,
+                                                       api: api,
+                                                       credential: credential,
+                                                       customHeaders: customHeaders))
             }
         }
     }
@@ -124,9 +229,13 @@ class AIConnectionTester: NSObject {
         var parser = provider.responseParser()
         do {
             _ = try parser.parse(data: response.data.lossyData)
-            return (.success, "The connection succeeded. The model responded normally.")
+            return (.success, String(localized: "AIConnectionTester.Succeeded",
+                                     defaultValue: "The connection succeeded. The model responded normally.",
+                                     comment: "Result of a successful AI connection test"))
         } catch {
-            return (.failure, "The server responded but its reply could not be understood: \(error.localizedDescription)")
+            return (.failure, String(localized: "AIConnectionTester.UnparseableReply",
+                                     defaultValue: "The server responded but its reply could not be understood: \(error.localizedDescription)",
+                                     comment: "Result of the AI connection test when the server's reply could not be parsed; the placeholder is an error description"))
         }
     }
 }

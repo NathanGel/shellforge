@@ -592,47 +592,6 @@
     return [NSColor colorWithWhite:0 alpha:base + (1 - base) * (highlightAmount * 0.05)];
 }
 
-- (NSColor *)mojaveBackgroundColorSelected:(BOOL)selected highlightAmount:(CGFloat)highlightAmount NS_AVAILABLE_MAC(10_14) {
-    CGFloat colors[3];
-    const BOOL keyMainAndActive = self.windowIsMainAndAppIsActive;
-    if (keyMainAndActive) {
-        if (selected) {
-            colors[0] = 210.0 / 255.0;
-            colors[1] = 210.0 / 255.0;
-            colors[2] = 210.0 / 255.0;
-        } else {
-            NSColor *color = self.tabBarColor;
-            colors[0] = color.redComponent;
-            colors[1] = color.greenComponent;
-            colors[2] = color.blueComponent;
-        }
-    } else {
-        if (selected) {
-            colors[0] = 246.0 / 255.0;
-            colors[1] = 246.0 / 255.0;
-            colors[2] = 246.0 / 255.0;
-        } else {
-            NSColor *color = self.tabBarColor;
-            colors[0] = color.redComponent;
-            colors[1] = color.greenComponent;
-            colors[2] = color.blueComponent;
-        }
-    }
-    CGFloat highlightedColors[3] = { 0, 0, 0 };
-    CGFloat a = 0;
-    if (!selected) {
-        a = highlightAmount * 0.05;
-    }
-    for (int i = 0; i < 3; i++) {
-        colors[i] = colors[i] * (1.0 - a) + highlightedColors[i] * a;
-    }
-
-    return [NSColor colorWithSRGBRed:colors[0]
-                               green:colors[1]
-                                blue:colors[2]
-                               alpha:1];
-}
-
 - (NSColor *)backgroundColorSelected:(BOOL)selected highlightAmount:(CGFloat)highlightAmount {
     return [self bigSurBackgroundColorSelected:selected highlightAmount:highlightAmount];
 }
@@ -1449,10 +1408,15 @@ static const CGFloat kPSMSquaredCollapsedChevron = 14;  // room for the collapse
     }];
     // A fully collapsed run has no visible members, so the block above never
     // fires for it; draw the collapsed chip's self-contained affordance.
+    NSString *dropTargetGID = [bar collapsedTabGroupDropTargetIdentifier];
     [bar enumerateCollapsedTabGroupChipsWithBlock:^(PSMTabBarCell *chip,
                                                     NSInteger memberCount,
                                                     NSString *gid) {
-        [self drawSquaredCollapsedTabGroupChip:chip memberCount:memberCount groupID:gid inBar:bar];
+        [self drawSquaredCollapsedTabGroupChip:chip
+                                   memberCount:memberCount
+                                       groupID:gid
+                                         inBar:bar
+                                  isDropTarget:[gid isEqualToString:dropTargetGID]];
     }];
 }
 
@@ -1473,7 +1437,8 @@ static const CGFloat kPSMSquaredCollapsedChevron = 14;  // room for the collapse
 - (void)drawSquaredCollapsedTabGroupChip:(PSMTabBarCell *)chip
                              memberCount:(NSInteger)count
                                  groupID:(NSString *)gid
-                                   inBar:(PSMTabBarControl *)bar {
+                                   inBar:(PSMTabBarControl *)bar
+                            isDropTarget:(BOOL)isDropTarget {
     id<PSMTabGroup> group = [bar.tabGroupDataSource tabGroupWithIdentifier:gid];
     NSColor *groupColor = group.color ?: [NSColor systemBlueColor];
     NSString *name = group.name ?: @"";
@@ -1535,6 +1500,16 @@ static const CGFloat kPSMSquaredCollapsedChevron = 14;  // room for the collapse
     // Squared enclosing outline.
     [groupColor set];
     NSFrameRectWithWidthUsingOperation(box, 1, NSCompositingOperationSourceOver);
+
+    // Drop-target feedback: while a dragged tab is poised to join this collapsed
+    // group, frame the block in the accent color so the user sees the drop lands
+    // INSIDE the group (no member cells open a slot to show it).
+    // NSFrameRect* fills the border with the current FILL color, so use -set (not
+    // -setStroke) or the frame would draw in whatever fill color was last set.
+    if (isDropTarget) {
+        [[NSColor controlAccentColor] set];
+        NSFrameRectWithWidthUsingOperation(NSInsetRect(box, -1, -1), 2, NSCompositingOperationSourceOver);
+    }
 }
 
 - (void)drawSquaredTabGroupRunHorizontal:(BOOL)horizontal

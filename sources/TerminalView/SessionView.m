@@ -3,7 +3,9 @@
 #import "FutureMethods.h"
 #import "iTermTexture.h"
 #import "iTerm2SharedARC-Swift.h"
+#import "iTermFlexibleView.h"
 #import "iTermAdvancedSettingsModel.h"
+#import "iTermCursor.h"
 #import "iTermAnnouncementViewController.h"
 #import "iTermBackgroundColorView.h"
 #import "iTermDropDownFindViewController.h"
@@ -15,6 +17,7 @@
 #import "iTermMetalClipView.h"
 #import "iTermMetalDeviceProvider.h"
 #import "iTermMetalDriver.h"
+#import "iTermMetalRenderer.h"
 #import "iTermPreferences.h"
 #import "iTermSearchResultsMinimapView.h"
 #import "iTermStatusBarContainerView.h"
@@ -67,7 +70,7 @@ NSString *const SessionViewWasSelectedForInspectionNotification = @"SessionViewW
 @end
 
 @implementation iTermHoverContainerView {
-    NSVisualEffectView *_vev NS_AVAILABLE_MAC(10_14);
+    NSVisualEffectView *_vev;
 }
 
 - (instancetype)initWithFrame:(NSRect)frame {
@@ -120,6 +123,12 @@ NSString *const SessionViewWasSelectedForInspectionNotification = @"SessionViewW
 @end
 
 @implementation SessionView {
+    // The pane drag over this view will place a float rather than split this view.
+    BOOL _dragPlacesFloatingPane;
+    // Whether the pointer is over a part of this view that nothing covers, as far as entered, exited
+    // and moved events tell. Tracking areas ignore floating panes, so crossing a float's edge inside
+    // this view's tracking area produces no event of its own.
+    BOOL _pointerIsOverUncoveredPart;
     NSMutableArray *_announcements;
     BOOL _inDealloc;
     iTermAnnouncementViewController *_currentAnnouncement;
@@ -143,13 +152,14 @@ NSString *const SessionViewWasSelectedForInspectionNotification = @"SessionViewW
     NSRect _urlAnchorFrame;
 
     BOOL _useMetal;
+    iTermHDREngager *_hdrEngager;
     iTermMetalClipView *_metalClipView;
     iTermDropDownFindViewController *_dropDownFindViewController;
     iTermFindDriver *_dropDownFindDriver;
     iTermFindDriver *_permanentStatusBarFindDriver;
     iTermFindDriver *_temporaryStatusBarFindDriver;
     iTermGenericStatusBarContainer *_genericStatusBarContainer;
-    iTermImageView *_imageView NS_AVAILABLE_MAC(10_14);
+    iTermImageView *_imageView;
     NSColor *_terminalBackgroundColor;
 
     // For macOS 10.14+ when subpixel AA is turned on and the scroller style is legacy, this draws
@@ -298,6 +308,7 @@ NSString *const SessionViewWasSelectedForInspectionNotification = @"SessionViewW
         }
 
         [self installLegacyView];
+        [self installHDREngager];
 
 #if ENABLE_LOW_POWER_GPU_DETECTION
         [[NSNotificationCenter defaultCenter] addObserver:self
@@ -305,10 +316,6 @@ NSString *const SessionViewWasSelectedForInspectionNotification = @"SessionViewW
                                                      name:iTermMetalDeviceProviderPreferredDeviceDidChangeNotification
                                                    object:nil];
 #endif
-        if (PTYScrollView.shouldDismember) {
-            [self addSubviewBelowFindView:_scrollview.verticalScroller];
-            _scrollview.verticalScroller.frame = [self frameForScroller];
-        }
         _rightGutterController = [[iTermRightGutterController alloc] initWithSessionView:self];
         [self updateSessionSelectorButton];
         [[NSNotificationCenter defaultCenter] addObserver:self
@@ -404,6 +411,25 @@ NSString *const SessionViewWasSelectedForInspectionNotification = @"SessionViewW
     return _showTitle ? iTermGetSessionViewTitleHeight() : 0;
 }
 
+- (BOOL)clickableDecorationIntersectsWindowRect:(NSRect)rect {
+    NSMutableArray<NSView *> *decorations = [NSMutableArray array];
+    if (_toolbarView) {
+        [decorations addObject:_toolbarView];
+    }
+    if (_showTitle && _title) {
+        [decorations addObject:_title];
+    }
+    if (_showBottomStatusBar && _genericStatusBarContainer) {
+        [decorations addObject:_genericStatusBarContainer];
+    }
+    return [decorations anyWithBlock:^BOOL(NSView *view) {
+        if (!view.window || view.isHiddenOrHasHiddenAncestor) {
+            return NO;
+        }
+        return NSIntersectsRect([view convertRect:view.bounds toView:nil], rect);
+    }];
+}
+
 - (void)updateToolbarFrame {
     if (!_toolbarView) {
         return;
@@ -418,7 +444,7 @@ NSString *const SessionViewWasSelectedForInspectionNotification = @"SessionViewW
 
 - (void)setBrowserViewController:(iTermBrowserViewController *)browserViewController
                       initialURL:(NSString *)initialURL
-                 restorableState:(NSDictionary *)restorableState NS_AVAILABLE_MAC(11_0) {
+                 restorableState:(NSDictionary *)restorableState {
     _browserViewController = browserViewController;
 
     // Set initial frame to avoid constraint conflicts
@@ -557,14 +583,6 @@ NSString *const SessionViewWasSelectedForInspectionNotification = @"SessionViewW
     _imageView.blend = blend;
     [_toolbarView setTransparencyAlpha:transparencyAlpha];
     [CATransaction commit];
-}
-
-- (NSRect)frameForScroller NS_AVAILABLE_MAC(10_14) {
-    [_scrollview.verticalScroller sizeToFit];
-    NSSize size = _scrollview.verticalScroller.frame.size;
-    NSSize mySize = self.bounds.size;
-    NSRect frame = NSMakeRect(mySize.width - size.width, 0, size.width, mySize.height);
-    return frame;
 }
 
 - (void)dealloc {
@@ -842,7 +860,7 @@ NSString *const SessionViewWasSelectedForInspectionNotification = @"SessionViewW
     return _useMetal;
 }
 
-- (void)setUseMetal:(BOOL)useMetal dataSource:(id<iTermMetalDriverDataSource>)dataSource NS_AVAILABLE_MAC(10_11) {
+- (void)setUseMetal:(BOOL)useMetal dataSource:(id<iTermMetalDriverDataSource>)dataSource {
     if (useMetal != _useMetal) {
         _useMetal = useMetal;
         RLog(@"setUseMetal:%@ dataSource:%@", @(useMetal), dataSource);
@@ -862,7 +880,7 @@ NSString *const SessionViewWasSelectedForInspectionNotification = @"SessionViewW
     }
 }
 
-- (void)preferredMetalDeviceDidChange:(NSNotification *)notification NS_AVAILABLE_MAC(10_11) {
+- (void)preferredMetalDeviceDidChange:(NSNotification *)notification {
     if (_metalView) {
         [self.delegate sessionViewRecreateMetalView];
     }
@@ -914,6 +932,31 @@ NSString *const SessionViewWasSelectedForInspectionNotification = @"SessionViewW
     _metalClipView.legacyView = _legacyView;
 }
 
+- (void)setHdrCursorEnabled:(BOOL)hdrCursorEnabled {
+    _hdrCursorEnabled = hdrCursorEnabled;
+    // The engager engages/releases EDR based on this. Its layer work is cheap and
+    // can update live.
+    _hdrEngager.enabled = hdrCursorEnabled;
+    // The metal view's EDR engagement is a layer property that can update live;
+    // its pixel format cannot, so a format change is handled separately by
+    // rebuilding the driver (PTYSession -> bounceMetal). Keep the live part synced.
+    _metalView.wantsHDR = hdrCursorEnabled;
+}
+
+- (void)installHDREngager {
+    assert(!_hdrEngager);
+    // An invisible 1pt view that holds EDR engaged so the HDR cursor (legacy or
+    // Metal) can render above reference white. Installed for every session
+    // regardless of the current setting: it creates Metal resources lazily only
+    // while this session's HDR cursor is enabled and the display has headroom, and
+    // releases them otherwise, so it costs nothing until the feature is used and it
+    // can react live when the setting is flipped on for an existing session.
+    // Keeping it also means tearing down the Metal view never drops EDR.
+    _hdrEngager = [[iTermHDREngager alloc] initWithFrame:NSMakeRect(0, 0, 1, 1)];
+    _hdrEngager.enabled = _hdrCursorEnabled;
+    [self insertSubview:_hdrEngager atIndex:_contentViewIndex];
+}
+
 - (void)insertSubview:(NSView *)subview atIndex:(NSInteger)index {
     [super insertSubview:subview atIndex:index];
     [self sanityCheckSubviewOrder];
@@ -961,7 +1004,7 @@ NSString *const SessionViewWasSelectedForInspectionNotification = @"SessionViewW
         [self addSubview:_activePaneBorderView positioned:NSWindowBelow relativeTo:_progressBar];
     }
 }
-- (void)installMetalViewWithDataSource:(id<iTermMetalDriverDataSource>)dataSource NS_AVAILABLE_MAC(10_11) {
+- (void)installMetalViewWithDataSource:(id<iTermMetalDriverDataSource>)dataSource {
     if (_metalView) {
         [self removeMetalView];
     }
@@ -978,10 +1021,15 @@ NSString *const SessionViewWasSelectedForInspectionNotification = @"SessionViewW
 #else
     _metalView.layer.opaque = YES;
 #endif
-    if ([iTermAdvancedSettingsModel hdrCursor]) {
+    _metalView.wantsHDR = _hdrCursorEnabled;
+    if (_hdrCursorEnabled) {
+        // Make the layer fp16 so the cursor can exceed reference white. Must match
+        // the driver's framebufferPixelFormat below.
         [_metalView enableHDR];
     }
-    _metalView.colorspace = [[NSColorSpace it_defaultColorSpace] CGColorSpace];
+    // The metal view's color space is managed by iTermMTKView.preferredColorspace
+    // (set in viewDidMoveToWindow): the screen's own color space normally, or a
+    // gamut-matched extended space only when EDR is engaged.
 
     // Tell the clip view about it so it can ask the metalview to draw itself on scroll.
     _metalClipView.metalView = _metalView;
@@ -999,20 +1047,27 @@ NSString *const SessionViewWasSelectedForInspectionNotification = @"SessionViewW
 
     // Start the metal driver going. It will receive delegate calls from iTermMTKView that kick off
     // frame rendering.
-    _driver = [[iTermMetalDriver alloc] initWithDevice:_metalView.device];
+    _driver = [[iTermMetalDriver alloc] initWithDevice:_metalView.device
+                                framebufferPixelFormat:iTermMetalFramebufferPixelFormat(_hdrCursorEnabled)];
     _driver.dataSource = dataSource;
     [_driver metalView:_metalView drawableSizeWillChange:_metalView.drawableSize];
     _metalView.delegate = _driver;
     [self metalViewVisibilityDidChange];
 }
 
-- (void)removeMetalView NS_AVAILABLE_MAC(10_11) {
+- (void)removeMetalView {
+    // The Metal view is itself an EDR-engaged layer. Removing it can drop the
+    // display out of extended range (which historically latched the screen out of
+    // EDR until relaunch). We don't release EDR ourselves; instead the permanent
+    // iTermHDREngager re-asserts it below. reengage is a no-op if this view is not
+    // in a window yet, so it never drops EDR held by some other view.
     _metalView.delegate = nil;
     [_metalView removeFromSuperview];
     _metalView = nil;
     _driver = nil;
     _metalClipView.useMetal = NO;
     _metalClipView.metalView = nil;
+    [_hdrEngager reengage];
     [self metalViewVisibilityDidChange];
 }
 
@@ -1249,9 +1304,6 @@ NSString *const SessionViewWasSelectedForInspectionNotification = @"SessionViewW
             frame.origin.y = maxY;
             DLog(@"Tweaking y offset of scrollview for title bar");
             _scrollview.frame = frame;
-            if (PTYScrollView.shouldDismember) {
-                _scrollview.verticalScroller.frame = [self frameForScroller];
-            }
         }
         [self updateToolbarFrame];
         if (_showBottomStatusBar) {
@@ -1447,9 +1499,7 @@ NSString *const SessionViewWasSelectedForInspectionNotification = @"SessionViewW
 
     [self _dimShadeToDimmingAmount:amount];
     [_title setDimmingAmount:amount];
-    if (@available(macOS 11, *)) {
-        _browserViewController.dimming = amount;
-    }
+    _browserViewController.dimming = amount;
     iTermStatusBarViewController *statusBar = self.delegate.sessionViewStatusBarViewController;
     [statusBar updateColors];
 }
@@ -1490,13 +1540,21 @@ typedef struct {
     NSTrackingAreaOptions options;
 } iTermTrackingAreaSpec;
 
+- (NSRect)leftMarginTrackingRect {
+    return NSMakeRect(0, 0, [iTermPreferences sideMargins], self.bounds.size.height);
+}
+
 // specs points at space for SessionViewNumberOfTrackingAreas values.
 - (void)getDesiredTrackingRectFrames:(iTermTrackingAreaSpec *)specs {
     NSTrackingAreaOptions trackingOptions;
     trackingOptions = (NSTrackingMouseEnteredAndExited |
                        NSTrackingActiveAlways |
                        NSTrackingEnabledDuringMouseDrag);
-    if ([self.delegate sessionViewCaresAboutMouseMovement]) {
+    if ([self.delegate sessionViewCaresAboutMouseMovement] ||
+        [self tabHasVisibleFloatingPanes] ||
+        [[iTermPaneFocusFollowsMouse shared] wantsPointerMovementFor:self]) {
+        // With floats in the tab, movement is how crossing a float's edge is noticed. Focus follows
+        // mouse needs movement to notice the pointer moving onto a panel.
         DLog(@"Track mouse moved events");
         trackingOptions |= NSTrackingMouseMoved;
     } else {
@@ -1513,84 +1571,23 @@ typedef struct {
         },
         // This one is because command marks and fold buttons are in the left margin.
         {
-            .rect = NSMakeRect(0, 0, [iTermPreferences sideMargins], self.bounds.size.height),
+            .rect = [self leftMarginTrackingRect],
             .options = NSTrackingActiveInActiveApp | NSTrackingMouseMoved
         }
     };
     memmove(specs, value, sizeof(value));
 }
 
-typedef NS_ENUM(NSInteger, SessionViewTrackingMode) {
-    // Track the terminal. Handle enter and exit normally.
-    SessionViewTrackingModeNormal,
-
-    // Track the first responder. Resume normal mode on exit.
-    SessionViewTrackingModeTrackFirstResponderFragile,
-
-    // Track the terminal. Resume normal mode on exit.
-    SessionViewTrackingModeTrackTerminalFragile
-};
-
 - (CGFloat)desiredRightExtra {
     return _delegate.desiredRightExtra;
-}
-
-- (SessionViewTrackingMode)desiredTrackingMode {
-    DLog(@"desiredTrackingMode %@", self);
-    if (![iTermPreferences boolForKey:kPreferenceKeyFocusFollowsMouse]) {
-        DLog(@"ffm off");
-        return SessionViewTrackingModeNormal;
-    }
-    NSView *firstResponderView = [NSView castFrom:self.window.firstResponder];
-    if ([firstResponderView it_isTerminalResponder]) {
-        DLog(@"mouse in terminal");
-        return SessionViewTrackingModeNormal;
-    }
-    // Walk firstResponderView up to the children of SessionView.
-    while (firstResponderView != nil && firstResponderView.superview != self) {
-        firstResponderView = firstResponderView.superview;
-    }
-    if (firstResponderView == nil) {
-        DLog(@"first responder not subview of SessionView");
-        return SessionViewTrackingModeNormal;
-    }
-    const BOOL firstResponderHasImmunity = [firstResponderView it_focusFollowsMouseImmune];
-    if (!firstResponderHasImmunity) {
-        DLog(@"Mouse in non-immune view %@", firstResponderView);
-        return SessionViewTrackingModeNormal;
-    }
-    const NSPoint mouseLocation = [self.window convertPointFromScreen:[NSEvent mouseLocation]];
-    const NSRect firstResponderRect = [firstResponderView convertRect:firstResponderView.bounds
-                                                               toView:nil];
-    const BOOL mouseInFirstResponder = NSPointInRect(mouseLocation, firstResponderRect);
-    NSView *hitTest = [self.window.contentView hitTest:[self.window.contentView convertPoint:mouseLocation fromView:nil]];
-    const BOOL mouseInTerminal = hitTest.it_isTerminalResponder;
-    if (mouseInTerminal) {
-        DLog(@"Mouse in terminal - no tracking");
-        // Mouse is in terminal while a subview of the terminal is first responder.
-        // Don't track any rects.
-        return SessionViewTrackingModeTrackTerminalFragile;
-    }
-    if (mouseInFirstResponder) {
-        DLog(@"Mouse in first responder %@ - track only first responder", firstResponderView);
-        // Mouse is in the subview of the terminal. Make terminal first responder when it exits.
-        return SessionViewTrackingModeTrackFirstResponderFragile;
-    }
-    DLog(@"Mouse in nothing - track normally");
-    // Mouse is neither in the terminal nor the subview. Behave normally.
-    return SessionViewTrackingModeNormal;
 }
 
 // It's very expensive for PTYTextView to own its own tracking events because its frame changes
 // constantly, plus it can miss mouse exit events and spurious mouse enter events (issue 3345).
 // I believe it also caused hangs (issue 3974).
 - (void)updateTrackingAreas {
-    [self updateTrackingAreasOnMouseExit:NO];
-}
-
-- (void)updateTrackingAreasOnMouseExit:(BOOL)onMouseExit {
     [super updateTrackingAreas];
-    if ([self window] && (onMouseExit || [self shouldUpdateTrackingAreas])) {
+    if ([self window] && [self shouldUpdateTrackingAreas]) {
         while (self.trackingAreas.count) {
             [self removeTrackingArea:self.trackingAreas[0]];
         }
@@ -1598,34 +1595,13 @@ typedef NS_ENUM(NSInteger, SessionViewTrackingMode) {
         iTermTrackingAreaSpec specs[SessionViewNumberOfTrackingAreas];
         [self getDesiredTrackingRectFrames:specs];
 
-        const SessionViewTrackingMode mode = onMouseExit ? SessionViewTrackingModeNormal : [self desiredTrackingMode];
-        switch (mode) {
-            case SessionViewTrackingModeTrackTerminalFragile:
-                DLog(@"falling through");
-            case SessionViewTrackingModeNormal:
-                DLog(@"Create tracking area for terminal");
-                for (NSInteger i = 0; i < SessionViewNumberOfTrackingAreas; i++) {
-                    NSTrackingArea *trackingArea = [[NSTrackingArea alloc] initWithRect:specs[i].rect
-                                                                                options:specs[i].options
-                                                                                  owner:self
-                                                                               userInfo:@{@"mode": @(mode)}];
-                    [self addTrackingArea:trackingArea];
-                }
-                break;
-            case SessionViewTrackingModeTrackFirstResponderFragile: {
-                DLog(@"Create tracking area for first responder view");
-                // Mouse is in find view and find view is first responder.
-                NSView *firstResponderView = [NSView castFrom:self.window.firstResponder];
-                const NSRect rect = [self convertRect:firstResponderView.bounds fromView:firstResponderView];
-                NSTrackingArea *trackingArea =
-                    [[NSTrackingArea alloc] initWithRect:rect
-                                                 options:(NSTrackingMouseEnteredAndExited |
-                                                          NSTrackingActiveAlways)
-                                                   owner:self
-                                                userInfo:@{@"mode": @(mode)}];
-                [self addTrackingArea:trackingArea];
-                break;
-            }
+        DLog(@"Create tracking areas");
+        for (NSInteger i = 0; i < SessionViewNumberOfTrackingAreas; i++) {
+            NSTrackingArea *trackingArea = [[NSTrackingArea alloc] initWithRect:specs[i].rect
+                                                                        options:specs[i].options
+                                                                          owner:self
+                                                                       userInfo:nil];
+            [self addTrackingArea:trackingArea];
         }
     }
 }
@@ -1656,38 +1632,114 @@ typedef NS_ENUM(NSInteger, SessionViewTrackingMode) {
     return [self.delegate sessionViewOffscreenCommandLineFrameForView:self];
 }
 
+#pragma mark - Floating pane occlusion
+
+// Tracking areas are not occlusion-aware: a pane under a floating pane gets entered and moved
+// events while the pointer is over the float. Only matters while the tab shows a float.
+- (BOOL)tabHasVisibleFloatingPanes {
+    for (NSView *view = self.superview; view; view = view.superview) {
+        if ([view isKindOfClass:[iTermFlexibleView class]]) {
+            for (NSView *subview in view.subviews) {
+                if ([subview isKindOfClass:[iTermFloatingPaneView class]] && !subview.isHidden) {
+                    return YES;
+                }
+            }
+            return NO;
+        }
+    }
+    return NO;
+}
+
+// The view at a window location, as a click there would find it.
+- (NSView *)viewHitAtLocationInWindow:(NSPoint)locationInWindow {
+    NSView *contentView = self.window.contentView;
+    return [contentView hitTest:[contentView.superview convertPoint:locationInWindow fromView:nil]];
+}
+
+- (BOOL)locationIsCoveredByAnotherView:(NSPoint)locationInWindow {
+    if (![self tabHasVisibleFloatingPanes]) {
+        return NO;
+    }
+    NSView *hit = [self viewHitAtLocationInWindow:locationInWindow];
+    iTermFloatingPaneView *hitFloat = [iTermFloatingPaneView castFrom:hit];
+    if ([hitFloat resizeBandContainsWindowPoint:locationInWindow]) {
+        // A float's resize band, even this float's own where it lies over its content.
+        return YES;
+    }
+    // Otherwise a view that contains this one, such as its float's outline or a split view's
+    // divider, does not cover it.
+    return hit != nil && ![hit isDescendantOf:self] && ![self isDescendantOf:hit];
+}
+
+- (SessionView *)sessionViewAtLocationInWindow:(NSPoint)locationInWindow {
+    for (NSView *view = [self viewHitAtLocationInWindow:locationInWindow]; view; view = view.superview) {
+        if ([view isKindOfClass:[SessionView class]]) {
+            return (SessionView *)view;
+        }
+    }
+    return nil;
+}
+
 - (void)mouseEntered:(NSEvent *)theEvent {
     DLog(@"mouseEntered %@", self);
-    switch ([theEvent.trackingArea.userInfo[@"mode"] unsignedIntegerValue]) {
-        case SessionViewTrackingModeTrackTerminalFragile:
-        case SessionViewTrackingModeTrackFirstResponderFragile:
-            DLog(@"Ignore");
-            return;
-        case SessionViewTrackingModeNormal:
-            break;
+    [[iTermPaneFocusFollowsMouse shared] pointerMoved];
+    if ([self locationIsCoveredByAnotherView:theEvent.locationInWindow]) {
+        DLog(@"Ignore mouseEntered: the pointer is over a view that covers this one");
+        _pointerIsOverUncoveredPart = NO;
+        return;
     }
+    _pointerIsOverUncoveredPart = YES;
     DLog(@"enter %@", theEvent.trackingArea);
     [_delegate sessionViewMouseEntered:theEvent];
 }
 
 - (void)mouseExited:(NSEvent *)theEvent {
     DLog(@"mouseExited %@", self);
-    switch ([theEvent.trackingArea.userInfo[@"mode"] unsignedIntegerValue]) {
-        case SessionViewTrackingModeTrackFirstResponderFragile:
-        case SessionViewTrackingModeTrackTerminalFragile:
-            DLog(@"Mouse exited with mode immune or none");
-            [self updateTrackingAreasOnMouseExit:YES];
-            [_delegate sessionViewMouseEntered:theEvent];
-            return;
-        case SessionViewTrackingModeNormal:
-            break;
-    }
+    [[iTermPaneFocusFollowsMouse shared] pointerMoved];
+    _pointerIsOverUncoveredPart = NO;
     DLog(@"exit %@", theEvent.trackingArea);
     [_delegate sessionViewMouseExited:theEvent];
+    [self enterSessionViewUnderPointerAfterExit:theEvent];
+}
+
+// Leaving a float onto the pane beneath it: that pane never sees an entered event, because the
+// pointer was inside its tracking area all along. Tell it now.
+- (void)enterSessionViewUnderPointerAfterExit:(NSEvent *)theEvent {
+    if (![self tabHasVisibleFloatingPanes]) {
+        return;
+    }
+    SessionView *under = [self sessionViewAtLocationInWindow:theEvent.locationInWindow];
+    if (under && under != self) {
+        DLog(@"Pointer left %@ onto %@", self, under);
+        [under.delegate sessionViewMouseEntered:theEvent];
+    }
 }
 
 - (void)mouseMoved:(NSEvent *)theEvent {
     DLog(@"Mouse moved %@", self);
+    iTermPaneFocusFollowsMouse *focusFollowsMouse = [iTermPaneFocusFollowsMouse shared];
+    if ([self tabHasVisibleFloatingPanes] || [focusFollowsMouse wantsPointerMovementFor:self]) {
+        // Crossing a float's edge or moving onto a panel happens without entered events.
+        [focusFollowsMouse pointerMoved];
+    }
+    if ([self locationIsCoveredByAnotherView:theEvent.locationInWindow]) {
+        // Don't underline URLs, change the cursor, or report motion for a covered spot.
+        _pointerIsOverUncoveredPart = NO;
+        return;
+    }
+    if (!_pointerIsOverUncoveredPart && [self tabHasVisibleFloatingPanes]) {
+        // The pointer came out from under a float, or in past a float's resize band, without
+        // leaving this view's tracking area. That is entering this view.
+        DLog(@"Pointer moved onto an uncovered part of %@", self);
+        _pointerIsOverUncoveredPart = YES;
+        [_delegate sessionViewMouseEntered:theEvent];
+    }
+    if (![self.delegate sessionViewCaresAboutMouseMovement] &&
+        ![self tabHasVisibleFloatingPanes] &&
+        !NSPointInRect([self convertPoint:theEvent.locationInWindow fromView:nil], [self leftMarginTrackingRect])) {
+        // The whole-pane tracking area reports this movement only for focus follows mouse.
+        return;
+    }
     [_delegate sessionViewMouseMoved:theEvent];
 }
 
@@ -1972,6 +2024,7 @@ typedef NS_ENUM(NSInteger, SessionViewTrackingMode) {
 
 - (void)draggingSession:(NSDraggingSession *)session movedToPoint:(NSPoint)screenPoint {
     [[NSCursor closedHandCursor] set];
+    [[MovePaneController sharedInstance] dragDidMove];
 }
 
 - (NSDragOperation)draggingSession:(NSDraggingSession *)session sourceOperationMaskForDraggingContext:(NSDraggingContext)context {
@@ -2000,8 +2053,34 @@ typedef NS_ENUM(NSInteger, SessionViewTrackingMode) {
     return [[sender draggingPasteboard] availableTypeFromArray:@[ PSMTabDragIsGroupPasteboardType ]] != nil;
 }
 
+- (BOOL)isInFloatingPane {
+    for (NSView *view = self.superview; view; view = view.superview) {
+        if ([view isKindOfClass:[iTermFloatingPaneView class]]) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
+// A pane drag that should end with the session floating where it is dropped, instead of split
+// halves.
+- (BOOL)dragPlacesFloatingPane:(id<NSDraggingInfo>)sender {
+    if (![[sender draggingPasteboard] availableTypeFromArray:@[ iTermMovePaneDragType ]]) {
+        return NO;
+    }
+    return [[MovePaneController sharedInstance] dropPlacesFloatingPaneOverFloat:[self isInFloatingPane]];
+}
+
 - (NSDragOperation)draggingEntered:(id < NSDraggingInfo >)sender {
     if ([self draggingIsWholeTabGroup:sender]) {
+        return NSDragOperationNone;
+    }
+    _dragPlacesFloatingPane = [self dragPlacesFloatingPane:sender];
+    if (_dragPlacesFloatingPane) {
+        return NSDragOperationMove;
+    }
+    if ([self isInFloatingPane]) {
+        // A float holds one session, so it is never split by a drop.
         return NSDragOperationNone;
     }
     return [_delegate sessionViewDraggingEntered:sender];
@@ -2015,6 +2094,25 @@ typedef NS_ENUM(NSInteger, SessionViewTrackingMode) {
 
 - (NSDragOperation)draggingUpdated:(id<NSDraggingInfo>)sender {
     if ([self draggingIsWholeTabGroup:sender]) {
+        return NSDragOperationNone;
+    }
+    // Pressing or releasing Control mid-drag switches between placing a float and docking it.
+    const BOOL placesFloatingPane = [self dragPlacesFloatingPane:sender];
+    if (placesFloatingPane != _dragPlacesFloatingPane) {
+        _dragPlacesFloatingPane = placesFloatingPane;
+        if (placesFloatingPane) {
+            [_delegate sessionViewDraggingExited:sender];
+            [_splitSelectionView removeFromSuperview];
+            _splitSelectionView = nil;
+        } else if (![self isInFloatingPane] &&
+                   [_delegate sessionViewDraggingEntered:sender] == NSDragOperationNone) {
+            return NSDragOperationNone;
+        }
+    }
+    if (placesFloatingPane) {
+        return NSDragOperationMove;
+    }
+    if ([self isInFloatingPane]) {
         return NSDragOperationNone;
     }
     if ([_delegate sessionViewShouldSplitSelectionAfterDragUpdate:sender]) {
@@ -2031,6 +2129,14 @@ typedef NS_ENUM(NSInteger, SessionViewTrackingMode) {
 - (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
     RLog(@"performDragOperation: %@", sender);
     if ([self draggingIsWholeTabGroup:sender]) {
+        return NO;
+    }
+    if ([self dragPlacesFloatingPane:sender]) {
+        const BOOL placed = [_delegate sessionViewPlaceFloatingPaneAtWindowPoint:[sender draggingLocation]];
+        [_delegate sessionViewDraggingExited:sender];
+        return placed;
+    }
+    if ([self isInFloatingPane]) {
         return NO;
     }
     BOOL result = [_delegate sessionViewPerformDragOperation:sender];
@@ -2082,9 +2188,6 @@ typedef NS_ENUM(NSInteger, SessionViewTrackingMode) {
     if (adjustScrollView) {
         DLog(@"Tweaking scrollview for titlebar");
         [scrollView setFrame:frame];
-        if (PTYScrollView.shouldDismember) {
-            _scrollview.verticalScroller.frame = [self frameForScroller];
-        }
     } else {
         [self updateTitleFrame];
     }
@@ -2126,6 +2229,7 @@ typedef NS_ENUM(NSInteger, SessionViewTrackingMode) {
             _progressBar.hidden = NO;
             break;
         case VT100ScreenProgressIndeterminate:
+        case VT100ScreenProgressPausedIndeterminate:
             _progressBar.hidden = NO;
             break;
         case VT100ScreenProgressSuccessBase:
@@ -2426,9 +2530,6 @@ typedef NS_ENUM(NSInteger, SessionViewTrackingMode) {
          NSStringFromRect(rect));
     [self scrollview].frame = rect;
     DLog(@"Scrollview frame is now %@", NSStringFromRect(self.scrollview.frame));
-    if (PTYScrollView.shouldDismember) {
-        _scrollview.verticalScroller.frame = [self frameForScroller];
-    }
     rect.origin = NSZeroPoint;
     rect.size.width = _scrollview.contentSize.width;
     rect.size.height = [_delegate sessionViewDesiredHeightOfDocumentView];
@@ -2610,13 +2711,11 @@ typedef NS_OPTIONS(NSUInteger, iTermCornerFlags) {
         frame.origin.x += 5;
     }
     frame = NSInsetRect(frame, 0, 2);
-    if (@available(macOS 10.15, *)) {
-        if ([[NSApp effectiveAppearance] it_isDark]) {
-            // Avoid overlapping the border on the right. It looks ugly
-            // when the window's dark because the part that overlaps the
-            // border is extra bright.
-            frame.size.width -= 1;
-        }
+    if ([[NSApp effectiveAppearance] it_isDark]) {
+        // Avoid overlapping the border on the right. It looks ugly
+        // when the window's dark because the part that overlaps the
+        // border is extra bright.
+        frame.size.width -= 1;
     }
     if (animated) {
         [NSView animateWithDuration:5.0 / 60.0
@@ -2996,10 +3095,6 @@ extendResultsAcrossSoftBoundaries:(BOOL)extendResultsAcrossSoftBoundaries {
     return [self backgroundColorForDecorativeSubviews];
 }
 
-- (NSScrollView *)ptyScrollerScrollView NS_AVAILABLE_MAC(10_14) {
-    return _scrollview;
-}
-
 #pragma mark - SplitSelectionViewDelegate
 
 - (void)didSelectDestinationSession:(PTYSession *)session half:(SplitSessionHalf)half {
@@ -3008,11 +3103,11 @@ extendResultsAcrossSoftBoundaries:(BOOL)extendResultsAcrossSoftBoundaries {
 
 #pragma mark - iTermSearchResultsMinimapViewDelegate
 
-- (NSIndexSet *)searchResultsMinimapViewLocations:(iTermSearchResultsMinimapView *)view NS_AVAILABLE_MAC(10_14) {
+- (NSIndexSet *)searchResultsMinimapViewLocations:(iTermSearchResultsMinimapView *)view {
     return [self.searchResultsMinimapViewDelegate searchResultsMinimapViewLocations:view];
 }
 
-- (NSRange)searchResultsMinimapViewRangeOfVisibleLines:(iTermSearchResultsMinimapView *)view NS_AVAILABLE_MAC(10_14) {
+- (NSRange)searchResultsMinimapViewRangeOfVisibleLines:(iTermSearchResultsMinimapView *)view {
     return [self.searchResultsMinimapViewDelegate searchResultsMinimapViewRangeOfVisibleLines:view];
 }
 
@@ -3078,7 +3173,14 @@ extendResultsAcrossSoftBoundaries:(BOOL)extendResultsAcrossSoftBoundaries {
     [self ensureSessionNoteViewWithModel:model];
 }
 
+- (void)setSessionNoteCollapsed:(BOOL)collapsed {
+    _sessionNoteView.isCollapsed = collapsed;
+}
+
 - (void)ensureSessionNoteViewWithModel:(iTermSessionNoteModel *)model {
+    // Mirror visibility into the model so it can be saved in an arrangement. This is the one place a
+    // note view gets created, and the hide paths below are the only places one gets destroyed.
+    model.isVisible = YES;
     if (_sessionNoteView) {
         return;
     }
@@ -3103,6 +3205,7 @@ extendResultsAcrossSoftBoundaries:(BOOL)extendResultsAcrossSoftBoundaries {
 
 - (void)hideSessionNoteIfEmpty {
     if (_sessionNoteView && !_sessionNoteView.hasContent) {
+        _sessionNoteView.model.isVisible = NO;
         [_sessionNoteView removeFromSuperview];
         _sessionNoteView = nil;
     }
@@ -3110,6 +3213,7 @@ extendResultsAcrossSoftBoundaries:(BOOL)extendResultsAcrossSoftBoundaries {
 
 - (void)hideSessionNote {
     if (_sessionNoteView) {
+        _sessionNoteView.model.isVisible = NO;
         [_sessionNoteView syncModelFrame];
         [_sessionNoteView removeFromSuperview];
         _sessionNoteView = nil;
@@ -3159,6 +3263,10 @@ extendResultsAcrossSoftBoundaries:(BOOL)extendResultsAcrossSoftBoundaries {
 
 - (void)sessionNoteViewDidUpdateFrame:(iTermSessionNoteView *)view {
     // Model frame is updated by the view.
+}
+
+- (void)sessionNoteViewDidCollapseWithKeyboardFocus:(iTermSessionNoteView *)view {
+    [self.delegate sessionViewBecomeFirstResponder];
 }
 
 - (NSFont *)sessionNoteFont {

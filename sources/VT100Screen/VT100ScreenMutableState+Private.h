@@ -73,6 +73,15 @@ iTermTriggerScopeProvider> {
     // use, when the screen state is fully settled.
     long long _bottommostFoldAbsLine;
     BOOL _foldCacheDirty;
+    // YES once this session has received a proprietary location code (1337;RemoteHost
+    // or CurrentDir). If we've seen those, disabling OSC 7 doesn't break shell
+    // integration's location reporting, so we don't warn about it.
+    BOOL _sawProprietaryLocationCode;
+    // YES once this session has queued the "AcceptOSC7 is off" warning, so a
+    // session reporting OSC 7 every prompt doesn't enqueue a side effect every
+    // prompt. Cleared whenever the setting is seen on, so a later off-episode
+    // can warn again.
+    BOOL _queuedOSC7DisabledWarning;
 }
 
 @property (atomic) BOOL hadCommand;
@@ -115,11 +124,6 @@ iTermTriggerScopeProvider> {
 - (void)addPausedSideEffect:(void (^)(id<VT100ScreenDelegate> delegate, iTermTokenExecutorUnpauser *unpauser))sideEffect
                        name:(NSString *)name;
 
-// Paused variant of addReportSideEffect: for outbound report sends that must
-// pause (e.g. an async pasteboard read). Does not disarm skip-sync.
-- (void)addPausedReportSideEffect:(void (^)(id<VT100ScreenDelegate> delegate, iTermTokenExecutorUnpauser *unpauser))sideEffect
-                             name:(NSString *)name;
-
 // Urgent variants of addSideEffect:name: and addPausedSideEffect:name:. A background
 // session batches its side effects at a much longer period than a visible one; these opt
 // out of that. Reach for one only when a batching period would stall a protocol or hold a
@@ -133,6 +137,11 @@ iTermTriggerScopeProvider> {
                        name:(NSString *)name;
 
 - (void)addUrgentPausedSideEffect:(void (^)(id<VT100ScreenDelegate> delegate, iTermTokenExecutorUnpauser *unpauser))sideEffect
+                             name:(NSString *)name;
+
+// Paused variant of addReportSideEffect: for outbound report sends that must
+// pause (e.g. an async pasteboard read). Does not disarm skip-sync.
+- (void)addPausedReportSideEffect:(void (^)(id<VT100ScreenDelegate> delegate, iTermTokenExecutorUnpauser *unpauser))sideEffect
                              name:(NSString *)name;
 
 - (void)addDeferredSideEffect:(void (^)(id<VT100ScreenDelegate> delegate))sideEffect

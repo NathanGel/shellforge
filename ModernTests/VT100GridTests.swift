@@ -37,7 +37,8 @@ class VT100GridTests: XCTestCase {
                              ansi: false,
                              insert: false,
                              externalAttributeIndex: nil,
-                             rtlFound: false,
+                             rtlUpdate: .none,
+                             bidiDirection: .default,
                              dwcFree: false)
             if newline {
                 grid.cursorX = 0
@@ -590,7 +591,8 @@ class VT100GridTests: XCTestCase {
                          ansi: false,
                          insert: false,
                          externalAttributeIndex: nil,
-                         rtlFound: false,
+                         rtlUpdate: .none,
+                         bidiDirection: .default,
                          dwcFree: false)
 
         // After wraparound:
@@ -2806,7 +2808,8 @@ class VT100GridTests: XCTestCase {
                                                ansi: ansi,
                                                insert: insert,
                                                externalAttributeIndex: nil,
-                                               rtlFound: false,
+                                               rtlUpdate: .none,
+                                               bidiDirection: .default,
                                                dwcFree: false)
 
         XCTAssertEqual(grid.allLinesAsStrings, expectedLinesArray)
@@ -3312,7 +3315,8 @@ class VT100GridTests: XCTestCase {
                          ansi: false,
                          insert: false,
                          externalAttributeIndex: nil,
-                         rtlFound: false,
+                         rtlUpdate: .none,
+                         bidiDirection: .default,
                          dwcFree: false)
 
         let before = grid.coordinate(
@@ -3801,7 +3805,8 @@ class VT100GridTests: XCTestCase {
                          ansi: false,
                          insert: false,
                          externalAttributeIndex: nil,
-                         rtlFound: false,
+                         rtlUpdate: .none,
+                         bidiDirection: .default,
                          dwcFree: false)
 
         XCTAssertEqual(grid.allLinesAsStrings, [
@@ -3909,7 +3914,8 @@ class VT100GridTests: XCTestCase {
                              ansi: false,
                              insert: false,
                              externalAttributeIndex: nil,
-                             rtlFound: false,
+                             rtlUpdate: .none,
+                             bidiDirection: .default,
                              dwcFree: false)
             grid.moveCursorToLeftMargin()
             grid.moveCursorDown(1)
@@ -3936,7 +3942,8 @@ class VT100GridTests: XCTestCase {
                              ansi: false,
                              insert: false,
                              externalAttributeIndex: nil,
-                             rtlFound: false,
+                             rtlUpdate: .none,
+                             bidiDirection: .default,
                              dwcFree: false)
             grid.moveCursorToLeftMargin()
             grid.moveCursorDown(1)
@@ -4168,5 +4175,506 @@ extension LineBuffer {
             }
             return uw.stringValue + eol
         }
+    }
+}
+
+// MARK: - Content generation (restorable-state delta encoding)
+
+extension VT100GridTests {
+    func testContentGeneration_stableWhenIdle() {
+        let grid = VT100Grid(size: VT100GridSize(width: 4, height: 4), delegate: nil)!
+        XCTAssertEqual(grid.contentGeneration, grid.contentGeneration)
+    }
+
+    func testContentGeneration_bumpsOnAppend() {
+        let lineBuffer = LineBuffer()
+        let grid = VT100Grid(size: VT100GridSize(width: 4, height: 4), delegate: nil)!
+        let before = grid.contentGeneration
+        append(strings: ["abc"], toGrid: grid, lineBuffer: lineBuffer)
+        XCTAssertNotEqual(before, grid.contentGeneration)
+    }
+
+    func testContentGeneration_bumpsOnCursorMoveButNotNoOp() {
+        let grid = VT100Grid(size: VT100GridSize(width: 4, height: 4), delegate: nil)!
+        let before = grid.contentGeneration
+        grid.cursor = VT100GridCoord(x: 2, y: 1)
+        let afterMove = grid.contentGeneration
+        XCTAssertNotEqual(before, afterMove)
+        // Setting the same cursor position must not bump.
+        grid.cursor = VT100GridCoord(x: 2, y: 1)
+        XCTAssertEqual(afterMove, grid.contentGeneration)
+    }
+
+    func testContentGeneration_bumpsOnScrollRegionChange() {
+        let grid = VT100Grid(size: VT100GridSize(width: 8, height: 8), delegate: nil)!
+        let before = grid.contentGeneration
+        grid.scrollRegionRows = VT100GridRange(location: 1, length: 4)
+        XCTAssertNotEqual(before, grid.contentGeneration)
+    }
+
+    func testContentGeneration_preservedByCopy() {
+        let lineBuffer = LineBuffer()
+        let grid = VT100Grid(size: VT100GridSize(width: 4, height: 4), delegate: nil)!
+        append(strings: ["hi"], toGrid: grid, lineBuffer: lineBuffer)
+        let gen = grid.contentGeneration
+        let copy = grid.copy() as! VT100Grid
+        XCTAssertEqual(gen, copy.contentGeneration)
+    }
+
+    func testContentGeneration_copyMutationDoesNotAffectOriginal() {
+        let grid = VT100Grid(size: VT100GridSize(width: 4, height: 4), delegate: nil)!
+        append(strings: ["hi"], toGrid: grid, lineBuffer: LineBuffer())
+        let copy = grid.copy() as! VT100Grid
+        let originalGen = grid.contentGeneration
+        append(strings: ["yo"], toGrid: copy, lineBuffer: LineBuffer())
+        XCTAssertNotEqual(copy.contentGeneration, originalGen)
+        XCTAssertEqual(grid.contentGeneration, originalGen)
+    }
+
+    func testContentGeneration_roundTripsThroughPOD() {
+        // The generation is persisted in the grid's POD (like LineBlock) so it
+        // survives the real restore path. Encode then decode must preserve it.
+        let grid = VT100Grid(size: VT100GridSize(width: 4, height: 4), delegate: nil)!
+        append(strings: ["abc"], toGrid: grid, lineBuffer: LineBuffer())
+        let gen = grid.contentGeneration
+        let encoder = iTermMutableDictionaryEncoderAdapter.encoder()
+        grid.encode(encoder)
+        let dict = encoder.mutableDictionary as! [AnyHashable: Any]
+        XCTAssertNotNil(dict["contentGeneration"])
+        let restored = VT100Grid(dictionary: dict, delegate: nil)!
+        XCTAssertEqual(restored.contentGeneration, gen)
+    }
+
+    // One assertion per bump call site so a dropped hook is caught.
+
+    private func assertBumps(_ grid: VT100Grid, _ mutate: (VT100Grid) -> Void) {
+        let before = grid.contentGeneration
+        mutate(grid)
+        XCTAssertNotEqual(before, grid.contentGeneration)
+    }
+
+    func testContentGeneration_bumpsOnMarkCharsDirtyRect() {
+        let grid = VT100Grid(size: VT100GridSize(width: 4, height: 4), delegate: nil)!
+        // Bind the SCA so its backing buffer outlives the .line[0] read.
+        let sca = screenCharArrayWithDefaultStyle("Z", eol: EOL_HARD)
+        let c = sca.line[0]
+        assertBumps(grid) {
+            $0.setCharsFrom(VT100GridCoord(x: 0, y: 0),
+                            to: VT100GridCoord(x: 1, y: 0),
+                            to: c,
+                            externalAttributes: nil)
+        }
+    }
+
+    func testContentGeneration_markAllCharsDirtyNoTimestampsDoesNotBump() {
+        // updateTimestamps:NO is a pure redraw signal (flips dirty flags, changes no
+        // serialized state). Bumping here re-saved idle grids perpetually via the
+        // restoreState: redraw, so it must not bump.
+        let grid = VT100Grid(size: VT100GridSize(width: 4, height: 4), delegate: nil)!
+        let before = grid.contentGeneration
+        grid.markAllCharsDirty(true, updateTimestamps: false)
+        XCTAssertEqual(before, grid.contentGeneration)
+    }
+
+    func testContentGeneration_markAllCharsDirtyUpdatingTimestampsBumps() {
+        // updateTimestamps:YES rewrites every line's serialized metadata timestamp,
+        // so it is a content change and must bump (clearScrollbackBuffer relies on it).
+        let grid = VT100Grid(size: VT100GridSize(width: 4, height: 4), delegate: nil)!
+        assertBumps(grid) { $0.markAllCharsDirty(true, updateTimestamps: true) }
+    }
+
+    func testContentGeneration_bumpsOnCursorX() {
+        let grid = VT100Grid(size: VT100GridSize(width: 4, height: 4), delegate: nil)!
+        assertBumps(grid) { $0.cursorX = 2 }
+    }
+
+    func testContentGeneration_bumpsOnCursorY() {
+        let grid = VT100Grid(size: VT100GridSize(width: 4, height: 4), delegate: nil)!
+        assertBumps(grid) { $0.cursorY = 2 }
+    }
+
+    func testContentGeneration_bumpsOnCursorXOnlyMove() {
+        let grid = VT100Grid(size: VT100GridSize(width: 4, height: 4), delegate: nil)!
+        grid.cursor = VT100GridCoord(x: 0, y: 1)
+        // Same y, different x: exercises the explicit x-only bump in setCursor:.
+        assertBumps(grid) { $0.cursor = VT100GridCoord(x: 3, y: 1) }
+    }
+
+    func testContentGeneration_bumpsOnResize() {
+        let grid = VT100Grid(size: VT100GridSize(width: 4, height: 4), delegate: nil)!
+        assertBumps(grid) { $0.size = VT100GridSize(width: 6, height: 6) }
+    }
+
+    func testContentGeneration_bumpsOnScrollRegionCols() {
+        let grid = VT100Grid(size: VT100GridSize(width: 8, height: 8), delegate: nil)!
+        assertBumps(grid) { $0.scrollRegionCols = VT100GridRange(location: 1, length: 4) }
+    }
+
+    func testContentGeneration_bumpsOnUseScrollRegionCols() {
+        let grid = VT100Grid(size: VT100GridSize(width: 8, height: 8), delegate: nil)!
+        assertBumps(grid) { $0.useScrollRegionCols = true }
+    }
+
+    func testContentGeneration_bumpsOnSavedDefaultChar() {
+        let grid = VT100Grid(size: VT100GridSize(width: 4, height: 4), delegate: nil)!
+        // Bind the SCA so its backing buffer outlives the .line[0] read.
+        let sca = screenCharArrayWithDefaultStyle("X", eol: EOL_HARD)
+        let c = sca.line[0]
+        assertBumps(grid) { $0.savedDefaultChar = c }
+        // Setting the same value again must not bump.
+        let stable = grid.contentGeneration
+        grid.savedDefaultChar = c
+        XCTAssertEqual(stable, grid.contentGeneration)
+    }
+
+    func testContentGeneration_preUpgradeSaveGetsFreshGeneration() {
+        // A pre-upgrade save lacks the "contentGeneration" POD key, so nothing is
+        // read from the dictionary; the grid instead gets a fresh generation
+        // allocated during init (setSize bumps it). It is re-saved under the new
+        // (…V2) key as a fresh node, so no migration fallback is needed. A
+        // subsequent change must still bump monotonically.
+        let grid = VT100Grid(size: VT100GridSize(width: 4, height: 4), delegate: nil)!
+        append(strings: ["abc"], toGrid: grid, lineBuffer: LineBuffer())
+        let savedGen = grid.contentGeneration
+        let encoder = iTermMutableDictionaryEncoderAdapter.encoder()
+        grid.encode(encoder)
+        var dict = encoder.mutableDictionary as! [AnyHashable: Any]
+        dict.removeValue(forKey: "contentGeneration")  // simulate a pre-upgrade save
+        let restored = VT100Grid(dictionary: dict, delegate: nil)!
+        // The persisted value was NOT adopted (there was no key to read).
+        XCTAssertNotEqual(restored.contentGeneration, savedGen)
+        let restoredGen = restored.contentGeneration
+        append(strings: ["z"], toGrid: restored, lineBuffer: LineBuffer())
+        XCTAssertGreaterThan(restored.contentGeneration, restoredGen)
+    }
+
+    func testContentGeneration_restoreBumpsGlobalMinimumAboveRestoredValue() {
+        // After restore, a subsequent change must get a generation strictly greater
+        // than the restored value, so the delta encoder never has to self-heal.
+        let grid = VT100Grid(size: VT100GridSize(width: 4, height: 4), delegate: nil)!
+        append(strings: ["abc"], toGrid: grid, lineBuffer: LineBuffer())
+        let encoder = iTermMutableDictionaryEncoderAdapter.encoder()
+        grid.encode(encoder)
+        var dict = encoder.mutableDictionary as! [AnyHashable: Any]
+        let big = grid.contentGeneration + 1_000_000
+        dict["contentGeneration"] = NSNumber(value: big)  // as if a large value was persisted
+        let restored = VT100Grid(dictionary: dict, delegate: nil)!
+        XCTAssertEqual(restored.contentGeneration, big)
+        append(strings: ["z"], toGrid: restored, lineBuffer: LineBuffer())
+        XCTAssertGreaterThan(restored.contentGeneration, big)
+    }
+
+    func testContentGeneration_bumpsOnResetScrollRegions() {
+        let grid = VT100Grid(size: VT100GridSize(width: 8, height: 8), delegate: nil)!
+        grid.scrollRegionRows = VT100GridRange(location: 1, length: 4)
+        assertBumps(grid) { $0.resetScrollRegions() }
+    }
+
+    func testContentGeneration_bumpsOnResetTimestamps() {
+        let grid = VT100Grid(size: VT100GridSize(width: 4, height: 4), delegate: nil)!
+        assertBumps(grid) { $0.resetTimestamps() }
+    }
+
+    func testContentGeneration_resetTimestampsBumpsEvenWhenAllDirty() {
+        // resetTimestamps must bump even when the grid is already all-dirty, where
+        // markAllCharsDirty: early-returns without doing anything.
+        let grid = VT100Grid(size: VT100GridSize(width: 4, height: 4), delegate: nil)!
+        grid.markAllCharsDirty(true, updateTimestamps: false)
+        assertBumps(grid) { $0.resetTimestamps() }
+    }
+
+    func testContentGeneration_bumpsOnMarkContentDidChange() {
+        let grid = VT100Grid(size: VT100GridSize(width: 4, height: 4), delegate: nil)!
+        assertBumps(grid) { $0.markContentDidChange() }
+    }
+
+    func testContentGeneration_bumpsOnMarkLineDidChange() {
+        let grid = VT100Grid(size: VT100GridSize(width: 4, height: 4), delegate: nil)!
+        assertBumps(grid) { $0.markLineDidChange(1) }
+    }
+
+    func testContentGeneration_bumpsOnSetContinuationMark() {
+        let grid = VT100Grid(size: VT100GridSize(width: 4, height: 4), delegate: nil)!
+        grid.setContinuationMarkOnLine(0, to: unichar(EOL_HARD))  // normalize
+        // Changing the continuation mark (the WIDTH+1 EOL cell) must bump, and a
+        // no-op set must not.
+        assertBumps(grid) { $0.setContinuationMarkOnLine(0, to: unichar(EOL_SOFT)) }
+        let stable = grid.contentGeneration
+        grid.setContinuationMarkOnLine(0, to: unichar(EOL_SOFT))
+        XCTAssertEqual(stable, grid.contentGeneration)
+    }
+
+    // The generation must survive reconstruction through the real graph path
+    // (propertyListValue -> dictionaryValue for a __dict node), which preserves the
+    // POD. Encode a grid as a child of a __dict node, reconstruct the parent as the
+    // restore path does, and verify the generation round-trips via the POD.
+    func testContentGeneration_survivesGraphDictionaryValueReconstruction() {
+        let grid = VT100Grid(size: VT100GridSize(width: 4, height: 4), delegate: nil)!
+        append(strings: ["abc"], toGrid: grid, lineBuffer: LineBuffer())
+        let gen = grid.contentGeneration
+
+        let root = iTermGraphEncoder(key: "__dict", identifier: "", generation: 1)
+        let adapter = iTermGraphEncoderAdapter(graphEncoder: root)
+        _ = adapter.encodeDictionary(withKey: "PrimaryGridV2", generation: Int(gen)) { sub in
+            grid.encode(sub)
+            return true
+        }
+        let reconstructed = root.record!.propertyListValue as! [AnyHashable: Any]
+        let gridDict = reconstructed["PrimaryGridV2"] as! [AnyHashable: Any]
+        XCTAssertEqual((gridDict["contentGeneration"] as! NSNumber).int64Value, gen)
+
+        let restored = VT100Grid(dictionary: gridDict, delegate: nil)!
+        XCTAssertEqual(restored.contentGeneration, gen)
+    }
+}
+
+// MARK: - Grid geometry types (ported from the legacy VT100GridTest.m)
+
+extension VT100GridTests {
+    func testGridCoordMakeStoresFields() {
+        let coord = VT100GridCoordMake(1, 2)
+        XCTAssertEqual(coord.x, 1)
+        XCTAssertEqual(coord.y, 2)
+    }
+
+    func testGridSizeMakeStoresFields() {
+        let size = VT100GridSizeMake(3, 4)
+        XCTAssertEqual(size.width, 3)
+        XCTAssertEqual(size.height, 4)
+    }
+
+    func testGridRangeMakeStoresFields() {
+        let range = VT100GridRangeMake(5, 6)
+        XCTAssertEqual(range.location, 5)
+        XCTAssertEqual(range.length, 6)
+    }
+
+    func testGridRectMakeStoresFields() {
+        let rect = VT100GridRectMake(7, 8, 9, 10)
+        XCTAssertEqual(rect.origin.x, 7)
+        XCTAssertEqual(rect.origin.y, 8)
+        XCTAssertEqual(rect.size.width, 9)
+        XCTAssertEqual(rect.size.height, 10)
+    }
+
+    func testGridRunMakeStoresFields() {
+        let run = VT100GridRunMake(11, 12, 13)
+        XCTAssertEqual(run.origin.x, 11)
+        XCTAssertEqual(run.origin.y, 12)
+        XCTAssertEqual(run.length, 13)
+    }
+
+    func testGridRangeMaxIsInclusive() {
+        XCTAssertEqual(VT100GridRangeMax(VT100GridRangeMake(5, 6)), 10)
+    }
+
+    func testGridRunMax_TrivialRun() {
+        let runMax = VT100GridRunMax(VT100GridRunMake(1, 1, 1), 100)
+        XCTAssertEqual(runMax.x, 1)
+        XCTAssertEqual(runMax.y, 1)
+    }
+
+    func testGridRunMax_RunFitsOnOneLine() {
+        let runMax = VT100GridRunMax(VT100GridRunMake(11, 12, 13), 100)
+        XCTAssertEqual(runMax.x, 11 + 13 - 1)
+        XCTAssertEqual(runMax.y, 12)
+    }
+
+    func testGridRunMax_RunWrapsToNextLine() {
+        let runMax = VT100GridRunMax(VT100GridRunMake(11, 12, 13), 12)
+        XCTAssertEqual(runMax.x, 11)
+        XCTAssertEqual(runMax.y, 13)
+    }
+
+    func testGridRectMaxIsBottomRightCell() {
+        let rectMax = VT100GridRectMax(VT100GridRectMake(7, 8, 9, 10))
+        XCTAssertEqual(rectMax.x, 7 + 9 - 1)
+        XCTAssertEqual(rectMax.y, 8 + 10 - 1)
+    }
+
+    func testGridRunFromCoordsExcludesEnd() {
+        let run = VT100GridRunFromCoords(VT100GridCoordMake(1, 2),
+                                         VT100GridCoordMake(2, 4),
+                                         5)
+        // .....
+        // .....
+        // .1234
+        // 56789
+        // 0ab..
+        XCTAssertEqual(run.length, 12)
+        XCTAssertEqual(run.origin.x, 1)
+        XCTAssertEqual(run.origin.y, 2)
+    }
+
+    func testNSValueRoundTripsGridCoord() {
+        let coord = VT100GridCoordMake(1, 2)
+        let value = NSValue(gridCoord: coord)
+        XCTAssertEqual(value.gridCoordValue().x, coord.x)
+        XCTAssertEqual(value.gridCoordValue().y, coord.y)
+    }
+
+    func testNSValueRoundTripsGridSize() {
+        let size = VT100GridSizeMake(3, 4)
+        let value = NSValue(gridSize: size)
+        XCTAssertEqual(value.gridSizeValue().width, size.width)
+        XCTAssertEqual(value.gridSizeValue().height, size.height)
+    }
+
+    func testNSValueRoundTripsGridRange() {
+        let range = VT100GridRangeMake(5, 6)
+        let value = NSValue(gridRange: range)
+        XCTAssertEqual(value.gridRangeValue().location, range.location)
+        XCTAssertEqual(value.gridRangeValue().length, range.length)
+    }
+
+    func testNSValueRoundTripsGridRect() {
+        let rect = VT100GridRectMake(7, 8, 9, 10)
+        let value = NSValue(gridRect: rect)
+        XCTAssertEqual(value.gridRectValue().origin.x, rect.origin.x)
+        XCTAssertEqual(value.gridRectValue().origin.y, rect.origin.y)
+        XCTAssertEqual(value.gridRectValue().size.width, rect.size.width)
+        XCTAssertEqual(value.gridRectValue().size.height, rect.size.height)
+    }
+
+    func testNSValueRoundTripsGridRun() {
+        let run = VT100GridRunMake(11, 12, 13)
+        let value = NSValue(gridRun: run)
+        XCTAssertEqual(value.gridRun().origin.x, run.origin.x)
+        XCTAssertEqual(value.gridRun().origin.y, run.origin.y)
+        XCTAssertEqual(value.gridRun().length, run.length)
+    }
+}
+
+// MARK: - Basic grid state (ported from the legacy VT100GridTest.m)
+
+extension VT100GridTests {
+    func testInitializationProducesEmptyGrid() {
+        let grid = smallGrid()
+        XCTAssertEqual(grid.compactLineDump(), "..\n..")
+    }
+
+    func testLookUpScreenCharsByLineNumber() {
+        let grid = smallGrid()
+        let a = unichar(Character("a").utf16.first!)
+        let b = unichar(Character("b").utf16.first!)
+        grid.screenChars(atLineNumber: 0)[0].code = a
+        grid.screenChars(atLineNumber: 1)[0].code = b
+        XCTAssertEqual(grid.screenChars(atLineNumber: 0)[0].code, a)
+        XCTAssertEqual(grid.screenChars(atLineNumber: 1)[0].code, b)
+        XCTAssertEqual(grid.compactLineDump(), "a.\nb.")
+    }
+
+    func testSetCursorWithinBounds() {
+        let grid = smallGrid()
+        grid.cursor = VT100GridCoordMake(1, 1)
+        XCTAssertEqual(grid.cursorX, 1)
+        XCTAssertEqual(grid.cursorY, 1)
+    }
+
+    func testSetCursorAllowsXEqualToWidth() {
+        let grid = smallGrid()
+        grid.cursor = VT100GridCoordMake(2, 1)
+        XCTAssertEqual(grid.cursorX, 2)
+        XCTAssertEqual(grid.cursorY, 1)
+    }
+
+    func testSetCursorClampsXToWidth() {
+        let grid = smallGrid()
+        grid.cursor = VT100GridCoordMake(3, 1)
+        XCTAssertEqual(grid.cursorX, 2)
+    }
+
+    func testSetCursorClampsYToLastLine() {
+        let grid = smallGrid()
+        grid.cursor = VT100GridCoordMake(3, 2)
+        XCTAssertEqual(grid.cursorY, 1)
+    }
+
+    func testSetCursorClampsNegativeCoordsToOrigin() {
+        let grid = smallGrid()
+        grid.cursor = VT100GridCoordMake(1, 1)
+        grid.cursor = VT100GridCoordMake(-1, -1)
+        XCTAssertEqual(grid.cursorX, 0)
+        XCTAssertEqual(grid.cursorY, 0)
+    }
+
+    func testMarkCharDirty_NewGridIsClean() {
+        let grid = smallGrid()
+        let coord = VT100GridCoordMake(1, 1)
+        XCTAssertFalse(grid.isCharDirty(at: coord))
+        XCTAssertFalse(grid.isAnyCharDirty())
+    }
+
+    func testMarkCharDirty_MarkingDirtyAndCleanAgain() {
+        let grid = smallGrid()
+        let coord = VT100GridCoordMake(1, 1)
+
+        grid.markCharDirty(true, at: coord, updateTimestamp: false)
+        XCTAssertTrue(grid.isCharDirty(at: coord))
+        XCTAssertTrue(grid.isAnyCharDirty())
+
+        grid.markCharDirty(false, at: coord, updateTimestamp: true)
+        XCTAssertFalse(grid.isCharDirty(at: coord))
+        XCTAssertFalse(grid.isAnyCharDirty())
+    }
+
+    func testMarkAllCharsDirtyTogglesEveryCell() {
+        let grid = smallGrid()
+        XCTAssertEqual(grid.compactDirtyDump(), "cc\ncc")
+        grid.markAllCharsDirty(true, updateTimestamps: false)
+        XCTAssertEqual(grid.compactDirtyDump(), "dd\ndd")
+        grid.markAllCharsDirty(false, updateTimestamps: false)
+        XCTAssertEqual(grid.compactDirtyDump(), "cc\ncc")
+    }
+
+    func testNumberOfLinesUsedCountsContentAndCursorLine() {
+        let grid = gridFromCompactLines("abcd\nefgh\n....\n....")
+        XCTAssertEqual(grid.numberOfLinesUsed(), 2)
+        grid.cursorY = 1
+        XCTAssertEqual(grid.numberOfLinesUsed(), 2)
+        grid.cursorY = 2
+        XCTAssertEqual(grid.numberOfLinesUsed(), 3)
+        grid.cursorY = 3
+        XCTAssertEqual(grid.numberOfLinesUsed(), 4)
+    }
+
+    func testNumberOfLinesUsedOnEmptyGridIsOne() {
+        let grid = smallGrid()
+        XCTAssertEqual(grid.numberOfLinesUsed(), 1)
+    }
+
+    // The legacy test obtained the default colors from the grid delegate. Today the
+    // grid owns its default character, so the test sets grid.defaultChar directly.
+    private func verifyDefaultLine(foregroundColor: UInt32, file: StaticString = #filePath, line: UInt = #line) {
+        let grid = smallGrid()
+        var expected = screen_char_t()
+        expected.foregroundColor = foregroundColor
+        expected.foregroundColorMode = UInt32(ColorModeAlternate.rawValue)
+        expected.backgroundColor = UInt32(ALTSEM_DEFAULT)
+        expected.backgroundColorMode = UInt32(ColorModeAlternate.rawValue)
+        grid.defaultChar = expected
+
+        let w = 80
+        guard let data = grid.defaultLine(ofWidth: Int32(w)) else {
+            XCTFail("defaultLineOfWidth returned nil", file: file, line: line)
+            return
+        }
+        // w+1 because it adds one for the continuation marker.
+        XCTAssertEqual(data.length, MemoryLayout<screen_char_t>.size * (w + 1), file: file, line: line)
+        let chars = data.bytes.bindMemory(to: screen_char_t.self, capacity: w + 1)
+        for i in 0..<w {
+            XCTAssertTrue(ForegroundAttributesEqual(chars[i], expected), "column \(i)", file: file, line: line)
+            XCTAssertTrue(BackgroundColorsEqual(chars[i], expected), "column \(i)", file: file, line: line)
+            XCTAssertEqual(chars[i].code, 0, "column \(i)", file: file, line: line)
+        }
+        XCTAssertEqual(Int32(chars[w].code), EOL_HARD, file: file, line: line)
+    }
+
+    func testDefaultLineWithDefaultColors() {
+        verifyDefaultLine(foregroundColor: UInt32(ALTSEM_DEFAULT))
+    }
+
+    func testDefaultLineWithSelectedForegroundColor() {
+        verifyDefaultLine(foregroundColor: UInt32(ALTSEM_SELECTED))
     }
 }

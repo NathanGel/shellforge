@@ -7,6 +7,7 @@
 //
 
 #import "SessionTitleView.h"
+#import "iTerm2SharedARC-Swift.h"
 #import "iTermAdvancedSettingsModel.h"
 #import "PSMCachedTitle.h"
 #import "iTermHamburgerButton.h"
@@ -42,6 +43,8 @@ static const CGFloat kButtonSize = 17;
     NSButton *closeButton_;
     NSButton *lockButton_;
     iTermHamburgerButton *menuButton_;
+    // The floating pane this title bar belongs to, while a mouse-down in it may become a move.
+    __weak iTermFloatingPaneView *_floatingPaneBeingMoved;
 }
 
 @synthesize title = title_;
@@ -85,7 +88,7 @@ static const CGFloat kLockButtonSize = 14;
 
         // Create lock button - positioned to the left of menu button, hidden by default
         NSImage *lockImage = [NSImage imageWithSystemSymbolName:SFSymbolGetString(SFSymbolLockFill)
-                                         accessibilityDescription:@"Pane is locked"];
+                                         accessibilityDescription:NSLocalizedStringWithDefaultValue(@"SessionTitleView.LockAccessibility", nil, [NSBundle mainBundle], @"Pane is locked", @"Accessibility description for the lock icon")];
         NSImageSymbolConfiguration *config = [NSImageSymbolConfiguration configurationWithPointSize:11 weight:NSFontWeightMedium];
         lockImage = [lockImage imageWithSymbolConfiguration:config];
 
@@ -96,7 +99,7 @@ static const CGFloat kLockButtonSize = 14;
         [lockButton_ setAction:@selector(toggleLock:)];
         [lockButton_ setBordered:NO];
         [lockButton_ setTitle:@""];
-        [lockButton_ setToolTip:@"This pane is locked. It cannot be moved, swapped, or dragged, and closing it requires confirmation. Right-click to unlock."];
+        [lockButton_ setToolTip:NSLocalizedStringWithDefaultValue(@"SessionTitleView.LockedTooltip", nil, [NSBundle mainBundle], @"This pane is locked. It cannot be moved, swapped, or dragged, and closing it requires confirmation. Right-click to unlock.", @"Tooltip for the lock button on a locked pane")];
         [[lockButton_ cell] setHighlightsBy:NSContentsCellMask];
         [lockButton_ setHidden:YES]; // Hidden by default until delegate says it's locked
         [self addSubview:lockButton_];
@@ -117,8 +120,6 @@ static const CGFloat kLockButtonSize = 14;
         [menuButton_ setAutoresizingMask:NSViewMinXMargin];
         [lockButton_ setAutoresizingMask:NSViewMinXMargin]; // Stay at right side
         [label_ setAutoresizingMask:NSViewMaxYMargin | NSViewWidthSizable];
-        [self addCursorRect:NSMakeRect(0, 0, frame.size.width, frame.size.height)
-                     cursor:[NSCursor arrowCursor]];
 
         [self updateTextColor];
     }
@@ -235,12 +236,7 @@ static const CGFloat kLockButtonSize = 14;
 }
 
 - (void)updateBackgroundColor {
-    if (@available(macOS 10.16, *)) {
-        return;
-    }
-    label_.backgroundColor = [self.delegate sessionTitleViewBackgroundColor];
-    label_.drawsBackground = YES;
-    [self setNeedsDisplay:YES];
+    return;
 }
 
 - (void)setTitle:(NSString *)title {
@@ -379,7 +375,38 @@ static const CGFloat kLockButtonSize = 14;
     [self setNeedsDisplay:YES];
 }
 
+- (iTermFloatingPaneView *)enclosingFloatingPane {
+    for (NSView *view = self.superview; view; view = view.superview) {
+        if ([view isKindOfClass:[iTermFloatingPaneView class]]) {
+            return (iTermFloatingPaneView *)view;
+        }
+    }
+    return nil;
+}
+
+// Cursor rects added once are dropped whenever the window recomputes them, so this is where the
+// arrow goes. Without it, the I-beam of a text view beneath a floating pane's title bar showed
+// through.
+- (void)resetCursorRects {
+    [super resetCursorRects];
+    [self addCursorRect:self.bounds cursor:[NSCursor arrowCursor]];
+}
+
+- (void)mouseDown:(NSEvent *)theEvent {
+    // A floating pane's title bar is its grab handle: dragging it moves the float live.
+    iTermFloatingPaneView *pane = [self enclosingFloatingPane];
+    _floatingPaneBeingMoved = [pane titleBarMouseDown:theEvent] ? pane : nil;
+    [super mouseDown:theEvent];
+}
+
 - (void)mouseDragged:(NSEvent *)theEvent {
+    if ([_floatingPaneBeingMoved titleBarMouseDragged:theEvent]) {
+        return;
+    }
+    iTermFloatingPaneView *pane = [self enclosingFloatingPane];
+    if (pane && !pane.allowsPaneDrag) {
+        return;
+    }
     if ([iTermAdvancedSettingsModel requireOptionToDragSplitPaneTitleBar]) {
         if ((NSApp.currentEvent.modifierFlags & NSEventModifierFlagOption) == 0) {
             return;
@@ -389,6 +416,12 @@ static const CGFloat kLockButtonSize = 14;
 }
 
 - (void)mouseUp:(NSEvent *)theEvent {
+    iTermFloatingPaneView *pane = _floatingPaneBeingMoved;
+    _floatingPaneBeingMoved = nil;
+    if ([pane titleBarMouseUp:theEvent]) {
+        // It was a move, not a click.
+        return;
+    }
     if (theEvent.clickCount == 2) {
         [self.delegate doubleClickOnTitleView];
     } else {

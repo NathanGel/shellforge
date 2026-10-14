@@ -128,6 +128,8 @@
 #define KEY_UNDERLINE_COLOR        @"Underline Color"
 #define KEY_USE_UNDERLINE_COLOR    @"Use Underline Color"
 #define KEY_CURSOR_BOOST           @"Cursor Boost"
+#define KEY_HDR_CURSOR             @"HDR Cursor"
+#define KEY_HDR_CURSOR_BRIGHTNESS  @"HDR Cursor Brightness"
 #define KEY_USE_CURSOR_GUIDE       @"Use Cursor Guide"
 #define KEY_CURSOR_GUIDE_COLOR     @"Cursor Guide Color"
 #define KEY_BADGE_COLOR            @"Badge Color"
@@ -221,8 +223,12 @@
 #define KEY_USE_HFS_PLUS_MAPPING              @"Use HFS Plus Mapping"  // DEPRECATED
 #define KEY_UNICODE_NORMALIZATION             @"Unicode Normalization"
 #define KEY_SILENCE_BELL                      @"Silence Bell"
+// Empty for the system alert sound, the name of an installed sound, or the path to an
+// audio file. See iTermBellSound.
+#define KEY_BELL_SOUND                        @"Bell Sound"
 #define KEY_VISUAL_BELL                       @"Visual Bell"
 #define KEY_FLASHING_BELL                     @"Flashing Bell"
+#define KEY_PREVENT_SLEEP                     @"Prevent Sleep"
 #define KEY_XTERM_MOUSE_REPORTING             @"Mouse Reporting"
 #define KEY_XTERM_MOUSE_REPORTING_ALLOW_MOUSE_WHEEL @"Mouse Reporting allow mouse wheel"
 #define KEY_XTERM_MOUSE_REPORTING_ALLOW_CLICKS_AND_DRAGS @"Mouse Reporting allow clicks and drags"
@@ -464,6 +470,11 @@ typedef NS_ENUM(int, iTermWindowType) {
     
     WINDOW_TYPE_CENTERED = 17,  // May be converted to compact-centered depending on theme
     WINDOW_TYPE_COMPACT_CENTERED = 18,
+
+    // Centered like WINDOW_TYPE_CENTERED but chromeless like WINDOW_TYPE_NO_TITLE_BAR.
+    // Like WINDOW_TYPE_NO_TITLE_BAR it has no title bar in any theme, so unlike the
+    // centered pair above it needs no compact variant.
+    WINDOW_TYPE_CENTERED_NO_TITLE_BAR = 19,
 };
 
 iTermWindowType iTermWindowDefaultType(void);
@@ -526,8 +537,22 @@ typedef NS_OPTIONS(NSUInteger, iTermTitleComponents) {
     iTermTitleComponentsHost = 1 << 8,
     iTermTitleComponentsCommandLine = 1 << 9,
     iTermTitleComponentsSize = 1 << 10,
-    iTermTitleComponentsTemporarySessionName = 1 << 11
+    iTermTitleComponentsTemporarySessionName = 1 << 11,
+    iTermTitleComponentsAI = 1 << 12  // On-device (Apple Intelligence) generated name for the visible work.
 };
+
+// The mutually-exclusive "name group": the components the title popup treats as radio
+// buttons (selecting one deselects the others). Defined ONCE so a new name-slot
+// component is added in a single place rather than hand-spelled into every ad hoc mask;
+// omitting AI from one such mask silently broke the popup's mutual exclusion once
+// before. NOT the same as "a session name is already visible" (which also
+// counts TemporarySessionName and excludes AI) - that is a different concept, spelled
+// out at its own site.
+#define iTermTitleComponentsNameGroup \
+    (iTermTitleComponentsSessionName | \
+     iTermTitleComponentsProfileName | \
+     iTermTitleComponentsProfileAndSessionName | \
+     iTermTitleComponentsAI)
 
 typedef NS_ENUM(NSUInteger, iTermProfileIcon) {
     iTermProfileIconNone = 0,

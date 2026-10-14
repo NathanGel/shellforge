@@ -225,14 +225,9 @@ static iTermController *gSharedInstance;
         // Kill restorable sessions. I've always been on the fence about whether to do this or not.
         // If they were undoable when the app quits, shouldn't they be restored? Kind of but I think
         // it's somewhat surprising. In order to support the auto-archiving feature, we'll kill them
-        // which IMO breaks the tie.
-        [_restorableSessions enumerateObjectsUsingBlock:^(iTermRestorableSession *restorableSession, NSUInteger idx, BOOL * _Nonnull stop) {
-            [restorableSession.sessions enumerateObjectsUsingBlock:^(PTYSession *session, NSUInteger idx, BOOL * _Nonnull stop) {
-                if (!session.isTmuxClient) {
-                    [session terminate];
-                }
-            }];
-        }];
+        // which IMO breaks the tie. Normally -hardStopRestorableSessions already ran when the app
+        // began terminating, so there is nothing left to do here.
+        [self hardStopRestorableSessions];
     }
     _terminalWindows = nil;
 }
@@ -858,7 +853,7 @@ replaceInitialDirectoryForSessionWithGUID:(NSString *)guid
     }
     if ([[ProfileModel sharedInstance] numberOfBookmarks] > MAX_MENU_ITEMS) {
         int overflow = [[ProfileModel sharedInstance] numberOfBookmarks] - MAX_MENU_ITEMS;
-        NSMenuItem* overflowItem = [[NSMenuItem alloc] initWithTitle:[NSString stringWithFormat:@"[%d profiles not shown]", overflow]
+        NSMenuItem* overflowItem = [[NSMenuItem alloc] initWithTitle:[NSString localizedStringWithFormat:NSLocalizedStringWithDefaultValue(@"iTermController.ProfilesNotShown", nil, [NSBundle mainBundle], @"[%ld profiles not shown]", @"Overflow menu item; %ld is the number of profiles not shown"), (long)overflow]
                                                            action:nil
                                                     keyEquivalent:@""];
         [subMenu addItem:overflowItem];
@@ -869,7 +864,7 @@ replaceInitialDirectoryForSessionWithGUID:(NSString *)guid
 
     if (openAllSelector && count > 1) {
         [subMenu addItem:[NSMenuItem separatorItem]];
-        aMenuItem = [[NSMenuItem alloc] initWithTitle:@"Open All"
+        aMenuItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedStringWithDefaultValue(@"ProfilesMenu.OpenAll", nil, [NSBundle mainBundle], @"Open All", @"Menu item that opens every profile in the menu or folder as tabs")
                                                action:openAllSelector
                                         keyEquivalent:@""];
         if (@available(macOS 26, *)) {
@@ -890,7 +885,7 @@ replaceInitialDirectoryForSessionWithGUID:(NSString *)guid
         [subMenu addItem:aMenuItem];
 
         // Add alternate -------------------------------------------------------
-        aMenuItem = [[NSMenuItem alloc] initWithTitle:@"Open All in New Window"
+        aMenuItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedStringWithDefaultValue(@"ProfilesMenu.OpenAllInNewWindow", nil, [NSBundle mainBundle], @"Open All in New Window", @"Menu item that opens every profile in the menu or folder in a new window")
                                                action:openAllSelector
                                         keyEquivalent:@""];
         modifierMask = NSEventModifierFlagCommand | NSEventModifierFlagControl;
@@ -926,10 +921,10 @@ replaceInitialDirectoryForSessionWithGUID:(NSString *)guid
 }
 
 - (BOOL)shouldOpenManyProfiles:(int)count {
-    NSString *theTitle = [NSString stringWithFormat:@"You are about to open %d profiles.", count];
+    NSString *theTitle = [NSString localizedStringWithFormat:NSLocalizedStringWithDefaultValue(@"iTermController.AboutToOpenProfiles", nil, [NSBundle mainBundle], @"You are about to open %ld profiles.", @"Confirmation before opening several profiles; %ld is the number of profiles"), (long)count];
     iTermWarningSelection selection =
         [iTermWarning showWarningWithTitle:theTitle
-                                   actions:@[ @"OK", @"Cancel" ]
+                                   actions:@[ iTermLocalizedOK(), iTermLocalizedCancel() ]
                                 identifier:@"AboutToOpenManyProfiles"
                                silenceable:kiTermWarningTypePermanentlySilenceable
                                     window:nil];
@@ -1078,6 +1073,7 @@ replaceInitialDirectoryForSessionWithGUID:(NSString *)guid
             case WINDOW_TYPE_COMPACT_MAXIMIZED:
             case WINDOW_TYPE_CENTERED:
             case WINDOW_TYPE_COMPACT_CENTERED:
+            case WINDOW_TYPE_CENTERED_NO_TITLE_BAR:
                 *percentage = (iTermPercentage){ .width = -1, .height = -1 };
                 break;
 
@@ -1204,6 +1200,7 @@ replaceInitialDirectoryForSessionWithGUID:(NSString *)guid
 
 - (void)maybeWarnAboutOpeningInTab {
 #if ENABLE_RESPECT_DOCK_PREFER_TABS_SETTING
+    // Localization unneeded
     NSString *const firstVersionRespectingSetting = @"SET THIS";
     if (iTermUserDefaults.haveBeenWarnedAboutTabDockSetting) {
         return;
@@ -1215,7 +1212,9 @@ replaceInitialDirectoryForSessionWithGUID:(NSString *)guid
     if (!haveUsedOlderVersion) {
         return;
     }
+    // Localization unneeded
     [[iTermNotificationController sharedInstance] postNotificationWithTitle:@"Creating a tab"
+                                                                     // Localization unneeded
                                                                      detail:@"The system preference to open a tab instead of a window is now respected in iTerm2."
                                                                         URL:[NSURL URLWithString:@"https://gitlab.com/gnachman/iterm2/wikis/Prefer-Tabs-When-Opening-Documents"]];
     iTermUserDefaults.haveBeenWarnedAboutTabDockSetting = YES;
@@ -1390,7 +1389,9 @@ replaceInitialDirectoryForSessionWithGUID:(NSString *)guid
     iTermRestorableSession *session = self.currentRestorableSession;
     assert(session);
     if (session) {
-        if (session.sessions.count > 0) {
+        // Windows closed while quitting are not undoable. Their sessions were
+        // already stopped (and archived, if enabled).
+        if (session.sessions.count > 0 && !self.applicationIsQuitting) {
             [_restorableSessions addObject:session];
         }
         [_currentRestorableSessionsStack removeObjectAtIndex:0];
@@ -1401,7 +1402,8 @@ replaceInitialDirectoryForSessionWithGUID:(NSString *)guid
     return _currentRestorableSessionsStack.count ? _currentRestorableSessionsStack[0] : nil;
 }
 
-- (void)removeSessionFromRestorableSessions:(PTYSession *)session {
+- (void)removeSessionFromRestorableSessions:(PTYSession *)session
+                                archivePath:(NSString *)archivePath {
     NSInteger index =
         [_restorableSessions indexOfObjectPassingTest:^BOOL(id obj, NSUInteger idx, BOOL *stop) {
             iTermRestorableSession *restorableSession = obj;
@@ -1412,9 +1414,27 @@ replaceInitialDirectoryForSessionWithGUID:(NSString *)guid
                 return NO;
             }
         }];
-    if (index != NSNotFound) {
-        [_restorableSessions removeObjectAtIndex:index];
+    if (index == NSNotFound) {
+        return;
     }
+    iTermRestorableSession *restorableSession = _restorableSessions[index];
+    if (!archivePath || !session.guid) {
+        // Nothing can take this session's place, so the group can't be restored.
+        [_restorableSessions removeObjectAtIndex:index];
+        return;
+    }
+    // Keep only the archive's path so the session can be freed. Undo restores
+    // it from the archive and revives the group's sessions that are still alive.
+    restorableSession.sessions = [restorableSession.sessions arrayByRemovingObject:session];
+    restorableSession.archivePathsBySessionGUID =
+        [restorableSession.archivePathsBySessionGUID ?: @{} dictionaryBySettingObject:archivePath
+                                                                               forKey:session.guid];
+    if (restorableSession.sessions.count == 0) {
+        // It can now be saved in restorable state.
+        [self undoCloseRestorableStateDidChange];
+    }
+    DLog(@"Undo of %@ will revive %@ and restore archives %@",
+         restorableSession, restorableSession.sessions, restorableSession.archivePathsBySessionGUID);
 }
 
 - (iTermRestorableSession *)popRestorableSession {
@@ -1423,11 +1443,177 @@ replaceInitialDirectoryForSessionWithGUID:(NSString *)guid
     }
     iTermRestorableSession *restorableSession = [_restorableSessions lastObject];
     [_restorableSessions removeLastObject];
+    [self resolveTabGUIDsInRestorableSession:restorableSession];
+    if (restorableSession.archivePathsBySessionGUID.count > 0) {
+        // Don't save now: the caller hasn't restored the session yet, so the
+        // saved state would have neither the entry nor the restored session.
+        // -undoCloseSession: saves after restoring it.
+        [NSApp invalidateRestorableState];
+    }
     return restorableSession;
+}
+
+- (void)undoCloseRestorableStateDidChange {
+    [NSApp invalidateRestorableState];
+    if (!self.applicationIsQuitting) {
+        // State is otherwise saved only when the app resigns active or quits.
+        // Save now so the change survives the app being killed.
+        [[iTermApplication.sharedApplication delegate] saveRestorableState];
+    }
+}
+
+static NSString *const iTermUndoCloseStateRestorableSessionKey = @"restorableSession";
+static NSString *const iTermUndoCloseStateGroupKey = @"group";
+static NSString *const iTermUndoCloseStateArchivePathsKey = @"archivePathsBySessionGUID";
+static NSString *const iTermUndoCloseStateTabGUIDKey = @"tabGUID";
+static NSString *const iTermUndoCloseStatePredecessorTabGUIDsKey = @"predecessorTabGUIDs";
+static const NSUInteger iTermUndoCloseStateMaximumCount = 20;
+
+- (NSArray<NSDictionary *> *)undoCloseRestorableState {
+    NSArray<iTermRestorableSession *> *archived = [_restorableSessions filteredArrayUsingBlock:^BOOL(iTermRestorableSession *restorableSession) {
+        // Sessions that are still alive can't be saved.
+        return (restorableSession.sessions.count == 0 &&
+                restorableSession.archivePathsBySessionGUID.count > 0 &&
+                restorableSession.group != kiTermRestorableSessionGroupChannel);
+    }];
+    if (archived.count > iTermUndoCloseStateMaximumCount) {
+        archived = [archived subarrayFromIndex:archived.count - iTermUndoCloseStateMaximumCount];
+    }
+    return [archived mapWithBlock:^id(iTermRestorableSession *restorableSession) {
+        // Tab unique IDs don't survive a restart but tab GUIDs do.
+        // An entry restored at launch and not yet undone still has its GUIDs.
+        PseudoTerminal *term = [self terminalWithGuid:restorableSession.terminalGuid];
+        NSString *tabGUID = restorableSession.tabGUID ?: [term tabWithUniqueId:restorableSession.tabUniqueId].stringUniqueIdentifier;
+        NSArray<NSString *> *predecessorTabGUIDs = restorableSession.predecessorTabGUIDs ?: [restorableSession.predecessors mapWithBlock:^id(NSNumber *uniqueId) {
+            return [term tabWithUniqueId:uniqueId.intValue].stringUniqueIdentifier;
+        }];
+        NSMutableDictionary *dict = [NSMutableDictionary dictionary];
+        dict[iTermUndoCloseStateRestorableSessionKey] = [restorableSession restorableState];
+        dict[iTermUndoCloseStateGroupKey] = @(restorableSession.group);
+        dict[iTermUndoCloseStateArchivePathsKey] = restorableSession.archivePathsBySessionGUID;
+        dict[iTermUndoCloseStateTabGUIDKey] = tabGUID;
+        dict[iTermUndoCloseStatePredecessorTabGUIDsKey] = predecessorTabGUIDs ?: @[];
+        return dict;
+    }];
+}
+
+- (void)restoreUndoCloseFromState:(NSArray<NSDictionary *> *)state {
+    NSMutableArray<iTermRestorableSession *> *restored = [NSMutableArray array];
+    for (NSDictionary *dict in [NSArray castFrom:state]) {
+        if (![dict isKindOfClass:[NSDictionary class]]) {
+            continue;
+        }
+        NSDictionary *restorableState = [NSDictionary castFrom:dict[iTermUndoCloseStateRestorableSessionKey]];
+        NSDictionary *archivePaths = [NSDictionary castFrom:dict[iTermUndoCloseStateArchivePathsKey]];
+        NSNumber *groupNumber = [NSNumber castFrom:dict[iTermUndoCloseStateGroupKey]];
+        const iTermRestorableSessionGroup group = groupNumber.integerValue;
+        if (!restorableState || archivePaths.count == 0 || !groupNumber ||
+            (group != kiTermRestorableSessionGroupSession &&
+             group != kiTermRestorableSessionGroupTab &&
+             group != kiTermRestorableSessionGroupWindow)) {
+            DLog(@"Skip malformed undo close state %@", dict);
+            continue;
+        }
+        BOOL pathsOK = YES;
+        for (id key in archivePaths) {
+            if (![key isKindOfClass:[NSString class]] || ![archivePaths[key] isKindOfClass:[NSString class]]) {
+                pathsOK = NO;
+                break;
+            }
+        }
+        if (!pathsOK) {
+            continue;
+        }
+        iTermRestorableSession *restorableSession = [[iTermRestorableSession alloc] initWithRestorableState:restorableState];
+        restorableSession.sessions = @[];
+        restorableSession.group = group;
+        restorableSession.archivePathsBySessionGUID = archivePaths;
+
+        // Windows may not be restored yet, so tabs are looked up on undo.
+        // 0 is never a valid tab unique ID.
+        restorableSession.tabUniqueId = 0;
+        restorableSession.predecessors = @[];
+        restorableSession.tabGUID = [NSString castFrom:dict[iTermUndoCloseStateTabGUIDKey]];
+        restorableSession.predecessorTabGUIDs = [[NSArray castFrom:dict[iTermUndoCloseStatePredecessorTabGUIDsKey]] mapWithBlock:^id(id guid) {
+            return [NSString castFrom:guid];
+        }];
+        [restored addObject:restorableSession];
+    }
+    RLog(@"Restored %@ undo close entries", @(restored.count));
+    // These were closed before anything closed since launch.
+    [_restorableSessions insertObjects:restored
+                             atIndexes:[NSIndexSet indexSetWithIndexesInRange:NSMakeRange(0, restored.count)]];
+}
+
+- (void)resolveTabGUIDsInRestorableSession:(iTermRestorableSession *)restorableSession {
+    if (!restorableSession.tabGUID && !restorableSession.predecessorTabGUIDs) {
+        return;
+    }
+    PseudoTerminal *term = [self terminalWithGuid:restorableSession.terminalGuid];
+    // An unmatched tab gets 0, which no tab has, so it's treated as gone.
+    restorableSession.tabUniqueId = [self tabInTerminal:term withGUID:restorableSession.tabGUID].uniqueId;
+    restorableSession.predecessors = [restorableSession.predecessorTabGUIDs mapWithBlock:^id(NSString *guid) {
+        PTYTab *tab = [self tabInTerminal:term withGUID:guid];
+        return tab ? @(tab.uniqueId) : nil;
+    }];
+    restorableSession.tabGUID = nil;
+    restorableSession.predecessorTabGUIDs = nil;
+}
+
+- (PTYTab *)tabInTerminal:(PseudoTerminal *)term withGUID:(NSString *)guid {
+    if (!guid) {
+        return nil;
+    }
+    for (PTYTab *tab in term.tabs) {
+        if ([tab.stringUniqueIdentifier isEqualToString:guid]) {
+            return tab;
+        }
+    }
+    return nil;
 }
 
 - (BOOL)hasRestorableSession {
     return _restorableSessions.count > 0;
+}
+
+- (void)pauseRestorableSessionTermination {
+    for (iTermRestorableSession *restorableSession in _restorableSessions) {
+        for (PTYSession *session in restorableSession.sessions) {
+            [session pauseTerminationTimer];
+        }
+    }
+}
+
+- (void)resumeRestorableSessionTermination {
+    for (iTermRestorableSession *restorableSession in _restorableSessions) {
+        for (PTYSession *session in restorableSession.sessions) {
+            [session resumeTerminationTimer];
+        }
+    }
+}
+
+- (void)performBlockWithRestorableSessionTerminationPaused:(void (NS_NOESCAPE ^)(void))block {
+    [self pauseRestorableSessionTermination];
+    @try {
+        block();
+    } @finally {
+        // @finally so the resume runs even if block raises an ObjC exception.
+        [self resumeRestorableSessionTermination];
+    }
+}
+
+- (void)hardStopRestorableSessions {
+    // Stopping a session changes _restorableSessions, so collect them first.
+    NSMutableArray<PTYSession *> *sessions = [NSMutableArray array];
+    for (iTermRestorableSession *restorableSession in _restorableSessions) {
+        [sessions addObjectsFromArray:restorableSession.sessions];
+    }
+    RLog(@"hardStopRestorableSessions: %@", sessions);
+    for (PTYSession *session in sessions) {
+        if (!session.isTmuxClient) {
+            [session hardStop];
+        }
+    }
 }
 
 - (void)killRestorableSessions {
@@ -1741,6 +1927,7 @@ replaceInitialDirectoryForSessionWithGUID:(NSString *)guid
     NSString *const escapedCommand = escapeArguments ? [command stringWithBackslashEscapedShellCharactersIncludingNewlines:YES] : command;
     NSArray<NSString *> *const combinedArray = [@[escapedCommand] arrayByAddingObjectsFromArray:escapedArguments];
     NSString *const commandLine = [combinedArray componentsJoinedByString:@" "];
+    // Localization unneeded
     return [NSString stringWithFormat:@"sh -c \"%@\"", commandLine];
 }
 
@@ -1932,6 +2119,18 @@ replaceInitialDirectoryForSessionWithGUID:(NSString *)guid
                                         profile:profile
                                splitSessionGuid:term.currentSession.guid];
             }
+            break;
+        case iTermOpenStyleFloatingPane:
+            term = [self currentTerminal];
+            if (term.canCreateFloatingPane) {
+                PTYSession *previous = term.currentSession;
+                [term openFloatingPaneWithURL:url target:target baseProfile:profile];
+                if (!select && previous) {
+                    [term.currentTab setActiveSession:previous];
+                }
+                return YES;
+            }
+            // Can't float here (layout lock, tmux, or no window): fall back to a tab or window.
             break;
     }
     if (term.layoutLocked && term.numberOfTabs > 0) {

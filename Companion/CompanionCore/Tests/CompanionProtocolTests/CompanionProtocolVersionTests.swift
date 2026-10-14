@@ -51,4 +51,37 @@ final class CompanionProtocolVersionTests: XCTestCase {
         XCTAssertEqual(eval(8, 5, 3, 1), .peerMustUpgrade)
         XCTAssertEqual(eval(3, 1, 8, 5), .selfMustUpgrade)
     }
+
+    func testAIDecouplingRevisionConstants() {
+        // Revision 13 is the AI-decoupling revision, and it is additive: the peer
+        // floor is unchanged, so no compatible pairing is broken by the bump.
+        XCTAssertEqual(CompanionProtocolVersion.aiDecouplingRevision, 13)
+        XCTAssertEqual(CompanionProtocolVersion.minimumPeer, 11)
+    }
+
+    func testModalAlertRevisionConstants() {
+        // Revision 14 is the mac-status revision, and it is additive: the peer
+        // floor is unchanged, so no compatible pairing is broken by the bump.
+        XCTAssertEqual(CompanionProtocolVersion.current, 14)
+        XCTAssertEqual(CompanionProtocolVersion.modalAlertRevision, 14)
+        XCTAssertEqual(CompanionProtocolVersion.minimumPeer, 11)
+    }
+
+    func testModalAlertRevisionIsBackwardCompatibleWithPriorPeers() {
+        // A current build still talks to peers at the last three shipped
+        // revisions, and they to it.
+        XCTAssertEqual(eval(14, 11, 11, 11), .compatible)
+        XCTAssertEqual(eval(14, 11, 12, 11), .compatible)
+        XCTAssertEqual(eval(14, 11, 13, 11), .compatible)
+        XCTAssertEqual(eval(13, 11, 14, 11), .compatible)
+    }
+
+    func testAIDecouplingIsBackwardCompatibleWithPriorPeers() {
+        // A current build still talks to a revision-11 or -12 peer (the last two
+        // shipped revisions): the AI-decoupling change added no hard incompatibility.
+        XCTAssertEqual(eval(13, 11, 11, 11), .compatible)
+        XCTAssertEqual(eval(13, 11, 12, 11), .compatible)
+        // And a current peer talking to a current build.
+        XCTAssertEqual(eval(13, 11, 13, 11), .compatible)
+    }
 }

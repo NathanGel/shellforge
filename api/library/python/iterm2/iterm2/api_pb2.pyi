@@ -2811,6 +2811,7 @@ class GetPropertyRequest(_message.Message):
     "grid_size" -> { "width": number, "height": number }
     "buried" -> boolean
     "number_of_lines" -> { "overflow": number, "grid": number, "history": number }
+    "session_note" -> { "text": string, "visible": boolean, "collapsed": boolean }
 
     For windows:
     "frame" -> { "origin": { "x": number, "y": number }, "size": { "width": number, "height": number } }
@@ -2900,6 +2901,8 @@ class SetPropertyRequest(_message.Message):
     For sessions:
     grid_size      { "width": 80, "height": 25 }
     buried         true
+    "session_note" -> { "text": string, "visible": boolean, "collapsed": boolean }
+    Accepts a partial object; omitted keys retain their current values.
     """
     json_value: _builtins.str
     def __init__(
@@ -3240,17 +3243,35 @@ class RPCRegistrationRequest(_message.Message):
 
         DISPLAY_NAME_FIELD_NUMBER: _builtins.int
         UNIQUE_IDENTIFIER_FIELD_NUMBER: _builtins.int
+        SUBMENU_FIELD_NUMBER: _builtins.int
+        VISIBLE_WHEN_FIELD_NUMBER: _builtins.int
         display_name: _builtins.str
         unique_identifier: _builtins.str
+        submenu: _builtins.str
+        """If set, the item appears in a submenu with this title. Items from any
+        script that share a submenu title are grouped together. Added in
+        protocol 1.23.
+        """
+        visible_when: _builtins.str
+        """If set, an expression evaluated in the clicked session's scope when the
+        menu opens. The item is shown only if it evaluates to a boolean or
+        number that is true or nonzero; a string result (even "1") hides it, as
+        do undefined variables and errors. To test a flag that may have been set
+        from the shell (and so be a string), compare it: `user.flag == 1`. It must not call functions, since it
+        is evaluated synchronously. When unset the item is always shown. Added
+        in protocol 1.23.
+        """
         def __init__(
             self,
             *,
             display_name: _builtins.str | None = ...,
             unique_identifier: _builtins.str | None = ...,
+            submenu: _builtins.str | None = ...,
+            visible_when: _builtins.str | None = ...,
         ) -> None: ...
-        _HasFieldArgType: _TypeAlias = _typing.Literal["display_name", b"display_name", "unique_identifier", b"unique_identifier"]  # noqa: Y015
+        _HasFieldArgType: _TypeAlias = _typing.Literal["display_name", b"display_name", "submenu", b"submenu", "unique_identifier", b"unique_identifier", "visible_when", b"visible_when"]  # noqa: Y015
         def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-        _ClearFieldArgType: _TypeAlias = _typing.Literal["display_name", b"display_name", "unique_identifier", b"unique_identifier"]  # noqa: Y015
+        _ClearFieldArgType: _TypeAlias = _typing.Literal["display_name", b"display_name", "submenu", b"submenu", "unique_identifier", b"unique_identifier", "visible_when", b"visible_when"]  # noqa: Y015
         def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
         def WhichOneof(self, oneof_group: _Never) -> None: ...
 
@@ -5439,6 +5460,32 @@ class SplitTreeNode(_message.Message):
 Global___SplitTreeNode: _TypeAlias = SplitTreeNode  # noqa: Y015
 
 @_typing.final
+class FloatingPane(_message.Message):
+    """A pane that floats over its tab's split panes. Added in protocol 1.21."""
+
+    DESCRIPTOR: _descriptor.Descriptor
+
+    SESSION_FIELD_NUMBER: _builtins.int
+    @_builtins.property
+    def session(self) -> Global___SessionSummary:
+        """The session's frame is the float's frame in the tab, in points, with the
+        origin at the tab's top left and y increasing downward.
+        """
+
+    def __init__(
+        self,
+        *,
+        session: Global___SessionSummary | None = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["session", b"session"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["session", b"session"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+    def WhichOneof(self, oneof_group: _Never) -> None: ...
+
+Global___FloatingPane: _TypeAlias = FloatingPane  # noqa: Y015
+
+@_typing.final
 class ListSessionsResponse(_message.Message):
     DESCRIPTOR: _descriptor.Descriptor
 
@@ -5486,6 +5533,12 @@ class ListSessionsResponse(_message.Message):
         TMUX_CONNECTION_ID_FIELD_NUMBER: _builtins.int
         MINIMIZED_SESSIONS_FIELD_NUMBER: _builtins.int
         ACTIVE_SESSION_ID_FIELD_NUMBER: _builtins.int
+        TAB_GROUP_ID_FIELD_NUMBER: _builtins.int
+        TAB_GROUP_NAME_FIELD_NUMBER: _builtins.int
+        TAB_GROUP_COLOR_FIELD_NUMBER: _builtins.int
+        TAB_GROUP_COLLAPSED_FIELD_NUMBER: _builtins.int
+        FLOATING_PANES_FIELD_NUMBER: _builtins.int
+        FLOATING_PANES_HIDDEN_FIELD_NUMBER: _builtins.int
         tab_id: _builtins.str
         tmux_window_id: _builtins.str
         tmux_connection_id: _builtins.str
@@ -5493,10 +5546,29 @@ class ListSessionsResponse(_message.Message):
         """guid of the tab's active session, so clients can determine the current
         session without waiting for a focus notification. Added in protocol 1.18.
         """
+        tab_group_id: _builtins.str
+        """Tab group membership. A tab group's identity is a UUID that rides on each
+        member tab (there is no central registry); all members of a group carry
+        the same name/color/collapsed values. tab_group_id is unset when the tab
+        belongs to no group; the other three are meaningful only when it is set.
+        The color is a hex string as produced by -[NSColor hexStringPreservingColorSpace]
+        ("#rrggbb" for sRGB, "p3#rrggbbrrggbb" for Display P3). Added in protocol 1.19.
+        """
+        tab_group_name: _builtins.str
+        tab_group_color: _builtins.str
+        tab_group_collapsed: _builtins.bool
+        floating_panes_hidden: _builtins.bool
+        """Whether the tab's floating panes are hidden. Added in protocol 1.21."""
         @_builtins.property
         def root(self) -> Global___SplitTreeNode: ...
         @_builtins.property
         def minimized_sessions(self) -> _containers.RepeatedCompositeFieldContainer[Global___SessionSummary]: ...
+        @_builtins.property
+        def floating_panes(self) -> _containers.RepeatedCompositeFieldContainer[Global___FloatingPane]:
+            """The tab's floating panes, back to front. Their sessions are not in
+            `root`. Added in protocol 1.21.
+            """
+
         def __init__(
             self,
             *,
@@ -5506,10 +5578,16 @@ class ListSessionsResponse(_message.Message):
             tmux_connection_id: _builtins.str | None = ...,
             minimized_sessions: _abc.Iterable[Global___SessionSummary] | None = ...,
             active_session_id: _builtins.str | None = ...,
+            tab_group_id: _builtins.str | None = ...,
+            tab_group_name: _builtins.str | None = ...,
+            tab_group_color: _builtins.str | None = ...,
+            tab_group_collapsed: _builtins.bool | None = ...,
+            floating_panes: _abc.Iterable[Global___FloatingPane] | None = ...,
+            floating_panes_hidden: _builtins.bool | None = ...,
         ) -> None: ...
-        _HasFieldArgType: _TypeAlias = _typing.Literal["active_session_id", b"active_session_id", "root", b"root", "tab_id", b"tab_id", "tmux_connection_id", b"tmux_connection_id", "tmux_window_id", b"tmux_window_id"]  # noqa: Y015
+        _HasFieldArgType: _TypeAlias = _typing.Literal["active_session_id", b"active_session_id", "floating_panes_hidden", b"floating_panes_hidden", "root", b"root", "tab_group_collapsed", b"tab_group_collapsed", "tab_group_color", b"tab_group_color", "tab_group_id", b"tab_group_id", "tab_group_name", b"tab_group_name", "tab_id", b"tab_id", "tmux_connection_id", b"tmux_connection_id", "tmux_window_id", b"tmux_window_id"]  # noqa: Y015
         def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-        _ClearFieldArgType: _TypeAlias = _typing.Literal["active_session_id", b"active_session_id", "minimized_sessions", b"minimized_sessions", "root", b"root", "tab_id", b"tab_id", "tmux_connection_id", b"tmux_connection_id", "tmux_window_id", b"tmux_window_id"]  # noqa: Y015
+        _ClearFieldArgType: _TypeAlias = _typing.Literal["active_session_id", b"active_session_id", "floating_panes", b"floating_panes", "floating_panes_hidden", b"floating_panes_hidden", "minimized_sessions", b"minimized_sessions", "root", b"root", "tab_group_collapsed", b"tab_group_collapsed", "tab_group_color", b"tab_group_color", "tab_group_id", b"tab_group_id", "tab_group_name", b"tab_group_name", "tab_id", b"tab_id", "tmux_connection_id", b"tmux_connection_id", "tmux_window_id", b"tmux_window_id"]  # noqa: Y015
         def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
         def WhichOneof(self, oneof_group: _Never) -> None: ...
 

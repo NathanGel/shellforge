@@ -210,6 +210,7 @@ void iTermAsciiDataSet(AsciiData *asciiData, const char *bytes, int length, Scre
                 @(VT100CSI_SM):                     @"VT100CSI_SM",
                 @(VT100CSI_TBC):                    @"VT100CSI_TBC",
                 @(VT100CSI_DECSCUSR):               @"VT100CSI_DECSCUSR",
+                @(VT100CSI_SCP):                    @"VT100CSI_SCP",
                 @(VT100CSI_DECSTR):                 @"VT100CSI_DECSTR",
                 @(VT100CSI_DECDSR):                 @"VT100CSI_DECDSR",
                 @(VT100CSI_SET_MODIFIERS):          @"VT100CSI_SET_MODIFIERS",
@@ -267,6 +268,7 @@ void iTermAsciiDataSet(AsciiData *asciiData, const char *bytes, int length, Scre
                 @(XTERMCC_REPORT_WIN_STATE):        @"XTERMCC_REPORT_WIN_STATE",
                 @(XTERMCC_REPORT_WIN_POS):          @"XTERMCC_REPORT_WIN_POS",
                 @(XTERMCC_REPORT_WIN_PIX_SIZE):     @"XTERMCC_REPORT_WIN_PIX_SIZE",
+                @(XTERMCC_REPORT_CELL_SIZE_PIX):    @"XTERMCC_REPORT_CELL_SIZE_PIX",
                 @(XTERMCC_REPORT_WIN_SIZE):         @"XTERMCC_REPORT_WIN_SIZE",
                 @(XTERMCC_REPORT_SCREEN_SIZE):      @"XTERMCC_REPORT_SCREEN_SIZE",
                 @(XTERMCC_REPORT_ICON_TITLE):       @"XTERMCC_REPORT_ICON_TITLE",
@@ -297,6 +299,7 @@ void iTermAsciiDataSet(AsciiData *asciiData, const char *bytes, int length, Scre
                 @(XTERMCC_SET_HIGHLIGHT_FOREGROUND_COLOR):    @"XTERMCC_SET_HIGHLIGHT_FOREGROUND_COLOR",
                 @(XTERMCC_SET_POINTER_SHAPE):       @"XTERMCC_SET_POINTER_SHAPE",
                 @(XTERMCC_SET_TAB_STATUS):          @"XTERMCC_SET_TAB_STATUS",
+                @(XTERMCC_PROGRAM_STATUS):          @"XTERMCC_PROGRAM_STATUS",
 
                 @(XTERMCC_FINAL_TERM):              @"XTERMCC_FINAL_TERM",
                 @(XTERMCC_FRAMER_WRAPPER):          @"XTERMCC_FRAMER_WRAPPER",
@@ -570,8 +573,8 @@ void iTermAsciiDataSet(AsciiData *asciiData, const char *bytes, int length, Scre
     pre->rtlFound = rtlFound;
     pre->config = config;
     // The space is at index 0, so everything past it in that cluster came from the string.
-    pre->firstClusterLengthInString =
-        (int)[augmented rangeOfComposedCharacterSequenceAtIndex:0].length - 1;
+    // Segment the way StringToScreenChars does, since that decides which cells get written.
+    pre->firstClusterLengthInString = (int)[augmented rangeOfFirstComposedCharacter].length - 1;
     pre->valid = YES;
 }
 

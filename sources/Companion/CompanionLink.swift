@@ -1,0 +1,714 @@
+//
+//  CompanionLink.swift
+//  iTerm2
+//
+//  The network endpoint of one phone connection, kept OFF the main actor.
+//
+//  A modal alert started from a main-queue callout freezes the main dispatch
+//  queue and every @MainActor job until it is dismissed. CompanionHostBridge is
+//  @MainActor because its handlers read and write app state, so on its own it
+//  goes silent for the whole time such an alert is up. The link owns the parts
+//  that must keep working regardless: the receive loop, the outbox drain, and
+//  the few messages that can be answered without app state (hello, ping, and
+//  the relay room secret a connecting phone sends before its hello). It also
+//  tells the phone which alerts are showing and whether the main thread is
+//  blocked, and passes the phone's answer to an alert along.
+//  Everything else is forwarded, in wire order, to the bridge through `events`,
+//  where it simply waits until the main actor runs again.
+//
+//  Main-actor code talks to the link only through nonisolated, synchronous
+//  calls (send, poke, close). It must never reach the link with `Task { await
+//  link... }`: a task created on the main actor starts on the main actor, so it
+//  would be stuck behind the very freeze this type exists to survive.
+//
+
+import Foundation
+import QuartzCore
+import CompanionProtocol
+import os
+
+/// Whether AI is available on this Mac right now, readable from any thread.
+/// CompanionPairingController.aiAvailable() must run on the main thread, so the
+/// main actor publishes its result here and the link reads the copy.
+final class CompanionAIAvailabilityCache: Sendable {
+    static let shared = CompanionAIAvailabilityCache(false)
+
+    private let storage: OSAllocatedUnfairLock<Bool>
+
+    init(_ value: Bool) {
+        storage = OSAllocatedUnfairLock(initialState: value)
+    }
+
+    var value: Bool {
+        get { storage.withLock { $0 } }
+        set { storage.withLock { $0 = newValue } }
+    }
+}
+
+/// How a connection is classified for the presence warning. See
+/// CompanionHostBridge.onConnectionClassified.
+enum CompanionConnectionClassification: Equatable {
+    case solicited
+    case unsolicited
+}
+
+/// Delivers the phone's stream acknowledgements to the streamer that paces
+/// against them, without going through the main actor. A streamer stops
+/// emitting frames once it gets about half a second ahead of the last
+/// acknowledgement, so if acknowledgements waited for the main queue the video
+/// would stall for as long as an alert had that queue frozen.
+final class CompanionStreamAckRouter: Sendable {
+    typealias Sink = @Sendable (_ ptsMilliseconds: UInt64, _ queueDepth: Int) -> Void
+    private let sinks = OSAllocatedUnfairLock(initialState: [UInt32: Sink]())
+
+    /// `sink` is called on the link's executor and must be safe on any thread.
+    func register(streamID: UInt32, sink: @escaping Sink) {
+        sinks.withLock { $0[streamID] = sink }
+    }
+
+    func unregister(streamID: UInt32) {
+        sinks.withLock { $0[streamID] = nil }
+    }
+
+    func deliver(streamID: UInt32, ptsMilliseconds: UInt64, queueDepth: Int) {
+        let sink = sinks.withLock { $0[streamID] }
+        sink?(ptsMilliseconds, queueDepth)
+    }
+}
+
+actor CompanionLink {
+    enum Event {
+        /// A decoded message from the phone, in wire order. `handledByLink` is
+        /// true when the link already handled it (hello, ping, relayRoomSecret,
+        /// answerModalAlert);
+        /// the bridge then only does its bookkeeping and must not answer again.
+        case envelope(ClientEnvelope, handledByLink: Bool)
+        /// The link answered a hello. `blocked` is true when the peer is
+        /// version-incompatible. Follows that hello's `.envelope`.
+        case helloCompleted(peerRevision: Int, blocked: Bool)
+        /// The hello just completed was incompatible. Follows `.helloCompleted`.
+        case versionIncompatible(CompanionProtocolVersion.Compatibility)
+        /// The connection ended. Always the last event. The error is nil for a
+        /// deliberate local close and non-nil when the connection dropped.
+        case closed(Error?)
+    }
+
+    /// Something the link should re-examine. Pokes carry no payload: the link
+    /// rereads the current state and compares it with what it last sent, so a
+    /// duplicated or reordered poke is harmless.
+    enum Poke: Sendable {
+        case aiAvailability
+        /// The alerts the phone may answer, or whether the main thread is
+        /// blocked, may have changed.
+        case macStatus
+    }
+
+    /// Outbound frames. Lock-protected, so main-actor code and encoder threads
+    /// enqueue synchronously and enqueue order is wire order.
+    nonisolated let outbox = CompanionPriorityOutbox<HostEnvelope>()
+
+    /// Where the phone's acknowledgements of video frames go. The bridge
+    /// registers each stream here, and the link delivers to it directly.
+    nonisolated let streamAcks = CompanionStreamAckRouter()
+
+    /// Single consumer: the @MainActor bridge.
+    nonisolated let events: AsyncStream<Event>
+
+    /// State that nonisolated entry points and the drain task share with the
+    /// actor. Never held across a suspension point.
+    private struct Shared: Sendable {
+        var started = false
+        var localCloseRequested = false
+        /// Set once the connection has ended; `closeError` is then final.
+        var finished = false
+        var closeError: Error?
+        var closeWaiters: [CheckedContinuation<Error?, Never>] = []
+        var drainTask: Task<Void, Never>?
+        /// The pairing is being removed: store no room secret from here on.
+        var roomSecretStorageStopped = false
+        /// While true the drain sends the peer nothing but hello, error, and
+        /// unpaired. Mirrors `versionBlocked` for the drain task, which is not
+        /// on the actor. The bridge learns of a blocked peer through an event
+        /// that lags while the main actor is busy; this closes that gap.
+        var versionBlocked = false
+    }
+
+    private nonisolated let shared = OSAllocatedUnfairLock(initialState: Shared())
+    /// Keeps the link subscribed to the alert registry and the stall monitor
+    /// for as long as it is open.
+    private nonisolated let subscriptions = OSAllocatedUnfairLock(uncheckedState: [AnyObject]())
+    private nonisolated let transport: MessageTransport
+    private nonisolated let aiAvailability: CompanionAIAvailabilityCache
+    private nonisolated let wantsNotificationPermission: @Sendable () -> Bool
+    private nonisolated let storeRoomSecret: @Sendable (Data) throws -> Void
+    private nonisolated let alerts: ModalAlertSource
+    private nonisolated let mainStall: CompanionMainStallSource
+    private nonisolated let eventsContinuation: AsyncStream<Event>.Continuation
+    private nonisolated let pokes: AsyncStream<Poke>
+    private nonisolated let pokesContinuation: AsyncStream<Poke>.Continuation
+
+    // Actor-isolated protocol state.
+    private var helloSent = false
+    private var versionBlocked = false
+    /// The AI availability last advertised to this phone (seeded by the hello
+    /// reply). nil until the first hello is answered.
+    private var lastSentAIAvailable: Bool?
+    /// The status last sent to this phone (seeded by the hello reply). nil while
+    /// the phone gets no status: before its hello, or because it is too old to
+    /// understand it, or version-blocked.
+    private var lastSentStatus: CompanionMacStatus?
+
+    init(transport: MessageTransport,
+         aiAvailability: CompanionAIAvailabilityCache,
+         wantsNotificationPermission: @escaping @Sendable () -> Bool,
+         storeRoomSecret: @escaping @Sendable (Data) throws -> Void,
+         alerts: ModalAlertSource,
+         mainStall: CompanionMainStallSource) {
+        self.alerts = alerts
+        self.mainStall = mainStall
+        self.transport = transport
+        self.aiAvailability = aiAvailability
+        self.wantsNotificationPermission = wantsNotificationPermission
+        self.storeRoomSecret = storeRoomSecret
+        (events, eventsContinuation) = AsyncStream<Event>.makeStream()
+        (pokes, pokesContinuation) = AsyncStream<Poke>.makeStream()
+    }
+
+    /// A link wired to the app's real dependencies. The one place that does so,
+    /// so a link from a fresh pairing and a link from a reconnect cannot differ.
+    static func makeForProduction(transport: MessageTransport) -> CompanionLink {
+        return CompanionLink(transport: transport,
+                             aiAvailability: .shared,
+                             wantsNotificationPermission: { CompanionPushRegistry.alertsEverEnabled },
+                             storeRoomSecret: storeRoomSecretIfChanged,
+                             alerts: ModalAlertRegistry.shared,
+                             mainStall: CompanionMainThreadMonitor.shared)
+    }
+
+    /// The production room secret store. The phone re-sends the secret on every
+    /// connect, so skip the keychain write when it is the one already held.
+    static let storeRoomSecretIfChanged: @Sendable (Data) throws -> Void = { secret in
+        if CompanionMacIdentity.pairedRoomSecret() == secret {
+            return
+        }
+        try CompanionMacIdentity.storePairedRoomSecret(secret)
+    }
+
+    // MARK: Nonisolated entry points
+
+    /// Start receiving and sending. Safe to call from the main actor even if it
+    /// is about to freeze: the tasks are detached, so none of them starts on
+    /// the caller's actor.
+    nonisolated func start() {
+        let outbox = self.outbox
+        let transport = self.transport
+        let lock = self.shared
+        let alreadyStarted = lock.withLock { state -> Bool in
+            if state.started || state.finished {
+                return true
+            }
+            state.started = true
+            state.drainTask = Task.detached {
+                await Self.drain(outbox: outbox, transport: transport, shared: lock)
+            }
+            return false
+        }
+        guard !alreadyStarted else { return }
+        // The observers only poke: they are called on a main thread that may be
+        // about to freeze (the registry's) or on a background thread (the
+        // monitor's), and poke() is a synchronous yield either way.
+        let tokens = [
+            alerts.addObserver { [weak self] in self?.poke(.macStatus) },
+            mainStall.addObserver { [weak self] in self?.poke(.macStatus) },
+        ]
+        subscriptions.withLockUnchecked { $0 = tokens }
+        Task.detached { [self] in
+            await self.receiveLoop()
+        }
+        Task.detached { [self] in
+            for await poke in self.pokes {
+                await self.handle(poke)
+            }
+        }
+    }
+
+    /// Enqueue one control message for the phone. Synchronous: call order is
+    /// wire order among control frames.
+    nonisolated func send(_ payload: CompanionHostMessage, requestID: UInt64?) {
+        outbox.enqueueControl(HostEnvelope(requestID: requestID, payload: payload))
+    }
+
+    nonisolated func poke(_ kind: Poke) {
+        pokesContinuation.yield(kind)
+    }
+
+    /// Close the connection without a farewell. Idempotent.
+    nonisolated func close() {
+        let (alreadyRequested, started) = shared.withLock { shared -> (Bool, Bool) in
+            let result = (shared.localCloseRequested, shared.started)
+            shared.localCloseRequested = true
+            return result
+        }
+        guard !alreadyRequested else { return }
+        outbox.finish()
+        let transport = self.transport
+        Task.detached {
+            // When started, the receive loop sees this and reports the close.
+            await transport.close()
+        }
+        if !started {
+            // No receive loop is running to notice, so report it here.
+            finish(error: nil)
+        }
+    }
+
+    /// Send `.unpaired`, wait until it is on the wire, then close. The farewell
+    /// reaches the phone even if it is version-blocked.
+    nonisolated func sendFarewellAndClose() async {
+        let (alreadyRequested, drainTask) = shared.withLock { shared -> (Bool, Task<Void, Never>?) in
+            let result = (shared.localCloseRequested, shared.drainTask)
+            shared.localCloseRequested = true
+            return result
+        }
+        guard !alreadyRequested else { return }
+        send(.unpaired, requestID: nil)
+        outbox.finish()
+        // The drain exits once it has sent everything enqueued before finish(),
+        // including the farewell. Close only AFTER that: closing the transport
+        // first would race the farewell against the connection teardown.
+        await drainTask?.value
+        DLog("Companion link: farewell flushed; closing transport")
+        await transport.close()
+        if drainTask == nil {
+            finish(error: nil)
+        }
+    }
+
+    /// Whether the connection has ended.
+    nonisolated var isClosed: Bool {
+        return shared.withLock { $0.finished }
+    }
+
+    /// Suspends until the connection has ended, then returns what `.closed`
+    /// carried.
+    nonisolated func waitUntilClosed() async -> Error? {
+        return await withCheckedContinuation { (continuation: CheckedContinuation<Error?, Never>) in
+            let result = shared.withLock { shared -> (finished: Bool, error: Error?) in
+                if shared.finished {
+                    return (true, shared.closeError)
+                }
+                shared.closeWaiters.append(continuation)
+                return (false, nil)
+            }
+            if result.finished {
+                continuation.resume(returning: result.error)
+            }
+        }
+    }
+
+    // MARK: Drain
+
+    private static func isAllowedWhileVersionBlocked(_ payload: CompanionHostMessage) -> Bool {
+        switch payload {
+        case .hello, .error, .unpaired:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func drain(outbox: CompanionPriorityOutbox<HostEnvelope>,
+                              transport: MessageTransport,
+                              shared: OSAllocatedUnfairLock<Shared>) async {
+        // Diagnostic counters/heartbeat. If a send wedges (half-open splice),
+        // the heartbeat below stops logging while the link believes it is still
+        // connected -- the signal we need.
+        var mediaFrames = 0
+        var mediaBytes = 0
+        var controlFrames = 0
+        var lastHeartbeat = CACurrentMediaTime()
+        RLog("link outbox drain started")
+        drain: while true {
+            let data: Data
+            let isMedia: Bool
+            let item = await outbox.next()
+            let blocked = shared.withLock { $0.versionBlocked }
+            switch item {
+            case .finished:
+                break drain
+            case .control(let envelope):
+                isMedia = false
+                if blocked && !isAllowedWhileVersionBlocked(envelope.payload) {
+                    DLog("Companion link: dropping a frame for a version-blocked peer")
+                    continue
+                }
+                do {
+                    data = try WireCoding.encode(envelope)
+                } catch {
+                    RLog("Companion link: DROPPING unencodable envelope: \(error)")
+                    continue
+                }
+            case .media(let payload):
+                isMedia = true
+                if blocked {
+                    continue
+                }
+                // Control frames stay bare JSON; media frames carry the marker.
+                data = CompanionFrameChannel.frameMedia(payload)
+            }
+            do {
+                try await transport.send(data)
+            } catch {
+                RLog("link outbox send FAILED (outbox dead) after \(mediaFrames) media/\(controlFrames) control: \(error)")
+                break drain
+            }
+            if isMedia {
+                mediaFrames += 1
+                mediaBytes += data.count
+            } else {
+                controlFrames += 1
+            }
+            let now = CACurrentMediaTime()
+            if now - lastHeartbeat >= 5 {
+                RLog("link outbox alive: sent \(mediaFrames) media (\(mediaBytes) B), \(controlFrames) control")
+                lastHeartbeat = now
+            }
+        }
+        RLog("link outbox drained/exited: \(mediaFrames) media, \(controlFrames) control total")
+    }
+
+    // MARK: Receive
+
+    private func receiveLoop() async {
+        // If the relay splice goes half-open during streaming, receive() can
+        // block forever -- we'd see "started" but never "receive FAILED" or
+        // "exited", confirming the wedge (no teardown, no re-park).
+        RLog("link receiveLoop started")
+        let dropError: Error
+        while true {
+            let frame: Data
+            do {
+                frame = try await transport.receive()
+            } catch {
+                RLog("link receiveLoop receive() ended: \(error)")
+                dropError = error
+                break
+            }
+            guard let envelope = try? WireCoding.decode(ClientEnvelope.self, from: frame) else {
+                // A frame we cannot decode (newer phone) is dropped, not fatal.
+                continue
+            }
+            handle(envelope)
+        }
+        let closedLocally = shared.withLock { $0.localCloseRequested }
+        RLog("link receiveLoop exited (closedLocally=\(closedLocally))")
+        outbox.finish()
+        finish(error: closedLocally ? nil : dropError)
+    }
+
+    private func handle(_ envelope: ClientEnvelope) {
+        let requestID = envelope.requestID
+        // An incompatible peer is served nothing but a re-hello: the phone shows
+        // an upgrade panel and disconnects, but refuse here too so a stale peer
+        // cannot drive an out-of-date protocol.
+        if versionBlocked {
+            if case .hello(let revision, let minimumPeer) = envelope.payload {
+                handleHello(envelope, peerRevision: revision, peerMinimumPeer: minimumPeer)
+            } else {
+                send(.error(CompanionError(code: .badRequest, message: "Companion app upgrade required")),
+                     requestID: requestID)
+            }
+            return
+        }
+        switch envelope.payload {
+        case .hello(let revision, let minimumPeer):
+            handleHello(envelope, peerRevision: revision, peerMinimumPeer: minimumPeer)
+        case .ping:
+            send(.pong, requestID: requestID)
+            eventsContinuation.yield(.envelope(envelope, handledByLink: true))
+        case .relayRoomSecret(let secret):
+            // A connecting phone couriers this BEFORE its hello and waits for
+            // the ack, so it has to be answered here or the phone could never
+            // reach hello while the main actor is frozen.
+            // Persist the secret so the mac can sign its relay parks, then ack so
+            // the phone may register its verifier. Idempotent (re-sent every
+            // connect); a store failure simply withholds the ack, and the phone
+            // retries on the next connection.
+            do {
+                // Stored under the lock that stopStoringRoomSecret takes, so an
+                // unpair that has started deleting key material cannot have
+                // the secret written back behind it.
+                try shared.withLock { shared in
+                    guard !shared.roomSecretStorageStopped else {
+                        throw RoomSecretStorageStopped()
+                    }
+                    try storeRoomSecret(secret)
+                }
+                RLog("Companion link: stored relay room secret")
+                send(.relayRoomSecretStored, requestID: requestID)
+            } catch {
+                RLog("Companion link: failed to store room secret: \(error)")
+                send(.error(CompanionError(code: .internalError, message: "\(error)")),
+                     requestID: requestID)
+            }
+            eventsContinuation.yield(.envelope(envelope, handledByLink: true))
+        case .answerModalAlert(let alertID, let buttonIndex, let suppress, let inputs):
+            eventsContinuation.yield(.envelope(envelope, handledByLink: true))
+            // Only a phone that was told about the alert can mean to answer it:
+            // one that completed hello at a revision that carries the status and
+            // is not version-blocked. That is exactly when lastSentStatus is set.
+            guard lastSentStatus != nil else {
+                RLog("Companion link: ignoring an alert answer from a phone that was sent no status")
+                break
+            }
+            // Not awaited here. Pressing the button needs the main thread, and
+            // if that is busy in a way that keeps even a run loop block from
+            // running, the receive loop must go on answering everything else.
+            Task {
+                await self.answerAlert(alertID: alertID,
+                                       buttonIndex: buttonIndex,
+                                       suppress: suppress,
+                                       inputs: inputs ?? [:])
+            }
+        case .streamAck(let streamID, let lastPTSMilliseconds, let queueDepth):
+            streamAcks.deliver(streamID: streamID, ptsMilliseconds: lastPTSMilliseconds, queueDepth: queueDepth)
+            eventsContinuation.yield(.envelope(envelope, handledByLink: true))
+        case .sendKey, .pasteText, .reportScrollWheel:
+            // Terminal input is only meaningful now. Forwarded while the main
+            // thread cannot act on it, it would sit in the event stream and be
+            // typed into the session whenever the alert is finally dismissed,
+            // possibly minutes later. Refuse it instead. This does not depend on
+            // what the phone was told: an older Buddy does not know to hold its
+            // input, and a new one may send before the status reaches it.
+            guard !mainThreadCannotServeRequests() else {
+                RLog("Companion link: refusing terminal input while the main thread is blocked")
+                if let requestID {
+                    send(.error(CompanionError(code: .internalError,
+                                               message: "The Mac can’t accept input right now.")),
+                         requestID: requestID)
+                }
+                break
+            }
+            eventsContinuation.yield(.envelope(envelope, handledByLink: false))
+        default:
+            eventsContinuation.yield(.envelope(envelope, handledByLink: false))
+        }
+    }
+
+    /// Whether requests that need the main thread will go unserved for now.
+    /// An alert being up is not enough to say so: one started by something the
+    /// user did at the Mac leaves the main queue running.
+    private func mainThreadCannotServeRequests() -> Bool {
+        return mainStall.isMainBlocked()
+    }
+
+    private func handleHello(_ envelope: ClientEnvelope, peerRevision: Int, peerMinimumPeer: Int) {
+        let aiAvailable = aiAvailability.value
+        let verdict = CompanionProtocolVersion.evaluate(peerRevision: peerRevision,
+                                                        peerMinimumPeer: peerMinimumPeer)
+        let blocked = (verdict != .compatible)
+        // Update the gate BEFORE enqueueing the reply, so nothing queued behind
+        // the reply can slip out to a peer that was just found incompatible.
+        versionBlocked = blocked
+        shared.withLock { $0.versionBlocked = blocked }
+        // The reply carries the current availability, and seeds the value later
+        // change events are compared against. handle(_: Poke) does nothing until
+        // helloSent, so an aiAvailabilityChanged can never precede this reply.
+        lastSentAIAvailable = aiAvailable
+        // The status rides the reply, so the phone knows it before it sends the
+        // requests that would time out against a blocked mac. Only for a phone
+        // that understands it; handle(_: Poke) sends changes only while this is
+        // non-nil.
+        let status: CompanionMacStatus? =
+            (!blocked && peerRevision >= CompanionProtocolVersion.modalAlertRevision) ? currentStatus() : nil
+        lastSentStatus = status
+        if let status, !status.mainBlocked, status.modalAlerts.contains(where: { $0.isAppModal }) {
+            // The phone connected with an alert already up. If the main queue
+            // is frozen the monitor may only just have started measuring.
+            mainStall.expedite()
+        }
+        helloSent = true
+        send(.hello(revision: CompanionProtocolVersion.current,
+                    minimumPeer: CompanionProtocolVersion.minimumPeer,
+                    wantsNotificationPermission: wantsNotificationPermission(),
+                    aiAvailable: aiAvailable,
+                    macStatus: status),
+             requestID: envelope.requestID)
+        RLog("Companion link: hello peer(rev=\(peerRevision), min=\(peerMinimumPeer)) -> \(verdict)")
+        eventsContinuation.yield(.envelope(envelope, handledByLink: true))
+        eventsContinuation.yield(.helloCompleted(peerRevision: peerRevision, blocked: blocked))
+        if blocked {
+            eventsContinuation.yield(.versionIncompatible(verdict))
+        }
+    }
+
+    // MARK: Pokes
+
+    private func handle(_ poke: Poke) {
+        switch poke {
+        case .aiAvailability:
+            // No-op before the first hello: the hello reply carries the current
+            // availability. After it, send only when the value actually changed,
+            // so unrelated settings writes on the mac do not spam the phone.
+            guard helloSent, let lastSentAIAvailable else { return }
+            let available = aiAvailability.value
+            guard available != lastSentAIAvailable else { return }
+            self.lastSentAIAvailable = available
+            RLog("Companion link: AI availability changed to \(available); notifying phone")
+            send(.aiAvailabilityChanged(available: available), requestID: nil)
+        case .macStatus:
+            // Like AI availability: nothing before the hello reply, which
+            // carries the status, and afterwards only actual changes.
+            guard let lastSentStatus else { return }
+            let status = currentStatus()
+            guard status != lastSentStatus else { return }
+            // An alert that can block the app has appeared. Whether it has the
+            // main queue frozen depends on how it was started, which is not
+            // known here, so have the monitor find out quickly.
+            let before = Set(lastSentStatus.modalAlerts.filter { $0.isAppModal }.map { $0.id })
+            if status.modalAlerts.contains(where: { $0.isAppModal && !before.contains($0.id) }) {
+                mainStall.expedite()
+            }
+            sendStatus(status)
+        }
+    }
+
+    // MARK: Mac status
+
+    private func currentStatus() -> CompanionMacStatus {
+        let modalAlerts = alerts.currentAlerts().map { snapshot in
+            CompanionModalAlert(
+                id: snapshot.id.uuidString,
+                heading: snapshot.heading,
+                body: snapshot.body,
+                buttons: snapshot.buttons.map {
+                    CompanionModalAlert.Button(title: $0.title,
+                                               isCancel: $0.isCancel,
+                                               isDestructive: $0.isDestructive,
+                                               rememberable: $0.rememberable,
+                                               offered: $0.offered)
+                },
+                suppressionLabel: snapshot.suppressionLabel,
+                inputs: snapshot.inputs.map { input in
+                    switch input.kind {
+                    case .secret:
+                        return CompanionModalAlert.Input(id: input.id,
+                                                         label: input.label,
+                                                         kind: CompanionModalAlert.Input.secretKind,
+                                                         value: "")
+                    case .text:
+                        return CompanionModalAlert.Input(id: input.id,
+                                                         label: input.label,
+                                                         kind: CompanionModalAlert.Input.textKind,
+                                                         value: input.value)
+                    case .integer(let minimum, let maximum):
+                        return CompanionModalAlert.Input(id: input.id,
+                                                         label: input.label,
+                                                         kind: CompanionModalAlert.Input.integerKind,
+                                                         value: input.value,
+                                                         minimum: minimum,
+                                                         maximum: maximum)
+                    }
+                },
+                hasAccessory: snapshot.hasAccessory,
+                isAppModal: snapshot.isAppModal,
+                sessionGuids: snapshot.sessionGuids,
+                suppressionDefault: snapshot.suppressionDefault)
+        }
+        return CompanionMacStatus(modalAlerts: modalAlerts, mainBlocked: mainStall.isMainBlocked())
+    }
+
+    private func sendStatus(_ status: CompanionMacStatus) {
+        lastSentStatus = status
+        RLog("Companion link: mac status: \(status.modalAlerts.count) alert(s), mainBlocked=\(status.mainBlocked)")
+        send(.macStatusChanged(status: status), requestID: nil)
+    }
+
+    private func answerAlert(alertID: String, buttonIndex: Int, suppress: Bool, inputs: [String: String]) async {
+        let pressed: Bool
+        if let id = UUID(uuidString: alertID) {
+            pressed = await alerts.answer(id: id, buttonIndex: buttonIndex, suppress: suppress, inputs: inputs)
+        } else {
+            pressed = false
+        }
+        RLog("Companion link: answer to alert \(alertID) button \(buttonIndex): \(pressed ? "pressed" : "REJECTED")")
+        // When the button was pressed the alert goes away, and the registry's
+        // observer reports that. When it was not, say so, and repeat the status
+        // (changed or not) so the phone is certain of what is showing.
+        guard !pressed, lastSentStatus != nil else { return }
+        send(.modalAlertAnswerRejected(alertID: alertID), requestID: nil)
+        sendStatus(currentStatus())
+    }
+
+    // MARK: Ending
+
+    /// Report the end of the connection, once. Later calls do nothing.
+    /// The pairing is being removed. From now on a room secret the phone
+    /// couriers is not stored. Returns only once any store already under way
+    /// has finished, so the caller can delete the stored secret next and know
+    /// nothing will write it back.
+    nonisolated func stopStoringRoomSecret() {
+        shared.withLock { $0.roomSecretStorageStopped = true }
+    }
+
+    private struct RoomSecretStorageStopped: Error, CustomStringConvertible {
+        var description: String { "This Mac is no longer paired." }  // Localization unneeded
+    }
+
+    private nonisolated func finish(error: Error?) {
+        let waiters = shared.withLock { shared -> [CheckedContinuation<Error?, Never>]? in
+            if shared.finished {
+                return nil
+            }
+            shared.finished = true
+            shared.closeError = error
+            let waiters = shared.closeWaiters
+            shared.closeWaiters = []
+            return waiters
+        }
+        guard let waiters else { return }
+        subscriptions.withLockUnchecked { $0 = [] }
+        eventsContinuation.yield(.closed(error))
+        eventsContinuation.finish()
+        pokesContinuation.finish()
+        for waiter in waiters {
+            waiter.resume(returning: error)
+        }
+    }
+}
+
+extension CompanionHostBridge {
+    /// How a link event classifies the connection for the presence warning, or
+    /// nil when it does not classify it at all. The bridge applies the first
+    /// non-nil result of a connection and ignores the rest.
+    ///
+    /// - hello is neutral, and so is `.helloCompleted`: the phone's notification
+    ///   extension says hello before it presents its push nonce, and classifying
+    ///   at hello would warn the user about their own Mac's fetch.
+    /// - messagesSince and syncSince are solicited only with a nonce that
+    ///   `nonceIsOutstanding` recognizes.
+    /// - An incompatible hello counts as solicited so the presence toast does
+    ///   not appear on top of the upgrade alert.
+    /// - Every other request, including a ping the link already answered, is
+    ///   interactive use of the phone: unsolicited.
+    nonisolated static func connectionClassification(
+        for event: CompanionLink.Event,
+        nonceIsOutstanding: (String) -> Bool) -> CompanionConnectionClassification? {
+        switch event {
+        case .helloCompleted, .closed:
+            return nil
+        case .versionIncompatible:
+            return .solicited
+        case .envelope(let envelope, _):
+            switch envelope.payload {
+            case .hello:
+                return nil
+            case .messagesSince(_, _, _, let nonce), .syncSince(_, _, _, let nonce):
+                let solicited = nonce.map { nonceIsOutstanding($0) } ?? false
+                return solicited ? .solicited : .unsolicited
+            default:
+                return .unsolicited
+            }
+        }
+    }
+}

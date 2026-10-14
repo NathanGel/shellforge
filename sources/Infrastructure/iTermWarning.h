@@ -2,6 +2,8 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+@class iTermModalAlertDescriptor;
+
 extern BOOL gShowRememberedAlerts;
 
 @protocol iTermWarningHandler <NSObject>
@@ -40,8 +42,75 @@ typedef void(^iTermWarningActionBlock)(iTermWarningSelection);
 + (instancetype)warningActionWithLabel:(NSString *)label
                                  block:(iTermWarningActionBlock _Nullable)block;
 
+// An action that only makes sense at this Mac (see notOfferedRemotely): choosing it opens a file
+// panel, another window, Finder, a web page, or the like. Use it in place of a label string in the
+// `actions` array of the +showWarningWithTitle:... methods, which accept either.
++ (instancetype)localOnlyActionWithLabel:(NSString *)label;
+
 @property(nonatomic, copy) NSString *label;
 @property(nonatomic, copy) iTermWarningActionBlock _Nullable block;
+
+// Structural identity, independent of the (localized) label. isCancel marks the Cancel/dismiss
+// action: it is excluded from the "remember my choice" affordance and its choice is never
+// persisted. neverRemember marks any other action whose choice should not be remembered. Object-
+// API callers may set these directly; the label-array API resolves them from cancelLabel /
+// doNotRememberLabels at show time, so the runtime never compares against a hardcoded @"Cancel".
+@property(nonatomic) BOOL isCancel;
+@property(nonatomic) BOOL neverRemember;
+
+// Set for an action that only makes sense at this Mac, such as one that opens another window here.
+// The companion app does not show its button and cannot press it.
+@property(nonatomic) BOOL notOfferedRemotely;
+
+@end
+
+// Describes one control in a warning's accessory view whose value the paired companion app may set
+// before it presses a button, so a warning that asks for input can be answered completely from
+// the phone. The phone shows a field with `label` and the control's current value, and sends back
+// what the user entered.
+@interface iTermWarningRemoteInput : NSObject
+
+// Stable name for this input within its warning. Not shown to the user.
+@property(nonatomic, readonly) NSString *identifier;
+// The control's label, already localized, or nil if the warning's text says what is being asked.
+@property(nonatomic, readonly, nullable) NSString *label;
+// YES for a whole number in [minimum, maximum]; NO for free text.
+@property(nonatomic, readonly) BOOL isInteger;
+@property(nonatomic, readonly) NSInteger minimum;
+@property(nonatomic, readonly) NSInteger maximum;
+// YES for a password or other secret. The phone shows an obscured field, and what the control
+// holds is never sent to it: currentValue is always empty.
+@property(nonatomic, readonly) BOOL isSecret;
+
+// What the control holds now.
+- (NSString *)currentValue;
+// Whether `value` could be put in the control. Text always can; an integer must parse and be in
+// range.
+- (BOOL)acceptsValue:(NSString *)value;
+// Put `value` in the control, as if the user had typed it. Only call with an accepted value.
+- (void)applyValue:(NSString *)value;
+
+// A free-text input backed by `textField`.
++ (instancetype)textInputWithIdentifier:(NSString *)identifier
+                                  label:(NSString * _Nullable)label
+                              textField:(NSTextField *)textField;
+
+// A secret, such as a password, backed by `textField` (normally an NSSecureTextField). What the
+// phone sends is put in the field; what the field holds is never sent to the phone.
++ (instancetype)secretInputWithIdentifier:(NSString *)identifier
+                                    label:(NSString * _Nullable)label
+                                textField:(NSTextField *)textField;
+
+// A whole-number input. `getter` reads the current value and `setter` stores a new one; the
+// setter is only called with a value in [minimum, maximum].
++ (instancetype)integerInputWithIdentifier:(NSString *)identifier
+                                     label:(NSString * _Nullable)label
+                                   minimum:(NSInteger)minimum
+                                   maximum:(NSInteger)maximum
+                                    getter:(NSInteger (^)(void))getter
+                                    setter:(void (^)(NSInteger value))setter;
+
+- (instancetype)init NS_UNAVAILABLE;
 
 @end
 
@@ -85,12 +154,32 @@ typedef void(^iTermWarningActionBlock)(iTermWarningSelection);
 // Tests can use this to prevent warning popups.
 + (void)setWarningHandler:(id<iTermWarningHandler>)handler;
 + (id<iTermWarningHandler>)warningHandler;
+
+// Tells warnings which terminal sessions a window holds, so a warning attached to a window can be
+// tied to them for the companion app (see sessionGuid). A block, set by the code that knows about
+// terminal windows, so this class need not. Called on the main thread.
++ (void)setSessionGuidResolver:(NSArray<NSString *> * _Nonnull (^ _Nullable)(NSWindow *window))resolver;
+
+// For tests. While YES, a warning that would be shown is not put on screen. It still builds its
+// alert and blocks the way a real one does (runModal spins a nested run loop in the modal panel
+// mode; a sheet started with runModalAsync: does not block), until one of the alert's buttons is
+// clicked programmatically or +cancelHeadlessModals is called. Unlike a warning handler, the
+// warning goes through everything else it normally does around showing an alert.
++ (void)setRunsHeadlessModals:(BOOL)headless;
++ (BOOL)runsHeadlessModals;
+
+// Ends every headless modal that is waiting, as if it had been aborted: each reports
+// kItermWarningSelectionError. Safe to call from inside a headless modal's run loop.
++ (void)cancelHeadlessModals;
 + (BOOL)showingWarning;
 // Nil if nothing saved, otherwise an iTermWarningSelection.
 + (NSNumber * _Nullable)conditionalSavedSelectionForIdentifier:(NSString *)identifier;
 
 // Show a warning, optionally with a suppression checkbox. It may not be shown
 // if it was previously suppressed.
+//
+// In all of these, each element of `actions` is a button: either its label (an NSString) or an
+// iTermWarningAction, such as one from +[iTermWarningAction localOnlyActionWithLabel:].
 + (iTermWarningSelection)showWarningWithTitle:(NSString *)title
                                       actions:(NSArray *)actions
                                    identifier:(NSString * _Nullable)identifier
@@ -154,6 +243,15 @@ typedef void(^iTermWarningActionBlock)(iTermWarningSelection);
                        completion:(void (^)(iTermWarningSelection selection,
                                             iTermWarning *warning))completion;
 
+// As above, with the accessory's controls described for the companion app (see remoteInputs).
++ (iTermWarningSelection)showWarningWithTitle:(NSString *)title
+                                      actions:(NSArray *)actions
+                                    accessory:(NSView * _Nullable)accessory
+                                 remoteInputs:(NSArray<iTermWarningRemoteInput *> * _Nullable)remoteInputs
+                                   identifier:(NSString * _Nullable)identifier
+                                  silenceable:(iTermWarningType)warningType
+                                       window:(NSWindow * _Nullable)window;
+
 // If you prefer you can set the properties you care about and then invoke runModal.
 
 // Main text to display.
@@ -187,8 +285,44 @@ typedef void(^iTermWarningActionBlock)(iTermWarningSelection);
 // Optional. Actions whose strings are in `doNotRememberLabels` won't be remembered.
 @property(nonatomic, copy) NSArray<NSString *> * _Nullable doNotRememberLabels;
 
+// Optional. Actions whose strings are in `notOfferedRemotelyLabels` are marked notOfferedRemotely,
+// for callers that pass labels rather than iTermWarningAction objects.
+@property(nonatomic, copy) NSArray<NSString *> * _Nullable notOfferedRemotelyLabels;
+
+// Set when `title` is itself a secret (a revealed password, say), to keep it out of logs. It is
+// still shown, on this Mac and in the companion app.
+@property(nonatomic) BOOL titleIsSecret;
+
 // If set then a "help" button is added to the alert box and this block is invoked when it is clicked.
 @property(nullable, nonatomic, copy) void (^showHelpBlock)(void);
+
+// Whether the paired companion app may see this warning and press one of its buttons while it is
+// showing (see iTermModalAlertRegistry). Defaults to YES, so every warning is answerable from the
+// phone unless its call site sets this to NO. No call site does yet. Set it to NO for a warning
+// that must be answered at this Mac.
+//
+// The accessory view itself is never sent. If it holds controls whose values matter to the answer,
+// describe them in remoteInputs so the phone can show and set them. Otherwise the phone is told
+// only that an accessory exists, and can still press any button, which for an accessory that takes
+// input means confirming contents the user has not seen.
+@property(nonatomic) BOOL remotelyAnswerable;
+
+// The terminal session this warning is about, if its caller knows. The companion app interrupts
+// with the warning only while the user is looking at a session it is about (or when the warning
+// has the whole app blocked). When nil, the sessions are taken from `window`: see
+// +setSessionGuidResolver:.
+@property(nullable, nonatomic, copy) NSString *sessionGuid;
+
+// The controls in `accessory` that the companion app may set before pressing a button. Setting
+// this declares that they are everything in the accessory that matters to the answer, so the phone
+// does not tell the user that more is shown on the Mac.
+@property(nullable, nonatomic, copy) NSArray<iTermWarningRemoteInput *> *remoteInputs;
+
+// A checkbox in `accessory` that the companion app shows and sets the way it does a warning's
+// own "don't ask again" box: for example "Remember this password". Only for a warning that has no
+// box of its own (kiTermWarningTypePersistent). The phone starts from the checkbox's state, and
+// what the phone chose is put in it before a button is pressed, whichever button that is.
+@property(nullable, nonatomic, strong) NSButton *remoteCheckbox;
 
 @property(nonatomic, retain) NSWindow * _Nullable window;
 @property(nonatomic, retain) NSView * _Nullable initialFirstResponder;
@@ -201,6 +335,22 @@ typedef void(^iTermWarningActionBlock)(iTermWarningSelection);
 // Modally show the alert. Returns the selection.
 - (iTermWarningSelection)runModal;
 - (void)runModalAsync:(void (^)(iTermWarningSelection result, iTermWarning *warning))completion;
+
+// How this warning would be described to iTermModalAlertRegistry if it were shown now. Builds the
+// alert without showing it. Nil when the warning is not remotelyAnswerable. For tests.
+- (iTermModalAlertDescriptor * _Nullable)modalAlertDescriptorWhenAppModal:(BOOL)appModal;
+
+// Builds this warning's alert without showing it. For tests.
+- (NSAlert *)makeAlertForRemoteAnswer;
+
+// The block iTermModalAlertRegistry calls to press a button on `alert` (which must be one this
+// warning made). It checks the suppression box first if `suppress` is set, the alert has one, and
+// that button's choice may be remembered; then it clicks the button. Before either, it puts each
+// value in `inputs` (keyed by remote input identifier) into its control; an input whose identifier
+// is absent keeps what it holds. Returns NO, changing and clicking nothing, if the index is not one
+// of this warning's actions, the button is disabled or hidden, a value is not acceptable to its
+// input, or the alert is gone. Holds the alert weakly.
+- (BOOL (^)(NSInteger buttonIndex, BOOL suppress, NSDictionary<NSString *, NSString *> *inputs))modalAlertPressBlockForAlert:(NSAlert *)alert;
 
 @end
 

@@ -19,11 +19,13 @@
 #import "iTermAdvancedSettingsModel.h"
 #import "iTermApplication.h"
 #import "iTermContextMenuUtilities.h"
+#import "iTermExpressionEvaluator.h"
 #import "iTermImageInfo.h"
 #import "iTermPreferences.h"
 #import "iTermScriptFunctionCall.h"
 #import "iTermSelection.h"
 #import "iTermTextExtractor.h"
+#import "iTermURLActionFactory.h"
 #import "iTermURLActionHelper.h"
 #import "iTermVariableScope.h"
 #import "iTermVariableScope+Session.h"
@@ -140,7 +142,7 @@ const int kMaxSelectedTextLengthForCustomActions = 400;
     NSMenu *menu = [[NSMenu alloc] initWithTitle:@"Contextual Menu"];
 
     if (baseline != clickedTime) {
-        NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:@"Set Baseline for Relative Timestamps"
+        NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:NSLocalizedStringWithDefaultValue(@"ContextMenu.SetTimestampBaseline", nil, [NSBundle mainBundle], @"Set Baseline for Relative Timestamps", @"Context menu item to set the baseline time for relative timestamps")
                                                       action:@selector(setTimestampBaseline:)
                                                keyEquivalent:@""];
         item.target = self;
@@ -148,7 +150,7 @@ const int kMaxSelectedTextLengthForCustomActions = 400;
         [menu addItem:item];
     }
     if (baseline != 0) {
-        NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:@"Disable Relative Timestamps"
+        NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:NSLocalizedStringWithDefaultValue(@"ContextMenu.DisableRelativeTimestamps", nil, [NSBundle mainBundle], @"Disable Relative Timestamps", @"Context menu item to disable relative timestamps")
                                                       action:@selector(setTimestampBaseline:)
                                                keyEquivalent:@""];
         item.target = self;
@@ -214,7 +216,7 @@ const int kMaxSelectedTextLengthForCustomActions = 400;
     if (mark.name) {
         NSMenuItem *nameItem = [[NSMenuItem alloc] initWithTitle:mark.name action:nil keyEquivalent:@""];
 
-        NSMenuItem *removeItem = [[NSMenuItem alloc] initWithTitle:@"Remove Named Mark" action:@selector(removeNamedMark:) keyEquivalent:@""];
+        NSMenuItem *removeItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedStringWithDefaultValue(@"ContextMenu.RemoveNamedMark", nil, [NSBundle mainBundle], @"Remove Named Mark", @"Context menu item to remove a named mark") action:@selector(removeNamedMark:) keyEquivalent:@""];
         removeItem.target = self;
         removeItem.representedObject = mark;
 
@@ -223,7 +225,7 @@ const int kMaxSelectedTextLengthForCustomActions = 400;
         [contextMenu insertItem:[NSMenuItem separatorItem] atIndex:2];
     }
     if (mark && mark.hasNonEmptyCommand) {
-        NSMenuItem *markItem = [[NSMenuItem alloc] initWithTitle:@"Command Info"
+        NSMenuItem *markItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedStringWithDefaultValue(@"ContextMenu.CommandInfo", nil, [NSBundle mainBundle], @"Command Info", @"Context menu item to reveal command info")
                                                           action:@selector(revealCommandInfo:)
                                                    keyEquivalent:@""];
         markItem.target = self;
@@ -249,7 +251,7 @@ const int kMaxSelectedTextLengthForCustomActions = 400;
     id<VT100ScreenMarkReading> mark = [self.delegate contextMenuCommandWithOutputAtLine:y];
 
     if (foldMark) {
-        NSMenuItem *markItem = [[NSMenuItem alloc] initWithTitle:@"Unfold"
+        NSMenuItem *markItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedStringWithDefaultValue(@"ContextMenu.Unfold", nil, [NSBundle mainBundle], @"Unfold", @"Context menu item to unfold folded lines")
                                                           action:@selector(unfoldMark:)
                                                    keyEquivalent:@""];
         markItem.target = self;
@@ -257,7 +259,7 @@ const int kMaxSelectedTextLengthForCustomActions = 400;
         [contextMenu insertItem:markItem atIndex:0];
         [contextMenu insertItem:[NSMenuItem separatorItem] atIndex:1];
     } else if (mark && mark.hasNonEmptyCommand && [self.delegate contextMenu:self markShouldBeFoldable:mark]) {
-        NSMenuItem *markItem = [[NSMenuItem alloc] initWithTitle:@"Fold"
+        NSMenuItem *markItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedStringWithDefaultValue(@"ContextMenu.Fold", nil, [NSBundle mainBundle], @"Fold", @"Context menu item to fold command output")
                                                           action:@selector(foldCommandMark:)
                                                    keyEquivalent:@""];
         markItem.target = self;
@@ -292,12 +294,26 @@ const int kMaxSelectedTextLengthForCustomActions = 400;
         [item action] == @selector(swapSessions:)) {
         return ![self.delegate contextMenuIsLocked:self] && ![self.delegate contextMenuWindowIsLayoutLocked:self];
     }
+    // A float cannot be split. Other ways to split one go to a tiled pane instead, but these
+    // items name this pane.
+    if (([item action] == @selector(splitTextViewVertically:) ||
+         [item action] == @selector(splitTextViewHorizontally:)) &&
+        [self.delegate contextMenuSessionIsFloating:self]) {
+        return NO;
+    }
     // These change the window's layout (split a pane or close a pane), so disable
     // them when the window's layout is locked.
     if ([item action] == @selector(splitTextViewVertically:) ||
         [item action] == @selector(splitTextViewHorizontally:) ||
         [item action] == @selector(closeTextViewSession:)) {
         return ![self.delegate contextMenuWindowIsLayoutLocked:self];
+    }
+    if ([item action] == @selector(dockFloatingPaneFromContextMenu:)) {
+        return [self.delegate contextMenuCanDockFloatingPane:self];
+    }
+    if ([item action] == @selector(bringFloatingPaneToFrontFromContextMenu:) ||
+        [item action] == @selector(sendFloatingPaneToBackFromContextMenu:)) {
+        return YES;
     }
     if ([item action] == @selector(toggleBroadcastingInput:) ||
         [item action] == @selector(toggleLock:) ||
@@ -334,7 +350,8 @@ const int kMaxSelectedTextLengthForCustomActions = 400;
         return [self.delegate contextMenu:self hasOutputForCommandMark:commandMark];
     }
     if ([item action] == @selector(openURLInVerticalSplitPane:) ||
-        [item action] == @selector(openURLInHorizontalSplitPane:)) {
+        [item action] == @selector(openURLInHorizontalSplitPane:) ||
+        [item action] == @selector(openURLInFloatingPane:)) {
         // These explicitly split the current window, so disable them when its
         // layout is locked (parallel to the greyed-out Split Pane menu items).
         iTermSelection *selection = [self.delegate contextMenuSelection:self];
@@ -389,32 +406,32 @@ const int kMaxSelectedTextLengthForCustomActions = 400;
         NSArray *entryDicts;
         if (imageInfo.broken) {
             entryDicts =
-                @[ @{ @"title": @"Save File As…",
+                @[ @{ @"title": NSLocalizedStringWithDefaultValue(@"ContextMenu.SaveFileAs", nil, [NSBundle mainBundle], @"Save File As…", @"Context menu item to save a file"),
                       @"selector": NSStringFromSelector(@selector(saveImageAs:)) },
-                   @{ @"title": @"Copy File",
+                   @{ @"title": NSLocalizedStringWithDefaultValue(@"ContextMenu.CopyFile", nil, [NSBundle mainBundle], @"Copy File", @"Context menu item to copy a file"),
                       @"selector": NSStringFromSelector(@selector(copyImage:)) },
-                   @{ @"title": @"Open File",
+                   @{ @"title": NSLocalizedStringWithDefaultValue(@"ContextMenu.OpenFile", nil, [NSBundle mainBundle], @"Open File", @"Context menu item to open a file"),
                       @"selector": NSStringFromSelector(@selector(openImage:)) },
-                   @{ @"title": @"Inspect",
+                   @{ @"title": NSLocalizedStringWithDefaultValue(@"ContextMenu.Inspect", nil, [NSBundle mainBundle], @"Inspect", @"Context menu item to inspect an image"),
                       @"selector": NSStringFromSelector(@selector(inspectImage:)) } ];
         } else {
             entryDicts =
-                @[ @{ @"title": @"Save Image As…",
+                @[ @{ @"title": NSLocalizedStringWithDefaultValue(@"ContextMenu.SaveImageAs", nil, [NSBundle mainBundle], @"Save Image As…", @"Context menu item to save an image"),
                       @"selector": NSStringFromSelector(@selector(saveImageAs:)) },
-                   @{ @"title": @"Copy Image",
+                   @{ @"title": NSLocalizedStringWithDefaultValue(@"ContextMenu.CopyImage", nil, [NSBundle mainBundle], @"Copy Image", @"Context menu item to copy an image"),
                       @"selector": NSStringFromSelector(@selector(copyImage:)) },
-                   @{ @"title": @"Open Image",
+                   @{ @"title": NSLocalizedStringWithDefaultValue(@"ContextMenu.OpenImage", nil, [NSBundle mainBundle], @"Open Image", @"Context menu item to open an image"),
                       @"selector": NSStringFromSelector(@selector(openImage:)) },
-                   @{ @"title": @"Inspect",
+                   @{ @"title": NSLocalizedStringWithDefaultValue(@"ContextMenu.Inspect", nil, [NSBundle mainBundle], @"Inspect", @"Context menu item to inspect an image"),
                       @"selector": NSStringFromSelector(@selector(inspectImage:)) } ];
         }
         if (imageInfo.animated || imageInfo.paused) {
             NSString *selector = NSStringFromSelector(@selector(togglePauseAnimatingImage:));
             if (imageInfo.paused) {
-                entryDicts = [entryDicts arrayByAddingObject:@{ @"title": @"Resume Animating",
+                entryDicts = [entryDicts arrayByAddingObject:@{ @"title": NSLocalizedStringWithDefaultValue(@"ContextMenu.ResumeAnimating", nil, [NSBundle mainBundle], @"Resume Animating", @"Context menu item to resume animating an image"),
                                                                 @"selector": selector }];
             } else {
-                entryDicts = [entryDicts arrayByAddingObject:@{ @"title": @"Stop Animating",
+                entryDicts = [entryDicts arrayByAddingObject:@{ @"title": NSLocalizedStringWithDefaultValue(@"ContextMenu.StopAnimating", nil, [NSBundle mainBundle], @"Stop Animating", @"Context menu item to stop animating an image"),
                                                                 @"selector": selector }];
             }
         }
@@ -483,17 +500,17 @@ const int kMaxSelectedTextLengthForCustomActions = 400;
 
                 switch (replacement.kind) {
                     case iTermSelectionReplacementKindJson:
-                        item.title = @"Replace with Pretty-Printed JSON";
+                        item.title = NSLocalizedStringWithDefaultValue(@"ContextMenu.ReplacePrettyJSON", nil, [NSBundle mainBundle], @"Replace with Pretty-Printed JSON", @"Context menu item to replace selection with pretty-printed JSON");
                         item.action = @selector(replaceWithPrettyJSON:);
                         break;
 
                     case iTermSelectionReplacementKindBase64Decode:
-                        item.title = @"Replace with Base64-Decoded Value";
+                        item.title = NSLocalizedStringWithDefaultValue(@"ContextMenu.ReplaceBase64Decoded", nil, [NSBundle mainBundle], @"Replace with Base64-Decoded Value", @"Context menu item to replace selection with base64-decoded value");
                         item.action = @selector(replaceWithBase64Decoded:);
                         break;
 
                     case iTermSelectionReplacementKindBase64Encode:
-                        item.title = @"Replace with Base64-Encoded Value";
+                        item.title = NSLocalizedStringWithDefaultValue(@"ContextMenu.ReplaceBase64Encoded", nil, [NSBundle mainBundle], @"Replace with Base64-Encoded Value", @"Context menu item to replace selection with base64-encoded value");
                         item.action = @selector(replaceWithBase64Encoded:);
                         break;
                 }
@@ -525,14 +542,16 @@ const int kMaxSelectedTextLengthForCustomActions = 400;
     // Menu items for acting on text selections
     const BOOL sshIntegrationDownload = [self.delegate contextMenuWillDownloadWithSSHIntegrationOnAbsLine:selection.lastAbsRange.coordRange.start.y];
 
-    __block NSString *scpTitle = sshIntegrationDownload ? @"Download using SSH Integration" : @"Download with scp";
+    __block NSString *scpTitle = sshIntegrationDownload ? NSLocalizedStringWithDefaultValue(@"ContextMenu.DownloadUsingSSHIntegration", nil, [NSBundle mainBundle], @"Download using SSH Integration", @"Context menu item to download a file using SSH integration") : NSLocalizedStringWithDefaultValue(@"ContextMenu.DownloadWithScp", nil, [NSBundle mainBundle], @"Download with scp", @"Context menu item to download a file with scp");
     if (haveShortSelection) {
         [self.delegate contextMenu:self withRelativeCoord:selection.lastAbsRange.coordRange.start block:^(VT100GridCoord coord) {
             SCPPath *scpPath = [self.delegate contextMenu:self scpPathForFile:shortSelectedText onLine:coord.y];
             if (scpPath) {
-                scpTitle = [NSString stringWithFormat:@"Download %@ from %@",
-                            sshIntegrationDownload ? @"using SSH Integration" : @"with scp",
-                            scpPath.hostname];
+                // Complete per-case sentences (not a translated method phrase spliced into a frame):
+                // the only interpolated value is the hostname.
+                scpTitle = sshIntegrationDownload
+                    ? [NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"ContextMenu.DownloadUsingSSHFromHost", nil, [NSBundle mainBundle], @"Download using SSH Integration from %@", @"Context menu item to download a file using SSH integration; %@ is the hostname"), scpPath.hostname]
+                    : [NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"ContextMenu.DownloadWithScpFromHost", nil, [NSBundle mainBundle], @"Download with scp from %@", @"Context menu item to download a file with scp; %@ is the hostname"), scpPath.hostname];
             }
         }];
     }
@@ -544,21 +563,25 @@ const int kMaxSelectedTextLengthForCustomActions = 400;
         [[theMenu itemAtIndex:[theMenu numberOfItems] - 1] setTarget:self];
     };
     add(scpTitle, @selector(downloadWithSCP:));
-    if (shortSelectedText) {
-        add(@"Open Selection as URL", @selector(browse:));
-        if ([[NSWorkspace sharedWorkspace] it_urlIsConditionallyLocallyOpenable:[NSURL URLWithString:shortSelectedText]]) {
-            add(@"Open URL in Vertical Split Pane", @selector(openURLInVerticalSplitPane:));
-            add(@"Open URL in Horizontal Split Pane", @selector(openURLInHorizontalSplitPane:));
+    // Same URL construction as browse: uses, so the items only appear when choosing one
+    // would open something. Issue 13092.
+    NSURL *selectionURL = shortSelectedText ? [iTermURLActionFactory urlForUserSuppliedString:shortSelectedText guessingScheme:YES] : nil;
+    if (selectionURL) {
+        add(NSLocalizedStringWithDefaultValue(@"ContextMenu.OpenSelectionAsURL", nil, [NSBundle mainBundle], @"Open Selection as URL", @"Context menu item to open the selected text as a URL"), @selector(browse:));
+        if ([[NSWorkspace sharedWorkspace] it_urlIsConditionallyLocallyOpenable:selectionURL]) {
+            add(NSLocalizedStringWithDefaultValue(@"ContextMenu.OpenURLInVerticalSplitPane", nil, [NSBundle mainBundle], @"Open URL in Vertical Split Pane", @"Context menu item to open a URL in a vertical split pane"), @selector(openURLInVerticalSplitPane:));
+            add(NSLocalizedStringWithDefaultValue(@"ContextMenu.OpenURLInHorizontalSplitPane", nil, [NSBundle mainBundle], @"Open URL in Horizontal Split Pane", @"Context menu item to open a URL in a horizontal split pane"), @selector(openURLInHorizontalSplitPane:));
+            add(NSLocalizedStringWithDefaultValue(@"ContextMenu.OpenURLInFloatingPane", nil, [NSBundle mainBundle], @"Open URL in Floating Pane", @"Context menu item to open a URL in a new floating pane, which floats over the tab’s split panes"), @selector(openURLInFloatingPane:));
             [theMenu addItem:[NSMenuItem separatorItem]];
         }
     }
     if (shortSelectedText && [self.delegate contextMenu:self canQuickLookURL:[NSURL URLWithUserSuppliedString:shortSelectedText]]) {
-        add(@"Quick Look Link", @selector(quickLook:));
+        add(NSLocalizedStringWithDefaultValue(@"ContextMenu.QuickLookLink", nil, [NSBundle mainBundle], @"Quick Look Link", @"Context menu item to Quick Look a link"), @selector(quickLook:));
     }
-    add(@"Search the Web for Selection", @selector(searchInBrowser:));
+    add(NSLocalizedStringWithDefaultValue(@"ContextMenu.SearchWebForSelection", nil, [NSBundle mainBundle], @"Search the Web for Selection", @"Context menu item to search the web for the selected text"), @selector(searchInBrowser:));
 
-    add(@"Send Email to Selected Address", @selector(mail:));
-    add(@"Add Trigger…", @selector(addTrigger:));
+    add(NSLocalizedStringWithDefaultValue(@"ContextMenu.SendEmailToSelectedAddress", nil, [NSBundle mainBundle], @"Send Email to Selected Address", @"Context menu item to send email to the selected address"), @selector(mail:));
+    add(NSLocalizedStringWithDefaultValue(@"ContextMenu.AddTrigger", nil, [NSBundle mainBundle], @"Add Trigger…", @"Context menu item to add a trigger"), @selector(addTrigger:));
 
     // Separator
     [theMenu addItem:[NSMenuItem separatorItem]];
@@ -578,8 +601,8 @@ const int kMaxSelectedTextLengthForCustomActions = 400;
     }
 
     // Split pane options
-    add(@"Split Pane Vertically", @selector(splitTextViewVertically:));
-    add(@"Split Pane Horizontally", @selector(splitTextViewHorizontally:));
+    add(NSLocalizedStringWithDefaultValue(@"ContextMenu.SplitPaneVertically", nil, [NSBundle mainBundle], @"Split Pane Vertically", @"Context menu item to split the pane vertically"), @selector(splitTextViewVertically:));
+    add(NSLocalizedStringWithDefaultValue(@"ContextMenu.SplitPaneHorizontally", nil, [NSBundle mainBundle], @"Split Pane Horizontally", @"Context menu item to split the pane horizontally"), @selector(splitTextViewHorizontally:));
     if ([iTermPreferences boolForKey:kPreferenceKeyMenuActionImages]) {
         NSInteger n = theMenu.numberOfItems;
         theMenu.itemArray[n - 2].image = [NSImage imageWithSystemSymbolName:@"square.split.2x1.fill"
@@ -591,26 +614,31 @@ const int kMaxSelectedTextLengthForCustomActions = 400;
     // Separator
     [theMenu addItem:[NSMenuItem separatorItem]];
 
-    add(@"Move Session to Split Pane", @selector(movePane:));
+    add(NSLocalizedStringWithDefaultValue(@"ContextMenu.MoveSessionToSplitPane", nil, [NSBundle mainBundle], @"Move Session to Split Pane", @"Context menu item to move the session to a split pane"), @selector(movePane:));
     if ([self.delegate contextMenuCurrentTabHasMultipleSessions:self]) {
-        NSMenuItem *item = [theMenu addItemWithTitle:@"Move Session to Tab"
+        NSMenuItem *item = [theMenu addItemWithTitle:NSLocalizedStringWithDefaultValue(@"ContextMenu.MoveSessionToTab", nil, [NSBundle mainBundle], @"Move Session to Tab", @"Context menu item to move the session to a tab")
                                               action:@selector(moveSessionToTab:)
                                        keyEquivalent:@""];
         item.representedObject = [self.delegate contextMenuSessionScope:self].ID;
     }
-    [theMenu addItemWithTitle:@"Move Session to Window"
+    [theMenu addItemWithTitle:NSLocalizedStringWithDefaultValue(@"ContextMenu.MoveSessionToWindow", nil, [NSBundle mainBundle], @"Move Session to Window", @"Context menu item to move the session to a window")
                      action:@selector(moveSessionToWindow:)
                 keyEquivalent:@""];
-    add(@"Swap With Session…", @selector(swapSessions:));
+    add(NSLocalizedStringWithDefaultValue(@"ContextMenu.SwapWithSession", nil, [NSBundle mainBundle], @"Swap With Session…", @"Context menu item to swap with another session"), @selector(swapSessions:));
+
+    if ([self.delegate contextMenuSessionIsFloating:self]) {
+        // This is also the floating pane's title bar menu.
+        [theMenu addItem:[NSMenuItem separatorItem]];
+        add(NSLocalizedStringWithDefaultValue(@"ContextMenu.DockFloatingPane", nil, [NSBundle mainBundle], @"Dock Floating Pane", @"Context menu item that moves a floating pane into the tab's split pane layout"), @selector(dockFloatingPaneFromContextMenu:));
+        add(NSLocalizedStringWithDefaultValue(@"ContextMenu.BringFloatingPaneToFront", nil, [NSBundle mainBundle], @"Bring to Front", @"Context menu item that puts a floating pane in front of the tab's other floating panes"), @selector(bringFloatingPaneToFrontFromContextMenu:));
+        add(NSLocalizedStringWithDefaultValue(@"ContextMenu.SendFloatingPaneToBack", nil, [NSBundle mainBundle], @"Send to Back", @"Context menu item that puts a floating pane behind the tab's other floating panes"), @selector(sendFloatingPaneToBackFromContextMenu:));
+    }
 
     // Separator
     [theMenu addItem:[NSMenuItem separatorItem]];
 
     // Copy,  paste, and save
-    [theMenu addItemWithTitle:NSLocalizedStringFromTableInBundle(@"Copy",
-                                                                 @"iTerm",
-                                                                 [NSBundle bundleForClass: [self class]],
-                                                                 @"Context menu")
+    [theMenu addItemWithTitle:iTermLocalizedCopy()
                      action:@selector(copy:) keyEquivalent:@""];
 
     // Don't attempt to extract a URL from invalid coordinates (-1,-1) if opened from the session titlebar
@@ -619,7 +647,7 @@ const int kMaxSelectedTextLengthForCustomActions = 400;
         NSString *urlID;
         NSURL *url = [extractor urlOfHypertextLinkAt:coord urlId:&urlID target:nil];
         if (url) {
-            NSMenuItem *item = [theMenu addItemWithTitle:@"Copy Link Address" action:@selector(copyLinkAddress:) keyEquivalent:@""];
+            NSMenuItem *item = [theMenu addItemWithTitle:NSLocalizedStringWithDefaultValue(@"ContextMenu.CopyLinkAddress", nil, [NSBundle mainBundle], @"Copy Link Address", @"Context menu item to copy a hyperlink address") action:@selector(copyLinkAddress:) keyEquivalent:@""];
             item.target = self;
             item.representedObject = url;
         } else {
@@ -628,59 +656,50 @@ const int kMaxSelectedTextLengthForCustomActions = 400;
             // when there's genuinely a URL under the cursor.
             NSURL *detectedURL = [_urlActionHelper urlForCopyAtCoord:coord];
             if (detectedURL) {
-                NSMenuItem *item = [theMenu addItemWithTitle:@"Copy URL" action:@selector(copyDetectedURL:) keyEquivalent:@""];
+                NSMenuItem *item = [theMenu addItemWithTitle:NSLocalizedStringWithDefaultValue(@"ContextMenu.CopyURL", nil, [NSBundle mainBundle], @"Copy URL", @"Context menu item to copy a detected URL") action:@selector(copyDetectedURL:) keyEquivalent:@""];
                 item.target = self;
                 item.representedObject = detectedURL;
             }
         }
     }
     
-    [theMenu addItemWithTitle:NSLocalizedStringFromTableInBundle(@"Paste",
-                                                                 @"iTerm",
-                                                                 [NSBundle bundleForClass: [self class]],
-                                                                 @"Context menu")
+    [theMenu addItemWithTitle:NSLocalizedStringWithDefaultValue(@"General.Paste", nil, [NSBundle mainBundle], @"Paste", @"Paste menu item")
                      action:@selector(paste:) keyEquivalent:@""];
-    [theMenu addItemWithTitle:NSLocalizedStringFromTableInBundle(@"Save",
-                                                                 @"iTerm",
-                                                                 [NSBundle bundleForClass: [self class]],
-                                                                 @"Context menu")
+    [theMenu addItemWithTitle:NSLocalizedStringWithDefaultValue(@"General.Save", nil, [NSBundle mainBundle], @"Save", @"Save: used on buttons and menu items")
                      action:@selector(saveDocumentAs:) keyEquivalent:@""];
 
     // Separator
     [theMenu addItem:[NSMenuItem separatorItem]];
 
     // Select all
-    [theMenu addItemWithTitle:NSLocalizedStringFromTableInBundle(@"Select All",
-                                                                 @"iTerm",
-                                                                 [NSBundle bundleForClass: [self class]],
-                                                                 @"Context menu")
+    [theMenu addItemWithTitle:NSLocalizedStringWithDefaultValue(@"General.SelectAll", nil, [NSBundle mainBundle], @"Select All", @"Select All menu item")
                      action:@selector(selectAll:) keyEquivalent:@""];
 
-    add(@"Send Selection", @selector(sendSelection:));
-    add(@"Save Selection as Snippet", @selector(saveSelectionAsSnippet:));
+    add(NSLocalizedStringWithDefaultValue(@"ContextMenu.SendSelection", nil, [NSBundle mainBundle], @"Send Selection", @"Context menu item to send the selected text"), @selector(sendSelection:));
+    add(NSLocalizedStringWithDefaultValue(@"ContextMenu.SaveSelectionAsSnippet", nil, [NSBundle mainBundle], @"Save Selection as Snippet", @"Context menu item to save the selection as a snippet"), @selector(saveSelectionAsSnippet:));
 
     // Clear buffer
-    add(@"Clear Buffer", @selector(clearTextViewBuffer:));
+    add(NSLocalizedStringWithDefaultValue(@"ContextMenu.ClearBuffer", nil, [NSBundle mainBundle], @"Clear Buffer", @"Context menu item to clear the buffer"), @selector(clearTextViewBuffer:));
 
     // Make note
-    add(@"Annotate Selection", @selector(addNote:));
-    add(@"Reveal Annotation", @selector(showNotes:));
+    add(NSLocalizedStringWithDefaultValue(@"ContextMenu.AnnotateSelection", nil, [NSBundle mainBundle], @"Annotate Selection", @"Context menu item to annotate the selection"), @selector(addNote:));
+    add(NSLocalizedStringWithDefaultValue(@"ContextMenu.RevealAnnotation", nil, [NSBundle mainBundle], @"Reveal Annotation", @"Context menu item to reveal an annotation"), @selector(showNotes:));
 
     // Separator
     [theMenu addItem:[NSMenuItem separatorItem]];
 
     // Edit Session
-    add(@"Edit Session...", @selector(editTextViewSession:));
+    add(NSLocalizedStringWithDefaultValue(@"ContextMenu.EditSession", nil, [NSBundle mainBundle], @"Edit Session…", @"Context menu item to edit the session"), @selector(editTextViewSession:));
 
     // Separator
     [theMenu addItem:[NSMenuItem separatorItem]];
 
     // Toggle broadcast
-    add(@"Toggle Broadcasting Input", @selector(toggleBroadcastingInput:));
+    add(NSLocalizedStringWithDefaultValue(@"ContextMenu.ToggleBroadcastingInput", nil, [NSBundle mainBundle], @"Toggle Broadcasting Input", @"Context menu item to toggle broadcasting input"), @selector(toggleBroadcastingInput:));
 
     // Lock pane
     {
-        NSMenuItem *lockItem = [[NSMenuItem alloc] initWithTitle:@"Lock Pane"
+        NSMenuItem *lockItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedStringWithDefaultValue(@"ContextMenu.LockPane", nil, [NSBundle mainBundle], @"Lock Pane", @"Context menu item to lock the pane")
                                                           action:@selector(toggleLock:)
                                                    keyEquivalent:@""];
         lockItem.target = self;
@@ -698,14 +717,14 @@ const int kMaxSelectedTextLengthForCustomActions = 400;
         if (allLocked) {
             // Primary: Unlock (since all are locked)
             // No alternate needed - Lock All would be a no-op
-            NSMenuItem *unlockItem = [[NSMenuItem alloc] initWithTitle:@"Unlock All Panes in Tab"
+            NSMenuItem *unlockItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedStringWithDefaultValue(@"ContextMenu.UnlockAllPanesInTab", nil, [NSBundle mainBundle], @"Unlock All Panes in Tab", @"Context menu item to unlock all panes in the tab")
                                                                 action:@selector(unlockAllInTab:)
                                                          keyEquivalent:@""];
             unlockItem.target = self;
             [theMenu addItem:unlockItem];
         } else {
             // Primary: Lock (since not all are locked)
-            NSMenuItem *lockItem = [[NSMenuItem alloc] initWithTitle:@"Lock All Panes in Tab"
+            NSMenuItem *lockItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedStringWithDefaultValue(@"ContextMenu.LockAllPanesInTab", nil, [NSBundle mainBundle], @"Lock All Panes in Tab", @"Context menu item to lock all panes in the tab")
                                                               action:@selector(lockAllInTab:)
                                                        keyEquivalent:@""];
             lockItem.target = self;
@@ -713,7 +732,7 @@ const int kMaxSelectedTextLengthForCustomActions = 400;
 
             // Alternate: Unlock (Option-key) - only if at least one pane is locked
             if (anyLocked) {
-                NSMenuItem *unlockItem = [[NSMenuItem alloc] initWithTitle:@"Unlock All Panes in Tab"
+                NSMenuItem *unlockItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedStringWithDefaultValue(@"ContextMenu.UnlockAllPanesInTab", nil, [NSBundle mainBundle], @"Unlock All Panes in Tab", @"Context menu item to unlock all panes in the tab")
                                                                     action:@selector(unlockAllInTab:)
                                                              keyEquivalent:@""];
                 unlockItem.target = self;
@@ -725,55 +744,55 @@ const int kMaxSelectedTextLengthForCustomActions = 400;
     }
 
     if ([self.delegate contextMenuHasCoprocess:self]) {
-        add(@"Stop Coprocess", @selector(stopCoprocess:));
+        add(NSLocalizedStringWithDefaultValue(@"ContextMenu.StopCoprocess", nil, [NSBundle mainBundle], @"Stop Coprocess", @"Context menu item to stop the coprocess"), @selector(stopCoprocess:));
     }
 
     // Separator
     [theMenu addItem:[NSMenuItem separatorItem]];
 
     // Close current pane
-    add(@"Close", @selector(closeTextViewSession:));
-    add(@"Restart", @selector(restartSession:));
+    add(NSLocalizedStringWithDefaultValue(@"General.Close", nil, [NSBundle mainBundle], @"Close", @"Close: used on buttons and menu items"), @selector(closeTextViewSession:));
+    add(NSLocalizedStringWithDefaultValue(@"ContextMenu.Restart", nil, [NSBundle mainBundle], @"Restart", @"Context menu item to restart the session"), @selector(restartSession:));
 
     [self.delegate contextMenu:self amend:theMenu];
 
     // Separator
     [theMenu addItem:[NSMenuItem separatorItem]];
-    add(@"Bury", @selector(bury:));
+    add(NSLocalizedStringWithDefaultValue(@"ContextMenu.Bury", nil, [NSBundle mainBundle], @"Bury", @"Context menu item to bury the session"), @selector(bury:));
 
     // Terminal State
     [theMenu addItem:[NSMenuItem separatorItem]];
-    NSMenuItem *terminalState = [[NSMenuItem alloc] initWithTitle:@"Terminal State" action:nil keyEquivalent:@""];
+    NSMenuItem *terminalState = [[NSMenuItem alloc] initWithTitle:NSLocalizedStringWithDefaultValue(@"ContextMenu.TerminalState", nil, [NSBundle mainBundle], @"Terminal State", @"Context menu item that opens the Terminal State submenu") action:nil keyEquivalent:@""];
     terminalState.submenu = [[NSMenu alloc] initWithTitle:@"Terminal State"];
 
     struct {
         NSString *title;
         SEL action;
     } terminalStateDecls[] = {
-        { @"Alternate Screen", @selector(terminalStateToggleAlternateScreen:) },
+        { NSLocalizedStringWithDefaultValue(@"ContextMenu.AlternateScreen", nil, [NSBundle mainBundle], @"Alternate Screen", @"Terminal State submenu item"), @selector(terminalStateToggleAlternateScreen:) },
         { nil, nil },
-        { @"Focus Reporting", @selector(terminalStateToggleFocusReporting:) },
-        { @"Mouse Reporting", @selector(terminalStateToggleMouseReporting:) },
-        { @"Paste Bracketing", @selector(terminalStateTogglePasteBracketing:) },
+        { NSLocalizedStringWithDefaultValue(@"ContextMenu.FocusReporting", nil, [NSBundle mainBundle], @"Focus Reporting", @"Terminal State submenu item"), @selector(terminalStateToggleFocusReporting:) },
+        { NSLocalizedStringWithDefaultValue(@"ContextMenu.MouseReporting", nil, [NSBundle mainBundle], @"Mouse Reporting", @"Terminal State submenu item"), @selector(terminalStateToggleMouseReporting:) },
+        { NSLocalizedStringWithDefaultValue(@"ContextMenu.PasteBracketing", nil, [NSBundle mainBundle], @"Paste Bracketing", @"Terminal State submenu item"), @selector(terminalStateTogglePasteBracketing:) },
         { nil, nil },
-        { @"Application Cursor", @selector(terminalStateToggleApplicationCursor:) },
-        { @"Application Keypad", @selector(terminalStateToggleApplicationKeypad:) },
+        { NSLocalizedStringWithDefaultValue(@"ContextMenu.ApplicationCursor", nil, [NSBundle mainBundle], @"Application Cursor", @"Terminal State submenu item"), @selector(terminalStateToggleApplicationCursor:) },
+        { NSLocalizedStringWithDefaultValue(@"ContextMenu.ApplicationKeypad", nil, [NSBundle mainBundle], @"Application Keypad", @"Terminal State submenu item"), @selector(terminalStateToggleApplicationKeypad:) },
         { nil, nil },
-        { @"Standard Key Reporting Mode", @selector(terminalToggleKeyboardMode:) },
-        { @"modifyOtherKeys Mode 1", @selector(terminalToggleKeyboardMode:) },
-        { @"modifyOtherKeys Mode 2", @selector(terminalToggleKeyboardMode:) },
-        { @"CSI u Mode", @selector(terminalToggleKeyboardMode:) },
-        { @"Raw Key Reporting Mode", @selector(terminalToggleKeyboardMode:) },
+        { NSLocalizedStringWithDefaultValue(@"ContextMenu.StandardKeyReportingMode", nil, [NSBundle mainBundle], @"Standard Key Reporting Mode", @"Terminal State submenu item"), @selector(terminalToggleKeyboardMode:) },
+        { NSLocalizedStringWithDefaultValue(@"ContextMenu.ModifyOtherKeysMode1", nil, [NSBundle mainBundle], @"modifyOtherKeys Mode 1", @"Terminal State submenu item"), @selector(terminalToggleKeyboardMode:) },
+        { NSLocalizedStringWithDefaultValue(@"ContextMenu.ModifyOtherKeysMode2", nil, [NSBundle mainBundle], @"modifyOtherKeys Mode 2", @"Terminal State submenu item"), @selector(terminalToggleKeyboardMode:) },
+        { NSLocalizedStringWithDefaultValue(@"ContextMenu.CSIuMode", nil, [NSBundle mainBundle], @"CSI u Mode", @"Terminal State submenu item"), @selector(terminalToggleKeyboardMode:) },
+        { NSLocalizedStringWithDefaultValue(@"ContextMenu.RawKeyReportingMode", nil, [NSBundle mainBundle], @"Raw Key Reporting Mode", @"Terminal State submenu item"), @selector(terminalToggleKeyboardMode:) },
         { nil, nil },
-        { @"Disambiguate Escape", @selector(terminalToggleKeyboardMode:) },
-        { @"Report All Event Types", @selector(terminalToggleKeyboardMode:) },
-        { @"Report Alternate Keys", @selector(terminalToggleKeyboardMode:) },
-        { @"Report All Keys as Escape Codes", @selector(terminalToggleKeyboardMode:) },
-        { @"Report Associated Text", @selector(terminalToggleKeyboardMode:) },
+        { NSLocalizedStringWithDefaultValue(@"ContextMenu.DisambiguateEscape", nil, [NSBundle mainBundle], @"Disambiguate Escape", @"Terminal State submenu item"), @selector(terminalToggleKeyboardMode:) },
+        { NSLocalizedStringWithDefaultValue(@"ContextMenu.ReportAllEventTypes", nil, [NSBundle mainBundle], @"Report All Event Types", @"Terminal State submenu item"), @selector(terminalToggleKeyboardMode:) },
+        { NSLocalizedStringWithDefaultValue(@"ContextMenu.ReportAlternateKeys", nil, [NSBundle mainBundle], @"Report Alternate Keys", @"Terminal State submenu item"), @selector(terminalToggleKeyboardMode:) },
+        { NSLocalizedStringWithDefaultValue(@"ContextMenu.ReportAllKeysAsEscapeCodes", nil, [NSBundle mainBundle], @"Report All Keys as Escape Codes", @"Terminal State submenu item"), @selector(terminalToggleKeyboardMode:) },
+        { NSLocalizedStringWithDefaultValue(@"ContextMenu.ReportAssociatedText", nil, [NSBundle mainBundle], @"Report Associated Text", @"Terminal State submenu item"), @selector(terminalToggleKeyboardMode:) },
         { nil, nil },
-        { @"Literal Controls", @selector(terminalStateToggleLiteralMode:)},
+        { NSLocalizedStringWithDefaultValue(@"ContextMenu.LiteralControls", nil, [NSBundle mainBundle], @"Literal Controls", @"Terminal State submenu item"), @selector(terminalStateToggleLiteralMode:)},
         { nil, nil },
-        { @"Emulation Level", nil }
+        { NSLocalizedStringWithDefaultValue(@"ContextMenu.EmulationLevel", nil, [NSBundle mainBundle], @"Emulation Level", @"Terminal State submenu item that opens the emulation level submenu"), nil }
     };
     NSInteger j = 1;
     for (size_t i = 0; i < sizeof(terminalStateDecls) / sizeof(*terminalStateDecls); i++) {
@@ -830,7 +849,7 @@ const int kMaxSelectedTextLengthForCustomActions = 400;
     if (![[iTermApplication sharedApplication] isUIElement]) {
         return;
     }
-    NSMenuItem *mainMenuItem = [[NSMenuItem alloc] initWithTitle:@"Main Menu" action:nil keyEquivalent:@""];
+    NSMenuItem *mainMenuItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedStringWithDefaultValue(@"ContextMenu.MainMenu", nil, [NSBundle mainBundle], @"Main Menu", @"Context menu item that contains a copy of the main menu") action:nil keyEquivalent:@""];
     NSMenu *copyOfMainMenu = [[NSMenu alloc] init];
     for (NSMenuItem *mainMenuItem in NSApp.mainMenu.itemArray) {
         [self addCopyOfItem:mainMenuItem to:copyOfMainMenu];
@@ -914,16 +933,90 @@ const int kMaxSelectedTextLengthForCustomActions = 400;
     if (reqs.count == 0) {
         return NO;
     }
+    NSArray<NSMenuItem *> *items = [iTermTextViewContextMenuHelper menuItemsForAPIRegistrationRequests:reqs
+                                                                                                 scope:[self.delegate contextMenuSessionScope:self]
+                                                                                                target:self
+                                                                                                action:@selector(apiMenuItem:)];
+    if (items.count == 0) {
+        return NO;
+    }
     [theMenu addItem:[NSMenuItem separatorItem]];
-    for (ITMRPCRegistrationRequest *req in reqs) {
-        NSMenuItem *theItem = [[NSMenuItem alloc] initWithTitle:req.contextMenuAttributes.displayName
-                                                         action:@selector(apiMenuItem:)
-                                                  keyEquivalent:@""];
-        theItem.representedObject = req.contextMenuAttributes.uniqueIdentifier;
-        theItem.target = self;
-        [theMenu addItem:theItem];
+    for (NSMenuItem *item in items) {
+        [theMenu addItem:item];
     }
     return YES;
+}
+
++ (NSArray<NSMenuItem *> *)menuItemsForAPIRegistrationRequests:(NSArray<ITMRPCRegistrationRequest *> *)reqs
+                                                         scope:(iTermVariableScope *)scope
+                                                        target:(id)target
+                                                        action:(SEL)action {
+    NSMutableArray<NSMenuItem *> *topLevelItems = [NSMutableArray array];
+    NSMutableDictionary<NSString *, NSMenuItem *> *submenuItems = [NSMutableDictionary dictionary];
+    // reqs is sorted by display name, so items within each submenu are too.
+    for (ITMRPCRegistrationRequest *req in reqs) {
+        if (![self apiContextMenuItemIsVisible:req scope:scope]) {
+            continue;
+        }
+        NSMenuItem *theItem = [[NSMenuItem alloc] initWithTitle:req.contextMenuAttributes.displayName
+                                                         action:action
+                                                  keyEquivalent:@""];
+        theItem.representedObject = req.contextMenuAttributes.uniqueIdentifier;
+        theItem.target = target;
+
+        NSString *submenuTitle = req.contextMenuAttributes.submenu;
+        if (submenuTitle.length == 0) {
+            [topLevelItems addObject:theItem];
+            continue;
+        }
+        NSMenuItem *parent = submenuItems[submenuTitle];
+        if (!parent) {
+            parent = [[NSMenuItem alloc] initWithTitle:submenuTitle action:nil keyEquivalent:@""];
+            parent.submenu = [[NSMenu alloc] initWithTitle:submenuTitle];
+            submenuItems[submenuTitle] = parent;
+            [topLevelItems addObject:parent];
+        }
+        [parent.submenu addItem:theItem];
+    }
+    [topLevelItems sortWithOptions:NSSortStable usingComparator:^NSComparisonResult(NSMenuItem *lhs, NSMenuItem *rhs) {
+        return [lhs.title localizedCaseInsensitiveCompare:rhs.title];
+    }];
+    return topLevelItems;
+}
+
+// Evaluated synchronously so that opening the menu never waits on a script.
+// Registration rejects expressions that call functions, so none of them need
+// an RPC. A missing variable or an evaluation error hides the item. Only a
+// true or nonzero number shows it. Strings (including "1", which is what a
+// user variable set from the shell holds) hide it, matching the expression
+// language's truthiness rules. Scripts should write `user.flag == 1`, which
+// converts numeric strings.
++ (BOOL)apiContextMenuItemIsVisible:(ITMRPCRegistrationRequest *)req
+                              scope:(iTermVariableScope *)scope {
+    NSString *expression = req.contextMenuAttributes.visibleWhen;
+    if (expression.length == 0) {
+        return YES;
+    }
+    if (!scope) {
+        return NO;
+    }
+    iTermExpressionEvaluator *evaluator = [[iTermExpressionEvaluator alloc] initWithExpressionString:expression
+                                                                                               scope:scope];
+    __block BOOL visible = NO;
+    [evaluator evaluateWithTimeout:0
+                sideEffectsAllowed:NO
+                        completion:^(iTermExpressionEvaluator *evaluator) {
+        if (evaluator.error) {
+            DLog(@"visible_when %@ for %@ failed: %@", expression, req.contextMenuAttributes.uniqueIdentifier, evaluator.error);
+            return;
+        }
+        NSNumber *number = [NSNumber castFrom:evaluator.value];
+        if (!number) {
+            DLog(@"visible_when %@ for %@ evaluated to non-number %@; hiding", expression, req.contextMenuAttributes.uniqueIdentifier, evaluator.value);
+        }
+        visible = number.boolValue;
+    }];
+    return visible;
 }
 
 - (NSMenu *)menuForMark:(id<VT100ScreenMarkReading>)mark directory:(NSString *)directory {
@@ -933,17 +1026,17 @@ const int kMaxSelectedTextLengthForCustomActions = 400;
     theMenu = [[NSMenu alloc] initWithTitle:@"Contextual Menu"];
 
     NSMenuItem *theItem = [[NSMenuItem alloc] init];
-    theItem.title = [NSString stringWithFormat:@"Command: %@", mark.firstLineOfCommand];
+    theItem.title = [NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"ContextMenu.CommandFormat", nil, [NSBundle mainBundle], @"Command: %@", @"Menu item showing the command. %@ is the command."), mark.firstLineOfCommand];
     [theMenu addItem:theItem];
 
     if (directory) {
         theItem = [[NSMenuItem alloc] init];
-        theItem.title = [NSString stringWithFormat:@"Directory: %@", directory];
+        theItem.title = [NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"ContextMenu.DirectoryFormat", nil, [NSBundle mainBundle], @"Directory: %@", @"Menu item showing the directory. %@ is the directory."), directory];
         [theMenu addItem:theItem];
     }
 
     theItem = [[NSMenuItem alloc] init];
-    theItem.title = [NSString stringWithFormat:@"Return code: %d", mark.code];
+    theItem.title = [NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"ContextMenu.ReturnCodeFormat", nil, [NSBundle mainBundle], @"Return code: %d", @"Menu item showing the command's return code. %d is the code."), mark.code];
     [theMenu addItem:theItem];
 
     if (mark.startDate) {
@@ -959,10 +1052,10 @@ const int kMaxSelectedTextLengthForCustomActions = 400;
         int seconds = (int)runningTime % 60;
         int millis = (int) ((runningTime - floor(runningTime)) * 1000);
         if (hours > 0) {
-            theItem.title = [NSString stringWithFormat:@"Running time: %d:%02d:%02d",
+            theItem.title = [NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"ContextMenu.RunningTimeHoursFormat", nil, [NSBundle mainBundle], @"Running time: %1$d:%2$02d:%3$02d", @"Menu item showing running time as hours:minutes:seconds."),
                              hours, minutes, seconds];
         } else {
-            theItem.title = [NSString stringWithFormat:@"Running time: %d:%02d.%03d",
+            theItem.title = [NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"ContextMenu.RunningTimeFormat", nil, [NSBundle mainBundle], @"Running time: %1$d:%2$02d.%3$03d", @"Menu item showing running time as minutes:seconds.milliseconds."),
                              minutes, seconds, millis];
         }
         [theMenu addItem:theItem];
@@ -970,14 +1063,14 @@ const int kMaxSelectedTextLengthForCustomActions = 400;
 
     [theMenu addItem:[NSMenuItem separatorItem]];
 
-    theItem = [[NSMenuItem alloc] initWithTitle:@"Re-run Command"
+    theItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedStringWithDefaultValue(@"ContextMenu.ReRunCommand", nil, [NSBundle mainBundle], @"Re-run Command", @"Menu item to re-run a command")
                                          action:@selector(reRunCommand:)
                                   keyEquivalent:@""];
     theItem.target = self;
     [theItem setRepresentedObject:mark.fullCommand];
     [theMenu addItem:theItem];
 
-    theItem = [[NSMenuItem alloc] initWithTitle:@"Select Command Output"
+    theItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedStringWithDefaultValue(@"ContextMenu.SelectCommandOutput", nil, [NSBundle mainBundle], @"Select Command Output", @"Menu item to select a command's output")
                                          action:@selector(selectCommandOutput:)
                                   keyEquivalent:@""];
     theItem.target = self;
@@ -1165,19 +1258,29 @@ const int kMaxSelectedTextLengthForCustomActions = 400;
 - (void)browse:(id)sender {
     [_urlActionHelper findUrlInString:[self.delegate contextMenuSelectedText:self capped:0]
                   andOpenInBackground:NO
-                                style:iTermOpenStyleTab];
+                                style:iTermOpenStyleTab
+                       guessingScheme:YES];
 }
 
 - (void)openURLInVerticalSplitPane:(id)sender {
     [_urlActionHelper findUrlInString:[self.delegate contextMenuSelectedText:self capped:0]
                   andOpenInBackground:NO
-                                style:iTermOpenStyleVerticalSplit];
+                                style:iTermOpenStyleVerticalSplit
+                       guessingScheme:YES];
 }
 
 - (void)openURLInHorizontalSplitPane:(id)sender {
     [_urlActionHelper findUrlInString:[self.delegate contextMenuSelectedText:self capped:0]
                   andOpenInBackground:NO
-                                style:iTermOpenStyleHorizontalSplit];
+                                style:iTermOpenStyleHorizontalSplit
+                       guessingScheme:YES];
+}
+
+- (void)openURLInFloatingPane:(id)sender {
+    [_urlActionHelper findUrlInString:[self.delegate contextMenuSelectedText:self capped:0]
+                  andOpenInBackground:NO
+                                style:iTermOpenStyleFloatingPane
+                       guessingScheme:YES];
 }
 
 - (void)quickLook:(id)sender {
@@ -1197,7 +1300,8 @@ const int kMaxSelectedTextLengthForCustomActions = 400;
                                             withValue:[self.delegate contextMenuSelectedText:self capped:0]];
     [_urlActionHelper findUrlInString:url.absoluteString
                   andOpenInBackground:NO
-                                style:iTermOpenStyleTab];
+                                style:iTermOpenStyleTab
+                       guessingScheme:NO];
 }
 
 - (void)addTrigger:(id)sender {
@@ -1269,6 +1373,18 @@ const int kMaxSelectedTextLengthForCustomActions = 400;
 
 - (void)swapSessions:(id)sender {
     [self.delegate contextMenuSwapSessions:self];
+}
+
+- (void)dockFloatingPaneFromContextMenu:(id)sender {
+    [self.delegate contextMenuDockFloatingPane:self];
+}
+
+- (void)bringFloatingPaneToFrontFromContextMenu:(id)sender {
+    [self.delegate contextMenu:self raiseFloatingPaneToFront:YES];
+}
+
+- (void)sendFloatingPaneToBackFromContextMenu:(id)sender {
+    [self.delegate contextMenu:self raiseFloatingPaneToFront:NO];
 }
 
 - (void)sendSelection:(id)sender {
@@ -1356,12 +1472,12 @@ const int kMaxSelectedTextLengthForCustomActions = 400;
     const long long overflow = [self.delegate contextMenuTotalScrollbackOverflow:self];
     VT100GridAbsCoordRange absRange = VT100GridAbsCoordRangeFromCoordRange(range, overflow);
     iTermSelection *selection = [self.delegate contextMenuSelection:self];
-    [selection beginSelectionAtAbsCoord:absRange.start
-                                    mode:kiTermSelectionModeCharacter
-                                  resume:NO
-                                  append:NO];
-    [selection moveSelectionEndpointTo:absRange.end];
-    [selection endLiveSelection];
+    // absRange is LOGICAL. Commit it as a logical selection rather than driving a
+    // character-mode live selection, which with bidi on would treat it as visual
+    // columns and mis-select on right-to-left output lines. Matches
+    // -[PTYTextView selectLastCommandOutput].
+    [selection setSelectedLogicalRange:VT100GridAbsWindowedRangeMake(absRange, 0, 0)
+                                  mode:kiTermSelectionModeCharacter];
 
     if ([iTermPreferences boolForKey:kPreferenceKeySelectionCopiesText]) {
         [self.delegate contextMenuCopySelectionAccordingToUserPreferences:self];

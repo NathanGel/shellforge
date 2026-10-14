@@ -136,6 +136,28 @@ const NSInteger iTermQuickPasteBytesPerCallDefaultValue = 768;
     return controlSet;
 }
 
+// Zero-width bidi/format characters that line editors render as a visible
+// <200c>-style escape: ZWSP, ZWNJ (Persian half-space), ZWJ, LRM, RLM, plus
+// soft hyphen, word joiner, and ZWNBSP/BOM.
++ (NSCharacterSet *)zeroWidthFormatCharacterSet {
+    static NSCharacterSet *set;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        NSMutableCharacterSet *s = [[NSMutableCharacterSet alloc] init];
+        [s addCharactersInRange:NSMakeRange(0x200b, 5)];  // 200B ZWSP, 200C ZWNJ, 200D ZWJ, 200E LRM, 200F RLM
+        [s addCharactersInString:@"\u00ad\u2060\ufeff"];  // soft hyphen, word joiner, ZWNBSP/BOM
+        // Bidi reordering controls (the Trojan-Source set): directional embeddings
+        // and overrides, isolates, and the Arabic Letter Mark. These are zero-width
+        // bidi/format characters too, and the ones a user most expects a "bidi/
+        // format" stripper to remove (they render as a visible <202e> at a prompt).
+        [s addCharactersInRange:NSMakeRange(0x202a, 5)];  // 202A LRE, 202B RLE, 202C PDF, 202D LRO, 202E RLO
+        [s addCharactersInRange:NSMakeRange(0x2066, 4)];  // 2066 LRI, 2067 RLI, 2068 FSI, 2069 PDI
+        [s addCharactersInString:@"\u061c"];         // 061C ALM (Arabic Letter Mark)
+        set = s;
+    });
+    return set;
+}
+
 + (BOOL)promptToConvertTabsToSpacesWhenPasting {
     return ![iTermWarning identifierIsSilenced:@"AboutToPasteTabsWithCancel"];
 }
@@ -239,6 +261,21 @@ const NSInteger iTermQuickPasteBytesPerCallDefaultValue = 768;
         // that transformation might add ^Vs.
         theString =
         [[theString componentsSeparatedByCharactersInSet:[iTermPasteHelper unsafeControlCodeSet]]
+         componentsJoinedByString:@""];
+    }
+
+    if ([iTermPreferences bidiEnabled] &&
+        [iTermAdvancedSettingsModel stripZeroWidthFormatCharactersOnPaste]) {
+        // Line editors (zsh/readline, some TUIs) render zero-width bidi/format
+        // characters as a visible <200c> because macOS classifies them as
+        // control characters, so pasting Persian at a prompt fills up with
+        // <200c>. When enabled, strip them on paste so the command line stays
+        // clean. Gated on the right-to-left support preference so it is fully
+        // inert unless bidi is on, and OFF by default even then: these
+        // characters are meaningful (the Persian half-space ZWNJ, the LTR/RTL
+        // marks), so removing them changes the text; it is the user's explicit choice.
+        theString =
+        [[theString componentsSeparatedByCharactersInSet:[iTermPasteHelper zeroWidthFormatCharacterSet]]
          componentsJoinedByString:@""];
     }
 
@@ -714,16 +751,18 @@ const NSInteger iTermQuickPasteBytesPerCallDefaultValue = 768;
     DLog(@"limit=%@, length=%@", @(limit), @(pasteEvent.string.length));
     if (limit >= 0) {
         if (pasteEvent.string.length > limit) {
-            NSNumberFormatter *numberFormatter = [[NSNumberFormatter alloc] init];
-            numberFormatter.numberStyle = NSNumberFormatterDecimalStyle;
-            const iTermWarningSelection selection =
-            [iTermWarning showWarningWithTitle:[NSString stringWithFormat:@"OK to paste %@ characters?", [numberFormatter stringFromNumber:@(pasteEvent.string.length)]]
-                                       actions:@[ @"OK", @"Cancel", @"Advanced…" ]
-                                     accessory:nil
-                                    identifier:@"NoSyncPasteOverCharacterLimitWarning"
-                                   silenceable:kiTermWarningTypePersistent
-                                       heading:@"Paste Limit Exceeded"
-                                        window:self.delegate.pasteHelperViewForIndicator.window];
+            NSString *const advanced = NSLocalizedStringWithDefaultValue(@"PasteHelper.Advanced", nil, [NSBundle mainBundle], @"Advanced…", @"Button that opens the advanced paste dialog");
+            iTermWarning *warning = [[iTermWarning alloc] init];
+            warning.heading = NSLocalizedStringWithDefaultValue(@"PasteHelper.PasteLimitExceeded", nil, [NSBundle mainBundle], @"Paste Limit Exceeded", @"Heading of the warning shown when pasting more than the configured character limit");
+            warning.title = [NSString localizedStringWithFormat:NSLocalizedStringWithDefaultValue(@"PasteHelper.OKToPasteCharacters", nil, [NSBundle mainBundle], @"OK to paste %ld characters?", @"Confirmation before pasting a large amount of text; %ld is the character count"), (long)pasteEvent.string.length];
+            warning.actionLabels = @[ iTermLocalizedOK(), iTermLocalizedCancel(), advanced ];
+            // The advanced paste panel opens on this Mac, where the companion app cannot use it.
+            warning.notOfferedRemotelyLabels = @[ advanced ];
+            warning.cancelLabel = iTermLocalizedCancel();
+            warning.identifier = @"NoSyncPasteOverCharacterLimitWarning";
+            warning.warningType = kiTermWarningTypePersistent;
+            warning.window = [self deepestSheetOfWindow:self.delegate.pasteHelperViewForIndicator.window];
+            const iTermWarningSelection selection = [warning runModal];
             switch (selection) {
                 case kiTermWarningSelection0:
                     break;
@@ -771,12 +810,12 @@ const NSInteger iTermQuickPasteBytesPerCallDefaultValue = 768;
     NSMutableArray<iTermWarningAction *> *actions = [NSMutableArray array];
 
     __block BOOL result = YES;
-    iTermWarningAction *cancel = [iTermWarningAction warningActionWithLabel:@"Cancel"
+    iTermWarningAction *cancel = [iTermWarningAction warningActionWithLabel:iTermLocalizedCancel()
                                                                       block:^(iTermWarningSelection selection) { result = NO; }];
-    iTermWarningAction *paste = [iTermWarningAction warningActionWithLabel:@"Paste"
+    iTermWarningAction *paste = [iTermWarningAction warningActionWithLabel:NSLocalizedStringWithDefaultValue(@"PasteHelper.Paste", nil, [NSBundle mainBundle], @"Paste", @"Button that confirms pasting")
                                                                      block:^(iTermWarningSelection selection) { result = YES; }];
     iTermWarningAction *pasteWithoutNewline =
-        [iTermWarningAction warningActionWithLabel:@"Paste Without Newline"
+        [iTermWarningAction warningActionWithLabel:NSLocalizedStringWithDefaultValue(@"PasteHelper.PasteWithoutNewline", nil, [NSBundle mainBundle], @"Paste Without Newline", @"Button that pastes text after trimming a trailing newline")
                                              block:^(iTermWarningSelection selection) {
             [pasteEvent trimNewlines];
             RLog(@"paste without newline selected: set result to YES");
@@ -789,23 +828,21 @@ const NSInteger iTermQuickPasteBytesPerCallDefaultValue = 768;
     BOOL prompt = YES;
     if (lines.count > 1) {
         if (atShellPrompt) {
-            theTitle = [NSString stringWithFormat:@"OK to paste %d lines at shell prompt?",
-                        (int)[lines count]];
+            theTitle = [NSString localizedStringWithFormat:NSLocalizedStringWithDefaultValue(@"PasteHelper.OKToPasteLinesAtPrompt", nil, [NSBundle mainBundle], @"OK to paste %ld lines at shell prompt?", @"Confirmation before pasting multiple lines at the shell prompt; %ld is the line count"), (long)[lines count]];
         } else {
             prompt = [iTermAdvancedSettingsModel promptForPasteWhenNotAtPrompt];
             DLog(@"set prompt to %@: there are multiple lines and we are not at the shell prompt", @(prompt));
-            theTitle = [NSString stringWithFormat:@"OK to paste %d lines?",
-                        (int)[lines count]];
+            theTitle = [NSString localizedStringWithFormat:NSLocalizedStringWithDefaultValue(@"PasteHelper.OKToPasteLines", nil, [NSBundle mainBundle], @"OK to paste %ld lines?", @"Confirmation before pasting multiple lines; %ld is the line count"), (long)[lines count]];
         }
     } else {
         [actions insertObject:pasteWithoutNewline atIndex:1];
         if (atShellPrompt) {
             identifier = [iTermAdvancedSettingsModel noSyncDoNotWarnBeforePastingOneLineEndingInNewlineAtShellPromptUserDefaultsKey];
-            theTitle = @"OK to paste one line ending in a newline at shell prompt?";
+            theTitle = NSLocalizedStringWithDefaultValue(@"PasteHelper.PasteOneLineNewlineAtPrompt", nil, [NSBundle mainBundle], @"OK to paste one line ending in a newline at shell prompt?", @"Confirmation title when pasting one line that ends in a newline at the shell prompt");
         } else {
             prompt = [iTermAdvancedSettingsModel promptForPasteWhenNotAtPrompt];
             DLog(@"set prompt to %@: pasting 0 or 1 lines and not at shell prompt", @(prompt));
-            theTitle = @"OK to paste one line ending in a newline?";
+            theTitle = NSLocalizedStringWithDefaultValue(@"PasteHelper.PasteOneLineNewline", nil, [NSBundle mainBundle], @"OK to paste one line ending in a newline?", @"Confirmation title when pasting one line that ends in a newline");
         }
     }
 
@@ -815,7 +852,7 @@ const NSInteger iTermQuickPasteBytesPerCallDefaultValue = 768;
     }
     // Issue 5115
     [iTermWarning unsilenceIdentifier:identifier ifSelectionEquals:[actions indexOfObjectIdenticalTo:cancel]];
-    [actions addObject:[iTermWarningAction warningActionWithLabel:@"Advanced…" block:^(iTermWarningSelection selection) {
+    [actions addObject:[iTermWarningAction warningActionWithLabel:NSLocalizedStringWithDefaultValue(@"PasteHelper.Advanced", nil, [NSBundle mainBundle], @"Advanced…", @"Button that opens the advanced paste dialog") block:^(iTermWarningSelection selection) {
         PTYSessionPasteFlags flags = 0;
         if (pasteEvent.slow) {
             flags |= kPTYSessionPasteSlowly;
@@ -825,17 +862,28 @@ const NSInteger iTermQuickPasteBytesPerCallDefaultValue = 768;
         [self showAdvancedPasteWithFlags:flags];
         result = NO;
     }]];
+    // The advanced paste panel opens on this Mac, where the companion app cannot use it.
+    actions.lastObject.notOfferedRemotely = YES;
     iTermWarning *warning = [[iTermWarning alloc] init];
-    warning.heading = @"Confirm Multi-Line Paste";
+    warning.heading = NSLocalizedStringWithDefaultValue(@"PasteHelper.ConfirmMultiLinePasteHeading", nil, [NSBundle mainBundle], @"Confirm Multi-Line Paste", @"Heading of the confirmation shown before a multi-line paste");
     warning.title = theTitle;
     warning.warningActions = actions;
     warning.identifier = identifier;
     warning.warningType = kiTermWarningTypePermanentlySilenceable;
-    warning.cancelLabel = @"Cancel";
+    warning.cancelLabel = iTermLocalizedCancel();
     warning.window = [[self.delegate pasteHelperViewForIndicator] window];
     [warning runModal];
     DLog(@"Return result of %@", @(result));
     return result;
+}
+
+// Where iTermWarning's class methods attach a sheet: the innermost sheet already on `window`.
+- (NSWindow *)deepestSheetOfWindow:(NSWindow *)window {
+    NSWindow *deepest = window;
+    while (deepest.sheets.lastObject) {
+        deepest = deepest.sheets.lastObject;
+    }
+    return deepest;
 }
 
 - (void)showAdvancedPasteWithFlags:(PTYSessionPasteFlags)flags {
@@ -870,13 +918,22 @@ const NSInteger iTermQuickPasteBytesPerCallDefaultValue = 768;
         iTermNumberOfSpacesAccessoryViewController *accessoryController =
             [[iTermNumberOfSpacesAccessoryViewController alloc] init];
 
-        iTermWarningSelection selection =
-            [iTermWarning showWarningWithTitle:@"You're about to paste a string with tabs."
-                                       actions:@[ @"OK", @"Cancel", @"Convert tabs to spaces", @"Advanced…" ]
-                                     accessory:accessoryController.view
-                                    identifier:@"AboutToPasteTabsWithCancel"
-                                   silenceable:kiTermWarningTypePermanentlySilenceable
-                                        window:self.delegate.pasteHelperViewForIndicator.window];
+        NSString *const advanced = NSLocalizedStringWithDefaultValue(@"PasteHelper.Advanced", nil, [NSBundle mainBundle], @"Advanced…", @"Button that opens the advanced paste dialog");
+        iTermWarning *warning = [[iTermWarning alloc] init];
+        warning.title = NSLocalizedStringWithDefaultValue(@"PasteHelper.PasteWithTabsTitle", nil, [NSBundle mainBundle], @"You're about to paste a string with tabs.", @"Title of the warning shown before pasting text containing tabs");
+        warning.actionLabels = @[ iTermLocalizedOK(),
+                                  iTermLocalizedCancel(),
+                                  NSLocalizedStringWithDefaultValue(@"PasteHelper.ConvertTabsToSpaces", nil, [NSBundle mainBundle], @"Convert tabs to spaces", @"Button that converts tabs to spaces when pasting"),
+                                  advanced ];
+        // The advanced paste panel opens on this Mac, where the companion app cannot use it.
+        warning.notOfferedRemotelyLabels = @[ advanced ];
+        warning.cancelLabel = iTermLocalizedCancel();
+        warning.accessory = accessoryController.view;
+        warning.remoteInputs = @[ accessoryController.remoteInput ];
+        warning.identifier = @"AboutToPasteTabsWithCancel";
+        warning.warningType = kiTermWarningTypePermanentlySilenceable;
+        warning.window = [self deepestSheetOfWindow:self.delegate.pasteHelperViewForIndicator.window];
+        const iTermWarningSelection selection = [warning runModal];
         switch (selection) {
             case kiTermWarningSelection0:  // Paste with tabs
                 return kNumberOfSpacesPerTabNoConversion;

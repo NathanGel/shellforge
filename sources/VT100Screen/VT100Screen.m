@@ -162,6 +162,20 @@ const NSInteger VT100ScreenBigFileDownloadThreshold = 1024 * 1024 * 1024;
     }];
 }
 
+- (void)inputWillBeWrittenToTask {
+    // Called on every write, so only hop to the mutation queue when there's a
+    // window to close. Not -mutateAsynchronously:, which would also exit copy mode
+    // and the like for writes that don't come from a keypress.
+    if (![_mutableState verifiedOSC7WindowIsOpen]) {
+        return;
+    }
+    [_mutableState performBlockAsynchronously:^(VT100Terminal * _Nullable terminal,
+                                                VT100ScreenMutableState * _Nonnull mutableState,
+                                                id<VT100ScreenDelegate>  _Nonnull delegate) {
+        [mutableState inputWasWrittenToTask];
+    }];
+}
+
 - (void)setTerminalEnabled:(BOOL)enabled {
     if (_terminalEnabled == enabled) {
         return;
@@ -691,8 +705,16 @@ additionalWordCharacters:(NSString *)additionalWordCharacters
     info.height = _state.currentGrid.size.height;
     info.width = _state.currentGrid.size.width;
 
+    // DVR lengths are ints. A huge grid (a browser session's 1x1 cells in a pane tens of
+    // thousands of points across) would overflow one and fail an assertion in the encoder.
+    // Frames that big are skipped, like any frame too large for the buffer.
+    const long long length = (long long)sizeof(screen_char_t) * (info.width + 1) * info.height;
+    if (length > INT_MAX) {
+        DLog(@"Not saving %@x%@ frame to DVR: %@ bytes", @(info.width), @(info.height), @(length));
+        return;
+    }
     [dvr_ appendFrame:[_state.currentGrid orderedLines]
-               length:sizeof(screen_char_t) * (_state.currentGrid.size.width + 1) * (_state.currentGrid.size.height)
+               length:(int)length
              metadata:[_state.currentGrid metadataArray]
            cleanLines:cleanLines
                  info:&info];
@@ -1043,6 +1065,31 @@ additionalWordCharacters:(NSString *)additionalWordCharacters
             }
             block(screenMark);
             if (maybeLast && [screenMark.guid isEqualToString:maybeLast]) {
+                return;
+            }
+        }
+        objects = [enumerator nextObject];
+    }
+}
+
+- (void)enumeratePromptsBackward:(void (^ NS_NOESCAPE)(id<VT100ScreenMarkReading> mark, BOOL *stop))block {
+    NSEnumerator *enumerator = [_state.intervalTree reverseLimitEnumerator];
+    NSArray *objects = [enumerator nextObject];
+    while (objects) {
+        // reverseLimitEnumerator yields groups newest-first, but within a group
+        // the objects are in forward (oldest-first) order, so reverse each group
+        // to honor the newest-first contract when a limit group holds a tie.
+        for (id obj in [objects reverseObjectEnumerator]) {
+            id<VT100ScreenMarkReading> screenMark = [VT100ScreenMark castFrom:obj];
+            if (!screenMark) {
+                continue;
+            }
+            if (!screenMark.isPrompt) {
+                continue;
+            }
+            BOOL stop = NO;
+            block(screenMark, &stop);
+            if (stop) {
                 return;
             }
         }
@@ -1456,15 +1503,19 @@ additionalWordCharacters:(NSString *)additionalWordCharacters
                                                                            unlimited:unlimited];
         return YES;
     }];
-    [encoder encodeDictionaryWithKey:@"PrimaryGrid"
-                          generation:iTermGenerationAlwaysEncode
+    // Gate the (large) grid cell data on the grid's content generation so an
+    // unchanged grid is not rewritten on every save. See VT100Grid contentGeneration.
+    // New keys (…V2): the pre-3.x nodes were AlwaysEncode; using a new key orphans
+    // them on upgrade instead of colliding with the content-generation namespace.
+    [encoder encodeDictionaryWithKey:@"PrimaryGridV2"
+                          generation:_state.primaryGrid.contentGeneration
                                block:^BOOL(id<iTermEncoderAdapter>  _Nonnull subencoder) {
         [_state.primaryGrid encode:subencoder];
         return YES;
     }];
     if (_state.altGrid) {
-        [encoder encodeDictionaryWithKey:@"AltGrid"
-                              generation:iTermGenerationAlwaysEncode
+        [encoder encodeDictionaryWithKey:@"AltGridV2"
+                              generation:_state.altGrid.contentGeneration
                                    block:^BOOL(id<iTermEncoderAdapter>  _Nonnull subencoder) {
             [_state.altGrid encode:subencoder];
             return YES;
@@ -1633,6 +1684,12 @@ additionalWordCharacters:(NSString *)additionalWordCharacters
                                        VT100ScreenMutableState *mutableState,
                                        id<VT100ScreenDelegate> delegate))block {
     [self.delegate screenEnsureDefaultMode];
+    [_mutableState performBlockAsynchronously:block];
+}
+
+- (void)mutateAsynchronouslyKeepingMode:(void (^)(VT100Terminal *terminal,
+                                                  VT100ScreenMutableState *mutableState,
+                                                  id<VT100ScreenDelegate> delegate))block {
     [_mutableState performBlockAsynchronously:block];
 }
 
@@ -2333,6 +2390,12 @@ launchCoprocessWithCommand:(NSString *)command
 
 - (void)triggerSession:(Trigger *)trigger setVariableNamed:(NSString *)name toValue:(id)value {
     [self.delegate triggerSideEffectSetValue:value forVariableNamed:name];
+}
+
+- (void)triggerSession:(Trigger *)trigger
+    setSessionSpecificProfileBool:(BOOL)value
+                           forKey:(NSString *)profileKey {
+    [self.delegate triggerSideEffectSetSessionSpecificProfileBool:value forKey:profileKey];
 }
 
 - (void)triggerSession:(Trigger *)trigger setTabStatus:(VT100TabStatusUpdate *)status {

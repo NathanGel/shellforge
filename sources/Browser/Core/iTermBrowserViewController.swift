@@ -20,6 +20,8 @@ protocol iTermBrowserViewControllerDelegate: AnyObject, iTermBrowserFindManagerD
     func browserViewController(_ controller: iTermBrowserViewController,
                                didUpdateFavicon favicon: NSImage?)
     func browserViewController(_ controller: iTermBrowserViewController,
+                               didUpdateBackgroundColor color: NSColor?)
+    func browserViewController(_ controller: iTermBrowserViewController,
                                requestNewWindowForURL url: URL,
                                configuration: WKWebViewConfiguration) -> iTermBrowserWebView?
     func browserViewControllerShowFindPanel(_ controller: iTermBrowserViewController)
@@ -139,6 +141,24 @@ class iTermBrowserViewController: NSViewController {
     class ShadeView: SolidColorView {
         override func hitTest(_ point: NSPoint) -> NSView? {
             return nil
+        }
+    }
+
+    // When true, the toolbar (navigation buttons and URL bar) is removed and the page fills
+    // the session. Web > Show Toolbar toggles it, and Open Location brings it back.
+    @objc var toolbarHidden = false {
+        didSet {
+            guard toolbarHidden != oldValue, isViewLoaded else {
+                return
+            }
+            // Keystrokes must not keep going to a URL bar that can no longer be seen.
+            if toolbarHidden,
+               let responder = view.window?.firstResponder as? NSView,
+               responder.isDescendant(of: toolbar) {
+                view.window?.makeFirstResponder(browserManager.webView)
+            }
+            toolbar.isHidden = toolbarHidden
+            layoutSubviews()
         }
     }
 
@@ -273,12 +293,12 @@ extension iTermBrowserViewController {
                 } catch {
                     videoWindowController?.close()
                     videoWindowController = nil
-                    iTermWarning.show(withTitle: "Could not create movie: \(error.localizedDescription)",
-                                      actions: ["OK"],
+                    iTermWarning.show(withTitle: String(localized: "BrowserViewController.CouldNotCreateMovie", defaultValue: "Could not create movie: \(error.localizedDescription)", comment: "Error shown when saving an instant replay movie fails"),
+                                      actions: [iTermLocalizedOK()],
                                       accessory: nil,
                                       identifier: nil,
                                       silenceable: .kiTermWarningTypePersistent,
-                                      heading: "Problem saving instant replay movie",
+                                      heading: String(localized: "BrowserViewController.ProblemSavingMovieHeading", defaultValue: "Problem saving instant replay movie", comment: "Heading for error when saving an instant replay movie fails"),
                                       window: view.window)
                 }
             }
@@ -338,25 +358,19 @@ extension iTermBrowserViewController {
 
     private var interactionState: NSObject? {
         get {
-            if #available(macOS 12, *) {
-                if let deferred = browserManager.webView.deferrableInteractionState {
-                    return deferred as? NSData
-                }
-                return browserManager.webView.interactionState as? NSData
-            } else {
-                return nil
+            if let deferred = browserManager.webView.deferrableInteractionState {
+                return deferred as? NSData
             }
+            return browserManager.webView.interactionState as? NSData
         }
         set {
-            if #available(macOS 12, *) {
-                // Check if we should defer setting interaction state during restoration
-                if shouldDeferLoading() {
-                    browserManager.webView.deferrableInteractionState = newValue
-                    return
-                }
-
-                browserManager.webView.interactionState = newValue
+            // Check if we should defer setting interaction state during restoration
+            if shouldDeferLoading() {
+                browserManager.webView.deferrableInteractionState = newValue
+                return
             }
+
+            browserManager.webView.interactionState = newValue
         }
     }
 
@@ -397,11 +411,6 @@ extension iTermBrowserViewController {
             shadeView.isHidden = newValue < 0.01
             shadeView.color = .init(white: 0.5, alpha: newValue)
         }
-    }
-
-    @objc
-    func refuseFirstResponderAtCurrentMouseLocation() {
-        browserManager.webView.refuseFirstResponderAtCurrentMouseLocation()
     }
 
     // MARK: - Search
@@ -721,6 +730,7 @@ extension iTermBrowserViewController {
                 completion(.success(FindOnPageOutput(results: results,
                                                      excessiveResultsDropped: dropped)))
             } catch {
+                // Localization unneeded
                 completion(.failure(BrowserManagerError(errorDescription: "The page could not be converted to markdown for processing")))
             }
         }
@@ -809,6 +819,10 @@ extension iTermBrowserViewController {
 
     private func setupBrowserManager() {
         browserManager.delegate = self
+        // Don't seed the page background color here: before any page has loaded, the web
+        // view's underPageBackgroundColor is WebKit's (light) default, not the page's
+        // real color. Seeding it would flip a dark-profile browser tab to light until a
+        // real page loads. The color is emitted once the page settles in didFinish.
     }
 
     private func setupToolbar() {
@@ -819,6 +833,7 @@ extension iTermBrowserViewController {
         indicatorsHelper.backgroundlessMode = true
         indicatorsHelper.indicatorSize = 20.0
         toolbar.configureIndicators(indicatorsHelper: indicatorsHelper, sessionGuid: sessionGuid)
+        toolbar.isHidden = toolbarHidden
         view.addSubview(toolbar)
     }
 
@@ -848,14 +863,15 @@ extension iTermBrowserViewController {
         // Background view - full coverage
         backgroundView.frame = bounds
         
-        // Toolbar - top, full width, 44pt height
+        // Toolbar - top, full width, 44pt height (none when hidden)
+        let toolbarHeight: CGFloat = toolbarHidden ? 0 : 44
         toolbar.frame = NSRect(x: 0, y: bounds.height - 44,
                               width: bounds.width, height: 44)
-        
+
         // WebView - below toolbar
         browserManager.webView.frame = NSRect(x: 0, y: 0,
                                             width: bounds.width,
-                                            height: bounds.height - 44)
+                                            height: bounds.height - toolbarHeight)
         
         // Shade view - full coverage
         shadeView.frame = bounds
@@ -891,9 +907,7 @@ extension iTermBrowserViewController {
     }
     
     func loadDeferredURLIfNeeded() {
-        if #available(macOS 12.0, *) {
-            browserManager.webView.applyDeferredInteractionStateIfNeeded()
-        }
+        browserManager.webView.applyDeferredInteractionStateIfNeeded()
 
         if let url = deferredURL {
             deferredURL = nil
@@ -978,7 +992,7 @@ extension iTermBrowserViewController: iTermBrowserToolbarDelegate {
             // Remove bookmark
             let success = await database.removeBookmark(url: currentURL)
             if success {
-                ToastWindowController.showToast(withMessage: "Bookmark Removed")
+                ToastWindowController.showToast(withMessage: String(localized: "BrowserViewController.BookmarkRemoved", defaultValue: "Bookmark Removed", comment: "Toast shown after removing a bookmark"))
             }
         } else {
             // Add bookmark first, then show tag editor
@@ -1098,6 +1112,10 @@ extension iTermBrowserViewController: iTermBrowserManagerDelegate {
     func browserManager(_ manager: iTermBrowserManager, didUpdateFavicon favicon: NSImage?) {
         toolbar.updateFavicon(favicon)
         delegate?.browserViewController(self, didUpdateFavicon: favicon)
+    }
+
+    func browserManager(_ manager: iTermBrowserManager, didUpdateBackgroundColor color: NSColor?) {
+        delegate?.browserViewController(self, didUpdateBackgroundColor: color)
     }
 
     func browserManager(_ manager: iTermBrowserManager, didUpdateCanGoBack canGoBack: Bool) {
@@ -1314,6 +1332,10 @@ extension iTermBrowserViewController: NSMenuItemValidation {
         if menuItem.action == #selector(performFindPanelAction(_:)) {
             return menuItem.tag != NSFindPanelAction.selectAll.rawValue
         }
+        if menuItem.action == #selector(browserToggleToolbar(_:)) {
+            menuItem.state = toolbarHidden ? .off : .on
+            return true
+        }
         return true
     }
 }
@@ -1332,7 +1354,7 @@ extension iTermBrowserViewController {
             }
 
             let savePanel = iTermModernSavePanel()
-            savePanel.defaultFilename = browserManager.webView.title ?? "Untitled"
+            savePanel.defaultFilename = browserManager.webView.title ?? String(localized: "BrowserViewController.Untitled", defaultValue: "Untitled", comment: "Default filename when the page has no title")
             let response = await savePanel.beginSheetModal(for: window)
             if response == .OK,
                 let item = savePanel.item,
@@ -1360,6 +1382,7 @@ extension iTermBrowserViewController {
     @objc
     @IBAction
     func browserOpenLocation(_ sender: Any) {
+        toolbarHidden = false
         toolbar.focusURLBar()
     }
 
@@ -1385,6 +1408,12 @@ extension iTermBrowserViewController {
     @IBAction
     func browserHistory(_ sender: Any) {
         browserManager.loadURL(iTermBrowserHistoryViewHandler.historyURL.absoluteString)
+    }
+
+    @objc
+    @IBAction
+    func browserToggleToolbar(_ sender: Any) {
+        toolbarHidden.toggle()
     }
 
     @objc(addNamedMark:)
@@ -1522,6 +1551,7 @@ extension iTermBrowserViewController: iTermBrowserActionPerforming {
                 delegate?.browserViewController(self,
                                                 showError: error.localizedDescription,
                                                 suppressionKey: "NoSyncSuppressCopyModeErrors",
+                                                // Localization unneeded
                                                 identifier: "Copy Mode Error")
                 DLog("\(error.localizedDescription)")
                 return

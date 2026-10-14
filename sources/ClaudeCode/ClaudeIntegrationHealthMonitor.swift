@@ -10,7 +10,9 @@ import Foundation
 //
 // "Broken" means: the user once successfully installed the cc-status
 // hook (so iTermUserDefaults.claudeCodeIntegrationCompleted is true)
-// but the hook is no longer present in ~/.claude/settings.json.
+// but some event no longer has a working cc-status hook in Claude Code's settings.json
+// (resolved from $CLAUDE_CONFIG_DIR, defaulting to ~/.claude — see
+// ClaudeCodeOnboarding.claudeSettingsURL).
 // Claude Code itself rewrites that file periodically and has been
 // observed to drop our hook entry; we have no way to prevent that,
 // so the recovery story is "notice it the next time claude runs and
@@ -48,7 +50,7 @@ final class ClaudeIntegrationHealthMonitor: NSObject {
     // burn the one-shot on whatever unrelated warning happened to
     // be up.
     //
-    // Without this gate we'd re-parse ~/.claude/settings.json
+    // Without this gate we'd re-parse Claude Code's settings.json
     // every time claude appears in or disappears from any
     // session's ancestor chain — a few times a day for active
     // users, and a burst at window restoration. If Claude Code
@@ -106,19 +108,26 @@ final class ClaudeIntegrationHealthMonitor: NSObject {
             hasEvaluated = true
             return
         }
+        // Only Not Now can be remembered (see doNotRememberLabels
+        // below), so a silenced warning would just be dismissed.
+        // Skip the disk read and any shell launch, unless the user
+        // asked to see alerts with remembered selections anyway.
+        guard !iTermWarning.identifierIsSilenced(Self.warningIdentifier) ||
+                iTermWarning.showRememberedAlerts else {
+            DLog("Health: repair prompt is silenced, skipping")
+            hasEvaluated = true
+            return
+        }
         hasEvaluated = true
         alertInFlight = true
-        diskQueue.async { [weak self] in
-            // Strict check: every event present, command path
-            // points at an executable file. Catches partial
-            // strips, stale paths, and dangling symlinks — not
-            // just the wholesale "hook is gone" case. Reads disk
-            // and follows symlinks, which is why it's off-main:
-            // a wedged network mount could block forever.
-            let healthy = ClaudeCodeOnboarding.hooksHealthyOnDiskForHealthCheck()
-            DispatchQueue.main.async {
-                self?.diskCheckCompleted(healthy: healthy)
-            }
+        // Strict check: every event present, command resolves to
+        // an executable file. Catches partial strips, stale paths,
+        // and dangling symlinks — not just the wholesale "hook is
+        // gone" case. The disk work runs on diskQueue; the user's
+        // shell is launched only if a hook command uses $HOME or
+        // the like (see ClaudeCodeOnboarding.withHookEnvironment).
+        ClaudeCodeOnboarding.checkHooksHealth(on: diskQueue) { [weak self] healthy in
+            self?.diskCheckCompleted(healthy: healthy)
         }
     }
 
@@ -140,24 +149,25 @@ final class ClaudeIntegrationHealthMonitor: NSObject {
             hasEvaluated = false
             return
         }
-        RLog("Health: integration completed but hook is missing on disk — prompting")
+        RLog("Health: integration completed but no working hook on disk — prompting")
+        // Synchronous, main-safe read of the install-time-recorded path.
+        let path = ClaudeCodeOnboarding.claudeSettingsURL().path
         let warning = iTermWarning()
-        warning.heading = "Claude Code Integration Looks Broken"
-        warning.title = "iTerm2\u{2019}s cc-status hook is no longer in "
-            + "~/.claude/settings.json. This usually means Claude Code "
-            + "rewrote that file. Reinstall the hook so per-tab status "
-            + "indicators (\u{201C}Working\u{2026},\u{201D} "
-            + "\u{201C}Waiting\u{2026}\u{201D}) work again?"
+        warning.heading = String(localized: "ClaudeHealthMonitor.BrokenHeading", defaultValue: "Claude Code Integration Looks Broken", comment: "Heading of the warning shown when the Claude Code status hook is missing")
+        warning.title = String(localized: "ClaudeHealthMonitor.HookNotWorkingTitle", defaultValue: "iTerm2 couldn\u{2019}t find a working cc-status hook for every Claude Code event in \(path). Reinstall the hook so per-tab status indicators (\u{201C}Working\u{2026},\u{201D} \u{201C}Waiting\u{2026}\u{201D}) work again?", comment: "Body of the warning shown when the Claude Code status hook is missing from settings.json or points at a file that can\u{2019}t run; the interpolated value is the absolute path to settings.json")
         warning.warningType = .kiTermWarningTypePermanentlySilenceable
         warning.identifier = Self.warningIdentifier
-        warning.actionLabels = ["Reinstall", "Not Now"]
+        let reinstall = String(localized: "ClaudeHealthMonitor.Reinstall", defaultValue: "Reinstall", comment: "Button to reinstall the Claude Code status hook")
+        warning.actionLabels = [reinstall, String(localized: "ClaudeHealthMonitor.NotNow", defaultValue: "Not Now", comment: "Button to dismiss the reinstall prompt for now")]
         // Without this, "Reinstall + Remember My Choice" would
         // preempt the dialog on every future broken-state launch
         // and silently open the onboarding window — almost
         // certainly not what a user means by "remember." Only the
         // dismiss path is rememberable; "Reinstall" always
         // requires a fresh click.
-        warning.doNotRememberLabels = ["Reinstall"]
+        warning.doNotRememberLabels = [reinstall]
+        // Reinstall opens the onboarding window on this Mac.
+        warning.notOfferedRemotelyLabels = [reinstall]
         warning.runModalAsync { [weak self] selection, _ in
             self?.alertInFlight = false
             if selection == .kiTermWarningSelection0 {

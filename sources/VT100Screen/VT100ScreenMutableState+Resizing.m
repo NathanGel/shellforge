@@ -208,6 +208,43 @@
     return result;
 }
 
+// Whether any cell in `range` (whose end is exclusive) holds a non-null character. A
+// selection of nothing but nulls has no content to preserve across a resize, and since
+// commit 5e401d357 runByTrimmingNullsFromRun: only trims within the run's first and last
+// lines, so such a selection would otherwise survive as a degenerate sub-selection.
+//
+// Lines are addressed with getLineAtIndex:, which is only accurate for rows that are in the
+// line buffer when this runs. The main-screen caller runs after the primary grid has been
+// appended to the line buffer. When the height does not shrink the whole grid is appended
+// and every row is read correctly. When the height shrinks only some rows are appended, and
+// a row past them is served from the top of the grid instead, so this can wrongly return
+// YES for an all-null range down there. That is harmless today only because
+// convertRange:toWidth:to:inLineBuffer:tolerateEmpty: cannot convert a range past the
+// appended rows and the selection is dropped anyway. Do not rely on this for rows that may
+// not have been appended; filter before appending the grid if that is ever needed.
+- (BOOL)coordRangeContainsNonNullCharacter:(VT100GridCoordRange)range {
+    const int width = self.width;
+    const int numberOfLines = self.numberOfLines;
+    VT100GridCoord end = range.end;
+    // Make the end inclusive.
+    end.x--;
+    if (end.x < 0) {
+        end.x = width - 1;
+        end.y--;
+    }
+    for (int y = MAX(0, range.start.y); y <= end.y && y < numberOfLines; y++) {
+        const screen_char_t *line = [self getLineAtIndex:y];
+        const int firstX = (y == range.start.y) ? MAX(0, range.start.x) : 0;
+        const int lastX = (y == end.y) ? MIN(end.x, width - 1) : width - 1;
+        for (int x = firstX; x <= lastX; x++) {
+            if (line[x].code != 0) {
+                return YES;
+            }
+        }
+    }
+    return NO;
+}
+
 static BOOL XYIsBeforeXY(int px1, int py1, int px2, int py2) {
     if (py1 == py2) {
         return px1 < px2;
@@ -409,6 +446,10 @@ static void SwapInt(int *a, int *b) {
         VT100GridAbsCoordRangeTryMakeRelative(sub.absRange.coordRange,
                                               self.cumulativeScrollbackOverflow,
                                               ^(VT100GridCoordRange range) {
+            if (![self coordRangeContainsNonNullCharacter:range]) {
+                DLog(@"Drop all-null selection on alt screen %@", VT100GridCoordRangeDescription(range));
+                return;
+            }
             LineBufferPositionRange *positionRange =
             [self positionRangeForCoordRange:range
                                 inLineBuffer:lineBufferWithAltScreen
@@ -588,6 +629,10 @@ static void SwapInt(int *a, int *b) {
         VT100GridAbsCoordRangeTryMakeRelative(sub.absRange.coordRange,
                                               overflow,
                                               ^(VT100GridCoordRange range) {
+            if (![self coordRangeContainsNonNullCharacter:range]) {
+                DLog(@"Drop all-null selection %@", VT100GridCoordRangeDescription(range));
+                return;
+            }
             VT100GridCoordRange newSelection;
             const BOOL ok = [self convertRange:range
                                        toWidth:newWidth
@@ -760,10 +805,11 @@ static void SwapInt(int *a, int *b) {
                                  oldSize:(VT100GridSize)oldSize
                                  newSize:(VT100GridSize)newSize {
     self.primaryGrid.size = newSize;
-    [self.primaryGrid setCharsFrom:VT100GridCoordMake(0, 0)
-                                to:VT100GridCoordMake(newSize.width - 1, newSize.height - 1)
-                            toChar:self.primaryGrid.savedDefaultChar
-                externalAttributes:nil];
+    // clearAllWithChar: because restoreScreenFromLineBuffer: below restores at
+    // most MIN(oldSize.height, newSize.height) lines and sets metadata only on
+    // those. Setting the size above rebuilds the line info (clearing attributes)
+    // only when the size actually changed, which is too subtle to rely on.
+    [self.primaryGrid clearAllWithChar:self.primaryGrid.savedDefaultChar];
     // If the height increased:
     // Growing (avoid pulling in stuff from scrollback. Add blank lines
     // at bottom instead). Note there's a little hack here: we use saved_primary_buffer as the default

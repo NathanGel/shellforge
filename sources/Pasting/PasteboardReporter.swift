@@ -89,26 +89,25 @@ class PasteboardReporter: NSObject {
             // App support doesn't exist, so no problem.
             return
         }
-        let alert = NSAlert()
-        alert.messageText = "Error Updating Settings"
-        alert.informativeText = "An error occurred while removing the file that authorizes clipboard reporting: \(error.localizedDescription).\nAs long as this file exists, clipboard reporting could be enabled by programs running on this computer."
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Reveal in Finder")
-        alert.runModal()
+        iTermWarning.show(withTitle: String(localized: "PasteboardReporter.RemoveAuthFileErrorBody", defaultValue: "An error occurred while removing the file that authorizes clipboard reporting: \(error.localizedDescription).\nAs long as this file exists, clipboard reporting could be enabled by programs running on this computer.", comment: "Error body shown when the clipboard-reporting authorization file cannot be removed"),
+                          actions: [String(localized: "PasteboardReporter.RevealInFinder", defaultValue: "Reveal in Finder", comment: "Button that reveals a file in Finder")],
+                          accessory: nil,
+                          identifier: nil,
+                          silenceable: .kiTermWarningTypePersistent,
+                          heading: String(localized: "PasteboardReporter.ErrorUpdatingSettingsTitle", defaultValue: "Error Updating Settings", comment: "Title of the dialog shown when updating clipboard settings fails"),
+                          window: nil)
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
     private static func doubleCheck() -> Bool {
-        let alert = NSAlert()
-        alert.messageText = "Really Enable Clipboard Reporting?"
-        alert.informativeText = "Reporting the content of the clipboard to apps running inside iTerm2 may expose sensitive information such as passwords. Think carefully before enabling this."
-        alert.alertStyle = .warning
-        let button = alert.addButton(withTitle: "OK")
-        if #available(macOS 11.0, *) {
-            button.hasDestructiveAction = true
-        }
-        alert.addButton(withTitle: "Cancel")
-        return alert.runModal() == .alertFirstButtonReturn
+        let warning = iTermWarning()
+        warning.heading = String(localized: "PasteboardReporter.ConfirmEnableTitle", defaultValue: "Really Enable Clipboard Reporting?", comment: "Title of the confirmation dialog for enabling clipboard reporting")
+        warning.title = String(localized: "PasteboardReporter.ConfirmEnableBody", defaultValue: "Reporting the content of the clipboard to apps running inside iTerm2 may expose sensitive information such as passwords. Think carefully before enabling this.", comment: "Warning body shown before enabling clipboard reporting")
+        warning.actionLabels = [iTermLocalizedOK(), iTermLocalizedCancel()]
+        warning.cancelLabel = iTermLocalizedCancel()
+        warning.warningType = .kiTermWarningTypePersistent
+        warning.warningActions?.first?.destructive = true
+        return warning.runModal() == .kiTermWarningSelection0
     }
 
     @objc

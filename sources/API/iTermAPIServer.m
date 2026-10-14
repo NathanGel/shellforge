@@ -384,6 +384,12 @@ NSString *const iTermAPIServerConnectionClosed = @"iTermAPIServerConnectionClose
     });
 }
 
+- (void)stopAcceptingConnections {
+    DLog(@"stopAcceptingConnections");
+    [_unixSocket close];
+    _unixSocket = nil;
+}
+
 - (void)stop {
     self.delegate = nil;
     [_unixSocket close];
@@ -423,6 +429,14 @@ NSString *const iTermAPIServerConnectionClosed = @"iTermAPIServerConnectionClose
         [conn abortWithCompletion:^{}];
     }];
     [_connections removeAllObjects];
+}
+
+- (NSString *)libraryVersionForConnectionKey:(NSString *)connectionKey {
+    __block NSString *result = nil;
+    dispatch_sync(_queue, ^{
+        result = self->_connections[connectionKey].libraryVersion;
+    });
+    return result;
 }
 
 - (NSString *)websocketKeyForConnectionKey:(NSString *)connectionKey {
@@ -982,7 +996,9 @@ NSString *const iTermAPIServerConnectionClosed = @"iTermAPIServerConnectionClose
 
     __block BOOL handled = NO;
     __weak __typeof(self) weakSelf = self;
-    [_delegate apiServerFocus:request.focusRequest handler:^(ITMFocusResponse *focusResponse) {
+    [_delegate apiServerFocus:request.focusRequest
+               libraryVersion:webSocketConnection.libraryVersion
+                      handler:^(ITMFocusResponse *focusResponse) {
         assert(!handled);
         handled = YES;
         response.focusResponse = focusResponse;

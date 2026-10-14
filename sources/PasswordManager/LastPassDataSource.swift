@@ -174,7 +174,7 @@ class LastPassDataSource: CommandLinePasswordDataSource {
                                sendOTP: false)
             }
         }
-        return wrap("The account list could not be fetched.", AnyRecipe(recipe))
+        return wrap(String(localized: "LastPass.AccountListFetchFailed", defaultValue: "The account list could not be fetched.", comment: "Error shown when the LastPass account list cannot be fetched"), AnyRecipe(recipe))
     }
 
     private var getPasswordRecipe: AnyRecipe<AccountIdentifier, Password> {
@@ -192,7 +192,7 @@ class LastPassDataSource: CommandLinePasswordDataSource {
             }
             return Password(password: string.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines))
         }
-        return wrap("The password could not be fetched.", AnyRecipe(recipe))
+        return wrap(String(localized: "LastPass.PasswordFetchFailed", defaultValue: "The password could not be fetched.", comment: "Error shown when a LastPass password cannot be fetched"), AnyRecipe(recipe))
     }
 
     private var setPasswordRecipe: AnyRecipe<SetPasswordRequest, Void> {
@@ -226,7 +226,7 @@ class LastPassDataSource: CommandLinePasswordDataSource {
                 throw LPError.runtime
             }
         }
-        return wrap("The password could not be set.", AnyRecipe(recipe))
+        return wrap(String(localized: "LastPass.PasswordSetFailed", defaultValue: "The password could not be set.", comment: "Error shown when a LastPass password cannot be set"), AnyRecipe(recipe))
     }
 
     private var deleteRecipe: AnyRecipe<AccountIdentifier, Void> {
@@ -241,7 +241,7 @@ class LastPassDataSource: CommandLinePasswordDataSource {
                 throw LPError.runtime
             }
         }
-        return wrap("The account could not be deleted", AnyRecipe(recipe))
+        return wrap(String(localized: "LastPass.AccountDeleteFailed", defaultValue: "The account could not be deleted", comment: "Error shown when a LastPass account cannot be deleted"), AnyRecipe(recipe))
     }
 
     private var addAccountRecipe: AnyRecipe<AddRequest, AccountIdentifier> {
@@ -302,17 +302,19 @@ class LastPassDataSource: CommandLinePasswordDataSource {
             LastPassDynamicCommandRecipe<AddRequest, Void>,
                 LastPassBasicCommandRecipe<(AddRequest, Void), Void>> = SequenceRecipe(addRecipe, syncRecipe)
         let sequence = SequenceRecipe(addSyncSequence, showRecipe)
-        return wrap("The account could not be added.", AnyRecipe(sequence))
+        return wrap(String(localized: "LastPass.AccountAddFailed", defaultValue: "The account could not be added.", comment: "Error shown when a LastPass account cannot be added"), AnyRecipe(sequence))
     }
 
     func wrap<Inputs, Outputs>(_ message: String, _ recipe: AnyRecipe<Inputs, Outputs>) -> AnyRecipe<Inputs, Outputs> {
         return AnyRecipe(CatchRecipe(recipe, errorHandler: { (inputs, error) in
             if error as? LPError == LPError.timedOut {
-                let alert = NSAlert()
-                alert.messageText = "Timeout"
-                alert.informativeText = "The LastPass service took too long to respond. \(message)"
-                alert.addButton(withTitle: "OK")
-                alert.runModal()
+                iTermWarning.show(withTitle: String(localized: "LastPass.TimeoutMessage", defaultValue: "The LastPass service took too long to respond. \(message)", comment: "Alert body when LastPass times out; the interpolated value is a context message"),
+                                  actions: [iTermLocalizedOK()],
+                                  accessory: nil,
+                                  identifier: nil,
+                                  silenceable: .kiTermWarningTypePersistent,
+                                  heading: String(localized: "LastPass.TimeoutTitle", defaultValue: "Timeout", comment: "Alert title when LastPass times out"),
+                                  window: nil)
                 return
             } else if error as? LPError == LPError.needsLogin {
                 LastPassUtils.showNotLoggedInMessage()
@@ -530,32 +532,39 @@ class LastPassUtils {
     }
 
     static func showNotLoggedInMessage() {
-        let alert = NSAlert()
         let email = iTermUserDefaults.userDefaults().string(forKey: usernameUserDefaultsKey) ?? "your@email.address"
-        alert.messageText = "Authentication Failed"
-        alert.informativeText = "You can also try opening a terminal window and running `lpass login \(email)`."
-        alert.addButton(withTitle: "Open Terminal Window")
-        alert.addButton(withTitle: "Copy Command")
-        alert.addButton(withTitle: "Cancel")
-        switch alert.runModal() {
-        case .alertFirstButtonReturn:
+        let selection = iTermWarning.show(withTitle: String(localized: "LastPass.AuthFailedMessage", defaultValue: "You can also try opening a terminal window and running `lpass login \(email)`.", comment: "Alert body when LastPass authentication fails; the interpolated value is the user email"),
+                                          actions: [String(localized: "LastPass.OpenTerminalWindow", defaultValue: "Open Terminal Window", comment: "Button to open a terminal window to log in to LastPass"),
+                                                    String(localized: "LastPass.CopyCommand", defaultValue: "Copy Command", comment: "Button to copy the LastPass login command"),
+                                                    iTermLocalizedCancel()],
+                                          actionMapping: nil,
+                                          accessory: nil,
+                                          identifier: nil,
+                                          silenceable: .kiTermWarningTypePersistent,
+                                          heading: String(localized: "LastPass.AuthFailedTitle", defaultValue: "Authentication Failed", comment: "Alert title when LastPass authentication fails"),
+                                          cancelLabel: iTermLocalizedCancel(),
+                                          window: nil)
+        switch selection {
+        case .kiTermWarningSelection0:
             let window = iTermController.sharedInstance().openSingleUseLoginWindowAndWrite("lpass login \(email)".data(using: .utf8)!) { session in
                 session?.addExpectation("^Success: Logged in as",
                                         after: nil,
                                         deadline: nil,
                                         willExpect: nil) { _ in
-                    let alert = NSAlert()
-                    alert.messageText = "Login Successful"
-                    alert.informativeText = "Please retry your action in the password manager."
-                    alert.addButton(withTitle: "OK")
-                    alert.runModal()
+                    iTermWarning.show(withTitle: String(localized: "LastPass.LoginSuccessfulMessage", defaultValue: "Please retry your action in the password manager.", comment: "Alert body when LastPass login succeeds"),
+                                      actions: [iTermLocalizedOK()],
+                                      accessory: nil,
+                                      identifier: nil,
+                                      silenceable: .kiTermWarningTypePersistent,
+                                      heading: String(localized: "LastPass.LoginSuccessfulTitle", defaultValue: "Login Successful", comment: "Alert title when LastPass login succeeds"),
+                                      window: nil)
                     session?.close()
                 }
             }
             Timer.scheduledTimer(withTimeInterval: 0, repeats: false) { _ in
                 window?.makeKeyAndOrderFront(nil)
             }
-        case .alertSecondButtonReturn:
+        case .kiTermWarningSelection1:
             NSPasteboard.general.declareTypes([.string], owner: self)
             NSPasteboard.general.setString("lpass login \(email)", forType: .string)
         default:
@@ -565,18 +574,26 @@ class LastPassUtils {
 
     // Returns true to show an open panel to locate it.
     private static func showCannotFindCLIMessage() -> Bool {
-        let alert = NSAlert()
-        alert.messageText = "Can’t Find LastPass CLI"
-        alert.informativeText = "In order to use the LastPass integration, iTerm2 needs to know where to find the CLI app named “lpass”. Select Locate to provide its location."
-        alert.addButton(withTitle: "Locate")
-        alert.addButton(withTitle: "Cancel")
-        alert.addButton(withTitle: "Help")
-        switch alert.runModal() {
-        case .alertFirstButtonReturn:
+        let locate = String(localized: "LastPass.Locate", defaultValue: "Locate", comment: "Button to locate the LastPass CLI")
+        let help = String(localized: "LastPass.Help", defaultValue: "Help", comment: "Help button")
+        let warning = iTermWarning()
+        warning.heading = String(localized: "LastPass.CannotFindCLITitle", defaultValue: "Can’t Find LastPass CLI", comment: "Alert title when the LastPass CLI cannot be found")
+        warning.title = String(localized: "LastPass.CannotFindCLIMessage", defaultValue: "In order to use the LastPass integration, iTerm2 needs to know where to find the CLI app named “lpass”. Select Locate to provide its location.", comment: "Alert body when the LastPass CLI cannot be found")
+        warning.actionLabels = [locate,
+                                iTermLocalizedCancel(),
+                                help]
+        // Locate opens a file panel on this Mac, which the companion app cannot operate. Help opens
+        // a web page in this Mac's browser.
+        warning.notOfferedRemotelyLabels = [locate, help]
+        warning.cancelLabel = iTermLocalizedCancel()
+        warning.warningType = .kiTermWarningTypePersistent
+        let selection = warning.runModal()
+        switch selection {
+        case .kiTermWarningSelection0:
             return true
-        case .alertSecondButtonReturn:
+        case .kiTermWarningSelection1:
             return false
-        case .alertThirdButtonReturn:
+        case .kiTermWarningSelection2:
             NSWorkspace.shared.open(URL(string: "https://iterm2.com/lastpass-cli")!)
             return false
         default:

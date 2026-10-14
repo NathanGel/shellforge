@@ -15,7 +15,7 @@ fileprivate let PSMTahoeTabStyleDebuggingEnabled: Bool = false
 @objc
 @available(macOS 26, *)
 class PSMTahoeTabStyle: NSObject, PSMTabStyle {
-   
+
     // MARK: - Private Properties
     private var _closeButton: NSImage?
     private var _closeButtonDown: NSImage?
@@ -600,12 +600,53 @@ class PSMTahoeTabStyle: NSObject, PSMTabStyle {
     }
     let containerBottomInset = CGFloat(0)
     
+    /// The bar's own shape, minus the add-tab button's margin when it is showing.
+    private func backgroundRect(forBar bar: PSMTabBarControl, in rect: NSRect) -> NSRect {
+        var backgroundRect = rect
+        if bar.showAddTabButton {
+            backgroundRect.size.width -= 32.0
+        }
+        return backgroundRect
+    }
+
+    /// The shape a per-cell accessory subview (the progress ring, the activity indicator) has to stay
+    /// inside, in the bar's coordinates, or nil when there is none.
+    ///
+    /// An accessory is a subview drawn on top of -drawRect:, so it never sees the graphics clip
+    /// `drawTabBar` sets for cells, and without this it follows its tab straight out past the bar's
+    /// rounded ends. This is the bar's own painted shape: `drawBackground(in:color:horizontal:)`
+    /// fills exactly this path, so an accessory held to it cannot paint where the bar is not.
+    ///
+    /// Deliberately NOT the clip cells get while the bar is scrollable, which is this path tightened
+    /// by (2, 1) so a scrolled pill cannot paint over the rounded border. The progress ring is outset
+    /// past its pill by `progressRingWidth` on every side, and `adjustedCellRect` puts the cell's top
+    /// at `containerTopInset`, so the ring's top edge lands exactly on the container's. Holding it to
+    /// the cell clip would shave the ring's top band, and most of the first and last tab's side
+    /// bands, which is the very thing the ring is drawn outset to show.
+    @objc func accessoryClipPath(forTabBar bar: PSMTabBarControl) -> NSBezierPath? {
+        // Take the axis from the bar rather than the cached one, the way every other query that is
+        // handed a bar does, and pass it down instead of writing it back: only drawTabBar syncs the
+        // cache, and this runs from layout, where -[iTermTabBarControlView setOrientation:] relays
+        // out through -update before it assigns the style's orientation. Updating the cache here
+        // would flip it partway through a pass whose earlier half already read the old value.
+        guard bar.orientation == .horizontalOrientation else {
+            // The vertical clip is the bar's full rect, which no accessory can leave.
+            return nil
+        }
+        return clippingPath(rect: backgroundRect(forBar: bar, in: bar.bounds),
+                            orientation: bar.orientation)
+    }
+
     // The bar's rounded container shape. `insetX`/`insetY` shrink it on each side;
     // both default to 0 so the background fill uses the full shape. A scrollable
     // bar insets the *cell* clip (see -drawTabBar:) so scrolled cells can't paint
-    // over the rounded border.
-    private func clippingPath(rect: NSRect, insetX: CGFloat = 0, insetY: CGFloat = 0) -> NSBezierPath {
-        if orientation == .horizontalOrientation {
+    // over the rounded border. `orientation` defaults to the cached axis; a caller
+    // that runs outside a draw, where the cache can lag the bar, passes the bar's.
+    private func clippingPath(rect: NSRect,
+                              insetX: CGFloat = 0,
+                              insetY: CGFloat = 0,
+                              orientation: PSMTabBarOrientation? = nil) -> NSBezierPath {
+        if (orientation ?? _orientation) == .horizontalOrientation {
             let container = NSRect(x: containerSideInset - 0.5,
                                    y: containerTopInset,
                                    width: rect.width - containerSideInset * 2 + 1,
@@ -648,28 +689,14 @@ class PSMTahoeTabStyle: NSObject, PSMTabStyle {
         
         
         let backgroundColor = Self.backgroundColor
-        var backgroundRect = rect
-        if bar.showAddTabButton {
-            backgroundRect.size.width -= 32.0
-        }
+        let backgroundRect = self.backgroundRect(forBar: bar, in: rect)
 
         drawBackground(in: backgroundRect, color: backgroundColor, horizontal: horizontal)
         NSGraphicsContext.current?.saveGraphicsState()
         defer {
             NSGraphicsContext.current?.restoreGraphicsState()
         }
-        // When the bar is scrollable, tabs can scroll all the way to the rounded
-        // ends. The selected tab's opaque pill would then paint over the bar's
-        // rounded border, since a non-scrollable bar only keeps tabs off the ends
-        // via its left/right margins. Inset the cell clip so a ring of bar
-        // background survives around the rounded ends. The inset matches the pill's
-        // own top/bottom margin (see -backgroundRect(for:), which insets 2 top / 1
-        // bottom) so the pill itself is never clipped.
-        if bar.tabBarIsScrollable() {
-            clippingPath(rect: backgroundRect, insetX: 2, insetY: 1).addClip()
-        } else {
-            clippingPath(rect: backgroundRect).addClip()
-        }
+        clippingPath(rect: backgroundRect).addClip()
 
         // no tab view == not connected
         guard let _ = bar.tabView else {
@@ -707,6 +734,20 @@ class PSMTahoeTabStyle: NSObject, PSMTabStyle {
         }
 
         if drawableCells.count > 0 {
+            // When the bar is scrollable, tabs can scroll all the way to the
+            // rounded ends. The selected tab's opaque pill would then paint over
+            // the bar's rounded border, since a non-scrollable bar only keeps tabs
+            // off the ends via its left/right margins. Inset the cell clip so a
+            // ring of bar background survives around the rounded ends. The inset
+            // matches the pill's own top/bottom margin (see -backgroundRect(for:),
+            // which insets 2 top / 1 bottom) so the pill itself is never clipped.
+            // Scope this tighter clip to the cells only: the group-run outline
+            // (drawn below) is intentionally outset past the cells and must reach
+            // the pill edges, so it stays under the full clip set above.
+            NSGraphicsContext.current?.saveGraphicsState()
+            if bar.tabBarIsScrollable() {
+                clippingPath(rect: backgroundRect, insetX: 2, insetY: 1).addClip()
+            }
             if let i = drawableCells.firstIndex(where: { $0.state == .on }) {
                 let cell = drawableCells.remove(at: i)
                 drawableCells.append(cell)
@@ -753,6 +794,7 @@ class PSMTahoeTabStyle: NSObject, PSMTabStyle {
             if let selectedCell = drawableCells.first, selectedCell.state == .on {
                 selectedCell.drawPostHocDecorations(onSelectedCell: selectedCell, tabBarControl: bar)
             }
+            NSGraphicsContext.current?.restoreGraphicsState()
         }
 
         // The container clip above hugs the tab pills with only a 2pt top / 1pt
@@ -865,8 +907,13 @@ class PSMTahoeTabStyle: NSObject, PSMTabStyle {
         // A fully collapsed run has no visible member tabs, so the run block
         // above is never invoked for it; its chip draws a self-contained
         // affordance (name + member count + collapse chevron) instead.
+        let dropTargetGID = bar.collapsedTabGroupDropTargetIdentifier()
         bar.enumerateCollapsedTabGroupChips { chip, memberCount, gid in
-            self.drawCollapsedTabGroupChip(chip: chip, memberCount: memberCount, groupID: gid, bar: bar)
+            self.drawCollapsedTabGroupChip(chip: chip,
+                                           memberCount: memberCount,
+                                           groupID: gid,
+                                           bar: bar,
+                                           isDropTarget: gid == dropTargetGID)
         }
     }
 
@@ -891,7 +938,8 @@ class PSMTahoeTabStyle: NSObject, PSMTabStyle {
     private func drawCollapsedTabGroupChip(chip: PSMTabBarCell,
                                            memberCount: Int,
                                            groupID: String,
-                                           bar: PSMTabBarControl) {
+                                           bar: PSMTabBarControl,
+                                           isDropTarget: Bool) {
         let (groupColor, bgColor, name) = tabGroupChrome(forGroupID: groupID, bar: bar)
         let font = Self.groupNameFont
         let textCol = NSColor.labelColor
@@ -990,6 +1038,17 @@ class PSMTahoeTabStyle: NSObject, PSMTabStyle {
                                    xRadius: radius, yRadius: radius)
         outline.lineWidth = 1
         outline.stroke()
+
+        // Drop-target feedback: while a dragged tab is poised to join this
+        // collapsed group, ring the pill in the accent color so the user sees the
+        // drop lands INSIDE the group (no member cells open a slot to show it).
+        if isDropTarget {
+            let ring = NSBezierPath(roundedRect: pill.insetBy(dx: -1.0, dy: -1.0),
+                                    xRadius: radius + 1.0, yRadius: radius + 1.0)
+            ring.lineWidth = 2
+            NSColor.controlAccentColor.setStroke()
+            ring.stroke()
+        }
     }
 
     @objc func tabGroupCollapsedChipCellWidth(forName name: String, memberCount count: Int) -> CGFloat {
@@ -1224,7 +1283,7 @@ class PSMTahoeTabStyle: NSObject, PSMTabStyle {
     }
 
     var dividerColor: NSColor {
-        NSColor(displayP3Red: 0.82, green: 0.82, blue: 0.82, alpha: 1.0)
+        NSColor(displayP3Red: 205.0 / 255.0, green: 205.0 / 255.0, blue: 205.0 / 255.0, alpha: 1.0)
     }
 
     func drawDivider(betweenCell leftCell: PSMTabBarCell, andCell rightCell: PSMTabBarCell) {
@@ -2399,7 +2458,7 @@ class PSMTahoeDarkTabStyle: PSMTahoeTabStyle {
     }()
     
     override var dividerColor: NSColor {
-        NSColor(displayP3Red: 0.271, green: 0.292, blue: 0.301, alpha: 1.0)
+        NSColor(displayP3Red: 38.0 / 255.0, green: 38.0 / 255.0, blue: 38.0 / 255.0, alpha: 1.0)
     }
 
     override func useLightControls() -> Bool {

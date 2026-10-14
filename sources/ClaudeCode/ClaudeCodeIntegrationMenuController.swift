@@ -39,51 +39,54 @@ final class ClaudeCodeIntegrationMenuController: NSObject {
     }
 
     @objc func uninstall(_ sender: Any?) {
-        let confirm = NSAlert()
-        confirm.messageText = "Uninstall Claude Code Integration?"
-        confirm.informativeText = "This removes the cc-status hook from "
-            + "~/.claude/settings.json, the Claude Code workgroup from your "
-            + "settings, and the Enter/Exit Workgroup triggers from every "
-            + "profile. You can reinstall any time using iTerm2 > Install Claude Code Integration."
-        confirm.alertStyle = .warning
-        confirm.addButton(withTitle: "Uninstall")
-        confirm.addButton(withTitle: "Cancel")
-        guard confirm.runModal() == .alertFirstButtonReturn else { return }
+        // The settings.json location was recorded at install time, so this is a
+        // synchronous read (no shell spawn) and is the same path uninstallHooks
+        // operates on below.
+        let settingsPath = ClaudeCodeOnboarding.claudeSettingsURL().path
+        let confirm = iTermWarning()
+        confirm.heading = String(localized: "ClaudeCode.UninstallTitle", defaultValue: "Uninstall Claude Code Integration?", comment: "Title of the uninstall confirmation dialog")
+        confirm.title = String(localized: "ClaudeCode.UninstallBody", defaultValue: "This removes the cc-status hook from \(settingsPath), the Claude Code workgroup from your settings, and the Enter/Exit Workgroup triggers from every profile. You can reinstall any time using iTerm2 > Install Claude Code Integration.", comment: "Explanation of what uninstalling the Claude Code integration does; the interpolated value is the absolute path to settings.json")
+        confirm.actionLabels = [String(localized: "ClaudeCode.Uninstall", defaultValue: "Uninstall", comment: "Button to confirm uninstalling the Claude Code integration"),
+                                iTermLocalizedCancel()]
+        confirm.cancelLabel = iTermLocalizedCancel()
+        confirm.warningType = .kiTermWarningTypePersistent
+        guard confirm.runModal() == .kiTermWarningSelection0 else { return }
 
         // Hooks first — they're the only step that can fail (disk).
-        // If the hook removal fails, ask before touching the rest:
-        // the user may want to bail out and fix the underlying
-        // problem (nothing removed, retryable), or push through and
-        // clean up the iTerm-side state anyway (cc-status will keep
-        // firing until they fix ~/.claude/settings.json by hand).
         let hookResult = ClaudeCodeOnboarding.uninstallHooks()
+        finishUninstall(hookResult: hookResult, settingsPath: settingsPath)
+    }
+
+    private func finishUninstall(hookResult: ClaudeCodeUninstallHooksResult, settingsPath: String) {
+        // If the hook removal fails, ask before touching the rest: the
+        // user may want to bail out and fix the underlying problem
+        // (nothing removed, retryable), or push through and clean up the
+        // iTerm-side state anyway (cc-status will keep firing until they
+        // fix settingsPath by hand).
         if hookResult != .success {
             let detail: String
             switch hookResult {
             case .unreadable:
-                detail = "Could not read ~/.claude/settings.json — check "
-                    + "the file\u{2019}s permissions."
+                detail = String(localized: "ClaudeCode.HookUnreadable", defaultValue: "Could not read \(settingsPath) — check the file\u{2019}s permissions.", comment: "Detail shown when the Claude Code settings file could not be read; the interpolated value is the absolute path to settings.json")
             case .malformed:
-                detail = "~/.claude/settings.json couldn\u{2019}t be parsed "
-                    + "as JSON. Open it in a text editor and check it for "
-                    + "syntax errors."
+                detail = String(localized: "ClaudeCode.HookMalformed", defaultValue: "\(settingsPath) couldn\u{2019}t be parsed as JSON. Open it in a text editor and check it for syntax errors.", comment: "Detail shown when the Claude Code settings file is not valid JSON; the interpolated value is the absolute path to settings.json")
             case .writeFailed:
-                detail = "Could not write to ~/.claude/settings.json — "
-                    + "check the file\u{2019}s permissions."
+                detail = String(localized: "ClaudeCode.HookWriteFailed", defaultValue: "Could not write to \(settingsPath) — check the file\u{2019}s permissions.", comment: "Detail shown when the Claude Code settings file could not be written; the interpolated value is the absolute path to settings.json")
             case .success:
                 detail = ""  // unreachable; covered by outer guard
             @unknown default:
                 detail = ""
             }
-            let failure = NSAlert()
-            failure.messageText = "Couldn\u{2019}t Remove Hooks"
-            failure.informativeText = "\(detail) Continue removing the "
-                + "workgroup and triggers anyway? cc-status will keep "
-                + "running until you fix the underlying issue and try again."
-            failure.alertStyle = .warning
-            failure.addButton(withTitle: "Continue")
-            failure.addButton(withTitle: "Cancel")
-            guard failure.runModal() == .alertFirstButtonReturn else { return }
+            let failure = iTermWarning()
+            failure.heading = String(localized: "ClaudeCode.HookRemovalFailedTitle", defaultValue: "Couldn\u{2019}t Remove Hooks", comment: "Title shown when Claude Code hook removal failed")
+            failure.title = String(localized: "ClaudeCode.HookRemovalFailedBody", defaultValue: "\(detail) Continue removing the workgroup and triggers anyway? cc-status will keep running until you fix the underlying issue and try again.", comment: "Body shown when hook removal failed, asking whether to continue uninstalling")
+            failure.actionLabels = [String(localized: "General.Continue", defaultValue: "Continue", comment: "Continue button"),
+                                    iTermLocalizedCancel()]
+            failure.cancelLabel = iTermLocalizedCancel()
+            failure.warningType = .kiTermWarningTypePersistent
+            guard failure.runModal() == .kiTermWarningSelection0 else { return }
+        } else {
+            warnAboutKeptHookCommands(settingsPath: settingsPath)
         }
 
         ClaudeCodeOnboarding.uninstallWorkgroup()
@@ -100,17 +103,38 @@ final class ClaudeCodeIntegrationMenuController: NSObject {
         // entirely if the API is already off (uninstall has nothing
         // to offer).
         if iTermAPIHelper.isEnabled() {
-            let apiAlert = NSAlert()
-            apiAlert.messageText = "Disable the Python API?"
-            apiAlert.informativeText = "The installer enabled iTerm2\u{2019}s "
-                + "Python API. Other scripts or integrations may be using "
-                + "it now. Leave it enabled, or turn it off?"
-            apiAlert.addButton(withTitle: "Leave Enabled")
-            apiAlert.addButton(withTitle: "Disable")
-            if apiAlert.runModal() == .alertSecondButtonReturn {
+            let apiAlert = iTermWarning()
+            apiAlert.heading = String(localized: "ClaudeCode.DisableAPITitle", defaultValue: "Disable the Python API?", comment: "Title asking whether to disable the Python API during uninstall")
+            apiAlert.title = String(localized: "ClaudeCode.DisableAPIBody", defaultValue: "The installer enabled iTerm2\u{2019}s Python API. Other scripts or integrations may be using it now. Leave it enabled, or turn it off?", comment: "Explanation shown when asking whether to disable the Python API during uninstall")
+            apiAlert.actionLabels = [String(localized: "ClaudeCode.LeaveEnabled", defaultValue: "Leave Enabled", comment: "Button to leave the Python API enabled"),
+                                     String(localized: "ClaudeCode.Disable", defaultValue: "Disable", comment: "Button to disable the Python API")]
+            apiAlert.warningType = .kiTermWarningTypePersistent
+            if apiAlert.runModal() == .kiTermWarningSelection1 {
                 iTermAPIHelper.setEnabled(false)
             }
         }
+    }
+
+    // Uninstall leaves a hook command that runs other programs as well as
+    // cc-status, since removing it would stop those too. Say so, or the
+    // user would think cc-status is gone while it keeps running. The list
+    // is every command that keeps hooksAlreadyInstalled true, so it also
+    // explains why Reinstall and Uninstall stay in the menu. Some of them
+    // may not actually run cc-status (its path is gone, or it's only an
+    // argument), so the text doesn't claim they do.
+    private func warnAboutKeptHookCommands(settingsPath: String) {
+        let kept = ClaudeCodeOnboarding.ccStatusCommandsOnDisk()
+        guard !kept.isEmpty else {
+            return
+        }
+        RLog("Uninstall left \(kept.count) cc-status hook command(s) in place")
+        let commands = kept.joined(separator: "\n")
+        let warning = iTermWarning()
+        warning.heading = String(localized: "ClaudeCode.HookCommandsKeptTitle", defaultValue: "Some Hooks Were Left in Place", comment: "Title shown after uninstalling when some Claude Code hook commands were not removed")
+        warning.title = String(localized: "ClaudeCode.HookCommandsKeptBody", defaultValue: "Some hook commands in \(settingsPath) mention cc-status but also run other programs, so Uninstall didn\u{2019}t remove them. If you don\u{2019}t want them anymore, edit the file by hand:\n\n\(commands)", comment: "Body shown after uninstalling when some Claude Code hook commands were not removed. The first interpolated value is the absolute path to settings.json; the second is the list of hook commands, one per line, shown verbatim")
+        warning.actionLabels = [iTermLocalizedOK()]
+        warning.warningType = .kiTermWarningTypePersistent
+        warning.runModal()
     }
 
     // MARK: - Menu Validation

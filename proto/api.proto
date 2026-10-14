@@ -689,6 +689,7 @@ message GetPropertyRequest {
   // "grid_size" -> { "width": number, "height": number }
   // "buried" -> boolean
   // "number_of_lines" -> { "overflow": number, "grid": number, "history": number }
+  // "session_note" -> { "text": string, "visible": boolean, "collapsed": boolean }
   //
   // For windows:
   // "frame" -> { "origin": { "x": number, "y": number }, "size": { "width": number, "height": number } }
@@ -730,6 +731,8 @@ message SetPropertyRequest {
   // For sessions:
   // grid_size      { "width": 80, "height": 25 }
   // buried         true
+  // "session_note" -> { "text": string, "visible": boolean, "collapsed": boolean }
+  // Accepts a partial object; omitted keys retain their current values.
   optional string name = 3;
   optional string json_value = 4;
 }
@@ -847,6 +850,20 @@ message RPCRegistrationRequest {
   message ContextMenuAttributes {
     optional string display_name = 1;
     optional string unique_identifier = 2;
+
+    // If set, the item appears in a submenu with this title. Items from any
+    // script that share a submenu title are grouped together. Added in
+    // protocol 1.23.
+    optional string submenu = 3;
+
+    // If set, an expression evaluated in the clicked session's scope when the
+    // menu opens. The item is shown only if it evaluates to a boolean or
+    // number that is true or nonzero; a string result (even "1") hides it, as
+    // do undefined variables and errors. To test a flag that may have been set
+    // from the shell (and so be a string), compare it: `user.flag == 1`. It must not call functions, since it
+    // is evaluated synchronously. When unset the item is always shown. Added
+    // in protocol 1.23.
+    optional string visible_when = 4;
   }
 
   oneof RoleSpecificAttributes {
@@ -1588,6 +1605,13 @@ message SplitTreeNode {
   }
 }
 
+// A pane that floats over its tab's split panes. Added in protocol 1.21.
+message FloatingPane {
+  // The session's frame is the float's frame in the tab, in points, with the
+  // origin at the tab's top left and y increasing downward.
+  optional SessionSummary session = 1;
+}
+
 message ListSessionsResponse {
   message Window {
     repeated Tab tabs = 1;
@@ -1607,6 +1631,21 @@ message ListSessionsResponse {
     // guid of the tab's active session, so clients can determine the current
     // session without waiting for a focus notification. Added in protocol 1.18.
     optional string active_session_id = 7;
+    // Tab group membership. A tab group's identity is a UUID that rides on each
+    // member tab (there is no central registry); all members of a group carry
+    // the same name/color/collapsed values. tab_group_id is unset when the tab
+    // belongs to no group; the other three are meaningful only when it is set.
+    // The color is a hex string as produced by -[NSColor hexStringPreservingColorSpace]
+    // ("#rrggbb" for sRGB, "p3#rrggbbrrggbb" for Display P3). Added in protocol 1.19.
+    optional string tab_group_id = 8;
+    optional string tab_group_name = 9;
+    optional string tab_group_color = 10;
+    optional bool tab_group_collapsed = 11;
+    // The tab's floating panes, back to front. Their sessions are not in
+    // `root`. Added in protocol 1.21.
+    repeated FloatingPane floating_panes = 12;
+    // Whether the tab's floating panes are hidden. Added in protocol 1.21.
+    optional bool floating_panes_hidden = 13;
   }
   repeated Window windows = 1;
   repeated SessionSummary buried_sessions = 2;

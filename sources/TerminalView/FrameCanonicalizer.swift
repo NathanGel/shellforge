@@ -57,7 +57,8 @@ class FrameCanonicalizer: NSObject {
             return canonicalizedNoOp()
         case .WINDOW_TYPE_TRADITIONAL_FULL_SCREEN:
             return canonicalizedTraditionalFullScreen()
-        case .WINDOW_TYPE_CENTERED, .WINDOW_TYPE_COMPACT_CENTERED:
+        case .WINDOW_TYPE_CENTERED, .WINDOW_TYPE_COMPACT_CENTERED,
+                .WINDOW_TYPE_CENTERED_NO_TITLE_BAR:
             return canonicalizedCentered()
         case .WINDOW_TYPE_TOP_PERCENTAGE:
             return canonicalizedTopPercentage()
@@ -120,6 +121,11 @@ class FrameCanonicalizer: NSObject {
         if !preserveSize {
             // If the screen grew and the window was smaller than the desired number of rows, grow it.
             frame.size = preferredSizeForEdgeAlignedWindow
+        } else if screenVisibleFrameIgnoringHiddenDock.width > 0 && screenVisibleFrameIgnoringHiddenDock.height > 0 {
+            // A manually resized window may be larger than this screen (e.g., after moving to a
+            // smaller display), so keep it from hanging off the edges.
+            frame.size.width = min(frame.width, screenVisibleFrameIgnoringHiddenDock.width)
+            frame.size.height = min(frame.height, screenVisibleFrameIgnoringHiddenDock.height)
         }
         frame = iTermRectCenteredHorizontallyWithinRect(frame, screenVisibleFrameIgnoringHiddenDock)
         frame = iTermRectCenteredVerticallyWithinRect(frame, screenVisibleFrameIgnoringHiddenDock)

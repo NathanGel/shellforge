@@ -211,11 +211,12 @@ class KittyImageRenderer: NSObject, iTermMetalCellRendererProtocol {
             return
         }
         // Bound the texture cache to the working set. Every transmission mints a fresh Image with a
-        // fresh uniqueId, so an animation that repeatedly retransmits under one image id and
-        // redisplays it would otherwise add one permanent MTLTexture per frame. Drop cached textures
-        // whose image is not drawn this frame; live ones are kept and reused, so a stable scene never
-        // re-creates textures. Do this once per frame (not per z-range pass), and only rebuild the
-        // dictionary when something is actually dead so the steady state is free.
+        // fresh uniqueId, and re-pointing live placements on retransmission means an animation that
+        // repeatedly retransmits under one image id would otherwise add one permanent MTLTexture per
+        // frame. Drop cached textures whose image is not drawn this frame; live ones are kept and
+        // reused, so a stable scene never re-creates textures. Do this once per frame (not per
+        // z-range pass), and only rebuild the dictionary when something is actually dead so the
+        // steady state is free.
         if !tState.didPruneTextures {
             tState.didPruneTextures = true
             let liveUUIDs = Set(tState.draws.map { $0.imageUniqueID })

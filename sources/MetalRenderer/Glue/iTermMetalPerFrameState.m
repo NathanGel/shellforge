@@ -6,6 +6,8 @@
 //
 
 #import "iTermMetalPerFrameState.h"
+#import "iTermCursor.h"
+#import "iTermMalloc.h"
 
 #import "DebugLogging.h"
 #import "iTerm2SharedARC-Swift.h"
@@ -14,6 +16,7 @@
 #import "iTermAttributedStringBuilder.h"
 #import "iTermAttributedStringProxy.h"
 #import "iTermBoxDrawingBezierCurveFactory.h"
+#import "iTermCharacterSets.h"
 #import "iTermCharacterSource.h"
 #import "iTermColorMap.h"
 #import "iTermController.h"
@@ -349,10 +352,18 @@ typedef struct {
 }
 - (void)loadCursorInfoWithDrawingHelper:(iTermTextDrawingHelper *)drawingHelper
                                textView:(PTYTextView *)textView {
+    const CGFloat potentialEDR = textView.window.screen.maximumPotentialExtendedDynamicRangeColorComponentValue;
     _cursorVisible = drawingHelper.isCursorVisible;
     const int offset = _visibleRange.start.y - _numberOfScrollbackLines;
     _cursorInfo = [[iTermMetalCursorInfo alloc] init];
     _cursorInfo.fadeAlpha = 1.0;
+    // Decide the HDR-cursor treatment once, where the profile hint, headroom, and
+    // background are all known, so the cursor renderer and the bold path agree.
+    // Uses the default background (like the legacy renderer) as the dark test.
+    _cursorInfo.useHDRWhite = [iTermCursor shouldUseHDRCursorOnBackground:[drawingHelper defaultBackgroundColor]
+                                                          profileEnabled:drawingHelper.hdrCursorEnabled
+                                                       potentialHeadroom:potentialEDR];
+    _cursorInfo.hdrBrightness = drawingHelper.hdrCursorBrightness;
     _cursorInfo.password = drawingHelper.passwordInput;
     _cursorInfo.copyMode = drawingHelper.copyMode;
     _cursorInfo.copyModeCursorCoord = VT100GridCoordMake(drawingHelper.copyModeCursorCoord.x,
@@ -408,6 +419,21 @@ typedef struct {
         _cursorInfo.fadeAlpha = fadeAlpha;
         _cursorInfo.type = drawingHelper.cursorType;
         _cursorInfo.cursorColor = [self backgroundColorForCursor];
+        // An unfocused box is drawn as a hollow frame by _frameCursorRenderer using
+        // this cursorColor, and that frame must keep the profile color (the frame
+        // renderer never forces white). Everywhere the block is actually filled and
+        // forced white, the glyph's antialiasing background (also derived from
+        // cursorColor) must be white too, or a saturated profile color fringes the
+        // character. The box-frame exception rule is shared with the legacy path.
+        if (_cursorInfo.useHDRWhite &&
+            [iTermCursor hdrCursorForcesWhiteForType:_cursorInfo.type focused:focused]) {
+            // Use an sRGB white, not +whiteColor: the latter is in the Generic Gray
+            // colorspace, and the Metal driver reads -redComponent/-green/-blue off
+            // this color, which raises NSColorRaiseWithColorSpaceError for a
+            // non-RGB colorspace. The EDR boost comes from the useHDRCursor flag,
+            // not from component values above 1, so a plain sRGB white is correct.
+            _cursorInfo.cursorColor = [[NSColor whiteColor] colorUsingColorSpace:[NSColorSpace sRGBColorSpace]];
+        }
         {
             const screen_char_t *const line = _rows[_cursorInfo.coord.y]->_screenCharLine.line;
             const screen_char_t screenChar = _cursorInfo.coord.x < _rows[_cursorInfo.coord.y]->_screenCharLine.length ? line[_cursorInfo.coord.x] : (screen_char_t){0};
@@ -430,7 +456,13 @@ typedef struct {
             if (_cursorInfo.type == CURSOR_BOX) {
                 _cursorInfo.shouldDrawText = YES;
                 iTermSmartCursorColor *smartCursorColor = nil;
-                if (drawingHelper.useSmartCursorColor) {
+                // When the HDR hint applies, iTermCursorRenderer force-overrides
+                // the block to white, so smart cursor color must be suppressed
+                // here: otherwise the glyph would be colored to contrast a
+                // smart-picked background that is never drawn (e.g. light-on-white
+                // and illegible). The legacy path does the same via
+                // smart:(_useSmartCursorColor && !hdrCursor).
+                if (drawingHelper.useSmartCursorColor && !_cursorInfo.useHDRWhite) {
                     smartCursorColor = [[iTermSmartCursorColor alloc] init];
                     smartCursorColor.delegate = self;
                 }
@@ -886,7 +918,7 @@ ambiguousIsDoubleWidth:(BOOL)ambiguousIsDoubleWidth
     return _configuration->_buttonsBackgroundRects;
 }
 
-- (NSArray<iTermButtonPillInfo *> *)buttonPillInfos NS_AVAILABLE_MAC(11) {
+- (NSArray<iTermButtonPillInfo *> *)buttonPillInfos {
     return _configuration->_buttonPillInfos;
 }
 
@@ -1014,13 +1046,24 @@ NS_INLINE int iTermGlyphKeyEmitRegular(iTermCachedGlyphKeysBuffer *buf,
                                        BOOL thinStrokes,
                                        const int *bidiLUT,
                                        int bidiLUTLength,
-                                       iTermLineAttribute lineAttribute) {
+                                       iTermBidiDisplayInfo * _Nullable bidiInfo,
+                                       iTermLineAttribute lineAttribute,
+                                       BOOL useNativePowerlineGlyphs) {
     iTermCachedGlyphKeysBufferEnsureSize(buf, i);
     iTermMetalGlyphKey *glyphKeys = buf->buffer;
     glyphKeys[i].type = iTermMetalGlyphTypeRegular;
     if (characterIsDrawable) {
         glyphKeys[i].payload.regular.code = line[logicalIndex].code;
         glyphKeys[i].payload.regular.isComplex = line[logicalIndex].complexChar;
+        // UBA rule L4: draw a bidi-mirrorable character (e.g. a bracket) as its
+        // counterpart when CoreText resolved this cell right-to-left. Only simple
+        // cells mirror. The CoreGraphics renderer does this in
+        // iTermAttributedStringBuilder.m; the Metal glyph path needs it too, or
+        // parentheses in right-to-left text render reversed («)تهران(» for
+        // «(تهران)»).
+        if (bidiInfo && !line[logicalIndex].complexChar && [bidiInfo mirrorsSourceCell:logicalIndex]) {
+            glyphKeys[i].payload.regular.code = iTermBidiMirroredCounterpart(glyphKeys[i].payload.regular.code);
+        }
     } else {
         glyphKeys[i].payload.regular.code = ' ';
         glyphKeys[i].payload.regular.isComplex = NO;
@@ -1032,9 +1075,9 @@ NS_INLINE int iTermGlyphKeyEmitRegular(iTermCachedGlyphKeysBuffer *buf,
     glyphKeys[i].payload.regular.drawable = YES;
     if (logicalIndex + 1 < width &&
         line[logicalIndex + 1].complexChar &&
-        !(!line[logicalIndex].complexChar && line[logicalIndex].code < 128) &&
-        ComplexCharCodeIsSpacingCombiningMark(line[logicalIndex + 1].code)) {
-        // Next character is a combining spacing mark that will join with this non-ascii character.
+        ComplexCharCodeIsSpacingCombiningMark(line[logicalIndex + 1].code) &&
+        iTermScreenCharCanHostSpacingMark(&line[logicalIndex], useNativePowerlineGlyphs)) {
+        // Next character is a combining spacing mark that will join with this character.
         glyphKeys[i].payload.regular.combiningSuccessor = line[logicalIndex + 1].code;
     } else {
         glyphKeys[i].payload.regular.combiningSuccessor = 0;
@@ -1412,7 +1455,13 @@ int iTermGetMetalBackgroundColors(iTermMetalPerFrameState *self,
             }
             continue;
         }
-        const BOOL selected = [selectedIndexes containsIndex:visualX];
+        // selectedIndexes is in LOGICAL coordinates (the selection is stored and
+        // reported logically), so test the logical cell index. The run is still
+        // positioned at its visual column via the LUT above; testing visualX here
+        // lit the mirror-image cells on right-to-left lines (the highlight landed
+        // on empty trailing-space columns at the left). Matches the CoreGraphics
+        // path in iTermBackgroundColorRun.m.
+        const BOOL selected = [selectedIndexes containsIndex:logicalX];
         BOOL findMatch = NO;
         if (findMatches && !selected) {
             findMatch = CheckFindMatchAtIndex(findMatches, logicalX);
@@ -1623,6 +1672,7 @@ static int iTermEmitGlyphsAndSetAttributes(iTermMetalPerFrameState *self,
                                            // content identity). The caller must not store such a row.
                                            BOOL *rowContentIsVolatilePtr) {
     const BOOL blinkAllowed = self->_configuration->_renderInputs.blinkAllowed;
+    const BOOL useNativePowerlineGlyphs = self->_configuration->_renderInputs.useNativePowerlineGlyphs;
     // The volatile-row scan only feeds the store path, so skip it entirely when the
     // cache is disabled (the default) to keep it out of the innermost glyph loop.
     const BOOL trackVolatile = (self->_rowOutputCache != nil);
@@ -1632,7 +1682,7 @@ static int iTermEmitGlyphsAndSetAttributes(iTermMetalPerFrameState *self,
     int asIndex = -1;
     int previousVisualX = -1;
     BOOL lastSelected = NO;
-    NSCharacterSet *boxCharacterSet = [iTermBoxDrawingBezierCurveFactory boxDrawingCharactersWithBezierPathsIncludingPowerline:self->_configuration->_renderInputs.useNativePowerlineGlyphs];
+    NSCharacterSet *boxCharacterSet = [iTermBoxDrawingBezierCurveFactory boxDrawingCharactersWithBezierPathsIncludingPowerline:useNativePowerlineGlyphs];
     iTermTextColorKey keys[2];
     iTermTextColorKey *currentColorKey = &keys[0];
     iTermTextColorKey *previousColorKey = &keys[1];
@@ -1686,7 +1736,11 @@ static int iTermEmitGlyphsAndSetAttributes(iTermMetalPerFrameState *self,
         }
 
         const vector_float4 bgColor = attributes[visualX].backgroundColor;
-        BOOL selected = [selectedIndexes containsIndex:visualX];
+        // selectedIndexes is in LOGICAL coordinates; testing visualX here gave
+        // a glyph the selected background with the unselected foreground on
+        // reordered lines (the background path below tests logicalX), which
+        // made selected glyphs disappear on the GPU renderer.
+        BOOL selected = [selectedIndexes containsIndex:logicalIndex];
         BOOL findMatch = NO;
         if (findMatches && !selected) {
             findMatch = CheckFindMatchAtIndex(findMatches, logicalIndex);
@@ -1704,7 +1758,9 @@ static int iTermEmitGlyphsAndSetAttributes(iTermMetalPerFrameState *self,
             // Normal code path
             lastSelected = selected;
         }
-        const BOOL annotated = [annotatedIndexes containsIndex:visualX];
+        // Annotation indexes are logical as well; the attribute is still
+        // STORED at the visual column, where the cell draws.
+        const BOOL annotated = [annotatedIndexes containsIndex:logicalIndex];
         const BOOL inUnderlinedRange = NSLocationInRange(logicalIndex, underlinedRange) || annotated;
 
 
@@ -1719,7 +1775,8 @@ static int iTermEmitGlyphsAndSetAttributes(iTermMetalPerFrameState *self,
                                                                                    _configuration->_blinkingItemsVisible,
                                                                                    blinkAllowed,
                                                                                    NO /* preferSpeedToFullLigatureSupport */,
-                                                                                   url != nil);
+                                                                                   url != nil,
+                                                                                   useNativePowerlineGlyphs);
         const BOOL isBoxDrawingCharacter = (characterIsDrawable &&
                                             ((!line[logicalIndex].complexChar &&
                                               line[logicalIndex].code > 127 &&
@@ -1814,7 +1871,9 @@ static int iTermEmitGlyphsAndSetAttributes(iTermMetalPerFrameState *self,
                                           [self useThinStrokesWithAttributes:&attributes[visualX]],
                                           bidiLUT,
                                           bidiLUTLength,
-                                          lineAttribute);
+                                          bidiInfo,
+                                          lineAttribute,
+                                          useNativePowerlineGlyphs);
         } else {
             iTermGlyphKeyEmitPlaceholder(buf, gk, logicalIndex, bidiLUT, bidiLUTLength);
         }
@@ -1864,8 +1923,23 @@ static int iTermEmitGlyphsAndSetAttributes(iTermMetalPerFrameState *self,
         underlinedRange = NSMakeRange(NSNotFound, 0);
         annotatedIndexes = nil;
     }
-    const screen_char_t *const line = (const screen_char_t *const)lineData.line;
+    const screen_char_t *line = (const screen_char_t *)lineData.line;
     const iTermLineAttribute rowLineAttribute = _rows[row]->_screenCharLine.metadata.lineAttribute;
+
+    // An HDR box cursor draws its character bold so it stays legible over the
+    // much-brighter-than-white block. Do it at the source (mark the cell bold and
+    // let the normal glyph pipeline resolve weight) so decomposed, regular, and
+    // ASCII glyphs all get the same treatment, real bold font if the font has one,
+    // otherwise a synthetic strike, independent of whether RTL/ligatures decompose
+    // the glyph. This mirrors the legacy renderer.
+    const BOOL hdrBoldCursorOnRow = (_cursorInfo != nil &&
+                                     _cursorInfo.useHDRWhite &&
+                                     _cursorInfo.cursorVisible &&
+                                     !_cursorInfo.frameOnly &&
+                                     _cursorInfo.type == CURSOR_BOX &&
+                                     _cursorInfo.coord.y == row &&
+                                     _cursorInfo.coord.x >= 0 &&
+                                     _cursorInfo.coord.x < width);
     iTermExternalAttributeIndex *eaIndex = _rows[row]->_eaIndex;
 
     *hoverStatePtr =_rows[row]->_hoverState;
@@ -1889,6 +1963,7 @@ static int iTermEmitGlyphsAndSetAttributes(iTermMetalPerFrameState *self,
     const BOOL cacheable = (_rowOutputCache != nil &&
                             !suppressed &&
                             !hasOverlay &&
+                            !hdrBoldCursorOnRow &&
                             _rows[row]->_contentIdentity.generation != iTermRowContentGenerationUncacheable);
     iTermRowCacheKey cacheKey;
     if (cacheable) {
@@ -1918,6 +1993,24 @@ static int iTermEmitGlyphsAndSetAttributes(iTermMetalPerFrameState *self,
         _rowCacheMisses++;
     }
 
+    // Substitute a bold copy of the cursor cell so the glyph is built bold. Kept
+    // local and freed below; the row is uncacheable (see hdrBoldCursorOnRow) so
+    // this per-frame edit is never stored. We copy rather than set/restore the bit
+    // in place because lineData may be the shared per-frame snapshot
+    // (paddedToAtLeastLength returns self when already wide enough); an in-place
+    // edit could corrupt it or a concurrent read. This is an O(width) copy per
+    // frame while an HDR box cursor is visible, acceptable for one cursor row.
+    screen_char_t *hdrBoldLine = NULL;
+    if (hdrBoldCursorOnRow) {
+        // lineData is paddedToAtLeastLength:width, so its buffer covers the full
+        // drawn range; copy that many cells.
+        hdrBoldLine = ScreenCharLineCopyWithBoldCursorCell(line,
+                                                           (size_t)lineData.length,
+                                                           _cursorInfo.coord.x,
+                                                           _cursorInfo.doubleWidth);
+        line = hdrBoldLine;
+    }
+
     vector_float4 unprocessedBackgroundColors[width];
 
     int rles = iTermGetMetalBackgroundColors(self,
@@ -1942,23 +2035,35 @@ static int iTermEmitGlyphsAndSetAttributes(iTermMetalPerFrameState *self,
     if (bidiInfo || _configuration->_renderInputs.ligaturesEnabled) {
         allAttributedStrings = [NSMutableArray array];
 
-        for (int i = 0; i < rles; i++) {
+        // On a bidi line, build the whole row in ONE call instead of one call
+        // per background-color run. Each call shapes its range independently,
+        // so per-run calls sever Arabic cursive joining wherever the background
+        // changes: a selection or SGR background split «کاملاً» into final and
+        // isolated letter forms on the Metal renderer. The colors the builder
+        // resolves depend on the background (minimum contrast, faint blending),
+        // but this path ignores them: glyph tinting is per cell from the
+        // attributes buffer. Only the shaping matters, so one representative
+        // background color is fine.
+        const int rleCountForStrings = (bidiInfo && rles > 0) ? 1 : rles;
+        for (int i = 0; i < rleCountForStrings; i++) {
             const iTermMetalBackgroundColorRLE *bgrle = &backgroundRLE[i];
             NSColor *bgColor = [NSColor colorWithDisplayP3Red:bgrle->color.x
                                                         green:bgrle->color.y
                                                          blue:bgrle->color.z
                                                         alpha:bgrle->color.w];
             iTermBackgroundColorRun run = {
-                .modelRange = NSMakeRange(bgrle->logicalOrigin, bgrle->count),
-                .visualRange = NSMakeRange(bgrle->origin, bgrle->count),
+                .modelRange = bidiInfo ? NSMakeRange(0, width) : NSMakeRange(bgrle->logicalOrigin, bgrle->count),
+                .visualRange = bidiInfo ? NSMakeRange(0, width) : NSMakeRange(bgrle->origin, bgrle->count),
                 .bgColor = line[bgrle->origin].backgroundColor,
                 .bgGreen = line[bgrle->origin].bgGreen,
                 .bgBlue = line[bgrle->origin].bgBlue,
                 .bgColorMode = line[bgrle->origin].backgroundColorMode,
-                .selected = [selectedIndexes containsIndex:bgrle->origin],
+                // selectedIndexes and findMatches are both logical; bgrle->origin
+                // is a visual column, so test bgrle->logicalOrigin for each.
+                .selected = [selectedIndexes containsIndex:bgrle->logicalOrigin],
                 .isMatch = (findMatches &&
                             !run.selected &&
-                            CheckFindMatchAtIndex(findMatches, bgrle->origin)),
+                            CheckFindMatchAtIndex(findMatches, bgrle->logicalOrigin)),
                 .beneathFaintText = line[bgrle->origin].faint
             };
             NSArray<id<iTermAttributedString>> *attributedStrings =
@@ -2028,6 +2133,9 @@ static int iTermEmitGlyphsAndSetAttributes(iTermMetalPerFrameState *self,
 
     [self applyBoxCursorTextColorTweakForRow:row width:width attributes:attributes];
     CTVectorDestroy(&positions);
+    if (hdrBoldLine) {
+        free(hdrBoldLine);
+    }
 }
 
 // Tweaks the text color for the cell that has a box cursor. This is a per-frame
@@ -2744,7 +2852,7 @@ static int iTermEmitGlyphsAndSetAttributes(iTermMetalPerFrameState *self,
     return _inputMethodMarkedRange.length > 0;
 }
 
-- (NSArray<iTermTerminalButton *> *)terminalButtons NS_AVAILABLE_MAC(11) {
+- (NSArray<iTermTerminalButton *> *)terminalButtons {
     return _configuration->_terminalButtons;
 }
 

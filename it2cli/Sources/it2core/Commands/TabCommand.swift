@@ -8,7 +8,7 @@ struct Tab: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "tab",
         abstract: "Manage iTerm2 tabs.",
-        subcommands: [
+        subcommands: sortedSubcommands([
             New.self,
             List.self,
             Close.self,
@@ -17,7 +17,7 @@ struct Tab: ParsableCommand {
             Next.self,
             Prev.self,
             Goto.self,
-        ]
+        ])
     )
 }
 
@@ -132,7 +132,7 @@ extension Tab {
                 if let filterWindow = window, win.windowId != filterWindow { continue }
                 guard let tabs = win.tabsArray as? [ITMListSessionsResponse_Tab] else { continue }
                 for (idx, tab) in tabs.enumerated() {
-                    let sessionCount = countSessions(in: tab.root)
+                    let sessionCount = collectSessionIds(in: tab).count
                     let isActive = selectedTabs.contains(tab.tabId ?? "")
                     let entry: [String: Any] = [
                         "id": tab.tabId ?? "",
@@ -153,10 +153,6 @@ extension Tab {
                     ctx.out("\(t["id"] ?? "")\twindow=\(t["window_id"] ?? "")\tindex=\(t["index"] ?? "")\tsessions=\(t["sessions"] ?? "")\(active)")
                 }
             }
-        }
-
-        private func countSessions(in node: ITMSplitTreeNode?) -> Int {
-            return collectSessionIds(from: node).count
         }
     }
 }

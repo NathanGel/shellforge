@@ -51,6 +51,7 @@ CF_EXTERN_C_BEGIN
 @class ITMCreateTabRequest;
 @class ITMCreateTabResponse;
 @class ITMCustomEscapeSequenceNotification;
+@class ITMFloatingPane;
 @class ITMFocusChangedNotification;
 @class ITMFocusChangedNotification_Window;
 @class ITMFocusRequest;
@@ -3171,6 +3172,7 @@ GPB_FINAL @interface ITMGetPropertyRequest : GPBMessage
  * "grid_size" -> { "width": number, "height": number }
  * "buried" -> boolean
  * "number_of_lines" -> { "overflow": number, "grid": number, "history": number }
+ * "session_note" -> { "text": string, "visible": boolean, "collapsed": boolean }
  *
  * For windows:
  * "frame" -> { "origin": { "x": number, "y": number }, "size": { "width": number, "height": number } }
@@ -3253,6 +3255,8 @@ GPB_FINAL @interface ITMSetPropertyRequest : GPBMessage
  * For sessions:
  * grid_size      { "width": 80, "height": 25 }
  * buried         true
+ * "session_note" -> { "text": string, "visible": boolean, "collapsed": boolean }
+ * Accepts a partial object; omitted keys retain their current values.
  **/
 @property(nonatomic, readwrite, copy, null_resettable) NSString *name;
 /** Test to see if @c name has been set. */
@@ -3558,6 +3562,8 @@ GPB_FINAL @interface ITMRPCRegistrationRequest_StatusBarComponentAttributes_Icon
 typedef GPB_ENUM(ITMRPCRegistrationRequest_ContextMenuAttributes_FieldNumber) {
   ITMRPCRegistrationRequest_ContextMenuAttributes_FieldNumber_DisplayName = 1,
   ITMRPCRegistrationRequest_ContextMenuAttributes_FieldNumber_UniqueIdentifier = 2,
+  ITMRPCRegistrationRequest_ContextMenuAttributes_FieldNumber_Submenu = 3,
+  ITMRPCRegistrationRequest_ContextMenuAttributes_FieldNumber_VisibleWhen = 4,
 };
 
 GPB_FINAL @interface ITMRPCRegistrationRequest_ContextMenuAttributes : GPBMessage
@@ -3569,6 +3575,28 @@ GPB_FINAL @interface ITMRPCRegistrationRequest_ContextMenuAttributes : GPBMessag
 @property(nonatomic, readwrite, copy, null_resettable) NSString *uniqueIdentifier;
 /** Test to see if @c uniqueIdentifier has been set. */
 @property(nonatomic, readwrite) BOOL hasUniqueIdentifier;
+
+/**
+ * If set, the item appears in a submenu with this title. Items from any
+ * script that share a submenu title are grouped together. Added in
+ * protocol 1.23.
+ **/
+@property(nonatomic, readwrite, copy, null_resettable) NSString *submenu;
+/** Test to see if @c submenu has been set. */
+@property(nonatomic, readwrite) BOOL hasSubmenu;
+
+/**
+ * If set, an expression evaluated in the clicked session's scope when the
+ * menu opens. The item is shown only if it evaluates to a boolean or
+ * number that is true or nonzero; a string result (even "1") hides it, as
+ * do undefined variables and errors. To test a flag that may have been set
+ * from the shell (and so be a string), compare it: `user.flag == 1`. It must not call functions, since it
+ * is evaluated synchronously. When unset the item is always shown. Added
+ * in protocol 1.23.
+ **/
+@property(nonatomic, readwrite, copy, null_resettable) NSString *visibleWhen;
+/** Test to see if @c visibleWhen has been set. */
+@property(nonatomic, readwrite) BOOL hasVisibleWhen;
 
 @end
 
@@ -5294,6 +5322,27 @@ GPB_FINAL @interface ITMSplitTreeNode_SplitTreeLink : GPBMessage
  **/
 void ITMSplitTreeNode_SplitTreeLink_ClearChildOneOfCase(ITMSplitTreeNode_SplitTreeLink *message);
 
+#pragma mark - ITMFloatingPane
+
+typedef GPB_ENUM(ITMFloatingPane_FieldNumber) {
+  ITMFloatingPane_FieldNumber_Session = 1,
+};
+
+/**
+ * A pane that floats over its tab's split panes. Added in protocol 1.21.
+ **/
+GPB_FINAL @interface ITMFloatingPane : GPBMessage
+
+/**
+ * The session's frame is the float's frame in the tab, in points, with the
+ * origin at the tab's top left and y increasing downward.
+ **/
+@property(nonatomic, readwrite, strong, null_resettable) ITMSessionSummary *session;
+/** Test to see if @c session has been set. */
+@property(nonatomic, readwrite) BOOL hasSession;
+
+@end
+
 #pragma mark - ITMListSessionsResponse
 
 typedef GPB_ENUM(ITMListSessionsResponse_FieldNumber) {
@@ -5359,6 +5408,12 @@ typedef GPB_ENUM(ITMListSessionsResponse_Tab_FieldNumber) {
   ITMListSessionsResponse_Tab_FieldNumber_TmuxConnectionId = 5,
   ITMListSessionsResponse_Tab_FieldNumber_MinimizedSessionsArray = 6,
   ITMListSessionsResponse_Tab_FieldNumber_ActiveSessionId = 7,
+  ITMListSessionsResponse_Tab_FieldNumber_TabGroupId = 8,
+  ITMListSessionsResponse_Tab_FieldNumber_TabGroupName = 9,
+  ITMListSessionsResponse_Tab_FieldNumber_TabGroupColor = 10,
+  ITMListSessionsResponse_Tab_FieldNumber_TabGroupCollapsed = 11,
+  ITMListSessionsResponse_Tab_FieldNumber_FloatingPanesArray = 12,
+  ITMListSessionsResponse_Tab_FieldNumber_FloatingPanesHidden = 13,
 };
 
 GPB_FINAL @interface ITMListSessionsResponse_Tab : GPBMessage
@@ -5391,6 +5446,41 @@ GPB_FINAL @interface ITMListSessionsResponse_Tab : GPBMessage
 /** Test to see if @c activeSessionId has been set. */
 @property(nonatomic, readwrite) BOOL hasActiveSessionId;
 
+/**
+ * Tab group membership. A tab group's identity is a UUID that rides on each
+ * member tab (there is no central registry); all members of a group carry
+ * the same name/color/collapsed values. tab_group_id is unset when the tab
+ * belongs to no group; the other three are meaningful only when it is set.
+ * The color is a hex string as produced by -[NSColor hexStringPreservingColorSpace]
+ * ("#rrggbb" for sRGB, "p3#rrggbbrrggbb" for Display P3). Added in protocol 1.19.
+ **/
+@property(nonatomic, readwrite, copy, null_resettable) NSString *tabGroupId;
+/** Test to see if @c tabGroupId has been set. */
+@property(nonatomic, readwrite) BOOL hasTabGroupId;
+
+@property(nonatomic, readwrite, copy, null_resettable) NSString *tabGroupName;
+/** Test to see if @c tabGroupName has been set. */
+@property(nonatomic, readwrite) BOOL hasTabGroupName;
+
+@property(nonatomic, readwrite, copy, null_resettable) NSString *tabGroupColor;
+/** Test to see if @c tabGroupColor has been set. */
+@property(nonatomic, readwrite) BOOL hasTabGroupColor;
+
+@property(nonatomic, readwrite) BOOL tabGroupCollapsed;
+
+@property(nonatomic, readwrite) BOOL hasTabGroupCollapsed;
+/**
+ * The tab's floating panes, back to front. Their sessions are not in
+ * `root`. Added in protocol 1.21.
+ **/
+@property(nonatomic, readwrite, strong, null_resettable) NSMutableArray<ITMFloatingPane*> *floatingPanesArray;
+/** The number of items in @c floatingPanesArray without causing the array to be created. */
+@property(nonatomic, readonly) NSUInteger floatingPanesArray_Count;
+
+/** Whether the tab's floating panes are hidden. Added in protocol 1.21. */
+@property(nonatomic, readwrite) BOOL floatingPanesHidden;
+
+@property(nonatomic, readwrite) BOOL hasFloatingPanesHidden;
 @end
 
 #pragma mark - ITMCreateTabRequest

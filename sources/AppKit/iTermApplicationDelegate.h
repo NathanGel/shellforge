@@ -44,6 +44,12 @@ extern NSString *const kMarkAlertActionPostNotification;
 extern NSString *const kMarkAlertActionRingBell;
 extern NSString *const kShowFullscreenTabsSettingDidChange;
 extern NSString *const iTermApplicationWillTerminate;
+
+// Accessibility identifiers for the dynamically-created Downloads and Uploads menu bar
+// items. These are stable and never localized, so code can find the menus by identifier
+// rather than by their (localizable) titles.
+extern NSString *const iTermDownloadsMenuAXIdentifier;
+extern NSString *const iTermUploadsMenuAXIdentifier;
 extern NSString *const iTermDidToggleAlertOnMarksInOffscreenSessionsNotification;
 
 void TurnOnDebugLoggingAutomatically(void);
@@ -75,6 +81,9 @@ void TurnOnDebugLoggingAutomatically(void);
 - (void)updateUseTransparencyMenuItem;
 
 - (void)makeHotKeyWindowKeyIfOpen;
+
+// Saves restorable state now if this app manages its own state restoration.
+- (void)saveRestorableState;
 
 // Call this when the user has any nontrivial interaction with a session, such as typing in it or closing a window.
 - (void)userDidInteractWithASession;
