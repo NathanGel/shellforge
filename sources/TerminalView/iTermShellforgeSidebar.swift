@@ -76,7 +76,7 @@ final class iTermShellforgeSidebar: NSObject {
         sidebars.add(model)
         watchClicks()
         return ShellforgeSidebar.makeView(model: model, chooseFolder: FolderChooser.choose, hooks: hooks, machine: machine,
-                                          backpack: backpack, zoom: zoom, showBackpack: { [weak windowController] present in
+                                          backpack: backpack, zoom: zoom, terminalMatch: iTermShellforgeTerminalMatch.settings, showBackpack: { [weak windowController] present in
             if let windowController { backpackSheets.register(windowController, present) }
         }, hideSidebar: { [weak windowController] in
             (windowController?.contentView as? iTermRootTerminalView)?.toggleShellforgeSidebar()

@@ -113,6 +113,9 @@
 #import "iTermMetalRenderer.h"
 #import "iTermMiniSearchFieldViewController.h"
 #import "iTermNotificationCenter.h"
+// Shellforge: the terminal match announces its theme as a theme change; its tests read effectiveTheme.
+#import "iTermPreferenceDidChangeNotification.h"
+#import "iTermVariableScope+Global.h"
 #import "iTermNotificationController.h"
 #import "iTermObject.h"
 #import "iTermOrderEnforcer.h"

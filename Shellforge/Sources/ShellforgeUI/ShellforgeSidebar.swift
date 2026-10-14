@@ -16,13 +16,15 @@ public enum ShellforgeSidebar {
     /// `backpack` is the app's one Backpack Mode; `showBackpack` hands back how this sidebar opens
     /// its sheet, for the View menu's ⌘B. `hideSidebar` is the header's Hide Sidebar button: ⌃⌘S.
     /// `zoom` is the app's one text size, which every window's sidebar draws at; its sheets, in
-    /// panels of their own, stay at `.standard`.
+    /// panels of their own, stay at `.standard`. `terminalMatch` is the app's one Settings › Core ›
+    /// Terminal switch.
     public static func makeView(model: SidebarModel, chooseFolder: @escaping @MainActor () -> String?, hooks: AgentHooksModel,
                                 machine: MachineMonitor, backpack: BackpackController, zoom: SidebarZoom,
+                                terminalMatch: TerminalMatchSettings,
                                 showBackpack: @escaping @MainActor (@escaping @MainActor () -> Void) -> Void = { _ in },
                                 hideSidebar: @escaping @MainActor () -> Void = {}) -> NSView {
         let sidebar = SidebarView(model: model, chooseFolder: chooseFolder, hooks: hooks, machine: machine,
-                                  backpack: backpack, showBackpack: showBackpack, hideSidebar: hideSidebar)
+                                  backpack: backpack, terminalMatch: terminalMatch, showBackpack: showBackpack, hideSidebar: hideSidebar)
         let host = SidebarHostingView(rootView: ZoomedSidebar(zoom: zoom, sidebar: sidebar))
         host.frame = NSRect(x: 0, y: 0, width: width, height: 400)
         // AiTerm is dark-only and forced the whole app dark; here only the sidebar is, so iTerm2's
@@ -91,6 +93,14 @@ struct ZoomedSidebar: View {
     var body: some View { sidebar.interfaceScale(zoom.scale) }
 }
 
+/// The sidebar's right edge: one hairline, so the sidebar reads apart from the terminal beside it.
+/// `Hairline` is horizontal and AiTerm's (TokenParityTests); this is its vertical twin.
+struct SidebarEdge: View {
+    var body: some View {
+        Rectangle().fill(Palette.border).frame(width: 1)
+    }
+}
+
 /// The sidebar's host: where `NativeRowHighlight` stops looking for its list.
 final class SidebarHostingView<Content: View>: NSHostingView<Content>, RowHighlightBoundary {}
 
@@ -102,6 +112,7 @@ struct SidebarView: View {
     @ObservedObject var hooks: AgentHooksModel
     let machine: MachineMonitor
     let backpack: BackpackController
+    let terminalMatch: TerminalMatchSettings
     let showBackpack: @MainActor (@escaping @MainActor () -> Void) -> Void
     let hideSidebar: @MainActor () -> Void
     /// The window the sidebar is drawn in, which the Agent hooks panel hangs from.
@@ -125,6 +136,7 @@ struct SidebarView: View {
                               toggleMac: { BackpackToggle(backpack: backpack, presentSheet: presentBackpack).run() },
                               openMacSettings: showMacSettings)
         }
+        .overlay(alignment: .trailing) { SidebarEdge() }
         .frame(minWidth: scale(Size.sidebarMinWidth), maxHeight: .infinity, alignment: .top)
         .background(Palette.sidebar)
         .surface(.sidebar)
@@ -218,7 +230,7 @@ struct SidebarView: View {
                                                     gitHub: model.gitHubSettings())
         let environment = model.environmentModel()
         sheet.present(over: anchor.window) { dismiss in
-            SettingsPanel(backpack: backpack, integrations: integrations, environment: environment, close: dismiss)
+            SettingsPanel(backpack: backpack, integrations: integrations, environment: environment, terminalMatch: terminalMatch, close: dismiss)
         }
     }
 

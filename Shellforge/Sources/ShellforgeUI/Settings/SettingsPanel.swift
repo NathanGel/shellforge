@@ -9,6 +9,7 @@ struct SettingsPanel: View {
     @ObservedObject var backpack: BackpackController
     let integrations: IntegrationSettingsModel
     var environment: EnvironmentModel?
+    let terminalMatch: TerminalMatchSettings
     let close: @MainActor () -> Void
     @State private var failure: String?
 
@@ -20,6 +21,7 @@ struct SettingsPanel: View {
                 SettingsSection("Core") {
                     MacSettingsCard(backpack: backpack)
                     if let environment { EnvironmentCard(model: environment) }
+                    TerminalMatchCard(settings: terminalMatch)
                 }
                 SettingsSection("Services") {
                     JiraCard(connection: integrations.jira)
@@ -34,10 +36,13 @@ struct SettingsPanel: View {
         }
         .task { integrations.testConfigured() }
         .task { await backpack.refreshSetup() }
+        .onAppear { terminalMatch.beginEditing() }
     }
 
     private func save() {
         failure = integrations.save()
-        if failure == nil { Task { @MainActor in close() } }
+        guard failure == nil else { return }
+        terminalMatch.save()
+        Task { @MainActor in close() }
     }
 }
