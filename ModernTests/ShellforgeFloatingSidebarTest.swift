@@ -82,4 +82,16 @@ final class ShellforgeFloatingSidebarTest: XCTestCase {
         XCTAssertEqual(handle.minY, root.shellforgeSidebarFrame.minY)
         XCTAssertEqual(handle.height, root.shellforgeSidebarFrame.height)
     }
+
+    /// Review of the snapshot: the title strip's background ran over the sidebar column and showed
+    /// through the glass panel.
+    func testNothingInTheRootViewSpansTheTopOfTheSidebarColumn() throws {
+        try XCTSkipUnless(iTermShellforgeSidebar.floats)
+        root.layoutSubtreeIfNeeded()
+        let sidebar = root.shellforgeSidebarFrame
+        let covering = root.subviews.filter {
+            !$0.isHidden && $0 is iTermLayerBackedSolidColorView && $0.frame.minX < sidebar.maxX && $0.frame.maxY > sidebar.maxY - 20 && $0.frame.width > 0
+        }
+        XCTAssertEqual(covering.map { NSStringFromRect($0.frame) }, [])
+    }
 }

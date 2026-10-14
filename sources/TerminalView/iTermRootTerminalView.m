@@ -1000,9 +1000,12 @@ typedef struct {
 
 - (NSRect)frameForTitleBackgroundView {
     const CGFloat height = [_delegate rootTerminalViewHeightOfTabBar:self];
-    return NSMakeRect(0,
+    // Shellforge: the title strip's background starts at the sidebar's column, so it does not show
+    // through the floating panel.
+    const CGFloat sidebarColumn = self.shellforgeSidebarWidth;
+    return NSMakeRect(sidebarColumn,
                       self.frame.size.height - height,
-                      self.frame.size.width,
+                      MAX(0, self.frame.size.width - sidebarColumn),
                       height);
 }
 
