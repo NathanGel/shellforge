@@ -2,39 +2,48 @@ import Darwin
 import Foundation
 import Testing
 @testable import ShellforgeCore
+@testable import ShellforgeTestSupport
 
-/// A finished call holds nothing: a background job that keeps the child's pipes open does not keep
-/// its reader threads or their descriptors (PRD goal 7).
+/// A finished call holds nothing for good: a background job that keeps the child's pipes open keeps
+/// no thread, its pipes close when it ends, and it is never killed for writing late (PRD goal 7).
 @Suite(.serialized) struct ChildProcessReleaseTests {
-    private static func threads() -> Int {
-        var list: thread_act_array_t?
-        var count: mach_msg_type_number_t = 0
-        guard task_threads(mach_task_self_, &list, &count) == KERN_SUCCESS, let list else { return -1 }
-        for i in 0..<Int(count) { mach_port_deallocate(mach_task_self_, list[i]) }
-        vm_deallocate(mach_task_self_, vm_address_t(UInt(bitPattern: list)), vm_size_t(Int(count) * MemoryLayout<thread_t>.stride))
-        return Int(count)
+    /// The pipes this process holds open.
+    private static func pipes() -> Int {
+        let fds = (try? FileManager.default.contentsOfDirectory(atPath: "/dev/fd")) ?? []
+        return fds.compactMap(Int32.init).filter { fd in
+            var info = stat()
+            return fstat(fd, &info) == 0 && info.st_mode & S_IFMT == S_IFIFO
+        }.count
     }
 
-    private static func descriptors() -> Int { (try? FileManager.default.contentsOfDirectory(atPath: "/dev/fd").count) ?? -1 }
+    /// A background job that writes after the call has returned is not killed for it: its output
+    /// is drained and dropped, not met with a closed pipe and SIGPIPE.
+    @Test func aLateWriterIsNotKilled() async throws {
+        try FileManager.default.createDirectory(at: TestScratch.root, withIntermediateDirectories: true)
+        let mark = TestScratch.root.appendingPathComponent("late-\(UUID().uuidString)").path
+        let script = "(sleep 3; echo late; echo late >&2; touch '\(mark)') & exit 0"
+        _ = try ChildProcess.run("/bin/sh", ["-c", script], environment: ["PATH": "/usr/bin:/bin"], timeout: 10)
+        let deadline = Date().addingTimeInterval(8)
+        while !FileManager.default.fileExists(atPath: mark), Date() < deadline { try await Task.sleep(for: .milliseconds(50)) }
+        #expect(FileManager.default.fileExists(atPath: mark), "the background job died writing to a closed pipe")
+    }
 
-    @Test func aBackgroundedGrandchildLeavesNoReaders() async throws {
-        let env = ["PATH": "/usr/bin:/bin"]
-        // Let threads from earlier work settle before counting.
-        try await Task.sleep(for: .milliseconds(300))
-        let threadsBefore = Self.threads(), descriptorsBefore = Self.descriptors()
+    /// Once the background jobs end, their pipes close: nothing waits on them for good.
+    @Test func pipesCloseWhenTheBackgroundJobEnds() async throws {
+        let before = Self.pipes()
         await withTaskGroup(of: Void.self) { group in
             for _ in 0..<5 {
-                group.addTask { _ = try? ChildProcess.run("/bin/sh", ["-c", "sleep 6 & exit 0"], environment: env, timeout: 10) }
+                group.addTask {
+                    _ = try? ChildProcess.run("/bin/sh", ["-c", "sleep 3 & exit 0"], environment: ["PATH": "/usr/bin:/bin"], timeout: 10)
+                }
             }
         }
-        // The background sleeps still hold the pipes for seconds yet; the readers must not wait for them.
-        try await Task.sleep(for: .milliseconds(800))
-        #expect(Self.threads() <= threadsBefore + 2, "reader threads outlived their calls")
-        #expect(Self.descriptors() <= descriptorsBefore + 1, "pipe ends outlived their calls")
+        // Other suites start commands too: wait for the count to come back, rather than read it once.
+        let deadline = Date().addingTimeInterval(10)
+        while Self.pipes() > before, Date() < deadline { try await Task.sleep(for: .milliseconds(100)) }
+        #expect(Self.pipes() <= before, "pipes outlived their background jobs")
     }
 
-    /// A child that has ended is let go: a helper in a crash loop does not pile up its Process and
-    /// log handle once per restart.
     @Test func aFinishedChildIsReleased() async throws {
         let exited = Locked(false)
         weak var released: RunningChild?

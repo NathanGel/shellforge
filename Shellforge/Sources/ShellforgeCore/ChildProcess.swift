@@ -103,47 +103,48 @@ public final class RunningChild: @unchecked Sendable {
     public func kill() { _ = Darwin.kill(pid, SIGKILL) }
 }
 
-/// Drains a pipe on a thread of its own, so a child that fills one pipe while we read the other
-/// never stalls. Its own thread, not a slot on a shared queue: a command that leaves a background
-/// job holding its pipe (an SSH tunnel, a hook's `&`) would otherwise tie up shared threads. What has
-/// arrived is kept as it arrives, so an end of output that comes late still leaves the output that
-/// came on time.
+/// Drains a pipe as its bytes arrive, on one dispatch queue every reader shares: no thread of its
+/// own, and no polling. What has arrived is kept as it arrives, so an end of output that comes late
+/// still leaves the output that came on time.
 ///
-/// Once the call has taken its text the reader stops, within `pollInterval`, and closes its end:
-/// a background job that keeps the pipe open for hours keeps neither this thread nor the descriptor.
+/// A command can leave a background job holding its pipe (an SSH tunnel, a hook's `&`). Once the
+/// call has taken its text, whatever that job still writes is read and dropped — never met with a
+/// closed pipe, whose SIGPIPE would kill it — and the pipe closes when the job lets go of it.
 private final class PipeReader: @unchecked Sendable {
+    private static let queue = DispatchQueue(label: "ShellforgeCore.PipeReader")
     private let lock = NSLock()
     private var data = Data()
-    private var stopped = false
+    private var taken = false
     private let done = DispatchSemaphore(value: 0)
-    static let pollInterval: Int32 = 100
+    /// Read into on `queue` only.
+    private var buffer = [UInt8](repeating: 0, count: 65_536)
+    private let source: DispatchSourceRead
 
     init(_ handle: FileHandle) {
-        let thread = Thread { [self] in
-            let fd = handle.fileDescriptor
-            var buffer = [UInt8](repeating: 0, count: 65_536)
-            reading: while !lock.withLock({ stopped }) {
-                var ready = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
-                let polled = poll(&ready, 1, Self.pollInterval)
-                if polled < 0, errno == EINTR { continue }
-                guard polled > 0 else { if polled < 0 { break }; continue }
-                let count = read(fd, &buffer, buffer.count)
-                if count < 0, errno == EINTR || errno == EAGAIN { continue }
-                guard count > 0 else { break reading }
-                lock.withLock { data.append(contentsOf: buffer[0..<count]) }
+        let fd = handle.fileDescriptor
+        source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: Self.queue)
+        // The handlers hold the reader until the pipe's end: dispatch lets them go once cancelled.
+        source.setEventHandler { [self] in
+            let count = read(fd, &buffer, buffer.count)
+            if count > 0 {
+                lock.withLock { if !taken { data.append(contentsOf: buffer[0..<count]) } }
+            } else if count == 0 || (errno != EINTR && errno != EAGAIN) {
+                source.cancel()
             }
+        }
+        source.setCancelHandler { [self] in
             try? handle.close()
             done.signal()
         }
-        thread.name = "ShellforgeCore.PipeReader"
-        thread.start()
+        source.resume()
     }
 
-    /// What arrived, waiting up to `seconds` for the end of output; then the reader stops.
+    /// What arrived, waiting up to `seconds` for the end of output; anything later is dropped.
     func text(waiting seconds: TimeInterval) -> String {
         _ = done.wait(timeout: .now() + seconds)
         return lock.withLock {
-            stopped = true
+            taken = true
+            defer { data = Data() }
             return String(decoding: data, as: UTF8.self)
         }
     }
