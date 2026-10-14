@@ -107,6 +107,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
   - The task's tabs close first, in every window, through iTerm2's own close.
   - A branch with commits its base lacks asks whether to keep it.
   - A review's branch goes only when nothing would be lost.
+  - A task continued in a worktree outside the project's `.worktrees/` folder is only forgotten: its tabs close, and the worktree and its branch stay where they are. The question says so.
   - While it runs, the row reads "Removing…", or why it stopped.
 - **Status dot:**
   - idle: a ring;

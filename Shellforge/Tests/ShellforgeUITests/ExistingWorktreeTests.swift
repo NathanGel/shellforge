@@ -106,4 +106,74 @@ import Testing
         sheet.chooseExisting(true)
         #expect(sheet.draft.title == "Login", "a typed name stays")
     }
+
+    /// Remove on a task continued outside `.worktrees/` asks only to forget it: no delete, no branch box.
+    @Test func removingAnOutsideWorktreesTaskOnlyForgetsIt() async throws {
+        let repo = try GitRepoForUI()
+        let outside = (repo.path as NSString).deletingLastPathComponent + "/hand-made"
+        try git(repo, "worktree", "add", "-q", "-b", "feat/hand", outside)
+        let (model, _, document, prompter) = model(repo, answers: [AlertAnswer(button: 1), AlertAnswer(button: 0)])
+        await model.addProject(folder: repo.path)  // skips the import
+        let project = try #require(document.workspace.projects.first)
+        let task = TaskItem(projectId: project.id, title: "hand", branch: "feat/hand", worktreePath: outside, baseBranch: "main")
+        try document.update { $0.tasks.append(task) }
+        #expect(await model.confirmRemove(taskId: task.id))
+        let asked = try #require(prompter.asked.last)
+        #expect(asked.detail == "Removes the task from Shellforge and closes its tabs. Its worktree stays where it is, on its branch:\n\n\(outside)")
+        #expect(asked.checkbox == nil && !asked.defaultDeletes)
+        #expect(document.workspace.tasks.isEmpty && FileManager.default.fileExists(atPath: outside))
+    }
+
+    /// The same worktree spelled two ways — /var and /private/var — is one, at save and at import.
+    @Test func aWorktreeTakenUnderAnotherSpellingIsNotTakenTwice() async throws {
+        let repo = try repo()
+        let (model, _, document, _) = model(repo, answers: [AlertAnswer(button: 1)])
+        await model.addProject(folder: repo.path)
+        let project = try #require(document.workspace.projects.first)
+        let sheet = try #require(model.makeNewTaskModel(for: project.id))
+        await sheet.loadExistingWorktrees()
+        let picked = try #require(sheet.kind.existing.first)
+        let resolved = URL(fileURLWithPath: picked.path).resolvingSymlinksInPath().path
+        let other = resolved.hasPrefix("/private/") ? String(resolved.dropFirst("/private".count)) : "/private" + resolved
+        try #require(FileManager.default.fileExists(atPath: other), "this test needs a symlinked scratch folder")
+        // Another window made a task of it, saved under the other spelling, after this sheet listed it.
+        try document.update { $0.tasks.append(TaskItem(projectId: project.id, title: "theirs", branch: picked.branch, worktreePath: other, baseBranch: "main")) }
+        var draft = TaskDraft(baseBranch: "main", agentId: "claude", model: "opus", reasoning: nil)
+        draft.useExisting = true
+        draft.pick(existing: picked)
+        await #expect(throws: ExistingWorktrees.Refusal.taken(picked.branch)) { try await model.newTask(draft: draft, in: project.id) }
+        #expect(document.workspace.tasks.count == 1)
+    }
+
+    /// The import reads the worktrees again once answered: one deleted meanwhile is not imported.
+    @Test func theImportReadsTheWorktreesAgainOnceAnswered() async throws {
+        let repo = try repo()
+        try git(repo, "worktree", "add", "-q", "-b", "feat/second", repo.path + "/.worktrees/second")
+        let (model, _, document, prompter) = model(repo, answers: [AlertAnswer(button: 0)])
+        prompter.hold = true
+        let adding = Task { await model.addProject(folder: repo.path) }
+        await eventually { prompter.asked.count == 1 }
+        try git(repo, "worktree", "remove", "--force", repo.path + "/.worktrees/second")
+        prompter.hold = false
+        prompter.release()
+        await adding.value
+        #expect(document.workspace.tasks.map(\.branch) == ["feat/resume"])
+    }
+
+    /// A worktree another window is adopting right now is refused here, before anything is written.
+    @Test func aWorktreeBeingAdoptedElsewhereIsRefused() async throws {
+        let repo = try repo()
+        let (model, host, document, _) = model(repo, answers: [AlertAnswer(button: 1)])
+        await model.addProject(folder: repo.path)
+        let project = try #require(document.workspace.projects.first)
+        let sheet = try #require(model.makeNewTaskModel(for: project.id))
+        await sheet.loadExistingWorktrees()
+        let picked = try #require(sheet.kind.existing.first)
+        model.removalBoard.adopting.insert(ExistingWorktrees.resolved(picked.path))
+        var draft = TaskDraft(baseBranch: "main", agentId: "claude", model: "opus", reasoning: nil)
+        draft.useExisting = true
+        draft.pick(existing: picked)
+        await #expect(throws: ExistingWorktrees.Refusal.taken(picked.branch)) { try await model.newTask(draft: draft, in: project.id) }
+        #expect(document.workspace.tasks.isEmpty && host.opened.isEmpty)
+    }
 }

@@ -14,6 +14,9 @@ final class RemovalBoard: ObservableObject {
     /// How many tasks or reviews are being created in each project: a project is not removed under
     /// a create, whose task would land in a project that is gone.
     var creating: [UUID: Int] = [:]
+    /// Worktrees (resolved paths) a New Task in some window is making a task of right now: a second
+    /// window's Create on the same one is refused before it writes anything there.
+    var adopting: Set<String> = []
     /// Projects whose default branch is being pulled, from any window: every window's menu greys Pull.
     @Published var pulling: Set<UUID> = []
 

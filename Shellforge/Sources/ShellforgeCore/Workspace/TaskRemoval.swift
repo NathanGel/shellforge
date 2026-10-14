@@ -25,7 +25,16 @@ public enum TaskRemoval {
     /// check, asked ahead of it so the task's tabs can close before anything is deleted. False for a
     /// folder git does not know as a worktree — `git status` there would answer for the project's
     /// checkout.
+    /// Whether the task's worktree is one Shellforge keeps — in the project's `.worktrees/` — and so
+    /// its to delete. A worktree continued from elsewhere (New Task's Existing worktree) is not:
+    /// removing its task only forgets the task.
+    public static func ownsWorktree(of task: TaskItem, in project: Project) -> Bool {
+        ExistingWorktrees.resolved(task.worktreePath).hasPrefix(ExistingWorktrees.resolved(project.path) + "/.worktrees/")
+    }
+
     public static func hasUnsavedWork(task: TaskItem, project: Project, launcher: CommandLauncher) throws -> Bool {
+        // Nothing is deleted from a worktree Shellforge does not keep, so nothing can be lost.
+        guard ownsWorktree(of: task, in: project) else { return false }
         guard FileManager.default.fileExists(atPath: task.worktreePath),
               try registered(task.worktreePath, in: project.path, launcher: launcher) != nil else { return false }
         return try !git(["status", "--porcelain", "--ignore-submodules=none"], in: task.worktreePath, launcher).isEmpty
@@ -36,6 +45,8 @@ public enum TaskRemoval {
     /// and said so; force authorises discarding the checkout's changes, never commits.
     public static func remove(task: TaskItem, project: Project, deleteBranch: Bool, force: Bool,
                               launcher: CommandLauncher) throws -> Removed {
+        // Not Shellforge's worktree: the task goes, the checkout and its branch stay.
+        guard ownsWorktree(of: task, in: project) else { return Removed(branchRefusal: nil) }
         if FileManager.default.fileExists(atPath: task.worktreePath) {
             try removeWorktree(at: task.worktreePath, branch: task.branch, in: project.path, force: force, launcher: launcher)
         } else {

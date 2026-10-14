@@ -35,6 +35,15 @@ import Testing
         _ = newer
     }
 
+    /// A record git keeps for a worktree deleted on disk is prunable, even once a folder of the same
+    /// name is back: that folder is no checkout to continue in.
+    @Test func aPrunableRecordIsNotOffered() throws {
+        let (repo, older, _) = try repo()
+        try FileManager.default.removeItem(atPath: older)
+        try FileManager.default.createDirectory(atPath: older, withIntermediateDirectories: true)
+        #expect(try list(repo).map(\.branch) == ["feat/newer"])
+    }
+
     @Test func newestFirst() throws {
         let (repo, _, _) = try repo()
         let offered = try list(repo)

@@ -34,7 +34,7 @@ public enum ExistingWorktrees {
     public static func list(project: Project, taken: [String], launcher: CommandLauncher) throws -> [ExistingWorktree] {
         let excluded = Set((taken + [project.path]).map(resolved))
         let candidates = try GitRepository(project.path, launcher: launcher).worktrees().filter { worktree in
-            worktree.branch != nil && !excluded.contains(resolved(worktree.path))
+            worktree.branch != nil && !worktree.prunable && !excluded.contains(resolved(worktree.path))
                 && FileManager.default.fileExists(atPath: worktree.path)
         }
         return candidates.compactMap { worktree -> ExistingWorktree? in
@@ -54,7 +54,7 @@ public enum ExistingWorktrees {
         if Set(taken.map(resolved)).contains(resolved(picked.path)) { throw Refusal.taken(picked.branch) }
         let listed = try GitRepository(project.path, launcher: launcher).worktrees()
         guard FileManager.default.fileExists(atPath: picked.path),
-              let current = listed.first(where: { resolved($0.path) == resolved(picked.path) }), let branch = current.branch
+              let current = listed.first(where: { resolved($0.path) == resolved(picked.path) }), !current.prunable, let branch = current.branch
         else { throw Refusal.gone(picked.branch) }
         return TaskItem(projectId: project.id, title: draft.title, branch: branch, worktreePath: current.path,
                         baseBranch: draft.baseBranch, agent: draft.agentId, model: draft.model, reasoning: draft.reasoning,
@@ -84,5 +84,6 @@ public enum ExistingWorktrees {
         return Date(timeIntervalSince1970: seconds)
     }
 
-    static func resolved(_ path: String) -> String { URL(fileURLWithPath: path).resolvingSymlinksInPath().path }
+    /// `path` with every symlink resolved: /tmp and /private/tmp, /var and /private/var, are one folder.
+    public static func resolved(_ path: String) -> String { URL(fileURLWithPath: path).resolvingSymlinksInPath().path }
 }

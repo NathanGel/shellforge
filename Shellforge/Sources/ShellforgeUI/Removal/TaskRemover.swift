@@ -30,16 +30,22 @@ extension SidebarModel {
         removalBoard.asking.insert(id)
         defer { removalBoard.asking.remove(id) }
         let isReview = shown.kind == .review
+        // A worktree continued from outside `.worktrees/` is not Shellforge's: Remove only forgets.
+        let owned = document.workspace.projects.first(where: { $0.id == shown.projectId })
+            .map { TaskRemoval.ownsWorktree(of: shown, in: $0) } ?? true
         // A review's branch is the merge request's: its Remove never offers to delete it — the
         // removal releases it only when nothing would be lost.
-        let answer = await prompter.ask(AlertPrompt(
+        let answer = await prompter.ask(owned ? AlertPrompt(
             message: "Remove \(isReview ? "review" : "task") “\(shown.title)”?",
             detail: isReview
                 ? "Deletes the worktree and closes its tabs. Its local branch goes too, unless it has commits origin lacks:\n\n\(shown.worktreePath)"
                 : "Deletes the worktree and closes its tabs:\n\n\(shown.worktreePath)",
             buttons: ["Remove", "Cancel"],
             checkbox: isReview ? nil : "Also delete branch \(shown.branch)",
-            defaultDeletes: true))
+            defaultDeletes: true)
+            : AlertPrompt(message: "Remove \(isReview ? "review" : "task") “\(shown.title)”?",
+                          detail: "Removes the task from Shellforge and closes its tabs. Its worktree stays where it is, on its branch:\n\n\(shown.worktreePath)",
+                          buttons: ["Remove", "Cancel"]))
         // Decided on the task as it is once answered: across the await it, or its project, can be gone.
         guard answer.confirmed, let task = document.workspace.tasks.first(where: { $0.id == id }),
               let project = document.workspace.projects.first(where: { $0.id == task.projectId }) else { return false }
