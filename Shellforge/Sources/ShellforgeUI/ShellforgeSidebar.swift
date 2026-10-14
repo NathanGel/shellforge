@@ -123,7 +123,11 @@ struct SidebarGround: View {
 }
 
 /// The sidebar's host: where `NativeRowHighlight` stops looking for its list.
-final class SidebarHostingView<Content: View>: NSHostingView<Content>, RowHighlightBoundary {}
+final class SidebarHostingView<Content: View>: NSHostingView<Content>, RowHighlightBoundary {
+    /// A floating sidebar's window moves by its background; a click in the sidebar is the
+    /// sidebar's, never the start of a window drag.
+    override var mouseDownCanMoveWindow: Bool { false }
+}
 
 /// AiTerm's sidebar, inside iTerm2's window: the PROJECTS header, each project with its tasks and
 /// the selected task's tabs, the tabs of no task, the banners, or the empty state.

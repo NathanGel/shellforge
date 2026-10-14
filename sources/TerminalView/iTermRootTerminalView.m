@@ -788,7 +788,17 @@ typedef struct {
     // Shellforge: beside the sidebar the strip starts at the sidebar's column, and the window
     // buttons, inside the panel, are not in its way.
     const CGFloat sidebarColumn = self.shellforgeSidebarWidth;
-    const CGFloat mostGenerousInset = sidebarColumn > 0 ? iTermRootTerminalViewWindowNumberLabelMargin : MAX(MAX(insets.left, insets.right), iTermRootTerminalViewWindowNumberLabelMargin);
+    // Shellforge: without the sidebar, a floating window's title clears macOS's window buttons and
+    // the Show Sidebar button beside them — the Tahoe tab-bar insets do not count them.
+    CGFloat shellforgeButtonsInset = 0;
+    if (sidebarColumn == 0 && [iTermShellforgeSidebar floats]) {
+        NSButton *zoom = [self.window standardWindowButton:NSWindowZoomButton];
+        if (zoom && !zoom.isHidden) {
+            shellforgeButtonsInset = NSMaxX([zoom convertRect:zoom.bounds toView:self]) +
+                NSWidth(_shellforgeShowSidebarAccessory.view.frame) + iTermRootTerminalViewWindowNumberLabelMargin;
+        }
+    }
+    const CGFloat mostGenerousInset = sidebarColumn > 0 ? iTermRootTerminalViewWindowNumberLabelMargin : MAX(MAX(MAX(insets.left, insets.right), iTermRootTerminalViewWindowNumberLabelMargin), shellforgeButtonsInset);
     const CGFloat containerWidth = NSWidth(self.frame) - sidebarColumn - ([self shouldShowToolbelt] ? NSWidth(_toolbelt.frame) : 0);
     const NSSize fittingSize = textField.fittingSize;
     const CGFloat desiredWidth = fittingSize.width;
@@ -1595,6 +1605,10 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
 
 - (NSRect)shellforgeSidebarFrame {
     return _shellforgeSidebar.frame;
+}
+
+- (NSRect)shellforgeWindowTitleFrame {
+    return [self frameForWindowTitleLabel];
 }
 
 - (BOOL)hasShellforgeSidebar {

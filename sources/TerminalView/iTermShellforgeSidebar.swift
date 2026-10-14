@@ -632,6 +632,13 @@ extension iTermShellforgeSidebar {
     /// The sidebar floats as a rounded panel inside the window on macOS 26 and later.
     @objc static var floats: Bool { ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 26 }
 
+    /// Whether a window of `type` is one the floating sidebar reshapes: a normal, maximized or
+    /// centred window on macOS 26. Hotkey, edge-anchored, untitled and accessory windows keep
+    /// iTerm2's own rules.
+    @objc static func floatsWindow(ofType type: iTermWindowType) -> Bool {
+        floats && (type == .WINDOW_TYPE_NORMAL || type == .WINDOW_TYPE_MAXIMIZED || type == .WINDOW_TYPE_CENTERED)
+    }
+
     /// How far the floating panel stands off the window's edges.
     @objc static var floatingInset: CGFloat { Space.base }
 

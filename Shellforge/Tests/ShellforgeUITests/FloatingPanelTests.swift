@@ -71,4 +71,21 @@ import ShellforgeDesign
         let rep = try render(panelCornerRadius: 8)
         #expect(isRedOrClear(rep.colorAt(x: 0, y: 0)), "a whole floating sidebar: its corner is not filled")
     }
+
+    /// Review fix: in a window that moves by its background, a click on the sidebar must not drag
+    /// the window.
+    @Test func theSidebarNeverMovesTheWindow() throws {
+        let document = WorkspaceDocument(store: WorkspaceStore(folder: TestScratch.root.appendingPathComponent("move-\(UUID().uuidString)")))
+        let launcher = CommandLauncher(resolve: { ResolvedEnvironment(variables: ["PATH": "/usr/bin"], source: .loginShell("/bin/zsh")) })
+        let model = SidebarModel(host: FakeTerminalHost(), document: document, launcher: launcher, jiraSettings: { nil })
+        let hooks = AgentHooksModel(integrations: HookIntegrations(home: TestScratch.root.appendingPathComponent("move-home-\(UUID().uuidString)"),
+                                                                   resources: .bundled(resourceURL: nil)), names: [:])
+        let view = ShellforgeSidebar.makeView(model: model, chooseFolder: { nil }, hooks: hooks,
+                                              machine: MachineMonitor(sensor: InertMachineSensor(), power: InertPower()),
+                                              backpack: BackpackController(ports: .inert, settings: BackpackSettings(defaults: nil), toast: { _ in }),
+                                              zoom: SidebarZoom(settings: SidebarLayoutSettings(defaults: ScratchDefaults.make())),
+                                              terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()),
+                                              panelCornerRadius: 8)
+        #expect(!view.mouseDownCanMoveWindow)
+    }
 }

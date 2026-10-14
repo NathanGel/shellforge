@@ -94,4 +94,41 @@ final class ShellforgeFloatingSidebarTest: XCTestCase {
         }
         XCTAssertEqual(covering.map { NSStringFromRect($0.frame) }, [])
     }
+
+    // Review fixes.
+
+    func testOnlyNormalMaximizedAndCentredWindowsFloat() {
+        let floats = iTermShellforgeSidebar.floats
+        for type in [iTermWindowType.WINDOW_TYPE_NORMAL, .WINDOW_TYPE_MAXIMIZED, .WINDOW_TYPE_CENTERED] {
+            XCTAssertEqual(iTermShellforgeSidebar.floatsWindow(ofType: type), floats, "\(type.rawValue)")
+        }
+        for type in [iTermWindowType.WINDOW_TYPE_TOP_PERCENTAGE, .WINDOW_TYPE_LEFT_CELLS, .WINDOW_TYPE_NO_TITLE_BAR,
+                     .WINDOW_TYPE_CENTERED_NO_TITLE_BAR, .WINDOW_TYPE_ACCESSORY, .WINDOW_TYPE_TRADITIONAL_FULL_SCREEN] {
+            XCTAssertFalse(iTermShellforgeSidebar.floatsWindow(ofType: type), "\(type.rawValue)")
+        }
+    }
+
+    func testTheTitleStripIsDrawnWhateverTheTabPosition() throws {
+        try XCTSkipUnless(iTermShellforgeSidebar.floats)
+        let saved = iTermPreferences.int(forKey: kPreferenceKeyTabPosition)
+        defer { iTermPreferences.setInt(saved, forKey: kPreferenceKeyTabPosition) }
+        iTermPreferences.setInt(2, forKey: kPreferenceKeyTabPosition) // PSMTab_LeftTab
+        root.layoutSubviews()
+        XCTAssertLessThan(try terminalFrame().maxY, root.bounds.height - 10, "the strip stays above the terminal with tabs on the left")
+    }
+
+    func testAHiddenSidebarsTitleClearsTheWindowButtons() throws {
+        try XCTSkipUnless(iTermShellforgeSidebar.floats)
+        root.toggleShellforgeSidebar()
+        defer { root.toggleShellforgeSidebar() }
+        root.layoutSubtreeIfNeeded()
+        let zoom = try XCTUnwrap(fixture.window.standardWindowButton(.zoomButton))
+        try XCTSkipIf(zoom.isHidden, "a compact window draws its own buttons")
+        let buttons = zoom.convert(zoom.bounds, to: root)
+        XCTAssertGreaterThanOrEqual(root.shellforgeWindowTitleFrame.minX, buttons.maxX)
+    }
+
+    func testTheDragHandleNeverMovesTheWindow() {
+        XCTAssertFalse(iTermDragHandleView(frame: NSRect(x: 0, y: 0, width: 4, height: 100)).mouseDownCanMoveWindow)
+    }
 }

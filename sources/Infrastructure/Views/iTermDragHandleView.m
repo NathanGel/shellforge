@@ -12,6 +12,12 @@
     CGFloat _origin;
 }
 
+// Shellforge: a drag handle resizes what it sits beside; in a window that moves by its background
+// (the floating sidebar's), a drag on it must not move the window.
+- (BOOL)mouseDownCanMoveWindow {
+    return NO;
+}
+
 - (void)resetCursorRects {
     NSRect bounds = self.bounds;
     [self addCursorRect:NSMakeRect(0, 0, bounds.size.width, bounds.size.height)
