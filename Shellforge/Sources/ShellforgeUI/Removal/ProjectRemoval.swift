@@ -48,6 +48,7 @@ extension SidebarModel {
             return false
         }
         stopOrphaned(project.tunnels)
+        forgetCaches(of: id)
         return true
     }
 

@@ -32,8 +32,8 @@ extension SidebarModel {
     /// AiTerm's review create: the merge request's branch in a worktree of its own, the agent's
     /// command with the typed prompt, then the review saved and its tab opened running the agent.
     public func newReview(draft: ReviewDraft, in projectId: UUID) async throws {
-        guard let project = document.workspace.projects.first(where: { $0.id == projectId }),
-              let agent = agents.first(where: { $0.id == draft.agentId }) else { return }
+        guard let project = document.workspace.projects.first(where: { $0.id == projectId }) else { throw ProjectGone() }
+        guard let agent = agents.first(where: { $0.id == draft.agentId }) else { return }
         let launcher = self.launcher
         // Held for Remove Project from the start of git's work until the task is saved.
         let made = try await whileCreating(in: projectId) { () async throws -> (TaskItem, String) in

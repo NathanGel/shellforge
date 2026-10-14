@@ -38,10 +38,13 @@ extension SidebarModel {
         if let branch = result.0, defaultBranches[id] != branch { defaultBranches[id] = branch }
         switch result.1 {
         case .success(let outcome):
-            lastError = nil
+            // Its own earlier failure goes; another action's error stays.
+            if let said = pullErrors.removeValue(forKey: id), lastError == said { lastError = nil }
             show(notice: outcome.summary)
         case .failure(let error):
-            lastError = "Couldn’t pull \(result.0 ?? "the default branch"). " + Self.reason(of: error)
+            let said = "Couldn’t pull \(result.0 ?? "the default branch"). " + Self.reason(of: error)
+            pullErrors[id] = said
+            lastError = said
         }
         return true
     }
@@ -49,10 +52,11 @@ extension SidebarModel {
     /// Said until `noticeLifetime` passes, unless a newer notice replaced it.
     func show(notice text: String) {
         notice = text
-        let lifetime = noticeLifetime
+        noticeGeneration += 1
+        let (lifetime, generation) = (noticeLifetime, noticeGeneration)
         Task { [weak self] in
             try? await Task.sleep(for: lifetime)
-            guard let self, self.notice == text else { return }
+            guard let self, self.noticeGeneration == generation else { return }
             self.notice = nil
         }
     }
