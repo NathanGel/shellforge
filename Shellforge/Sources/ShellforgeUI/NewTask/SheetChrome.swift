@@ -37,10 +37,21 @@ struct SheetLayout<Navigation: View, Content: View, Footer: View>: View {
             if height == nil {
                 paddedContent
             } else {
-                ScrollView { paddedContent }
+                // A rule above the buttons only while the content runs on under them, so a field cut
+                // off at the foot never reads as part of the footer.
+                GeometryReader { viewport in
+                    ScrollView {
+                        paddedContent.background(GeometryReader {
+                            Color.clear.preference(key: SheetContentHeight.self, value: $0.size.height)
+                        })
+                    }
+                    .overlayPreferenceValue(SheetContentHeight.self, alignment: .bottom) { contentHeight in
+                        if contentHeight > viewport.size.height + 0.5 { Hairline() }
+                    }
+                }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
-            // On the sheet itself, as macOS 26 draws a sheet's buttons: no band, no rule.
+            // On the sheet itself, as macOS 26 draws a sheet's buttons: no band of their own.
             footer
                 .padding(.horizontal, Space.margin).padding(.vertical, Space.block)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -57,6 +68,12 @@ struct SheetLayout<Navigation: View, Content: View, Footer: View>: View {
     private var paddedContent: some View {
         content.frame(maxWidth: .infinity, alignment: .topLeading).padding(Space.margin)
     }
+}
+
+/// How tall a scrolling sheet's content is, against the room it is given.
+private struct SheetContentHeight: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
 /// The band under a sheet's title, on a sheet with no steps and no tabs: one sentence saying what
