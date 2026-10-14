@@ -115,3 +115,4 @@ The Development build next to AiTerm's own sidebar, both dark, at the same scale
 
 The sidebar staying dark inside a light iTerm2 is held by `theSidebarDrawsDarkInALightWindow` and
 `theHooksPanelIsDark`. It was not switched live.
+| `README.md` | Shellforge's readme; iTerm2's moved to `README-iTerm2.md` | The repository's front page says what it is |
