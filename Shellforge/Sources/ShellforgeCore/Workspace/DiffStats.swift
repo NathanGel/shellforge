@@ -50,11 +50,16 @@ public final class DiffStats: Sendable {
         var counted: [String: [String: Counted]] = [:]
         /// When git last ran out of time on a checkout.
         var timeouts: [String: Date] = [:]
+        /// Checkouts being read now: every window asks on the same tick, and a second ask gets the
+        /// last known answer rather than running git beside the first.
+        var reading: Set<String> = []
     }
 
     /// Untracked files bigger than this are skipped rather than read.
     static let untrackedByteLimit = 1 << 20
     public static let failureBackoff: TimeInterval = 30
+    /// Each git call's deadline: a worktree on a stalled mount holds up its pass this long at most.
+    public static let gitDeadline: TimeInterval = 10
 
     private let git: any GitCommands
     private let now: @Sendable () -> Date
@@ -81,15 +86,19 @@ public final class DiffStats: Sendable {
     /// The diff of `worktree` against `base`; nil when there is no base, it cannot be found locally
     /// or as `origin/<base>`, or `worktree` is not a checkout.
     public func diff(for worktree: String, base: String) -> DiffStat? {
-        guard !worktree.isEmpty, !base.isEmpty else { return nil }
+        // A folder gone from disk is no checkout: no git is run for it.
+        guard !worktree.isEmpty, !base.isEmpty, FileManager.default.fileExists(atPath: worktree) else { return nil }
         let key = Self.key(worktree, base)
         let (known, stands): (Entry?, Bool) = kept.withLock { kept in
             let known = kept.entries[key], at = now()
             let fresh = known.map { at.timeIntervalSince($0.at) < ttl } ?? false
             let waiting = kept.timeouts[key].map { at.timeIntervalSince($0) < Self.failureBackoff } ?? false
-            return (known, fresh || waiting)
+            let stands = fresh || waiting || kept.reading.contains(key)
+            if !stands { kept.reading.insert(key) }
+            return (known, stands)
         }
         if stands { return known?.value }
+        defer { kept.withLock { _ = $0.reading.remove(key) } }
         do {
             let value = try read(worktree, base: base, key: key)
             kept.withLock { $0.entries[key] = Entry(value: value, at: now()); $0.timeouts[key] = nil }
@@ -134,9 +143,10 @@ public final class DiffStats: Sendable {
         return stat
     }
 
-    /// git's trimmed answer; nil for a command git refused, a throw for one that ran out of time.
+    /// git's trimmed answer; nil for a command git refused or that could not be run, a throw only
+    /// for one that ran out of time — the one failure that backs off.
     private func ask(_ args: [String], in directory: String) throws -> String? {
-        let out = try git.git(args, in: directory, remote: false, timeout: nil)
+        guard let out = try? git.git(args, in: directory, remote: false, timeout: Self.gitDeadline) else { return nil }
         if out.timedOut { throw GitTimedOut(command: "git " + args.joined(separator: " ")) }
         guard out.status == 0 else { return nil }
         return out.stdout.trimmingCharacters(in: .whitespacesAndNewlines)

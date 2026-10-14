@@ -161,6 +161,54 @@ import Testing
         #expect(recording.calls.dropFirst(before).contains { $0[0] == "merge-base" }, "a task left out was forgotten")
     }
 
+    /// Every window asks on the same tick: a read already running is not run again beside it.
+    @Test func concurrentAsksRunGitOnce() async throws {
+        let (repo, worktree) = try makeRepo()
+        let held = HeldGit(real: LauncherGit(launcher: repo.launcher), holding: "diff")
+        let s = DiffStats(git: held)
+        let first = Task.detached { s.diff(for: worktree, base: "main") }
+        while held.waiting == 0 { try await Task.sleep(for: .milliseconds(5)) }
+        let second = Task.detached { s.diff(for: worktree, base: "main") }
+        try await Task.sleep(for: .milliseconds(300))
+        let ran = held.count(of: "diff")
+        // Let any held call go, so a failing run ends rather than hangs.
+        held.release(); held.release()
+        #expect(ran == 1, "the second ask ran no diff of its own")
+        #expect(await second.value == nil, "it has no answer yet")
+        #expect(await first.value == DiffStat(added: 0, removed: 0))
+    }
+
+    @Test func gitIsGivenAShortDeadline() throws {
+        let (repo, worktree) = try makeRepo()
+        let recording = RecordingGit(real: LauncherGit(launcher: repo.launcher))
+        _ = DiffStats(git: recording).diff(for: worktree, base: "main")
+        #expect(recording.timeout(of: ["diff"]) == DiffStats.gitDeadline)
+        #expect(DiffStats.gitDeadline == 10)
+    }
+
+    /// git that could not be run is no answer, but no timeout either: it is asked again once the
+    /// answer expires, not left alone for the backoff.
+    @Test func aFailureThatIsNoTimeoutDoesNotBackOff() throws {
+        let clock = TestClock()
+        let (repo, worktree) = try makeRepo()
+        let failing = SwitchableGit(real: LauncherGit(launcher: repo.launcher))
+        failing.throwing = true
+        let s = DiffStats(git: failing, now: { clock.now })
+        #expect(s.diff(for: worktree, base: "main") == nil)
+        failing.throwing = false
+        clock.advance(by: 6)
+        #expect(s.diff(for: worktree, base: "main") == DiffStat(added: 0, removed: 0))
+    }
+
+    /// A worktree whose folder is gone runs no git at all.
+    @Test func aDeletedWorktreeRunsNoGit() throws {
+        let (repo, worktree) = try makeRepo()
+        try FileManager.default.removeItem(atPath: worktree)
+        let recording = RecordingGit(real: LauncherGit(launcher: repo.launcher))
+        #expect(DiffStats(git: recording).diff(for: worktree, base: "main") == nil)
+        #expect(recording.calls.isEmpty)
+    }
+
     @Test func lineCountMatchesGit() {
         #expect(DiffStats.lineCount(Data("a\nb\n".utf8)) == 2)
         #expect(DiffStats.lineCount(Data("a\nb".utf8)) == 2)
@@ -173,17 +221,39 @@ import Testing
 /// git that answers every call as timed out while `timingOut` is set, and counts the calls.
 final class SwitchableGit: GitCommands, @unchecked Sendable {
     private let lock = NSLock()
-    private var on = false, calls = 0
+    private var on = false, throwsNow = false, calls = 0
     let real: LauncherGit
     init(real: LauncherGit) { self.real = real }
     var timingOut: Bool {
         get { lock.lock(); defer { lock.unlock() }; return on }
         set { lock.lock(); on = newValue; lock.unlock() }
     }
+    /// Throws, as a git that could not be launched does.
+    var throwing: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return throwsNow }
+        set { lock.lock(); throwsNow = newValue; lock.unlock() }
+    }
     var count: Int { lock.lock(); defer { lock.unlock() }; return calls }
     func git(_ args: [String], in directory: String, remote: Bool, timeout: TimeInterval?) throws -> ChildOutput {
-        lock.lock(); calls += 1; let failing = on; lock.unlock()
+        lock.lock(); calls += 1; let failing = on, throwing = throwsNow; lock.unlock()
+        if throwing { throw CocoaError(.executableNotLoadable) }
         if failing { return ChildOutput(status: 15, stdout: "", stderr: "", timedOut: true) }
+        return try real.git(args, in: directory, remote: remote, timeout: timeout)
+    }
+}
+
+/// git that holds every `holding` call until released, and counts each command.
+final class HeldGit: GitCommands, @unchecked Sendable {
+    private let lock = NSLock(), gate = DispatchSemaphore(value: 0)
+    private var counts: [String: Int] = [:], held = 0
+    let real: LauncherGit, holding: String
+    init(real: LauncherGit, holding: String) { self.real = real; self.holding = holding }
+    var waiting: Int { lock.lock(); defer { lock.unlock() }; return held }
+    func count(of command: String) -> Int { lock.lock(); defer { lock.unlock() }; return counts[command, default: 0] }
+    func release() { gate.signal() }
+    func git(_ args: [String], in directory: String, remote: Bool, timeout: TimeInterval?) throws -> ChildOutput {
+        lock.lock(); counts[args[0], default: 0] += 1; let holds = args[0] == holding; if holds { held += 1 }; lock.unlock()
+        if holds { gate.wait() }
         return try real.git(args, in: directory, remote: remote, timeout: timeout)
     }
 }
