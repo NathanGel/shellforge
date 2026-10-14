@@ -148,7 +148,11 @@ struct SidebarView: View {
                              editSSHHost: { showSSHHost(for: node.id) },
                              openSSHHost: { Task { await model.openSSHHost(of: node.id) } },
                              canOpenSSHHost: model.canOpenSSHHost(of: node.id),
-                             remove: { Task { await model.confirmRemove(project: node.id) } })
+                             remove: { Task { await model.confirmRemove(project: node.id) } },
+                             pullTitle: SidebarModel.offersPull(model.providers[node.id] ?? .git)
+                                 ? SidebarModel.pullTitle(branch: model.defaultBranch(of: node.id)) : nil,
+                             pulling: model.isPulling(node.id),
+                             pull: { Task { await model.pullDefault(project: node.id) } })
                 .listRowSeparator(.hidden)
         case .terminal(let node, let selected):
             TerminalRowView(node: node, selected: selected, agents: model.avatars(forTerminal: node.id),

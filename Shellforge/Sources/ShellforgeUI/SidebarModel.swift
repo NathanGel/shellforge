@@ -85,6 +85,14 @@ public final class SidebarModel: ObservableObject {
     @Published public var lastError: String?
     /// What is being done right now, such as "Creating Fix login…"; nil when idle.
     @Published public private(set) var working: String?
+    /// What a finished action came to, such as "main is already up to date."; clears itself after
+    /// `noticeLifetime` (SidebarModel+PullDefault.swift).
+    @Published public internal(set) var notice: String?
+    var noticeLifetime: Duration = .seconds(6)
+    /// Projects whose default branch is being pulled: their menu greys Pull.
+    @Published var pulling: Set<UUID> = []
+    /// Each project's default branch, read with its provider, for the menu's "Pull main".
+    @Published var defaultBranches: [UUID: String] = [:]
     /// What the daemon says about the sessions: every dot is read from it.
     @Published public private(set) var sessions = SessionStore()
     /// How far the chain to the helper reaches; the sidebar says it while it is a problem.
@@ -479,12 +487,14 @@ public final class SidebarModel: ObservableObject {
         let launcher = self.launcher
         Task {
             let found = await BackgroundWork.run {
-                unknown.map { ($0.id, ProviderDetector.provider(ofRepositoryAt: $0.path, launcher: launcher)) }
+                unknown.map { ($0.id, ProviderDetector.provider(ofRepositoryAt: $0.path, launcher: launcher),
+                               Repository.defaultBranch(of: $0.path, launcher: launcher)) }
             }
             // One publication for the batch, not one redraw per project.
-            var next = providers
-            for (id, provider) in found { next[id] = provider }
+            var next = providers, branches = defaultBranches
+            for (id, provider, branch) in found { next[id] = provider; branches[id] = branch }
             providers = next
+            defaultBranches = branches
             detecting.subtract(found.map(\.0))
         }
     }
