@@ -303,9 +303,36 @@ struct SidebarBanner: View {
     @Environment(\.interfaceScale) private var scale
     @Environment(\.surface) private var surface
 
-    private var ink: Color {
+    /// The notice's text colour: readable on its tinted ground; the colour is the symbol's.
+    static func textInk(for tone: Tone) -> Color {
         switch tone {
-        case .error: Palette.text
+        case .error, .warning: Palette.text
+        case .info: Palette.muted
+        }
+    }
+
+    /// The notice's symbol, by tone.
+    static func symbol(for tone: Tone) -> String {
+        switch tone {
+        case .error: "xmark.octagon.fill"
+        case .warning: "exclamationmark.triangle.fill"
+        case .info: "info.circle.fill"
+        }
+    }
+
+    /// The notice's tinted ground, by tone.
+    static func ground(for tone: Tone) -> Color {
+        switch tone {
+        case .error: Palette.noticeError
+        case .warning: Palette.noticeWarning
+        case .info: Palette.noticeInfo
+        }
+    }
+
+    /// The symbol's colour: the tone's own.
+    static func symbolInk(for tone: Tone) -> Color {
+        switch tone {
+        case .error: Palette.destructive
         case .warning: Palette.amber
         case .info: Palette.muted
         }
@@ -313,7 +340,9 @@ struct SidebarBanner: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: scale(Space.snug)) {
-            Text(text).font(Typography.help).foregroundStyle(ink).textSelection(.enabled)
+            Image(systemName: Self.symbol(for: tone)).font(Typography.help).foregroundStyle(Self.symbolInk(for: tone))
+                .accessibilityHidden(true)
+            Text(text).font(Typography.help).foregroundStyle(Self.textInk(for: tone)).textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
             if let dismiss {
                 Button(action: dismiss) {
@@ -324,9 +353,13 @@ struct SidebarBanner: View {
                 .accessibilityLabel("Dismiss")
             }
         }
-        .padding(.leading, scale(Space.inset) + scale(Space.base))
+        .padding(.horizontal, scale(Space.base))
+        .padding(.vertical, scale(Space.snug))
+        // An inline notice: a tinted, rounded ground, lined up with the rows below it.
+        .background(RoundedRectangle(cornerRadius: scale(Radius.group), style: .continuous).fill(Self.ground(for: tone)))
+        .padding(.leading, scale(Space.inset))
         .padding(.trailing, scale(trailing))
-        .padding(.vertical, scale(vertical))
+        .padding(.vertical, scale(vertical) / 2)
     }
 }
 

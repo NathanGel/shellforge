@@ -17,4 +17,10 @@ struct SidebarHeadingTests {
         #expect(extraLarge.height > standard.height)
         #expect(extraLarge.width > standard.width)
     }
+    /// macOS 26 section headers are sentence case: the heading draws its title as given, so a lower-
+    /// case divider name is not shouted.
+    @Test func aHeadingIsNotUppercased() {
+        func width(_ title: String) -> CGFloat { NSHostingView(rootView: SidebarHeading(title).fixedSize()).fittingSize.width }
+        #expect(width("Projects") < width("PROJECTS"))
+    }
 }

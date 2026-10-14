@@ -13,6 +13,9 @@ public enum Surface: Equatable, Sendable {
     case hover
     /// A selected row. Everything on it turns white.
     case accent
+    /// A selected row while its window is not active: macOS's unemphasized grey selection, on which
+    /// everything keeps the sidebar's own ink.
+    case inactiveSelection
     /// A sheet or any other surface away from the sidebar. The default.
     case sheet
 
@@ -31,6 +34,7 @@ public enum Surface: Equatable, Sendable {
         case .sidebar: Palette.sidebar
         case .hover: Palette.rowHoverSolid
         case .accent: Palette.selection
+        case .inactiveSelection: Palette.controlActive
         case .sheet: Palette.surface
         }
     }

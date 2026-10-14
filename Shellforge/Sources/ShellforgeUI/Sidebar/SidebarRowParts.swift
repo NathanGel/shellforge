@@ -104,16 +104,37 @@ struct RowPill: ViewModifier {
     let selected: Bool
     var hovered = false
     @Environment(\.interfaceScale) private var scale
+    @Environment(\.controlActiveState) private var controlActiveState
+
+    /// The ground a row is on: the accent while selected in an active window, macOS's unemphasized
+    /// grey while selected in an inactive one, the hover wash, or the sidebar. `.hover`, not
+    /// `.sidebar`, while merely hovered: `AvatarGroupView`'s ring reads `occludingBackground`.
+    static func surface(selected: Bool, hovered: Bool, windowActive: Bool) -> Surface {
+        if selected { return windowActive ? .accent : .inactiveSelection }
+        return hovered ? .hover : .sidebar
+    }
+
+    /// Whether a window in `state` shows the emphasized (accent) selection: only the key window, as
+    /// AppKit's own tables — a window that is main while another panel is key shows grey.
+    static func windowActive(_ state: ControlActiveState) -> Bool { state == .key }
+
+    /// The pill's fill on `surface`.
+    static func fill(for surface: Surface) -> Color {
+        switch surface {
+        case .accent: Palette.selection
+        case .inactiveSelection: Palette.controlActive
+        case .hover: Palette.rowHover
+        case .sidebar, .sheet: .clear
+        }
+    }
 
     func body(content: Content) -> some View {
+        let windowActive = Self.windowActive(controlActiveState)
+        let surface = Self.surface(selected: selected, hovered: hovered, windowActive: windowActive)
         content
-            // `.hover`, not `.sidebar`, while the row is merely hovered: `AvatarGroupView`'s ring reads
-            // `Surface.occludingBackground`, which is `Palette.rowHoverSolid` for `.hover`. Every other
-            // consumer of `surface` on a row (`Badge`, `StatusMark`, `BranchLabelView`) only branches on
-            // `isOnAccent`, which `.hover` and `.sidebar` share.
-            .surface(selected ? .accent : (hovered ? .hover : .sidebar))
-            .background(RoundedRectangle(cornerRadius: scale(Radius.control))
-                .fill(selected ? Palette.selection : (hovered ? Palette.rowHover : .clear)))
+            .surface(surface)
+            // macOS 26's sidebar selection: a little rounder than a control.
+            .background(RoundedRectangle(cornerRadius: scale(Radius.group), style: .continuous).fill(Self.fill(for: surface)))
     }
 }
 

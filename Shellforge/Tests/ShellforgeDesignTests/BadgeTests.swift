@@ -115,4 +115,8 @@ struct BadgeTests {
         host.layoutSubtreeIfNeeded()
         return host.fittingSize
     }
+    /// macOS 26's badges are capsules.
+    @Test func aBadgeIsACapsule() {
+        #expect(Badge.isCapsule)
+    }
 }

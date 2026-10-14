@@ -196,6 +196,8 @@ public enum Typography {
     /// `.footnote`, semibold — "Projects", a row's disclosure chevron, the `+n` overflow, a step
     /// number, and a ticket row's small icon buttons (clear, toggle).
     public static let micro = TypeStyle(size: 10, weight: .semibold)
+    /// A sidebar section header (“Projects”): macOS 26's sidebar header, sentence case.
+    public static let sectionHeader = TypeStyle(size: 11, weight: .semibold)
     /// A branch name, a usage line.
     public static let mono = TypeStyle(size: 11, design: .monospaced)
     /// The command block, a ticket key in a sheet.

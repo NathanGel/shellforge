@@ -69,7 +69,8 @@ struct SidebarFooter: View {
                 macReadings
                 backpackLine
             }
-            Hairline()
+            // Inside the footer card, not past its edges.
+            Hairline().padding(.horizontal, scale(Space.base) + scale(Space.inset))
             group("Usage") {
                 ForEach(rows, id: \.vendor) { row in
                     telemetryRow(mark: vendorMark(row.vendor)) {
@@ -83,7 +84,7 @@ struct SidebarFooter: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .overlay(alignment: .top) { Hairline() }
+
     }
 
     /// The Mac's readings under its mark, read out as one element: its readings in words, then the

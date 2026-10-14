@@ -165,6 +165,16 @@ public enum Palette {
     /// A badge under the pointer on a selected row: stronger than `badgeSelected`, as
     /// `badgeHovered` is than `badge`.
     public static let badgeSelectedHovered = Color.white.opacity(0.28)
+    /// An inline notice's ground, by its tone: the error, warning and information colours as faint
+    /// washes, so the notice's symbol carries the colour and its text stays readable.
+    public static let noticeError = destructive.opacity(0.12)
+    /// A warning notice's ground.
+    public static let noticeWarning = amber.opacity(0.14)
+    /// An information notice's ground.
+    public static let noticeInfo = muted.opacity(0.10)
+    /// The footer card's ground: a faint wash, black in light and white in dark, that sets the
+    /// footer apart from the rows above it without a rule.
+    public static let footerCard = adaptive(light: NSColor(white: 0, alpha: 0.04), dark: NSColor(white: 1, alpha: 0.05))
     /// The sidebar's own background; equal to `surface` but named separately so sidebar styling
     /// reads locally.
     public static let sidebar = surface

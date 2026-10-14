@@ -15,10 +15,10 @@ import Testing
     static let ported = ["Palette", "Metrics", "Surface", "InterfaceScale", "Logos", "IconSource", "Badge", "Hairline",
                          "SidebarHeading", "SymbolMark", "FormField", "Input", "Select", "SegmentedControl", "Kbd", "SearchField"]
     /// Ported files that differ from AiTerm's on purpose (ledgered).
-    static let changed: Set = ["FormField", "Input", "SegmentedControl", "Palette", "IconSource"]
+    static let changed: Set = ["FormField", "Input", "SegmentedControl", "Palette", "IconSource", "SidebarHeading", "Metrics", "Surface", "Badge"]
     /// SHA-256 of each ported file, normalised, as reviewed.
     static let baseline: [String: String] = [
-        "Badge": "cde41a8fd041703814a5212741732e5cdd33108a0f5a34e811a15d7f27d67081",
+        "Badge": "8d82c1df4269c88794a80451715afc2a1dd54b5c8f5fa5fec6036c0c0075ff78",
         "FormField": "d2450a5864c2a2acb674de92b35abcf2e6d081ff5cb2c8daf67dc2872fbbf46f",
         "Hairline": "ab5976604f277a70104f15faa8d6d8effaa90519135e36862a2d24d48231e4f0",
         "Input": "efe2209ee6317b2f79eb518517aa611c250e29d164861d3d23bc8c872cad4cce",
@@ -29,10 +29,10 @@ import Testing
         "IconSource": "1c4233822c68d94be0a1d95aefdf0c27242b2a14b31839c4a5ef13c59be093df",
         "InterfaceScale": "8cd10c61121676480e5fae9e24d5e9499ee7babcb165739c16514f3174cda745",
         "Logos": "af2e1ee98ac438ca5bc59b58aa2fcffca6269ad502c2b1c73f78b875dfd7a4f5",
-        "Metrics": "a763271398c338d01e3b9776a8b393ca1c5c64aba662a05358dcdabaf2587805",
-        "Palette": "5691566a98751c9cbe03b00e14fe9528fe91fd87505c20850215926b08224a1b",
-        "SidebarHeading": "8ad7d4a95d09e4f7fdb6ca01ac287f59a03ec0b7511ed9ccf0866d60b19d772b",
-        "Surface": "9c7e52c35f0b007b2750a5f455243811e1065f53ea57948dd3d4f5ed11f4c282",
+        "Metrics": "413664f2cb268cf9c9ee739b8e90182bf0fcdcaac5b522d7859d4d1195b5e01a",
+        "Palette": "e2098fd80ad37a1b61b2c3c86d67c069dd739d85a68ee357712378bbc37a63d9",
+        "SidebarHeading": "920a10e24175cc889fa22c5437ca486ddebd7ee2605350795edb56138ebca38f",
+        "Surface": "59282e263f6d4728cd2af4ec4e48ffbbf6b18557111a89a6a97e9d4fe89adf7e",
         "SymbolMark": "4e2801b33a0284b0ab889398eaac1a6164465feed0a8a177922b41501ae61cc5",
     ]
 

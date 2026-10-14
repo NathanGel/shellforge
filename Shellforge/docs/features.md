@@ -22,7 +22,9 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 - **Terminal space.** The terminal always keeps at least 320 pt, about 40 columns, with iTerm2's toolbelt counted.
   - While the sidebar shows, the window can't be dragged narrower than both minimums together: 680 pt, plus the toolbelt's width when it is open. The sidebar shrinks to its minimum, then the window stops, rather than the sidebar jumping away.
   - A window sized some other way, such as tiling or a smaller screen, can still end up too narrow. There the sidebar steps aside.
-- **Header.** PROJECTS, then four buttons, left to right:
+- **Selection.** The selected row uses the system's selection: the accent while the window is active, grey while it is not.
+- **Banners** are inline notices with an icon; an error stays until you click its ×.
+- **Header.** Projects, then four buttons, left to right:
   - Agent hooks (the bolt);
   - Settings (the gear);
   - "+", with Add Project… and Add Divider…;
@@ -64,7 +66,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
   - The outcome shows under the sidebar for 6 seconds; a refusal shows as the error. Pull is greyed while one is running for that project.
 - **Remove Project… asks first**, listing the worktrees it keeps. It only removes the project from Shellforge:
   - Its tasks and terminals leave the sidebar. No git command runs, and files and worktrees stay on disk.
-  - Its tabs stay open and move under Other tabs.
+  - Its tabs stay open and move under Other Tabs.
   - A divider below it moves up with the projects.
   - While a task is being created or removed in the project, it says the project "can't be removed yet".
 
@@ -131,7 +133,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 
 ## Tabs and panes
 
-- **A task's tabs** are listed under it when it is selected and has more than one. Tabs of no task are listed under **Other tabs**.
+- **A task's tabs** are listed under it when it is selected and has more than one. Tabs of no task are listed under **Other Tabs**.
 - **Closing from the sidebar.** Right-click a tab row, or a task row, for **Close Tab**. On a tab split with ⌘D, the item reads **Close Pane** and closes only the focused pane.
   - Anything running asks first, as ⌘W does.
   - A task row brings its tab to the front before closing a pane of it.
@@ -149,13 +151,13 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 
 ## Footer
 
-- **SYSTEM** shows the selected task's or tab's agent:
+- **System** shows the selected task's or tab's agent:
   - its context ring and percent;
   - its token counts, such as `in 936k · out 5.6k`, with exact figures in the tooltip.
 - **Mac** shows `cpu` and `ram`, plus `bat` on battery, sampled every 5 s.
   - A reading turns amber only when macOS warns.
   - Click it for Backpack Mode, or right-click for Mac Settings….
-- **USAGE** has one row per vendor (Claude, Codex) with the weekly (`wk`) and 5-hour (`5h`) windows and their reset times.
+- **Usage** has one row per vendor (Claude, Codex) with the weekly (`wk`) and 5-hour (`5h`) windows and their reset times.
   - Rings turn amber at 80%.
   - Claude reads "Usage disconnected" until its status-line shim is installed (Agent hooks).
 

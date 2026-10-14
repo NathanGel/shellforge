@@ -70,6 +70,8 @@ struct SidebarFooterHost: View {
     let openMacSettings: () -> Void
     @Environment(\.footerClock) private var footerClock
 
+    @Environment(\.interfaceScale) private var scale
+
     var body: some View {
         TimelineView(.everyMinute) { context in
             SidebarFooter(task: model.footerRow,
@@ -79,6 +81,13 @@ struct SidebarFooterHost: View {
                           mac: MacModePresentation.line(mode: MacMode(state: backpack.state, transition: backpack.transition),
                                                         hotspot: backpack.network, wifi: backpack.currentNetwork),
                           toggleMac: toggleMac, openMacSettings: openMacSettings)
+        }
+        // The footer on a rounded card, inside its own frame, so the footer's geometry is unchanged.
+        .background {
+            RoundedRectangle(cornerRadius: scale(Radius.group), style: .continuous)
+                .fill(Palette.footerCard)
+                .padding(.horizontal, scale(Space.base))
+                .padding(.bottom, scale(Space.base))
         }
     }
 }
@@ -238,7 +247,7 @@ struct SidebarView: View {
                        close: { model.closeTab(tab.id) }, closeTitle: model.closeTitle(ofTab: tab.id))
                 .listRowSeparator(.hidden)
         case .otherTabsHeading:
-            SidebarHeading("Other tabs")
+            SidebarHeading("Other Tabs")
                 .frame(height: scale(Size.menuRow)).padding(.leading, scale(Space.base))
                 .listRowSeparator(.hidden)
         }
