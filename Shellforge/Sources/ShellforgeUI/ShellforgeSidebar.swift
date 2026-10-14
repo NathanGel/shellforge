@@ -238,7 +238,7 @@ struct SidebarView: View {
                        close: { model.closeTab(tab.id) }, closeTitle: model.closeTitle(ofTab: tab.id))
                 .listRowSeparator(.hidden)
         case .otherTabsHeading:
-            SidebarHeading("Other tabs")
+            SidebarHeading("Other Tabs")
                 .frame(height: scale(Size.menuRow)).padding(.leading, scale(Space.base))
                 .listRowSeparator(.hidden)
         }
