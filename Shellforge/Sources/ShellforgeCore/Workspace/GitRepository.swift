@@ -113,6 +113,8 @@ public struct GitRepository: Sendable {
         public var branch: String?
         /// The reason it is locked for: "" for a lock without one, nil when not locked.
         public var lockReason: String?
+        /// git's record outlived the checkout: `git worktree prune` would drop it.
+        public var prunable = false
     }
 
     /// Every worktree git lists, the main checkout first.
@@ -127,6 +129,8 @@ public struct GitRepository: Sendable {
                 found[found.count - 1].lockReason = ""
             } else if line.hasPrefix("locked "), !found.isEmpty {
                 found[found.count - 1].lockReason = String(line.dropFirst("locked ".count))
+            } else if line == "prunable" || line.hasPrefix("prunable "), !found.isEmpty {
+                found[found.count - 1].prunable = true
             }
         }
         return found

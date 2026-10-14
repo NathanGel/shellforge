@@ -32,6 +32,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 ## Projects
 
 - **Add Project.** Use ⌃⌘P, the header "+" or the empty state. The folder you pick must be inside a git repository, and a project can only be added once. The project is named after its folder.
+  - When the repository already has worktrees, Shellforge asks "Import N worktrees?": Import adds each as a task named after its branch, without starting an agent. A review's worktree comes in as a review.
 - **The workspace** lives in `~/Library/Application Support/Shellforge/workspace.json`, shared by every window.
   - Each save first keeps `workspace.json.backup`.
   - A file that won't load is set aside as `.damaged-<uuid>`, and the backup is used instead.
@@ -72,9 +73,11 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 - **New Task (⌃⌘N) and New Review (⌃⌘R)** act on the selected task's or terminal's project, else the window's only project. With several projects and nothing selected, they are greyed out.
 - **The New Task sheet** has three steps: Task, Agent and Prompt.
   - **Task:**
+    - **New worktree** or **Existing worktree**;
     - an optional Jira ticket, searched by text, or your open tickets when the search is empty;
-    - the task name, type (feat, fix or chore), new branch and base branch.
-    - A picked ticket fills in the name, type and branch.
+    - the task name;
+    - for a new worktree: type (feat, fix or chore), new branch and base branch. A picked ticket fills in the name, type and branch.
+    - for an existing worktree: which one, newest commit first, from the project's worktrees that are on a branch and not a task yet (made by Shellforge, AiTerm, an agent or by hand). The task is named after its branch unless you type a name. Nothing in git changes: the task continues on that branch as it is.
   - **Agent:** agent, model and reasoning.
   - **Prompt:** an optional first prompt. "/" lists the agent's commands and skills.
   - **Options:** "Include Jira ticket details", and "Open ssh <host> beside the agent".
@@ -104,6 +107,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
   - The task's tabs close first, in every window, through iTerm2's own close.
   - A branch with commits its base lacks asks whether to keep it.
   - A review's branch goes only when nothing would be lost.
+  - A task continued in a worktree outside the project's `.worktrees/` folder is only forgotten: its tabs close, and the worktree and its branch stay where they are. The question says so.
   - While it runs, the row reads "Removing…", or why it stopped.
 - **Status dot:**
   - idle: a ring;

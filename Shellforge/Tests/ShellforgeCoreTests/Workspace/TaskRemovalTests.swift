@@ -16,6 +16,21 @@ import Testing
         !(try repo.git("for-each-ref", "--format=%(refname)", "refs/heads/" + branch)).isEmpty
     }
 
+    /// A worktree continued from outside the project's `.worktrees/` is not Shellforge's to delete:
+    /// removing the task leaves it, and its branch, where they are.
+    @Test func aWorktreeOutsideTheProjectsFolderIsLeftAlone() throws {
+        let repo = try GitRepoFixture()
+        let outside = (repo.path as NSString).deletingLastPathComponent + "/hand-made"
+        try repo.git("worktree", "add", "-q", "-b", "feat/hand", outside)
+        let project = repo.project
+        let task = TaskItem(projectId: project.id, title: "hand", branch: "feat/hand", worktreePath: outside, baseBranch: "main")
+        #expect(!TaskRemoval.ownsWorktree(of: task, in: project))
+        #expect(TaskRemoval.ownsWorktree(of: TaskItem(projectId: project.id, title: "t", branch: "b", worktreePath: repo.path + "/.worktrees/t", baseBranch: "main"), in: project))
+        _ = try TaskRemoval.remove(task: task, project: project, deleteBranch: true, force: true, launcher: repo.launcher)
+        #expect(FileManager.default.fileExists(atPath: outside))
+        #expect(try branchExists(repo, "feat/hand"))
+    }
+
     @Test func anUnmergedBranchIsKeptAndDeletedOnlyOnRequest() throws {
         let repo = try GitRepoFixture()
         let task = try task(repo)
@@ -181,23 +196,21 @@ import Testing
         try FileManager.default.createSymbolicLink(atPath: repo.path + "/.worktrees", withDestinationPath: elsewhere)
         let stray = TaskItem(projectId: repo.project.id, title: "Keep", branch: "keep", worktreePath: repo.path + "/.worktrees/keep", baseBranch: "main")
 
-        #expect(throws: (any Error).self) {
-            _ = try TaskRemoval.remove(task: stray, project: repo.project, deleteBranch: false, force: true, launcher: repo.launcher)
-        }
+        // Not Shellforge's worktree, through the link: the task is only forgotten, nothing is deleted.
+        #expect(!TaskRemoval.ownsWorktree(of: stray, in: repo.project))
+        _ = try TaskRemoval.remove(task: stray, project: repo.project, deleteBranch: false, force: true, launcher: repo.launcher)
         #expect(FileManager.default.fileExists(atPath: elsewhere + "/keep"))
     }
 
-    /// Only a leftover of Shellforge's own is deleted: a folder outside `.worktrees/` that git does
-    /// not know as a worktree is refused and kept, whatever is in it.
+    /// Only a leftover of Shellforge's own is deleted: a folder outside `.worktrees/` is kept,
+    /// whatever is in it; its task is only forgotten.
     @Test func aFolderOutsideTheWorktreesIsNeverDeleted() throws {
         let repo = try GitRepoFixture()
         let folder = repo.path + "/notes"
         try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
         let stray = TaskItem(projectId: repo.project.id, title: "Notes", branch: "notes", worktreePath: folder, baseBranch: "main")
 
-        #expect(throws: (any Error).self) {
-            _ = try TaskRemoval.remove(task: stray, project: repo.project, deleteBranch: false, force: true, launcher: repo.launcher)
-        }
+        _ = try TaskRemoval.remove(task: stray, project: repo.project, deleteBranch: false, force: true, launcher: repo.launcher)
         #expect(FileManager.default.fileExists(atPath: folder))
     }
 

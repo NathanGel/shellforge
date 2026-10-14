@@ -49,13 +49,19 @@ public final class TaskCreation: CreationKind {
     public typealias Item = JiraTicket
     /// The project's SSH host, while the config has it: New Task offers it as a pane beside the agent.
     public let sshHost: String?
-    public init(sshHost: String? = nil) { self.sshHost = sshHost }
-    public func slug(of draft: TaskDraft) -> String { draft.worktreeSlug }
+    /// The project's worktrees New Task can continue in, as last read (`loadExistingWorktrees`).
+    public internal(set) var existing: [ExistingWorktree] = []
+    let listExisting: @Sendable () -> [ExistingWorktree]
+    public init(sshHost: String? = nil, listExisting: @escaping @Sendable () -> [ExistingWorktree] = { [] }) {
+        self.sshHost = sshHost; self.listExisting = listExisting
+    }
+    /// An existing worktree makes none: nothing to name.
+    public func slug(of draft: TaskDraft) -> String { draft.useExisting ? "" : draft.worktreeSlug }
     public func prompt(of draft: TaskDraft) -> String? {
         AgentCommand.composePrompt(userText: draft.promptText, ticket: draft.ticket, appendTicket: draft.appendTicket)
     }
     public func firstStepDone(_ draft: TaskDraft) -> Bool {
-        !draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && (!draft.useExisting || draft.existing != nil)
     }
     /// The base the draft opened with is replaced by the repository's default, unless the person
     /// picked another meanwhile.
@@ -283,9 +289,29 @@ extension CreationModel where Kind == TaskCreation {
                             branches: @escaping @Sendable () -> [String],
                             submit: @escaping @MainActor (TaskDraft) async throws -> Void,
                             searchIssues: @escaping @MainActor (String) async throws -> [JiraTicket] = { _ in [] },
-                            sshHost: String? = nil, home: URL) {
-        self.init(kind: TaskCreation(sshHost: sshHost), project: project, agents: agents, available: available, draft: draft, rememberedModels: rememberedModels,
+                            sshHost: String? = nil,
+                            existingWorktrees: @escaping @Sendable () -> [ExistingWorktree] = { [] }, home: URL) {
+        self.init(kind: TaskCreation(sshHost: sshHost, listExisting: existingWorktrees), project: project, agents: agents, available: available, draft: draft, rememberedModels: rememberedModels,
                   catalogue: catalogue, branches: branches, submit: submit, search: searchIssues, home: home)
+    }
+
+    /// New worktree or Existing worktree: the first listed is picked when none is.
+    public func chooseExisting(_ on: Bool) {
+        guard on else { draft.leaveExisting(); return }
+        draft.useExisting = true
+        if let picked = draft.existing { draft.pick(existing: picked) } else if let first = kind.existing.first { draft.pick(existing: first) }
+    }
+
+    /// The worktrees "Existing worktree" lists, read off the main actor. A pick that is no longer
+    /// among them goes.
+    public func loadExistingWorktrees() async {
+        let list = kind.listExisting
+        let found = await BackgroundWork.run { list() }
+        guard !Task.isCancelled else { return }
+        objectWillChange.send()
+        kind.existing = found
+        if let picked = draft.existing, !found.contains(picked) { draft.pick(existing: nil) }
+        if draft.useExisting, draft.existing == nil, let first = found.first { draft.pick(existing: first) }
     }
 
     /// The ticket list's open flag, as New Task names it.

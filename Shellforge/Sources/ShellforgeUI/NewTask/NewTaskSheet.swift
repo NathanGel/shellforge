@@ -72,6 +72,7 @@ struct NewTaskSheet: View {
         .task { await model.search(text: "") }
         .onDisappear { model.cancelSearch() }
         .task { await model.loadBranches() }
+        .task { await model.loadExistingWorktrees() }
         .task(id: model.draft.agentId) { await model.loadCatalogue() }
     }
 
@@ -85,6 +86,10 @@ struct NewTaskSheet: View {
 
     private var taskStep: some View {
         VStack(alignment: .leading, spacing: Space.block) {
+            // A new worktree, or one that already exists to continue in.
+            SegmentedControl(values: [false, true], selection: Binding(get: { model.draft.useExisting }, set: { model.chooseExisting($0) })) { existing, on in
+                Text(existing ? "Existing worktree" : "New worktree").font(on ? Typography.bodyEmphasis : Typography.body)
+            }
             FormField("Jira ticket (optional)") {
                 SearchPicker(placeholder: model.ticketPlaceholder,
                              query: Binding(get: { model.query }, set: { model.setQuery($0) }),
@@ -119,6 +124,30 @@ struct NewTaskSheet: View {
                 Input(placeholder: "Describe the task", text: Binding(get: { model.draft.title }, set: { model.draft.setTitle($0) }))
             }
 
+            if model.draft.useExisting {
+                existingWorktreeField
+            } else {
+                branchFields
+            }
+        }
+    }
+
+    /// The worktree to continue in, newest first; its branch is the task's, as it is.
+    @ViewBuilder private var existingWorktreeField: some View {
+        FormField("Worktree") {
+            if model.kind.existing.isEmpty {
+                HelpText("\(model.project.name) has no other worktrees to continue in.")
+            } else {
+                Select(values: model.kind.existing,
+                       selection: Binding(get: { model.draft.existing ?? model.kind.existing[0] }, set: { model.draft.pick(existing: $0) }),
+                       label: { $0.branch }, detail: { ExistingWorktreeLabel.detail(of: $0, in: model.project) }, monospaced: true)
+                HelpText("Continues on its branch as it is: nothing in git changes.")
+            }
+        }
+    }
+
+    private var branchFields: some View {
+        VStack(alignment: .leading, spacing: Space.block) {
             HStack(alignment: .top, spacing: Space.gap) {
                 FormField("Type") {
                     Select(values: BranchType.allCases, selection: Binding(get: { model.draft.branchType }, set: { model.draft.setBranchType($0) }),
@@ -152,6 +181,7 @@ struct NewTaskSheet: View {
     /// looks at the disk. Nothing until the task has a name to make a worktree of.
     private var destination: Destination? {
         guard Destination.isShown(onStep: step) else { return nil }
+        if model.draft.useExisting { return model.draft.existing.map { .existing(project: model.project, worktree: $0) } }
         let slug = model.worktreeSlug
         guard !slug.isEmpty else { return nil }
         return .worktree(project: model.project, slug: slug, branch: model.draft.branchName.isEmpty ? "" : model.draft.branch)
