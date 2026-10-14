@@ -1228,6 +1228,10 @@ static void iTermPreferencesRefreshFastCachesForKey(NSString *key);
 
 // Migrates all pre-10.14 users now on 10.14 to automatic, since anything else looks bad.
 + (NSNumber *)computedTabStyle {
+    // Shellforge: the Minimal theme while the terminal matches Shellforge; the saved one is kept.
+    if ([iTermShellforgeTerminalMatch overridesTheme]) {
+        return @(TAB_STYLE_MINIMAL);
+    }
     NSNumber *value;
     value = [[iTermUserDefaults userDefaults] objectForKey:kPreferenceKeyTabStyle];
     if (value) {

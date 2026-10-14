@@ -78,4 +78,20 @@ final class ShellforgeTerminalMatchTest: XCTestCase {
         iTermShellforgeTerminalMatch.setOn(true)
         try assertSame(background(session), iTermShellforgeTerminalMatch.paletteColor(forKey: KEY_BACKGROUND_COLOR), "separate colours")
     }
+
+    func testTheThemeIsMinimalOnlyWhileOn() {
+        let saved = iTermPreferences.int(forKey: kPreferenceKeyTabStyle)
+        let stored = iTermUserDefaults.userDefaults().object(forKey: kPreferenceKeyTabStyle) as? NSNumber
+        iTermShellforgeTerminalMatch.setOn(true)
+        XCTAssertEqual(iTermPreferences.int(forKey: kPreferenceKeyTabStyle), Int32(iTermPreferencesTabStyle.TAB_STYLE_MINIMAL.rawValue))
+        XCTAssertEqual(iTermUserDefaults.userDefaults().object(forKey: kPreferenceKeyTabStyle) as? NSNumber, stored,
+                       "the saved theme is not written")
+        iTermShellforgeTerminalMatch.setOn(false)
+        XCTAssertEqual(iTermPreferences.int(forKey: kPreferenceKeyTabStyle), saved)
+    }
+
+    nonisolated func testOverridesThemeAnswersOffTheMainThread() async {
+        let answer = await Task.detached { iTermShellforgeTerminalMatch.overridesTheme }.value
+        XCTAssertFalse(answer)
+    }
 }
