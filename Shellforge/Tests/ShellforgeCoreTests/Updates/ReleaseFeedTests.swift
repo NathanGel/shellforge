@@ -28,7 +28,7 @@ import Testing
 
     /// The update check is anonymous: a GitHub source has no token to send.
     @Test func aGitHubSourceIsTheFeedsRepository() throws {
-        let source = try #require(try ReleaseFeed("github:octocat/hello")!.source() as? GitHubReleaseSource)
+        let source = try #require(ReleaseFeed("github:octocat/hello")!.source() as? GitHubReleaseSource)
         #expect(source.owner == "octocat" && source.repo == "hello")
     }
 
