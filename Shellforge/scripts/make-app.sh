@@ -21,6 +21,11 @@ die() { print -u2 "make-app: $*"; exit 1; }
 
 mkdir -p "$OUT"
 cd "$ROOT"
+# A fresh clone has neither: the Makefile's own first step, and git's.
+[[ -f plists/iTerm2.plist ]] || cp plists/dev-iTerm2.plist plists/iTerm2.plist
+if git submodule status | grep -q '^-'; then
+    die "submodules are not checked out: git submodule update --init --recursive"
+fi
 # Xcode signs nothing: iTerm2's Deployment configuration asks for its own team's profile. The
 # whole bundle is signed below, once, with Shellforge's certificate.
 if ! xcodebuild -project iTerm2.xcodeproj -scheme iTerm2 -configuration Deployment -skipPackagePluginValidation \
