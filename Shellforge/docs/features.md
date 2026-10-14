@@ -41,7 +41,9 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
   - New Task…, New Review… and New Terminal…;
   - Open in Finder and Open in VS Code (when VS Code is installed);
   - Jira Projects…, Tunnels… and SSH Host…;
-  - Move Up and Move Down. A move crosses a divider.
+  - Pull <default branch>, for a GitLab or GitHub project;
+  - Move Up and Move Down. A move crosses a divider;
+  - Remove Project….
 - **Jira Projects…** links the project to Jira projects.
   - Search, add, or remove a link with ✕; nothing changes until Save.
   - The header badge shows the first project's key, which opens it, and "+n" for the rest.
@@ -50,7 +52,15 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
   - Once set, the menu item reads **SSH Host: <host>…**, and the project's name shows it on hover.
   - **Open ssh <host>** opens it in a tab of its own.
   - New Task offers "Open ssh <host> beside the agent", a pane next to the agent.
-- **Not ported yet:** Remove Project and Pull Default Branch.
+- **Pull <default branch>** (such as "Pull main") brings the project's default branch up to date with origin's, fast-forward only.
+  - Where the branch is checked out, it is merged there, so the files move too. Git refuses if that would overwrite uncommitted changes. Checked out nowhere, only the branch moves.
+  - With local commits and nothing new on origin, it is left as it is. If both have new commits, it is refused and says how many each has: nothing is merged, rebased or pushed.
+  - The outcome shows under the sidebar for 6 seconds; a refusal shows as the error. Pull is greyed while one is running for that project.
+- **Remove Project… asks first**, listing the worktrees it keeps. It only removes the project from Shellforge:
+  - Its tasks and terminals leave the sidebar. No git command runs, and files and worktrees stay on disk.
+  - Its tabs stay open and move under Other tabs.
+  - A divider below it moves up with the projects.
+  - While a task is being created or removed in the project, it says the project "can't be removed yet".
 
 ## Dividers
 
