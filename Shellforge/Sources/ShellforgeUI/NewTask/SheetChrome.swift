@@ -35,11 +35,10 @@ struct SheetLayout<Navigation: View, Content: View, Footer: View>: View {
             Hairline()
             ScrollView { paddedContent }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            Hairline()
+            // On the sheet itself, as macOS 26 draws a sheet's buttons: no band, no rule.
             footer
                 .padding(.horizontal, Space.margin).padding(.vertical, Space.block)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Palette.surfaceRaised)
         }
         .frame(width: Sheet.width, height: Sheet.fittingHeight(height))
         .background {
