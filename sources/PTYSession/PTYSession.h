@@ -1324,6 +1324,8 @@ webViewConfiguration:(nullable WKWebViewConfiguration *)webViewConfiguration
 
 // Set a value in the session's dictionary without affecting the backing profile.
 - (void)setSessionSpecificProfileValues:(NSDictionary *)newValues;
+// Shellforge: public so the terminal match can reload every session's colours.
+- (void)loadColorsFromProfile:(Profile *)aDict;
 - (void)setSessionSpecificProfileValues:(NSDictionary *)newValues reload:(BOOL)reload;
 // preserveColorBaselines:YES leaves _preEscapeSequenceColors intact for the keys
 // being written. Used by binding observers so applying a bound (i:N) color does

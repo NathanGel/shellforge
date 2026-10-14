@@ -5899,6 +5899,8 @@ webViewConfiguration:(WKWebViewConfiguration *)webViewConfiguration
 }
 
 - (void)loadColorsFromProfile:(Profile *)aDict {
+    // Shellforge: Shellforge's colours over the profile's while the terminal match is on.
+    aDict = [iTermShellforgeTerminalMatch profileForColors:aDict keeping:_overriddenFields];
     const BOOL dark = [NSApp effectiveAppearance].it_isDark;
     NSDictionary<NSNumber *, NSString *> *keyMap = [self colorTableForProfile:aDict darkMode:dark];
 

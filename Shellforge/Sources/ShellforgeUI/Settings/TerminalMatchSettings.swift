@@ -6,7 +6,7 @@ import Foundation
 /// only Save makes it `isOn`, as with every other Settings card.
 @MainActor
 public final class TerminalMatchSettings: ObservableObject {
-    public static let defaultsKey = "ShellforgeMatchTerminal"
+    public nonisolated static let defaultsKey = "ShellforgeMatchTerminal"
 
     private let defaults: UserDefaults
     public private(set) var isOn: Bool
