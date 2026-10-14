@@ -38,7 +38,7 @@ class CodexSessionFiles:
         # Thread id -> the rollout as last parsed, and the fill it gave.
         self._context: dict[str, tuple[Stamp, int | None]] = {}
         # Each rollout's (thread id, session id, parent thread id), from its first record, which
-        # never changes. One entry per file, so it is not pruned.
+        # never changes. Kept from the earliest day a running thread is on (`retain`).
         self._lineage: dict[Path, tuple[str | None, str | None, str | None]] = {}
         # Rollout -> its stamp as last read, and the total it gave.
         self._totals: dict[Path, tuple[Stamp, TokenTally | None]] = {}
@@ -57,6 +57,20 @@ class CodexSessionFiles:
         kept = {*self._paths.values(), *(p for paths in self._children.values() for p in paths)}
         for path in self._totals.keys() - kept:
             del self._totals[path]
+        # A running thread's children are looked for from its day to CHILD_DAYS after it: lineage
+        # outside every such window is never asked again; with no thread running, none is.
+        starts = {day for path in self._paths.values() if path is not None and (day := self._day(path)) is not None}
+        for path in list(self._lineage):
+            day = self._day(path)
+            if day is None or not any(start <= day <= start + timedelta(days=CHILD_DAYS) for start in starts):
+                del self._lineage[path]
+
+    def _day(self, path: Path) -> date | None:
+        """The day directory a rollout is in."""
+        try:
+            return date(*map(int, path.relative_to(self.root).parts[:3]))
+        except (ValueError, TypeError):
+            return None
 
     def context_percent(self, session_id: str) -> int | None:
         path = self._path_for(session_id)

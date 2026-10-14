@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import stat
+import subprocess
 import textwrap
 
 import pytest
@@ -19,6 +20,7 @@ FAKE_SSH = textwrap.dedent("""\
     printf '%s\\n' "$*" > "$FAKE_SSH_LOG.args"
     printf '%s\\n' "$FAKE_SSH_MARK" > "$FAKE_SSH_LOG.env"
     case "$FAKE_SSH_MODE" in
+      warm) exit 0 ;;
       fail) echo "${FAKE_SSH_LINE:-bind [127.0.0.1]:5432: Address already in use}" >&2; exit 255 ;;
       slow-bind) sleep 0.5; echo "bind [127.0.0.1]:5432: Address already in use" >&2; exit 255 ;;
       ignore-term) trap '' TERM; while :; do sleep 0.05; done ;;
@@ -36,6 +38,9 @@ def ssh_env(tmp_path):
     ssh = bin_dir / "ssh"
     ssh.write_text(FAKE_SSH)
     ssh.chmod(ssh.stat().st_mode | stat.S_IEXEC)
+    # macOS checks a newly written executable on its first run, which can take longer than a test's
+    # whole up_after: run it once here, so the timing the tests measure is the supervisor's.
+    subprocess.run([str(ssh)], env={"FAKE_SSH_MODE": "warm", "FAKE_SSH_LOG": str(tmp_path / "warm")}, check=False)
     log = tmp_path / "ssh"
 
     def env(mode="stay", **extra):
@@ -407,6 +412,9 @@ def test_no_fake_ssh_outlives_its_test(tmp_path):
     ssh = bin_dir / "ssh"
     ssh.write_text(FAKE_SSH)
     ssh.chmod(ssh.stat().st_mode | stat.S_IEXEC)
+    # macOS checks a newly written executable on its first run, which can take longer than a test's
+    # whole up_after: run it once here, so the timing the tests measure is the supervisor's.
+    subprocess.run([str(ssh)], env={"FAKE_SSH_MODE": "warm", "FAKE_SSH_LOG": str(tmp_path / "warm")}, check=False)
     child = subprocess.Popen([str(ssh), "db"], env={"PATH": "/usr/bin:/bin", "FAKE_SSH_LOG": str(tmp_path / "log")},
                              start_new_session=True)
     time.sleep(0.2)

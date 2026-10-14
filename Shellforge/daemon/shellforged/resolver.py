@@ -61,6 +61,10 @@ class SessionResolver:
         """Records what a resolved post says about its tab: the pin, and for Codex the thread."""
         if not session_id:
             return
+        # One conversation per agent per tab at a time: every /clear starts a new one, and the
+        # old pins would otherwise stay until the tab closed.
+        for key in [k for k, tab in self._pins.items() if tab == iterm_session_id and k[0] == agent and k[1] != session_id]:
+            del self._pins[key]
         self._pins[(agent, session_id)] = iterm_session_id
         if agent != "codex":
             return
