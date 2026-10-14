@@ -31,7 +31,7 @@ struct NameSheet: View {
     }
 
     var body: some View {
-        SheetLayout(title: title, height: Sheet.height) {
+        SheetLayout(title: title, height: nil) {
             SheetSubtitle(subtitle)
         } content: {
             FormField(fieldLabel) {

@@ -31,4 +31,9 @@ import ShellforgeDesign
             if difference >= 0.01 { return }
         }
     }
+
+    /// One field needs no 560 pt sheet: Rename, New Terminal and Add Divider fit their content.
+    @Test func aOneFieldSheetFitsItsContent() {
+        #expect(nameSheet().fittingSize.height < 300)
+    }
 }

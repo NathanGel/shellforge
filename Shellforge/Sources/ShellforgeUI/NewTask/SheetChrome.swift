@@ -4,15 +4,16 @@ import ShellforgeCore
 import ShellforgeDesign
 
 /// Shared modal chrome: navigation stays above the scrolling content and actions stay below it.
+/// A nil `height` fits the sheet to its content, which then does not scroll: a sheet of one field.
 struct SheetLayout<Navigation: View, Content: View, Footer: View>: View {
     let title: String
-    let height: CGFloat
+    let height: CGFloat?
     let onBackgroundTap: (() -> Void)?
     let navigation: Navigation
     let content: Content
     let footer: Footer
 
-    init(title: String, height: CGFloat, onBackgroundTap: (() -> Void)? = nil,
+    init(title: String, height: CGFloat?, onBackgroundTap: (() -> Void)? = nil,
          @ViewBuilder navigation: () -> Navigation,
          @ViewBuilder content: () -> Content,
          @ViewBuilder footer: () -> Footer) {
@@ -33,14 +34,18 @@ struct SheetLayout<Navigation: View, Content: View, Footer: View>: View {
             }
             .padding(.horizontal, Space.margin).padding(.top, Space.section).padding(.bottom, Space.block)
             Hairline()
-            ScrollView { paddedContent }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            if height == nil {
+                paddedContent
+            } else {
+                ScrollView { paddedContent }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            }
             // On the sheet itself, as macOS 26 draws a sheet's buttons: no band, no rule.
             footer
                 .padding(.horizontal, Space.margin).padding(.vertical, Space.block)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(width: Sheet.width, height: Sheet.fittingHeight(height))
+        .frame(width: Sheet.width, height: height.map(Sheet.fittingHeight))
         .background {
             if let onBackgroundTap {
                 Color.clear.contentShape(Rectangle()).onTapGesture(perform: onBackgroundTap)
