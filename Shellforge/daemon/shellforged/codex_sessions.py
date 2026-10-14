@@ -57,13 +57,12 @@ class CodexSessionFiles:
         kept = {*self._paths.values(), *(p for paths in self._children.values() for p in paths)}
         for path in self._totals.keys() - kept:
             del self._totals[path]
-        # A child starts on or after its parent's day, so no lineage before the earliest running
-        # thread's is asked again; with none running, none is.
-        days = [day for path in self._paths.values() if path is not None and (day := self._day(path)) is not None]
-        first = min(days, default=None)
+        # A running thread's children are looked for from its day to CHILD_DAYS after it: lineage
+        # outside every such window is never asked again; with no thread running, none is.
+        starts = {day for path in self._paths.values() if path is not None and (day := self._day(path)) is not None}
         for path in list(self._lineage):
             day = self._day(path)
-            if first is None or day is None or day < first:
+            if day is None or not any(start <= day <= start + timedelta(days=CHILD_DAYS) for start in starts):
                 del self._lineage[path]
 
     def _day(self, path: Path) -> date | None:

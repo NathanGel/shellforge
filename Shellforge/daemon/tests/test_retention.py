@@ -46,3 +46,30 @@ def test_a_repeated_failure_is_logged_once_a_while(caplog):
     assert messages.count("codex took over 5 s") <= 8
     assert any("repeated" in m for m in messages), "how many were held back is said"
     assert "something else" in messages
+
+
+def test_a_long_running_thread_keeps_only_the_days_it_can_need(tmp_path):
+    root = tmp_path / "sessions"
+    write_rollout(root, "old", [meta("old"), totals(1, 0, 1)], day="2026/01/05")
+    write_rollout(root, "later", [meta("later"), totals(1, 0, 1)], day="2026/09/22")
+    write_rollout(root, "child", [meta("child", parent="later"), totals(1, 0, 1)], day="2026/09/22")
+    files = CodexSessionFiles(root)
+    files.tally("old")
+    files.tally("later")
+    files.retain({"old"})  # the September thread's tab closed; January's still runs
+    assert not [p for p in files._lineage if p.parts[-4:-1] == ("2026", "09", "22")], \
+        "lineage outside the running thread's CHILD_DAYS window is dropped"
+
+
+def test_different_failures_in_the_same_words_are_both_logged(caplog):
+    now = [0.0]
+    logger = logging.getLogger("shellforged.test_repeats_kinds")
+    logger.addFilter(RepeatFilter(every=300, clock=lambda: now[0]))
+    with caplog.at_level(logging.ERROR, logger="shellforged.test_repeats_kinds"):
+        for error in (OSError("disk"), TypeError("snapshot")):
+            try:
+                raise error
+            except Exception:
+                logger.exception("tick failed")
+            now[0] += 2
+    assert [r.exc_info[0] for r in caplog.records] == [OSError, TypeError]
