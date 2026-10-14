@@ -26,7 +26,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 - **Banners** above the list show:
   - a fallback PATH;
   - problems with the helper;
-  - the last error;
+  - the last error, until you click its × or a later action succeeds;
   - work in progress, such as "Adding X…".
 
 ## Projects

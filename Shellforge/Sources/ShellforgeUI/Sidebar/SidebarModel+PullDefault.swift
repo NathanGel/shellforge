@@ -52,6 +52,12 @@ extension SidebarModel {
         return true
     }
 
+    /// The error banner's ×. An error has no timer: it stays until this, or a later success.
+    func dismissError() {
+        lastError = nil
+        shownPullError = nil
+    }
+
     /// Said until `noticeLifetime` passes, unless a newer notice replaced it.
     func show(notice text: String) {
         notice = text

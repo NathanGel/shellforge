@@ -280,7 +280,7 @@ struct SidebarBanners: View {
             SidebarBanner(text: model.helper.text, tone: model.helper == .helperUnreachable ? .info : .warning, trailing: Space.block)
         }
         if let error = model.lastError {
-            SidebarBanner(text: error, tone: .error)
+            SidebarBanner(text: error, tone: .error, dismiss: model.dismissError)
         }
         if let working = model.working {
             SidebarBanner(text: working, tone: .info)
@@ -298,7 +298,10 @@ struct SidebarBanner: View {
     let tone: Tone
     var trailing: CGFloat = Space.base
     var vertical: CGFloat = Space.snug
+    /// An × at the end that clears the banner; none when nil.
+    var dismiss: (() -> Void)?
     @Environment(\.interfaceScale) private var scale
+    @Environment(\.surface) private var surface
 
     private var ink: Color {
         switch tone {
@@ -309,11 +312,21 @@ struct SidebarBanner: View {
     }
 
     var body: some View {
-        Text(text).font(Typography.help).foregroundStyle(ink).textSelection(.enabled)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.leading, scale(Space.inset) + scale(Space.base))
-            .padding(.trailing, scale(trailing))
-            .padding(.vertical, scale(vertical))
+        HStack(alignment: .firstTextBaseline, spacing: scale(Space.snug)) {
+            Text(text).font(Typography.help).foregroundStyle(ink).textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if let dismiss {
+                Button(action: dismiss) {
+                    Image(systemName: "xmark").font(Typography.help).foregroundStyle(surface.secondaryInk)
+                }
+                .buttonStyle(.plain)
+                .help("Dismiss")
+                .accessibilityLabel("Dismiss")
+            }
+        }
+        .padding(.leading, scale(Space.inset) + scale(Space.base))
+        .padding(.trailing, scale(trailing))
+        .padding(.vertical, scale(vertical))
     }
 }
 
