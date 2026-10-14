@@ -11,6 +11,11 @@ final class RemovalBoard: ObservableObject {
     @Published var removals: [UUID: RowRemoval] = [:]
     /// The tasks whose Remove is asking its first question.
     var asking: Set<UUID> = []
+    /// How many tasks or reviews are being created in each project: a project is not removed under
+    /// a create, whose task would land in a project that is gone.
+    var creating: [UUID: Int] = [:]
+    /// Projects whose default branch is being pulled, from any window: every window's menu greys Pull.
+    @Published var pulling: Set<UUID> = []
 
     private static let boards = NSMapTable<WorkspaceDocument, RemovalBoard>.weakToStrongObjects()
 

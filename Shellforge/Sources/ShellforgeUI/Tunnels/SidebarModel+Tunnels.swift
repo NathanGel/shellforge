@@ -64,9 +64,14 @@ extension SidebarModel {
                 feed?.startTunnel(alias: tunnel.alias, keepRunning: keepsRunning(tunnel.alias))
             }
         }
-        // A running tunnel taken off its last project would keep its port with no row to stop it.
+        stopOrphaned(current.tunnels)
+    }
+
+    /// A running tunnel taken off its last project would keep its port with no row to stop it:
+    /// each of `tunnels` no project lists any more is stopped.
+    func stopOrphaned(_ tunnels: [TunnelDefinition]) {
         let kept = Set(document.workspace.projects.flatMap(\.tunnels).map(\.alias))
-        for tunnel in current.tunnels where !kept.contains(tunnel.alias) && [.connecting, .up].contains(tunnelState(tunnel.alias)) {
+        for tunnel in tunnels where !kept.contains(tunnel.alias) && [.connecting, .up].contains(tunnelState(tunnel.alias)) {
             feed?.stopTunnel(alias: tunnel.alias)
         }
     }

@@ -58,7 +58,8 @@ struct SidebarHeader: View {
 
 /// A project: its chevron, its provider's mark, its name and Jira badge, and the "+" that starts a
 /// task; right-clicked, AiTerm's menu: the "+" items, Open in, Jira Projects…, Tunnels… and SSH
-/// Host…, then Move Up and Move Down.
+/// Host…, Pull <default branch> for a hosted project, then Move Up and Move Down, and Remove
+/// Project… last.
 struct ProjectHeaderRow: View {
     let node: ProjectNode
     let collapsed: Bool
@@ -78,6 +79,12 @@ struct ProjectHeaderRow: View {
     /// The project's SSH host in a tab of its own; offered only while it is in ~/.ssh/config.
     var openSSHHost: () -> Void = {}
     var canOpenSSHHost = false
+    /// Remove Project…: asks, then forgets the project; files and tabs stay.
+    var remove: () -> Void = {}
+    /// "Pull main", offered for a project on GitLab or GitHub; nil hides it.
+    var pullTitle: String?
+    var pulling = false
+    var pull: () -> Void = {}
     @Environment(\.interfaceScale) private var scale
 
     /// An empty project has nothing to fold; its terminals are something.
@@ -118,7 +125,7 @@ struct ProjectHeaderRow: View {
         }
         .frame(height: scale(Size.projectRow)).padding(.leading, scale(Space.base)).padding(.trailing, SidebarRowLayout.trailingInset(scale))
         .modifier(RowPill(selected: false))
-        // AiTerm's order: what the "+" offers, Open in, what the project links to, then the moves.
+        // AiTerm's order: what the "+" offers, Open in, what the project links to, the moves, then Remove.
         .contextMenu {
             newItems
             Divider()
@@ -128,9 +135,15 @@ struct ProjectHeaderRow: View {
             Button("Tunnels…", action: editTunnels)
             Button(SidebarModel.sshHostMenuTitle(node.project.sshHost), action: editSSHHost)
             if let alias = node.project.sshHost, canOpenSSHHost { Button(SidebarModel.openSSHHostTitle(alias), action: openSSHHost) }
+            if let pullTitle {
+                Divider()
+                Button(pullTitle, action: pull).disabled(pulling)
+            }
             Divider()
             Button("Move Up") { move(true) }.disabled(!canMoveUp)
             Button("Move Down") { move(false) }.disabled(!canMoveDown)
+            Divider()
+            Button("Remove Project…", role: .destructive, action: remove)
         }
     }
 
@@ -269,6 +282,9 @@ struct SidebarBanners: View {
         }
         if let working = model.working {
             SidebarBanner(text: working, tone: .info)
+        }
+        if let notice = model.notice {
+            SidebarBanner(text: notice, tone: .info)
         }
     }
 }

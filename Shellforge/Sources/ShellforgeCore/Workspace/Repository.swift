@@ -8,10 +8,17 @@ public enum Repository {
     /// AiTerm's rule: origin's HEAD while it still names a branch, else whichever of origin's or the
     /// local `main`/`master` exists, origin's first; `main` when none does or git cannot be asked.
     public static func defaultBranch(of path: String, launcher: CommandLauncher) -> String {
+        (try? detectDefaultBranch(of: path, launcher: launcher)) ?? fallbackDefaultBranch
+    }
+
+    /// `defaultBranch`, with git's failure thrown rather than read as `main`: what a pull, which
+    /// moves the branch, asks.
+    public static func detectDefaultBranch(of path: String, launcher: CommandLauncher) throws -> String {
         let prefix = "refs/remotes/origin/"
         let usual = ["refs/remotes/origin/main", "refs/remotes/origin/master", "refs/heads/main", "refs/heads/master"]
-        guard let out = try? launcher.run("git", ["-C", path, "for-each-ref", "--format=%(refname) %(symref)", prefix + "HEAD"] + usual),
-              out.status == 0 else { return fallbackDefaultBranch }
+        let args = ["-C", path, "for-each-ref", "--format=%(refname) %(symref)", prefix + "HEAD"] + usual
+        let out = try launcher.run("git", args)
+        guard out.status == 0 else { throw GitFailure(command: "git for-each-ref", message: out.stderr) }
         var existing = Set<String>(), originHead: String?
         for line in out.stdout.split(separator: "\n") {
             let fields = line.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: false)
