@@ -313,11 +313,11 @@ with ⌘1–⌘3, and none opens with an intro line. It opens on Integrations wh
 saved service's last test failed (`ServiceTestRecord`), and on Agents otherwise; that is decided
 once, as the sheet opens, and a test answering afterwards never switches the tab.
 
-`SettingsCard` is the one box every Settings entry is drawn in — a harness on Agents; iTerm2
+`SettingsCard` is one row of a Settings section, drawn in the section's box with none of its own — a harness on Agents; iTerm2
 (`ItermSettingsCard`), the Mac (`MacSettingsCard`), then Jira, GitLab and GitHub (`ServiceCard`) on Integrations: a `Size.control` mark,
 a title with optional check chips, a status line in one of three tones (`SettingsTone`: ready, attention, idle, led by its `ToneDot` — the dot the footer's backpack line draws too)
 and with no full stop (`SettingsStatus` drops the one an error's own sentence ends with),
-trailing actions at `.controlSize(.large)`, fields below a divider. Cards carry no Test button:
+trailing actions at `.controlSize(.large)`, fields under the header. Cards carry no Test button:
 Settings tests every card when it opens (and a service again once its fields stop changing), and
 the answer replaces that card's status line rather than landing in the sheet footer. A harness
 card's one action is named by the card's state and runs the same code whatever it says: Install
@@ -338,8 +338,12 @@ iTerm2, or one line of `HelpText` when nothing is broken. Its status line is
 amber while iTerm2 refuses the connection. It stays a pattern: Settings is its only user and its
 layout is this app's.
 
-Integrations heads its cards in two `SettingsSection`s, Core (iTerm2, then the Mac) and Services (Jira,
-GitLab, GitHub), each title in `Typography.bodyEmphasis` as Interface heads its keyboard section.
+Integrations sets its rows in two `SettingsSection`s, Core (the Mac, Environment, the terminal match)
+and Services (Jira, GitLab, GitHub), as macOS's grouped form draws a section: a heading in
+`Typography.bodyEmphasis` lined up with the rows' marks, then one box of `Palette.groupFill` (a veil
+measured against the native grouped form's: darker in light, lighter in dark), its rows divided by a
+`SettingsRowDivider` inset past the marks. The terminal match is a row whose action is a
+`SettingsSwitch`.
 `MacSettingsCard` is a harness card's anatomy for the Mac: `macbook` in a `.paper` `SymbolMark`, the
 chips “Lid sleep” and “Network discovery”, one action named by its state — Allow… while something is
 missing, Remove once both are granted — and, below its rule, `NumberedSteps` for what is missing or one

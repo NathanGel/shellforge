@@ -31,6 +31,9 @@ public enum Palette {
     public static let surface = Color(nsColor: .windowBackgroundColor)
     /// The sheet footer that holds the primary action. Lighter than the surface.
     public static let surfaceRaised = Color(nsColor: .underPageBackgroundColor)
+    /// A Settings section's box, as macOS's grouped form fills one: a veil that sets it off the sheet
+    /// — darker in light, lighter in dark.
+    public static let groupFill = adaptive(light: NSColor(white: 0, alpha: 0.017), dark: NSColor(white: 1, alpha: 0.014))
     /// A text field's ground, as macOS 26's own bezeled fields draw it: white in light; in dark a
     /// veil of white that lifts the field off whatever it sits on. The system text background is a
     /// dark well below the sheet there, which no native field draws.

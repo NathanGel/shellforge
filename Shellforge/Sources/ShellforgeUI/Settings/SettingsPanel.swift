@@ -20,12 +20,15 @@ struct SettingsPanel: View {
             VStack(alignment: .leading, spacing: Space.section) {
                 SettingsSection("Core") {
                     MacSettingsCard(backpack: backpack)
-                    if let environment { EnvironmentCard(model: environment) }
+                    if let environment { SettingsRowDivider(); EnvironmentCard(model: environment) }
+                    SettingsRowDivider()
                     TerminalMatchCard(settings: terminalMatch)
                 }
                 SettingsSection("Services") {
                     JiraCard(connection: integrations.jira)
+                    SettingsRowDivider()
                     GitLabCard(connection: integrations.gitLab)
+                    SettingsRowDivider()
                     GitHubCard(connection: integrations.gitHub)
                 }
             }

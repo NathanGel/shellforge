@@ -231,7 +231,8 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 - **Agent hooks (the bolt)** have one row per agent, with its state and one button: Install, Repair or Reinstall. ⌘↩ or ⎋ closes the sheet.
   - Files change only when you click, and each is backed up once as `.shellforge-backup`.
   - The files are `~/.claude/settings.json`, `~/.codex/config.toml`, `~/.grok/config.toml` and `~/.pi/agent/extensions/shellforge-status.ts`.
-- **Terminal.** Settings › Core › Terminal › Match the terminal to Shellforge, off by default, takes effect on Save.
+- **Settings looks like System Settings:** Core and Services are each one grouped box, one row per setting or service.
+- **Terminal.** Settings › Core › Match the terminal to Shellforge, a switch, off by default, takes effect on Save.
   - Every terminal, including tabs opened later, uses Shellforge's colours: a background one step off the sidebar (darker in dark mode, lighter in light mode), the sidebar's text and selection colours, the macOS accent colour for the cursor, and macOS's system colours for the 16 terminal colours, each readable on the background.
   - iTerm2 uses its Minimal theme, so the title bar and window edges match. Settings › Appearance's Theme is greyed out while it is on.
   - Your profiles and your theme setting are not changed. Switching it off brings them back at once.

@@ -1,7 +1,8 @@
 import ShellforgeDesign
 import SwiftUI
 
-/// Settings › Core › Terminal: the switch that matches every terminal to Shellforge.
+/// Settings › Core › Terminal: one row, its setting the trailing switch that matches every terminal
+/// to Shellforge, as System Settings draws a setting.
 struct TerminalMatchCard: View {
     @ObservedObject var settings: TerminalMatchSettings
 
@@ -10,19 +11,17 @@ struct TerminalMatchCard: View {
     }
 
     var body: some View {
-        SettingsCard(title: "Terminal", status: status) {
+        SettingsCard(title: "Match the terminal to Shellforge", status: status) {
             SymbolMark(symbol: "paintpalette", size: Size.control, style: .paper)
         } chips: {
             EmptyView()
         } actions: {
-            EmptyView()
+            SettingsSwitch(title: "Match the terminal to Shellforge", isOn: $settings.draft)
         } content: {
-            VStack(alignment: .leading, spacing: Space.snug) {
-                Toggle("Match the terminal to Shellforge", isOn: $settings.draft)
-                Text("Uses Shellforge’s colours and iTerm2’s Minimal theme. Your profiles are not changed.")
-                    .font(Typography.help)
-                    .foregroundStyle(Palette.muted)
-            }
+            Text("Uses Shellforge’s colours and iTerm2’s Minimal theme. Your profiles are not changed.")
+                .font(Typography.help)
+                .foregroundStyle(Palette.muted)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }
