@@ -17,6 +17,7 @@ struct PaletteDistinctionTests {
     private static let colors: [(name: String, color: Color)] = [
         ("surface", Palette.surface),
         ("surfaceRaised", Palette.surfaceRaised),
+        ("groupFill", Palette.groupFill),
         ("fieldFill", Palette.fieldFill),
         ("menu", Palette.menu),
         ("border", Palette.border),
