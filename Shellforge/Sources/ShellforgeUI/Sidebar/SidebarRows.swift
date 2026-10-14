@@ -311,8 +311,37 @@ struct SidebarBanner: View {
         }
     }
 
+    /// The notice's symbol, by tone.
+    static func symbol(for tone: Tone) -> String {
+        switch tone {
+        case .error: "xmark.octagon.fill"
+        case .warning: "exclamationmark.triangle.fill"
+        case .info: "info.circle.fill"
+        }
+    }
+
+    /// The notice's tinted ground, by tone.
+    static func ground(for tone: Tone) -> Color {
+        switch tone {
+        case .error: Palette.noticeError
+        case .warning: Palette.noticeWarning
+        case .info: Palette.noticeInfo
+        }
+    }
+
+    /// The symbol's colour: the tone's own.
+    private var symbolInk: Color {
+        switch tone {
+        case .error: Palette.destructive
+        case .warning: Palette.amber
+        case .info: Palette.muted
+        }
+    }
+
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: scale(Space.snug)) {
+            Image(systemName: Self.symbol(for: tone)).font(Typography.help).foregroundStyle(symbolInk)
+                .accessibilityHidden(true)
             Text(text).font(Typography.help).foregroundStyle(ink).textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
             if let dismiss {
@@ -324,9 +353,13 @@ struct SidebarBanner: View {
                 .accessibilityLabel("Dismiss")
             }
         }
-        .padding(.leading, scale(Space.inset) + scale(Space.base))
+        .padding(.horizontal, scale(Space.base))
+        .padding(.vertical, scale(Space.snug))
+        // An inline notice: a tinted, rounded ground, lined up with the rows below it.
+        .background(RoundedRectangle(cornerRadius: scale(Radius.group), style: .continuous).fill(Self.ground(for: tone)))
+        .padding(.leading, scale(Space.inset))
         .padding(.trailing, scale(trailing))
-        .padding(.vertical, scale(vertical))
+        .padding(.vertical, scale(vertical) / 2)
     }
 }
 
