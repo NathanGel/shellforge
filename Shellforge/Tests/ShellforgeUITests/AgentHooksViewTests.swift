@@ -6,9 +6,9 @@ import Testing
 @testable import ShellforgeUI
 
 @MainActor @Suite struct AgentHooksViewTests {
-    /// The sheet opens in a panel of its own, dark like the sidebar, and leaves the window it hangs
-    /// from — iTerm2's — as it was.
-    @Test func theHooksPanelIsDark() throws {
+    /// The sheet opens in a panel of its own, in the appearance of the window it hangs from, and
+    /// leaves that window as it was.
+    @Test func theHooksPanelFollowsItsWindow() throws {
         let parent = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
         parent.appearance = NSAppearance(named: .aqua)
         let slot = PanelSlot()
@@ -17,7 +17,7 @@ import Testing
         content.layoutSubtreeIfNeeded()
         let bitmap = try #require(Snapshot.bitmap(of: content))
         let ground = try #require(bitmap.colorAt(x: Int(20 * Snapshot.scale), y: Int(20 * Snapshot.scale))?.usingColorSpace(.sRGB))
-        #expect(ground.brightnessComponent < 0.3, "the sheet draws light: \(ground)")
+        #expect(ground.brightnessComponent > 0.7, "a light window's sheet draws light: \(ground)")
         #expect(parent.appearance?.name == .aqua, "the window it hangs from keeps its own")
         slot.dismiss()
     }

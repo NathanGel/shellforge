@@ -29,19 +29,19 @@ import ShellforgeDesign
         #expect(ShellforgeSidebar.width == Size.sidebarWidth)
     }
 
-    /// Inside a light iTerm2 window the sidebar still draws AiTerm's dark ground: its host is dark,
-    /// whatever the window around it.
-    @Test func theSidebarDrawsDarkInALightWindow() throws {
+    /// Inside a light window the sidebar draws a light ground: its host takes the window's
+    /// appearance.
+    @Test func theSidebarDrawsLightInALightWindow() throws {
         let host = ShellforgeSidebar.makeView(model: try sidebarModel(), chooseFolder: { nil }, hooks: hooks(), machine: MachineMonitor(sensor: InertMachineSensor(), power: InertPower()), backpack: BackpackController(ports: .inert, settings: BackpackSettings(defaults: nil), toast: { _ in }), zoom: SidebarZoom(settings: SidebarLayoutSettings(defaults: ScratchDefaults.make())), terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()))
         host.frame.size.height = 400
         let window = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
         window.appearance = NSAppearance(named: .aqua)
         window.contentView = host
         host.layoutSubtreeIfNeeded()
-        #expect(host.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua)
+        #expect(host.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .aqua)
         let bitmap = try #require(Snapshot.bitmap(of: host))
         let ground = try #require(bitmap.colorAt(x: Int((host.bounds.width - 4) * Snapshot.scale), y: Int((host.bounds.height - 4) * Snapshot.scale))?.usingColorSpace(.sRGB))
-        #expect(ground.brightnessComponent < 0.3, "the sidebar's ground is light: \(ground)")
+        #expect(ground.brightnessComponent > 0.7, "a light window's sidebar is light: \(ground)")
     }
 }
 

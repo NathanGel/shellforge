@@ -4,11 +4,10 @@ import Testing
 @testable import ShellforgeUI
 
 @MainActor @Suite struct PanelsTests {
-    /// Add Project's folder chooser is dark like the sidebar, whatever iTerm2's appearance: the
-    /// app-modal panel would take the application's, not the sidebar's.
-    @Test func theFolderChooserIsDark() {
+    /// Add Project's folder chooser takes the app's appearance, as the sidebar takes its window's.
+    @Test func theFolderChooserFollowsTheApp() {
         let panel = FolderChooser.panel()
-        #expect(panel.appearance?.name == .darkAqua)
+        #expect(panel.appearance == nil)
         #expect(panel.canChooseDirectories && !panel.canChooseFiles)
         #expect(panel.prompt == "Add Project")
     }

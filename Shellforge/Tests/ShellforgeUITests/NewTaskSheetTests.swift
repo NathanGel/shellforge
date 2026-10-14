@@ -14,7 +14,7 @@ import ShellforgeDesign
                      home: TestScratch.root.appendingPathComponent("nts-home-\(UUID().uuidString)"))
     }
 
-    @Test func theSheetIsAiTermsSizeAndDarkInALightWindow() throws {
+    @Test func theSheetIsAiTermsSizeAndLightInALightWindow() throws {
         let parent = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 700), styleMask: [.titled], backing: .buffered, defer: false)
         parent.appearance = NSAppearance(named: .aqua)
         let slot = PanelSlot()
@@ -25,7 +25,7 @@ import ShellforgeDesign
         #expect(content.fittingSize.width == Sheet.width)
         let bitmap = try #require(Snapshot.bitmap(of: content))
         let ground = try #require(bitmap.colorAt(x: Int((content.bounds.width - 6) * Snapshot.scale), y: Int(content.bounds.height / 2 * Snapshot.scale))?.usingColorSpace(.sRGB))
-        #expect(ground.brightnessComponent < 0.3, "the sheet draws light: \(ground)")
+        #expect(ground.brightnessComponent > 0.7, "a light window's sheet draws light: \(ground)")
     }
 
     /// ⎋ and Back are one move: a step back, or the sheet closed from the first step — never while
