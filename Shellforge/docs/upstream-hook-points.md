@@ -8,6 +8,7 @@ this list short; new behaviour belongs in the Shellforge package.
 | `plists/dev-iTerm2.plist` | Bundle id `io.github.nathangel.shellforge`, name Shellforge, no `SUFeedURL*` keys, automatic update checks off | Installs beside stock iTerm2; never updates from iterm2.com |
 | `iTerm2.xcodeproj/project.pbxproj` | `PRODUCT_BUNDLE_IDENTIFIER` (4 configurations); the Shellforge package linked into `iTermSwiftPackages` like `WebExtensionsFramework`; `iTermShellforgeSidebar.swift` in `iTerm2SharedARC` | Identity; the sidebar's code |
 | `sources/AppKit/main.m` | Without `-suite`, the suite is `Shellforge` | Own preferences, Application Support folder and sockets |
+| `sources/AppKit/iTermInstanceLock.swift` (`resolveConflictIfNeeded`) | The already-running warning says Shellforge, under `Shellforge.InstanceLock.*` keys, and names no suite when it is the default `Shellforge` | `main.m` always sets a suite, so upstream's wording would show iTerm2 and the suite to every user |
 | `sources/TerminalView/iTermLayoutCalculator.{h,m}` | `leftPanelWidth` in, `leftPanelFrame` out; `calculateLayoutWithInputs:` lays out the rest as in a narrower window, then shifts it right | One place makes room for the sidebar in every tab-bar position |
 | `sources/TerminalView/iTermRootTerminalView.m` | Creates the sidebar, feeds its width to the calculator, sets its frame in `layoutSubviews` | The sidebar in every terminal window |
 | `sources/TerminalView/iTermShellforgeSidebar.swift` (new) | `@objc` bridge to `ShellforgeUI` | Objective-C cannot import the Swift package |
