@@ -112,9 +112,9 @@ def aiterm_model_defaults() -> dict[str, str]:
 
 
 def shellforge_running() -> bool:
-    return subprocess.run(["/usr/bin/pgrep", "-f", "iTerm2.app/Contents/MacOS/iTerm2"], capture_output=True).returncode == 0 \
-        and subprocess.run(["/usr/bin/osascript", "-e", 'application id "io.github.nathangel.shellforge" is running'],
-                           capture_output=True, text=True).stdout.strip() == "true"
+    """By bundle id: a release runs as Shellforge.app, a source build as iTerm2.app."""
+    return subprocess.run(["/usr/bin/osascript", "-e", 'application id "io.github.nathangel.shellforge" is running'],
+                          capture_output=True, text=True).stdout.strip() == "true"
 
 
 def main() -> int:

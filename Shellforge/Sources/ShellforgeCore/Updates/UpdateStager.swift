@@ -34,6 +34,9 @@ public struct UpdateStager: Sendable {
                   info["CFBundleIdentifier"] as? String == expectedIdentifier,
                   (info["CFBundleShortVersionString"] as? String).flatMap(ReleaseVersion.init) == version
             else { throw UpdateError.unverified }
+            // Without the quarantine a download carries: the swapped-in app opens as the old one did.
+            // Its signature is checked after, and the attribute is not part of it.
+            try Self.run("/usr/bin/xattr", ["-dr", "com.apple.quarantine", app.path])
             try Self.run("/usr/bin/codesign", ["--verify", "--deep", "--strict", app.path])
             try Self.run("/usr/bin/codesign", ["--verify", "-R", "=" + requirement, app.path])
             return app

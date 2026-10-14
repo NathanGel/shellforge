@@ -83,12 +83,13 @@ this:
 | What | Where |
 |---|---|
 | Projects, tasks, terminals, dividers, tunnels | `~/Library/Application Support/Shellforge/workspace.json` (a backup beside it on every save) |
-| Jira site and email, GitLab host, sidebar layout | macOS preferences, `io.github.nathangel.shellforge` |
+| Jira site and email, GitLab host | `~/Library/Preferences/io.github.nathangel.shellforge.plist` |
+| iTerm2's own preferences and profiles, the sidebar's width and visibility | `~/Library/Preferences/Shellforge.plist` |
 | Jira, GitLab and GitHub tokens | the Keychain, service `io.github.nathangel.shellforge` |
-| iTerm2's own preferences and profiles | iTerm2's usual preferences, under the same bundle id |
 
-To move to another Mac, copy `~/Library/Application Support/Shellforge/` and enter your tokens
-again.
+To move to another Mac, quit Shellforge on both. Then:
+1. Copy `~/Library/Application Support/Shellforge/` and the two preference files above to the same places on the new Mac.
+2. Open Shellforge there and enter your tokens again in Settings › Services.
 
 ## Updates
 

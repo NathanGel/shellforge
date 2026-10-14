@@ -27,6 +27,18 @@ enum FakeAppBundle {
                                      "-srcfolder", folder.path, dmg.path], timeout: 120)
     }
 
+    /// Marks `url` — and, for a folder, everything in it — as downloaded, as a browser or
+    /// URLSession download would.
+    static func quarantine(_ url: URL) throws {
+        try run("/usr/bin/xattr", ["-w", "-r", "com.apple.quarantine", "0081;00000000;Shellforge;", url.path])
+    }
+
+    /// Whether anything in `url` carries the quarantine attribute.
+    static func isQuarantined(_ url: URL) -> Bool {
+        let out = try? ChildProcess.run("/usr/bin/xattr", ["-r", "-l", url.path], environment: ProcessInfo.processInfo.environment, timeout: 30)
+        return out?.stdout.contains("com.apple.quarantine") ?? false
+    }
+
     static func run(_ tool: String, _ arguments: [String], timeout: TimeInterval = 30) throws {
         let output = try ChildProcess.run(tool, arguments, environment: ProcessInfo.processInfo.environment, timeout: timeout)
         guard output.status == 0 else {

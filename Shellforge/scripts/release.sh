@@ -13,10 +13,13 @@ DMG="$ROOT/build/Shellforge-$VERSION.dmg"
 
 die() { print -u2 "release: $*"; exit 1; }
 
-[[ "$VERSION" =~ '^[0-9]+\.[0-9]+\.[0-9]+$' ]] || die "usage: Shellforge/scripts/release.sh <major.minor.patch>"
+# Canonical numbers only: the updater reads 01.2.3 as 1.2.3 and would look for an image not there.
+[[ "$VERSION" =~ '^(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})$' ]] || die "usage: Shellforge/scripts/release.sh <major.minor.patch>, no leading zeros"
 cd "$ROOT"
 [[ "$(git branch --show-current)" == master ]] || die "run from master"
 [[ -z "$(git status --porcelain --untracked-files=no)" ]] || die "the working tree has uncommitted changes"
+# The helper is copied into the app as a whole folder: nothing in it may be absent from the tag.
+[[ -z "$(git status --porcelain --ignored -- Shellforge/daemon/shellforged)" ]] || die "Shellforge/daemon/shellforged has files git does not track (git clean -ndX -- Shellforge/daemon/shellforged)"
 origin="$(git remote get-url origin)"
 [[ "$origin" == (git@github.com:|https://github.com/|ssh://git@github.com/)"$REPO"(.git|) ]] || die "origin is $origin, not github.com/$REPO"
 git fetch --quiet --tags origin master

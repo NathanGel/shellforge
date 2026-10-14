@@ -72,6 +72,8 @@ public enum UpdateError: Error, Equatable, LocalizedError {
             case 1: return "The update wasn’t installed: Shellforge didn’t quit in time."
             case 2: return "The update wasn’t installed: the old version couldn’t be moved aside."
             case 3: return "The update wasn’t installed: the new version couldn’t be moved into place, so the old one was put back."
+            case 4: return "The update was installed, but Shellforge couldn’t reopen itself. Open it from Applications."
+            case 5: return "The update wasn’t installed, and the old version couldn’t be put back. It is in Shellforge’s Updates folder, under Caches."
             default: return "The update wasn’t installed: the install helper stopped with status \(status)."
             }
         case .other(let text): return text

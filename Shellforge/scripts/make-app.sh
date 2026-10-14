@@ -33,6 +33,8 @@ tail -1 "$LOG"
 
 rm -rf "$APP"
 ditto "$DERIVED/Build/Products/Deployment/iTerm2.app" "$APP"
+# Bytecode caches are this machine's, not the source's.
+find "$APP/Contents/Resources/daemon" -name __pycache__ -type d -prune -exec rm -rf {} +
 PLIST="$APP/Contents/Info.plist"
 if [[ -n "${SHELLFORGE_VERSION:-}" ]]; then
     /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $SHELLFORGE_VERSION" "$PLIST"

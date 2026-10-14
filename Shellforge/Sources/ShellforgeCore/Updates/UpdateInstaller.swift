@@ -58,7 +58,8 @@ public enum UpdateInstaller {
     }
 
     /// The last helper's exit status: 0 installed, 1 Shellforge never quit, 2 the old app could not
-    /// be moved aside, 3 the new one could not move in (the old one was put back). `nil` when no
+    /// be moved aside, 3 the new one could not move in (the old one was put back), 4 installed but
+    /// it would not open, 5 the old one could not be put back either. `nil` when no
     /// helper ran since `Updates/` was last cleared. Taken, not just read: the file goes at once,
     /// so a cleanup of `Updates/` that stops partway cannot report the same failure again.
     public static func takePreviousResult(in updates: URL) -> Int32? {
@@ -88,9 +89,12 @@ public enum UpdateInstaller {
     # Shellforge's update helper. Arguments: <pid> <staged app> <installed app> <previous app> <timeout s> <opener> <result file>
     pid=$1 staged=$2 installed=$3 previous=$4 timeout=$5 opener=$6 result=$7
     # The status goes to <result file> before anything opens: the app that opens reads it on launch.
+    # An app that will not open is said too (4), for whenever Shellforge is next opened by hand.
     finish() {
         print -r -- "$1" > "$result"
-        (( $1 == 1 )) || "$opener" "$installed"
+        if (( $1 != 1 )) && ! "$opener" "$installed"; then
+            (( $1 == 0 )) && { print -r -- 4 > "$result"; exit 4; }
+        fi
         exit "$1"
     }
     for (( i = 0; i < timeout * 10; i++ )); do
@@ -102,7 +106,10 @@ public enum UpdateInstaller {
     mkdir -p "${previous:h}"
     mv "$installed" "$previous" || finish 2
     if ! mv "$staged" "$installed"; then
-        mv "$previous" "$installed"
+        # A move that failed partway (another volume, a full disk) can leave part of the new app:
+        # it goes first, or the old app would land inside it.
+        rm -rf "$installed"
+        mv "$previous" "$installed" || finish 5
         finish 3
     fi
     finish 0

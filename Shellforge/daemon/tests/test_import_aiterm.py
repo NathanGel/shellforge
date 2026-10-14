@@ -65,3 +65,15 @@ def test_a_second_run_adds_nothing():
     once, _ = importer.merge(aiterm(), shellforge(), exists=lambda p: True)
     twice, _ = importer.merge(aiterm(), once, exists=lambda p: True)
     assert twice == once
+
+
+def test_a_running_release_is_noticed_whatever_its_folder(monkeypatch):
+    """A release runs from Shellforge.app, a source build from iTerm2.app: the bundle id is what tells."""
+    from types import SimpleNamespace
+
+    def run(args, **_):
+        if args[0].endswith("osascript"):
+            return SimpleNamespace(returncode=0, stdout="true\n")
+        return SimpleNamespace(returncode=1, stdout="")  # no iTerm2.app/Contents/MacOS process
+    monkeypatch.setattr(importer.subprocess, "run", run)
+    assert importer.shellforge_running()

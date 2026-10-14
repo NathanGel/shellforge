@@ -40,6 +40,19 @@ import Testing
         try expectNothingLeft(in: dir, keeping: ["0.3.0"])
     }
 
+    /// A downloaded image is quarantined, and its app with it: staged, the app carries no
+    /// quarantine, so the relaunch after the swap is not refused or questioned.
+    @Test func theStagedAppCarriesNoQuarantine() throws {
+        let dir = try workspace(); defer { try? FileManager.default.removeItem(at: dir) }
+        let dmg = try image(dir)
+        try FakeAppBundle.quarantine(dir.appendingPathComponent("src/Shellforge.app"))
+        try FakeAppBundle.dmg(of: dir.appendingPathComponent("src"), to: dmg)
+        try FakeAppBundle.quarantine(dmg)
+        let staged = try stager.stage(dmg: dmg, version: version, in: dir.appendingPathComponent("Updates"))
+        #expect(!FakeAppBundle.isQuarantined(staged), "the staged app is still quarantined")
+        try expectNothingLeft(in: dir, keeping: ["0.3.0"])
+    }
+
     /// The app's own name in the image is not what is trusted — its identifier, version and
     /// signature are — so an image of iTerm2's product name, `iTerm2.app`, stages as well.
     @Test func stagesTheImagesOneAppWhateverItsName() throws {

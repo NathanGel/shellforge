@@ -86,6 +86,23 @@ private final class Exit: @unchecked Sendable {
         #expect(UpdateInstaller.takePreviousResult(in: updates) == 3)
     }
 
+    /// A new app that will not open — LaunchServices refusing it — is said at the next launch, not
+    /// taken for a success with Shellforge left closed.
+    @Test func aRelaunchThatFailsIsSaid() throws {
+        let dir = try workspace(); defer { try? FileManager.default.removeItem(at: dir) }
+        let installed = dir.appendingPathComponent("Apps/Shellforge.app"), updates = dir.appendingPathComponent("Updates")
+        let staged = updates.appendingPathComponent("0.3.0/Shellforge.app")
+        try fakeApp(at: installed, marker: "old"); try fakeApp(at: staged, marker: "new")
+        let opener = dir.appendingPathComponent("refuses.sh")
+        try Data("#!/bin/sh\nexit 1\n".utf8).write(to: opener)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: opener.path)
+        let status = try launch(staged: staged, installed: installed, updates: updates, app: try shortLived("0.1"), opener: opener.path)
+        #expect(status == 4)
+        #expect(marker(installed) == "new")
+        #expect(UpdateInstaller.takePreviousResult(in: updates) == 4)
+        #expect(UpdateError.installAborted(4).message == "The update was installed, but Shellforge couldn’t reopen itself. Open it from Applications.")
+    }
+
     @Test func changesNothingWhenTheAppNeverQuits() throws {
         let dir = try workspace(); defer { try? FileManager.default.removeItem(at: dir) }
         let installed = dir.appendingPathComponent("Apps/Shellforge.app"), updates = dir.appendingPathComponent("Updates")
