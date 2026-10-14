@@ -68,6 +68,14 @@ public struct TaskDraft: Equatable, Sendable {
         if !titleEdited, let worktree { title = worktree.branch }
     }
 
+    /// Back to a new worktree: a name the picked worktree gave goes, the ticket's (or none) back.
+    public mutating func leaveExisting() {
+        useExisting = false
+        guard !titleEdited else { return }
+        title = ticket?.summary ?? ""
+        if !branchEdited { branchName = BranchNaming.branchSlug(key: ticket?.key, summary: ticket?.summary ?? title) }
+    }
+
     public mutating func setBranchType(_ type: BranchType) {
         guard type != branchType else { return }
         branchType = type; typeEdited = true

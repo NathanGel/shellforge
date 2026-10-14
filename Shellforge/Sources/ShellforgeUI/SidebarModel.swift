@@ -246,6 +246,7 @@ public final class SidebarModel: ObservableObject {
         working = "Adding \(URL(fileURLWithPath: folder).lastPathComponent)…"
         defer { working = nil }
         let found = await Task.detached { try ProjectFolders.project(at: folder, in: snapshot, launcher: launcher) }.result
+        var added: Project?
         attempt {
             let project = try found.get()
             try document.update { workspace in
@@ -255,7 +256,30 @@ public final class SidebarModel: ObservableObject {
                 }
                 workspace.projects.append(project)
             }
+            added = project
         }
+        // The "Adding…" banner goes before the question does.
+        working = nil
+        if let added { await offerWorktreeImport(added) }
+    }
+
+    /// AiTerm's offer, once a project is added: its existing worktrees as tasks, no agent started.
+    func offerWorktreeImport(_ project: Project) async {
+        let (launcher, taken) = (self.launcher, document.workspace.tasks.map(\.worktreePath))
+        let (found, base) = await BackgroundWork.run {
+            ((try? ExistingWorktrees.list(project: project, taken: taken, launcher: launcher)) ?? [],
+             Repository.defaultBranch(of: project.path, launcher: launcher))
+        }
+        guard !found.isEmpty else { return }
+        let answer = await prompter.ask(AlertPrompt(message: "Import \(found.count) worktree\(found.count == 1 ? "" : "s")?",
+                                                    detail: "Adds existing worktrees as tasks without starting agents.",
+                                                    buttons: ["Import", "Skip"], escape: 1))
+        // Anything can run across the await: the project can have gone, a worktree become a task.
+        guard answer.confirmed, self.project(project.id) != nil else { return }
+        let known = Set(document.workspace.tasks.map(\.worktreePath))
+        let tasks = ExistingWorktrees.imported(found.filter { !known.contains($0.path) }, project: project, baseBranch: base,
+                                               agent: nil, model: nil, reasoning: nil)
+        attempt { try document.update { $0.tasks += tasks } }
     }
 
     /// The New Task sheet for `projectId`, the SSH config read first when the project names a host:
@@ -289,6 +313,9 @@ public final class SidebarModel: ObservableObject {
                             // Read once, as the sheet opens: a Keychain read is too slow for every keystroke.
                             searchIssues: NewTaskModel.jiraSearcher(for: project, jira: jiraSettings()),
                             sshHost: paneHost(of: project),
+                            existingWorktrees: { [taken = document.workspace.tasks.map(\.worktreePath)] in
+                                (try? ExistingWorktrees.list(project: project, taken: taken, launcher: launcher)) ?? []
+                            },
                             home: FileManager.default.homeDirectoryForCurrentUser)
     }
 
@@ -298,14 +325,17 @@ public final class SidebarModel: ObservableObject {
     public func newTask(draft: TaskDraft, in projectId: UUID) async throws {
         guard let project = document.workspace.projects.first(where: { $0.id == projectId }) else { throw ProjectGone() }
         guard let agent = agents.first(where: { $0.id == draft.agentId }) else { return }
-        let launcher = self.launcher
+        let launcher = self.launcher, taken = document.workspace.tasks.map(\.worktreePath)
         // Held for Remove Project from the start of git's work until the task is saved.
         let made = try await whileCreating(in: projectId) { () async throws -> (TaskItem, String) in
             let made = try await BackgroundWork.run { () throws -> (TaskItem, String) in
                 // Looked for again here: the sheet read what was installed when it opened, and a tab
                 // whose first line is "command not found" is worse than a refusal.
                 guard launcher.locate(agent.command) != nil else { throw AgentNotInstalled(agent: agent.name) }
-                let task = try TaskWorktrees.create(draft: draft, in: project, launcher: launcher)
+                // Continued in a worktree that exists, or one made for it.
+            let task = draft.useExisting
+                ? try ExistingWorktrees.adopt(draft: draft, in: project, taken: taken, launcher: launcher)
+                : try TaskWorktrees.create(draft: draft, in: project, launcher: launcher)
                 let command = try AgentCommand.build(agent: agent, model: draft.model, reasoning: draft.reasoning,
                                                      prompt: AgentCommand.composePrompt(userText: draft.promptText, ticket: draft.ticket,
                                                                                         appendTicket: draft.appendTicket),
@@ -313,6 +343,10 @@ public final class SidebarModel: ObservableObject {
                 return (task, command)
             }
             try document.update { workspace in
+                // Another window may have made a task of the same worktree while git ran.
+                if draft.useExisting, workspace.tasks.contains(where: { $0.worktreePath == made.0.worktreePath }) {
+                    throw ExistingWorktrees.Refusal.taken(made.0.branch)
+                }
                 workspace.tasks.append(made.0)
                 workspace.remember(draft, projectId: projectId)
                 // Only a box the sheet showed is a choice to remember.

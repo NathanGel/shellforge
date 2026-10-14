@@ -19,6 +19,11 @@ struct Destination: Equatable {
         Destination(place: "\(project.name)/.worktrees/\(slug)", branch: branch)
     }
 
+    /// A worktree that already exists: inside the project, by its path there; elsewhere, whole.
+    static func existing(project: Project, worktree: ExistingWorktree) -> Destination {
+        Destination(place: ExistingWorktreeLabel.place(of: worktree, in: project), branch: worktree.branch)
+    }
+
     /// The project folder itself: New Terminal.
     static func projectFolder(_ project: Project, branch: String) -> Destination {
         Destination(place: project.name, branch: branch)
