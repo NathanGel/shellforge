@@ -145,7 +145,9 @@ struct SidebarView: View {
                              move: { up in model.move(.project(node.id), up: up) },
                              editJiraProjects: { showJiraProjects(for: node.id) },
                              editTunnels: { showTunnels(for: node.id) },
-                             editSSHHost: { showSSHHost(for: node.id) })
+                             editSSHHost: { showSSHHost(for: node.id) },
+                             openSSHHost: { Task { await model.openSSHHost(of: node.id) } },
+                             canOpenSSHHost: model.canOpenSSHHost(of: node.id))
                 .listRowSeparator(.hidden)
         case .terminal(let node, let selected):
             TerminalRowView(node: node, selected: selected, agents: model.avatars(forTerminal: node.id),
