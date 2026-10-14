@@ -5,7 +5,8 @@ import ShellforgeCore
 
 /// Remove Project… only forgets the project, as AiTerm's does: its tasks and terminals go from the
 /// sidebar, and no git command runs. Worktrees stay on disk — the alert lists them, so nothing
-/// disappears silently — and its tabs stay open, under Other tabs.
+/// disappears silently — and its tabs stay open, under Other tabs. A running tunnel no other
+/// project lists is stopped: its row went with the project.
 extension SidebarModel {
     /// True when the project was removed.
     @discardableResult
@@ -41,6 +42,7 @@ extension SidebarModel {
             lastError = "Couldn’t remove the project. " + Self.reason(of: error)
             return false
         }
+        stopOrphaned(project.tunnels)
         return true
     }
 

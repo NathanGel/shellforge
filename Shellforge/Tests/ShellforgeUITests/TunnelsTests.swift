@@ -164,6 +164,17 @@ import Testing
         #expect(feed.tunnelCalls == ["stop db"], "its row, its only stop, is gone; a stopped one needs nothing")
     }
 
+    /// Remove Project takes the tunnels' rows with it: a running one no other project lists stops.
+    @Test func removingTheProjectStopsItsRunningTunnels() async throws {
+        let (model, _, feed, _, project) = try await model(tunnels: [TunnelDefinition(alias: "db"), TunnelDefinition(alias: "web")])
+        model.prompter = ScriptedPrompter([AlertAnswer(button: 0)])
+        say(feed, [TunnelInfo(alias: "db", state: .up, error: nil, since: 1),
+                   TunnelInfo(alias: "web", state: .stopped, error: nil, since: 1)])
+        #expect(await eventually { model.tunnelState("db") == .up })
+        #expect(await model.confirmRemove(project: project))
+        #expect(feed.tunnelCalls == ["stop db"])
+    }
+
     @Test func clickingATaskWhoseTabIsOpenStartsNothing() async throws {
         let (model, _, feed, _, project) = try await model(tunnels: [TunnelDefinition(alias: "db", autoStart: .onTaskOpen)])
         #expect(await eventually { model.sshHosts != nil })
