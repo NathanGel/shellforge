@@ -31,6 +31,8 @@ public enum Palette {
     public static let surface = Color(nsColor: .windowBackgroundColor)
     /// The sheet footer that holds the primary action. Lighter than the surface.
     public static let surfaceRaised = Color(nsColor: .underPageBackgroundColor)
+    /// A text field's ground: the system text background, as macOS 26's own fields draw it.
+    public static let fieldFill = Color(nsColor: .textBackgroundColor)
     /// The fill of anything that hangs over a sheet's content: the completion popup and a
     /// `SearchPicker`'s results. Raised, not `surface`: on the sheet's own colour a popup has only
     /// its hairline to tell it from the field and the text it covers. An alias, because a menu

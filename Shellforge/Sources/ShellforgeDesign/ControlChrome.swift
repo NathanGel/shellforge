@@ -64,8 +64,14 @@ public extension View {
     /// `fieldChrome`'s padding and height, for a field that sizes and insets itself: the prompt
     /// editor.
     func fieldBox(focused: Bool = false) -> some View {
-        background(RoundedRectangle(cornerRadius: Radius.control).fill(Palette.surface))
-            .overlay(RoundedRectangle(cornerRadius: Radius.control).strokeBorder(Palette.border, lineWidth: 1))
-            .focusRing(focused)
+        let shape = RoundedRectangle(cornerRadius: FieldShape.cornerRadius, style: .continuous)
+        return background(shape.fill(Palette.fieldFill))
+            .overlay(shape.strokeBorder(Palette.border, lineWidth: 1))
+            .focusRing(focused, cornerRadius: FieldShape.cornerRadius)
     }
+}
+
+/// The shape of a text field: macOS 26's, rounder than a control.
+public enum FieldShape {
+    public static let cornerRadius = Radius.group
 }
