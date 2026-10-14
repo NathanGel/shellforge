@@ -141,7 +141,7 @@ popup's rows are handed no flag — and `SegmentedControl` for a segment, whose 
 
 `Surface` is not a component and gets no card — it is a rule the components assume.
 
-## One theme
+## Light and dark
 
 Shellforge follows its window's appearance, light or dark. Most colours are macOS's semantic ones and adapt by themselves; the few that cannot (`rowHover`, `rowHoverSolid`, `badgeHovered`, `codeBackground`) have a value for each appearance through `Palette.adaptive(light:dark:)`. `Icon` resolves a tint in the appearance it draws in. A test that needs a fixed appearance names it (`ColorProbe.hex(_:in:)`).
 
