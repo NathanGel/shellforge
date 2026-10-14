@@ -47,7 +47,10 @@ const int kLayoutTabPositionRight = 3;
     outputs.statusBarFrame = CGRectOffset(outputs.statusBarFrame, sidebar, 0);
     outputs.toolbeltFrame = CGRectOffset(outputs.toolbeltFrame, sidebar, 0);
     outputs.tabBarFrame = CGRectOffset(outputs.tabBarFrame, sidebar, 0);
-    outputs.leftPanelFrame = CGRectMake(0, 0, sidebar, inputs.contentViewHeight);
+    // Shellforge: the panel stands off the window's edges by the inset; the column it sits in, and
+    // so everything right of it, is unchanged.
+    const CGFloat inset = inputs.leftPanelInset;
+    outputs.leftPanelFrame = CGRectMake(inset, inset, MAX(0, sidebar - inset), MAX(0, inputs.contentViewHeight - 2 * inset));
     return outputs;
 }
 
