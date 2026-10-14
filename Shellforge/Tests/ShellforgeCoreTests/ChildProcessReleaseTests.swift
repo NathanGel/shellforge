@@ -32,4 +32,22 @@ import Testing
         #expect(Self.threads() <= threadsBefore + 2, "reader threads outlived their calls")
         #expect(Self.descriptors() <= descriptorsBefore + 1, "pipe ends outlived their calls")
     }
+
+    /// A child that has ended is let go: a helper in a crash loop does not pile up its Process and
+    /// log handle once per restart.
+    @Test func aFinishedChildIsReleased() async throws {
+        let exited = Locked(false)
+        weak var released: RunningChild?
+        do {
+            let child = try ChildProcess.launch("/usr/bin/true", [], environment: [:], directory: nil, output: nil) { _, _ in
+                exited.withLock { $0 = true }
+            }
+            released = child
+        }
+        let deadline = Date().addingTimeInterval(5)
+        while !exited.withLock({ $0 }), Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(exited.withLock { $0 })
+        while released != nil, Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(released == nil, "the ended child is still held")
+    }
 }

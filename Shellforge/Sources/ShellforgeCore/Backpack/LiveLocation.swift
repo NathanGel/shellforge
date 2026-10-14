@@ -12,7 +12,8 @@ import CoreLocation
 public final class CoreLocationAccess: NSObject, LocationAccess, CLLocationManagerDelegate {
     private let manager = CLLocationManager()
     private nonisolated let status = Locked(CLAuthorizationStatus.notDetermined)
-    private var waiting: CheckedContinuation<Bool, Never>?
+    /// Every request waiting on macOS's answer: a second while the first is asked waits beside it.
+    private let waiting = Waiters<Bool>()
 
     public override init() {
         super.init()
@@ -31,10 +32,7 @@ public final class CoreLocationAccess: NSObject, LocationAccess, CLLocationManag
         let current = manager.authorizationStatus
         status.withLock { $0 = current }
         guard Self.canAsk(current) else { return Self.granted(current) }
-        return await withCheckedContinuation { continuation in
-            waiting = continuation
-            manager.requestWhenInUseAuthorization()
-        }
+        return await waiting.wait { manager.requestWhenInUseAuthorization() }
     }
 
     /// Called as the delegate is set, with the status as it stands, and again with each answer.
@@ -42,10 +40,7 @@ public final class CoreLocationAccess: NSObject, LocationAccess, CLLocationManag
         let current = manager.authorizationStatus
         status.withLock { $0 = current }
         guard current != .notDetermined else { return }
-        MainActor.assumeIsolated {
-            waiting?.resume(returning: Self.granted(current))
-            waiting = nil
-        }
+        MainActor.assumeIsolated { waiting.resumeAll(Self.granted(current)) }
     }
 
     /// macOS has one granted status: a when-in-use request is answered `authorizedAlways` (3),
