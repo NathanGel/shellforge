@@ -180,7 +180,8 @@ static BOOL hasBecomeActive = NO;
     iTermRestorableStateControllerDelegate,
     iTermUntitledWindowStateMachineDelegate,
     NSMenuDelegate,
-    NSMenuItemValidation>
+    NSMenuItemValidation,
+    SUUpdaterDelegate>
 
 @property(nonatomic, readwrite) BOOL workspaceSessionActive;
 
@@ -372,6 +373,10 @@ static NSModalResponse iTermCompareRenderingRunModal(id self, SEL _cmd) {
 - (void)awakeFromNib {
     [ArchivesMenuBuilder setShared:[[ArchivesMenuBuilder alloc] initWithMenuItem:_archivesMenuItem]];
 
+    // Shellforge: Sparkle asks this delegate before every check, and is always refused. Shellforge
+    // updates from its own GitHub releases; iTerm2's builds are never offered.
+    suUpdater.delegate = self;
+
     NSMenu *viewMenu = [self topLevelViewNamed:@"View"];
     [viewMenu addItem:[NSMenuItem separatorItem]];
 
@@ -474,6 +479,10 @@ static NSModalResponse iTermCompareRenderingRunModal(id self, SEL _cmd) {
     if (menuItem.action == @selector(shellforgeToggleBackpack:)) {
         menuItem.state = [iTermShellforgeSidebar backpackIsOn] ? NSControlStateValueOn : NSControlStateValueOff;
         return YES;
+    }
+    if (menuItem.action == @selector(checkForUpdatesFromMenu:)) {
+        // Shellforge: disabled while a check or an update is under way.
+        return ![iTermShellforgeUpdates isBusy];
     }
     const SEL action = [menuItem action];
     if (action == @selector(newSessionInTabAtIndex:) ||
@@ -1585,6 +1594,11 @@ void TurnOnDebugLoggingAutomatically(void) {
     [iTermLaunchExperienceController applicationDidFinishLaunching];
     // Shellforge: the helper that tracks each tab's agent; it stops at iTermApplicationWillTerminate.
     [iTermShellforgeSidebar startHelper];
+    // Shellforge: say why the last update didn't install, if it didn't, and clear its leftovers.
+    // Not under unit tests, which run as the real bundle and must not touch its Caches.
+    if (![NSApp isRunningUnitTests]) {
+        [iTermShellforgeUpdates finishPreviousUpdate];
+    }
     [[iTermLaunchServices sharedInstance] registerForiTerm2Scheme];
     // Once a day at most, check for a newer uv (silently replace it) and refresh the
     // iterm2 module in provisioned basic-script venvs. A no-op until uv is installed.
@@ -2407,7 +2421,8 @@ static iTermKeyEventReplayer *gReplayer;
                                silenceable:kiTermWarningTypeSilenceableForOneMonth
                                     window:nil];
         if (selection == kiTermWarningSelection1) {
-            [[SUUpdater sharedUpdater] checkForUpdates:nil];
+            // Shellforge: its own update check, never Sparkle's.
+            [iTermShellforgeUpdates checkForUpdates];
         }
     }
 }
@@ -2554,8 +2569,17 @@ static iTermKeyEventReplayer *gReplayer;
     [pboard setString:copyString forType:NSPasteboardTypeString];
 }
 
+// Shellforge: Check for Updates… (the app menu's and the status bar menu's) reads Shellforge's own
+// GitHub releases, not iTerm2's Sparkle feed.
 - (IBAction)checkForUpdatesFromMenu:(id)sender {
-    [suUpdater checkForUpdates:(sender)];
+    [iTermShellforgeUpdates checkForUpdates];
+}
+
+#pragma mark - SUUpdaterDelegate
+
+// Shellforge: no Sparkle check, scheduled or asked for, ever runs.
+- (BOOL)updaterMayCheckForUpdates:(SUUpdater *)updater {
+    return NO;
 }
 
 // Depth-first search for the menu item wired to a given action, so a

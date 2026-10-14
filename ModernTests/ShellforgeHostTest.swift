@@ -76,4 +76,40 @@ final class ShellforgeHostTest: XCTestCase {
         XCTAssertFalse(prefs.preferenceKeyIsSyncable("backpack.network"))
         XCTAssertTrue(prefs.preferenceKeyIsSyncable("Columns"), "an ordinary setting still syncs")
     }
+
+    /// The built app names Shellforge's own feed, and a Development build marks itself as one, so
+    /// it never replaces itself with a release. Sparkle has no feed of iTerm2's to read.
+    func testTheBundleCarriesShellforgesFeedAndTheDevMark() {
+        let info = Bundle.main
+        XCTAssertEqual(info.object(forInfoDictionaryKey: "ShellforgeUpdateFeed") as? String, "github:NathanGel/shellforge")
+        XCTAssertEqual(info.object(forInfoDictionaryKey: "ShellforgeDevBuild") as? String, "YES", "the Development configuration sets SHELLFORGE_DEV_BUILD")
+        XCTAssertNil(info.object(forInfoDictionaryKey: "SUFeedURL"))
+        XCTAssertEqual(info.object(forInfoDictionaryKey: "SUEnableAutomaticChecks") as? Bool, false)
+    }
+
+    /// Sparkle asks the app delegate before every check, scheduled or chosen, and is always refused:
+    /// iTerm2's builds are never offered.
+    func testSparkleIsNeverAllowedToCheck() throws {
+        let delegate = try XCTUnwrap(NSApp.delegate as? NSObject)
+        let updaterClass = try XCTUnwrap(NSClassFromString("SUUpdater") as? NSObject.Type)
+        let updater = try XCTUnwrap(updaterClass.perform(NSSelectorFromString("sharedUpdater"))?.takeUnretainedValue() as? NSObject)
+        XCTAssertTrue(updater.value(forKey: "delegate") as? NSObject === delegate, "Sparkle's delegate is the app delegate")
+        let ask = NSSelectorFromString("updaterMayCheckForUpdates:")
+        XCTAssertTrue(delegate.responds(to: ask))
+        typealias May = @convention(c) (AnyObject, Selector, AnyObject?) -> ObjCBool
+        let may = unsafeBitCast(delegate.method(for: ask), to: May.self)
+        XCTAssertFalse(may(delegate, ask, updater).boolValue)
+    }
+
+    /// Check for Updates… is in the app menu once, and its action reaches Shellforge's controller,
+    /// which is idle until it is chosen.
+    @MainActor func testCheckForUpdatesIsShellforgesOwn() throws {
+        guard let main = NSApp.mainMenu else { return XCTFail("no main menu") }
+        func items(_ menu: NSMenu) -> [NSMenuItem] { menu.items.flatMap { [$0] + ($0.submenu.map(items) ?? []) } }
+        let check = items(main).filter { $0.action == NSSelectorFromString("checkForUpdatesFromMenu:") }
+        XCTAssertEqual(check.map(\.title), ["Check for Updates…"])
+        let delegate = try XCTUnwrap(NSApp.delegate as? NSMenuItemValidation)
+        XCTAssertTrue(delegate.validateMenuItem(try XCTUnwrap(check.first)), "enabled while no check runs")
+        XCTAssertFalse(iTermShellforgeUpdates.isBusy())
+    }
 }
