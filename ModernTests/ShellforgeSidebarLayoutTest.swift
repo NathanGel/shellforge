@@ -49,4 +49,33 @@ final class ShellforgeSidebarLayoutTest: XCTestCase {
         XCTAssertEqual(outputs.toolbeltFrame.maxX, 800)
         XCTAssertEqual(outputs.tabViewFrame.width, 800 - 240 - 200)
     }
+    func testTheInsetPanelStandsOffTheWindowsEdges() {
+        var inputs = inputs(sidebar: 240)
+        inputs.leftPanelInset = 8
+        let outputs = iTermLayoutCalculator.calculateLayout(with: inputs)
+        XCTAssertEqual(outputs.leftPanelFrame, CGRect(x: 8, y: 8, width: 232, height: 584))
+    }
+
+    func testTheInsetMovesNothingElse() {
+        var inset = inputs(sidebar: 240)
+        inset.leftPanelInset = 8
+        let flush = iTermLayoutCalculator.calculateLayout(with: inputs(sidebar: 240))
+        let moved = iTermLayoutCalculator.calculateLayout(with: inset)
+        XCTAssertEqual(moved.tabViewFrame, flush.tabViewFrame)
+        XCTAssertEqual(moved.toolbeltFrame, flush.toolbeltFrame)
+        XCTAssertEqual(moved.tabBarFrame, flush.tabBarFrame)
+    }
+
+    func testTheInsetPanelInFullScreen() {
+        var inputs = inputs(sidebar: 240)
+        inputs.leftPanelInset = 8
+        inputs.inFullscreen = ObjCBool(true)
+        XCTAssertEqual(iTermLayoutCalculator.calculateLayout(with: inputs).leftPanelFrame, CGRect(x: 8, y: 8, width: 232, height: 584))
+    }
+
+    func testAHiddenSidebarHasNoPanelWhateverTheInset() {
+        var inputs = inputs(sidebar: 0)
+        inputs.leftPanelInset = 8
+        XCTAssertEqual(iTermLayoutCalculator.calculateLayout(with: inputs).leftPanelFrame.width, 0)
+    }
 }

@@ -17,14 +17,15 @@ public enum ShellforgeSidebar {
     /// its sheet, for the View menu's ⌘B. `hideSidebar` is the header's Hide Sidebar button: ⌃⌘S.
     /// `zoom` is the app's one text size, which every window's sidebar draws at; its sheets, in
     /// panels of their own, stay at `.standard`. `terminalMatch` is the app's one Settings › Core ›
-    /// Terminal switch.
+    /// Terminal switch. `panelCornerRadius`, when given, draws the sidebar as a floating panel with
+    /// those corners (macOS 26); nil draws the classic sidebar.
     public static func makeView(model: SidebarModel, chooseFolder: @escaping @MainActor () -> String?, hooks: AgentHooksModel,
                                 machine: MachineMonitor, backpack: BackpackController, zoom: SidebarZoom,
-                                terminalMatch: TerminalMatchSettings,
+                                terminalMatch: TerminalMatchSettings, panelCornerRadius: CGFloat? = nil,
                                 showBackpack: @escaping @MainActor (@escaping @MainActor () -> Void) -> Void = { _ in },
                                 hideSidebar: @escaping @MainActor () -> Void = {}) -> NSView {
         let sidebar = SidebarView(model: model, chooseFolder: chooseFolder, hooks: hooks, machine: machine,
-                                  backpack: backpack, terminalMatch: terminalMatch, showBackpack: showBackpack, hideSidebar: hideSidebar)
+                                  backpack: backpack, terminalMatch: terminalMatch, panelCornerRadius: panelCornerRadius, showBackpack: showBackpack, hideSidebar: hideSidebar)
         let host = SidebarHostingView(rootView: ZoomedSidebar(zoom: zoom, sidebar: sidebar))
         host.frame = NSRect(x: 0, y: 0, width: width, height: 400)
         host.autoresizingMask = [.height]
@@ -98,8 +99,35 @@ struct SidebarEdge: View {
     }
 }
 
+/// What the sidebar is drawn on: the floating panel — a rounded `MaterialBackground` with a hairline
+/// outline — or, classic, the sidebar material filling its column. Either runs under the title bar,
+/// so it ignores the safe area the content keeps to.
+struct SidebarGround: View {
+    let cornerRadius: CGFloat?
+    /// This Mac's material; a test names one.
+    var kind: ShellforgeMaterial.Kind = ShellforgeMaterial.current
+
+    var body: some View {
+        Group {
+            if let cornerRadius {
+                let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                MaterialBackground(shape, kind: kind)
+                    .overlay { shape.strokeBorder(Palette.border, lineWidth: 1) }
+            } else {
+                // Glass is for the floating panel; a flush sidebar takes the sidebar material.
+                MaterialBackground(Rectangle(), kind: kind == .glass ? .sidebar : kind)
+            }
+        }
+        .ignoresSafeArea()
+    }
+}
+
 /// The sidebar's host: where `NativeRowHighlight` stops looking for its list.
-final class SidebarHostingView<Content: View>: NSHostingView<Content>, RowHighlightBoundary {}
+final class SidebarHostingView<Content: View>: NSHostingView<Content>, RowHighlightBoundary {
+    /// A floating sidebar's window moves by its background; a click in the sidebar is the
+    /// sidebar's, never the start of a window drag.
+    override var mouseDownCanMoveWindow: Bool { false }
+}
 
 /// AiTerm's sidebar, inside iTerm2's window: the PROJECTS header, each project with its tasks and
 /// the selected task's tabs, the tabs of no task, the banners, or the empty state.
@@ -110,6 +138,7 @@ struct SidebarView: View {
     let machine: MachineMonitor
     let backpack: BackpackController
     let terminalMatch: TerminalMatchSettings
+    let panelCornerRadius: CGFloat?
     let showBackpack: @MainActor (@escaping @MainActor () -> Void) -> Void
     let hideSidebar: @MainActor () -> Void
     /// The window the sidebar is drawn in, which the Agent hooks panel hangs from.
@@ -133,9 +162,9 @@ struct SidebarView: View {
                               toggleMac: { BackpackToggle(backpack: backpack, presentSheet: presentBackpack).run() },
                               openMacSettings: showMacSettings)
         }
-        .overlay(alignment: .trailing) { SidebarEdge() }
+        .overlay(alignment: .trailing) { if panelCornerRadius == nil { SidebarEdge() } }
         .frame(minWidth: scale(Size.sidebarMinWidth), maxHeight: .infinity, alignment: .top)
-        .background(Palette.sidebar)
+        .background { SidebarGround(cornerRadius: panelCornerRadius) }
         .surface(.sidebar)
         .tint(Palette.accent)
         .background(WindowReader(anchor: anchor))

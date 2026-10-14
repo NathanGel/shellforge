@@ -9,6 +9,7 @@
 import AppKit
 import Combine
 import ShellforgeCore
+import ShellforgeDesign
 import ShellforgeUI
 
 @objc(iTermShellforgeSidebar)
@@ -76,7 +77,8 @@ final class iTermShellforgeSidebar: NSObject {
         sidebars.add(model)
         watchClicks()
         return ShellforgeSidebar.makeView(model: model, chooseFolder: FolderChooser.choose, hooks: hooks, machine: machine,
-                                          backpack: backpack, zoom: zoom, terminalMatch: iTermShellforgeTerminalMatch.settings, showBackpack: { [weak windowController] present in
+                                          backpack: backpack, zoom: zoom, terminalMatch: iTermShellforgeTerminalMatch.settings,
+                                          panelCornerRadius: floats ? panelCornerRadius : nil, showBackpack: { [weak windowController] present in
             if let windowController { backpackSheets.register(windowController, present) }
         }, hideSidebar: { [weak windowController] in
             (windowController?.contentView as? iTermRootTerminalView)?.toggleShellforgeSidebar()
@@ -626,6 +628,22 @@ extension iTermShellforgeSidebar {
 
     /// The preferred width a new window starts with: the last one dragged, in any window.
     @objc static func defaultPreferredWidth() -> CGFloat { layout.width }
+
+    /// The sidebar floats as a rounded panel inside the window on macOS 26 and later.
+    @objc static var floats: Bool { ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 26 }
+
+    /// Whether a window of `type` is one the floating sidebar reshapes: a normal, maximized or
+    /// centred window on macOS 26. Hotkey, edge-anchored, untitled and accessory windows keep
+    /// iTerm2's own rules.
+    @objc static func floatsWindow(ofType type: iTermWindowType) -> Bool {
+        floats && (type == .WINDOW_TYPE_NORMAL || type == .WINDOW_TYPE_MAXIMIZED || type == .WINDOW_TYPE_CENTERED)
+    }
+
+    /// How far the floating panel stands off the window's edges.
+    @objc static var floatingInset: CGFloat { Space.base }
+
+    /// The panel's corners, concentric with the window's.
+    static var panelCornerRadius: CGFloat { max(0, iTermWindowCornerRadiusDetector.fallbackCornerRadius - floatingInset) }
 
     /// The width a window of `windowWidth` gives a sidebar that prefers `preferred`, with a
     /// toolbelt of `toolbeltWidth` showing on the right.

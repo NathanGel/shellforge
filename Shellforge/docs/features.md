@@ -5,6 +5,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 ## The sidebar
 
 - **Where it is.** Every terminal window has a sidebar on its left. It follows the window's appearance: light or dark, as macOS or iTerm2's Appearance setting has it. iTerm2's tab bar is hidden in these windows, because the sidebar lists the tabs instead.
+- **On macOS 26 and later** the sidebar floats: a rounded glass panel a little inside the window, with the window buttons in its top corner and the window's title over the terminal. Earlier macOS versions keep the full-height sidebar.
 - **Hide and show.** Use any of these:
   - the sidebar icon in the sidebar's header;
   - ⌃⌘S;

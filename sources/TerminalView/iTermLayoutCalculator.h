@@ -63,6 +63,10 @@ typedef struct {
 
     /// Shellforge: width of the sidebar column at the window's left edge, or 0 for none.
     CGFloat leftPanelWidth;
+
+    /// Shellforge: how far the panel stands off the window's top, left and bottom edges (the
+    /// floating sidebar on macOS 26); 0 for a flush sidebar.
+    CGFloat leftPanelInset;
 } iTermLayoutInputs;
 
 /// Output frame rects from layout calculation.
