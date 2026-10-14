@@ -6,11 +6,13 @@ import Foundation
 /// that session's child and turns transcript saving off. A person's own settings for those tools
 /// (`CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME`) are not markers and stay.
 public enum InheritedEnvironment {
-    /// Claude Code's session markers, and the generic agent flag.
+    /// Claude Code's session markers — its Remote Control bridge and agent-team identity among them —
+    /// and the generic agent flag.
     static let markers: Set<String> = [
         "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SESSION_ID",
         "CLAUDE_CODE_SESSION_ATTENDED", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN",
-        "CLAUDE_CODE_EXECPATH", "CLAUDE_CODE_SSE_PORT", "CLAUDE_PID", "CLAUDE_EFFORT", "AI_AGENT",
+        "CLAUDE_CODE_EXECPATH", "CLAUDE_CODE_SSE_PORT", "CLAUDE_CODE_BRIDGE_SESSION_ID", "CLAUDE_CODE_TEAM_NAME",
+        "CLAUDE_PID", "CLAUDE_EFFORT", "AI_AGENT",
     ]
 
     /// The markers `environment` holds.
