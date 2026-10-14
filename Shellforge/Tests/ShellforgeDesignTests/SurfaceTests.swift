@@ -62,4 +62,11 @@ struct SurfaceTests {
         #expect(ColorProbe.hex(Surface.accent.occludingBackground) == ColorProbe.hex(Palette.selection))
         #expect(ColorProbe.hex(Surface.sheet.occludingBackground) == ColorProbe.hex(Palette.surface))
     }
+    /// A selected row in an inactive window: macOS's grey selection, with the sidebar's own ink, so
+    /// nothing is white on grey.
+    @MainActor @Test func anInactiveSelectionKeepsNormalInk() {
+        #expect(ColorProbe.hex(Surface.inactiveSelection.ink, in: .aqua) == ColorProbe.hex(Palette.text, in: .aqua))
+        #expect(!Surface.inactiveSelection.isOnAccent)
+        #expect(ColorProbe.hex(Surface.inactiveSelection.occludingBackground, in: .aqua) == ColorProbe.hex(Palette.controlActive, in: .aqua))
+    }
 }
