@@ -71,7 +71,8 @@ import Testing
                                       backing: .buffered, defer: false)
                 window.isReleasedWhenClosed = false
                 window.contentView = ShellforgeSidebar.makeView(model: model, chooseFolder: { nil }, hooks: hooks, machine: machine,
-                                                                backpack: backpack, showBackpack: { [weak window] present in
+                                                                backpack: backpack, zoom: SidebarZoom(settings: SidebarLayoutSettings(defaults: ScratchDefaults.make())),
+                                                                showBackpack: { [weak window] present in
                     if let window { sheets.register(window, present) }
                 })
                 window.displayIfNeeded()

@@ -74,8 +74,9 @@ final class iTermShellforgeSidebar: NSObject {
         windows.add(model, for: windowController)
         model.onEnvironmentReloaded = { environmentChanged() }
         sidebars.add(model)
+        watchClicks()
         return ShellforgeSidebar.makeView(model: model, chooseFolder: FolderChooser.choose, hooks: hooks, machine: machine,
-                                          backpack: backpack, showBackpack: { [weak windowController] present in
+                                          backpack: backpack, zoom: zoom, showBackpack: { [weak windowController] present in
             if let windowController { backpackSheets.register(windowController, present) }
         }, hideSidebar: { [weak windowController] in
             (windowController?.contentView as? iTermRootTerminalView)?.toggleShellforgeSidebar()
@@ -575,6 +576,48 @@ private final class TasksMenuController: NSObject, NSMenuItemValidation {
     }
 }
 
+
+/// ⌘+ / ⌘− / ⌘0 on the sidebar: the View menu's Make Text Bigger, Smaller and Normal Size zoom the
+/// sidebar instead of the terminal while the window's last click was in the sidebar.
+extension iTermShellforgeSidebar {
+    /// The app's one sidebar text size, every window's.
+    static let zoom = SidebarZoom(settings: layout)
+    /// The size as a factor of normal, for tests that cannot import ShellforgeUI.
+    static var textScaleFactor: CGFloat { zoom.scale.factor }
+    /// Back to normal size, for those tests' tear-down.
+    static func resetTextScale() { zoom.reset() }
+    private static let clicks = SidebarClicks()
+    private static var clickMonitor: Any?
+
+    /// Notes which side of a terminal window each mouse-down lands on. Installed with the first
+    /// sidebar; it lets every event through.
+    static func watchClicks() {
+        guard clickMonitor == nil else { return }
+        clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { event in
+            MainActor.assumeIsolated {
+                if let window = event.window, window.windowController is PseudoTerminal {
+                    clicks.clicked(in: window, on: window.contentView?.superview?.hitTest(event.locationInWindow))
+                }
+            }
+            return event
+        }
+    }
+
+    /// Steps the sidebar's text size when `terminal`'s sidebar shows and was clicked last: up for a
+    /// positive `step`, down for a negative one, back to normal for 0. NO leaves the key to the terminal.
+    @objc static func zoomSidebar(in terminal: PseudoTerminal, by step: Int) -> Bool {
+        guard let root = terminal.contentView, root.hasShellforgeSidebar, !root.shellforgeSidebarHidden,
+              clicks.sidebarIsActive(in: terminal.window) else {
+            return false
+        }
+        switch step {
+        case 0: zoom.reset()
+        case 1...: zoom.bigger()
+        default: zoom.smaller()
+        }
+        return true
+    }
+}
 
 /// The sidebar's width, as dragged, and whether new windows start with it hidden (⌃⌘S).
 extension iTermShellforgeSidebar {

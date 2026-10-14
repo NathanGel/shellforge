@@ -6,6 +6,7 @@ import ShellforgeDesign
 public struct SidebarLayoutSettings {
     private static let widthKey = "ShellforgeSidebarWidth"
     private static let hiddenKey = "ShellforgeSidebarHidden"
+    private static let scaleKey = "ShellforgeSidebarScale"
     private let defaults: UserDefaults
 
     public init(defaults: UserDefaults) { self.defaults = defaults }
@@ -30,6 +31,16 @@ public struct SidebarLayoutSettings {
     public var hidden: Bool {
         get { defaults.bool(forKey: Self.hiddenKey) }
         nonmutating set { defaults.set(newValue, forKey: Self.hiddenKey) }
+    }
+
+    /// The sidebar's text size (⌘+ / ⌘− while it is the window's active side): one of
+    /// `InterfaceScale.all`, saved as its factor; anything else reads as `.standard`.
+    public var scale: InterfaceScale {
+        get {
+            let saved = defaults.double(forKey: Self.scaleKey)
+            return InterfaceScale.all.first { $0.factor == saved } ?? .standard
+        }
+        nonmutating set { defaults.set(Double(newValue.factor), forKey: Self.scaleKey) }
     }
 
     /// A window's preferred width after its edge moved `delta`: from its own preferred width, not
