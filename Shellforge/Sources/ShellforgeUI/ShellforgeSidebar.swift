@@ -15,18 +15,27 @@ public enum ShellforgeSidebar {
     /// `machine` is the app's one sampler of the Mac's readings, for the footer.
     /// `backpack` is the app's one Backpack Mode; `showBackpack` hands back how this sidebar opens
     /// its sheet, for the View menu's ⌘B. `hideSidebar` is the header's Hide Sidebar button: ⌃⌘S.
+    /// `zoom` is the app's one text size, which every window's sidebar draws at; its sheets, in
+    /// panels of their own, stay at `.standard`.
     public static func makeView(model: SidebarModel, chooseFolder: @escaping @MainActor () -> String?, hooks: AgentHooksModel,
-                                machine: MachineMonitor, backpack: BackpackController,
+                                machine: MachineMonitor, backpack: BackpackController, zoom: SidebarZoom,
                                 showBackpack: @escaping @MainActor (@escaping @MainActor () -> Void) -> Void = { _ in },
                                 hideSidebar: @escaping @MainActor () -> Void = {}) -> NSView {
-        let host = SidebarHostingView(rootView: SidebarView(model: model, chooseFolder: chooseFolder, hooks: hooks, machine: machine,
-                                                            backpack: backpack, showBackpack: showBackpack, hideSidebar: hideSidebar))
+        let sidebar = SidebarView(model: model, chooseFolder: chooseFolder, hooks: hooks, machine: machine,
+                                  backpack: backpack, showBackpack: showBackpack, hideSidebar: hideSidebar)
+        let host = SidebarHostingView(rootView: ZoomedSidebar(zoom: zoom, sidebar: sidebar))
         host.frame = NSRect(x: 0, y: 0, width: width, height: 400)
         // AiTerm is dark-only and forced the whole app dark; here only the sidebar is, so iTerm2's
         // own windows keep the appearance the user chose. Every colour below resolves against this.
         host.appearance = NSAppearance(named: .darkAqua)
         host.autoresizingMask = [.height]
         return host
+    }
+
+    /// Whether `view` is a sidebar `makeView` made, or inside one.
+    public static func contains(_ view: NSView?) -> Bool {
+        guard let view else { return false }
+        return sequence(first: view, next: \.superview).contains { $0 is SidebarHostingView<ZoomedSidebar> }
     }
 }
 
@@ -72,6 +81,14 @@ struct SidebarFooterHost: View {
                           toggleMac: toggleMac, openMacSettings: openMacSettings)
         }
     }
+}
+
+/// The sidebar at the app's text size, redrawn when ⌘+ / ⌘− changes it.
+struct ZoomedSidebar: View {
+    @ObservedObject var zoom: SidebarZoom
+    let sidebar: SidebarView
+
+    var body: some View { sidebar.interfaceScale(zoom.scale) }
 }
 
 /// The sidebar's host: where `NativeRowHighlight` stops looking for its list.

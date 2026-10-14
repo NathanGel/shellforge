@@ -14825,12 +14825,16 @@ typedef NS_ENUM(NSUInteger, iTermBroadcastCommand) {
     [iTermAdjustFontSizeHelper toggleSizeChangesAffectProfile];
 }
 - (IBAction)biggerFont:(id)sender {
+    // Shellforge: the sidebar's text, while the window's last click was in it.
+    if ([iTermShellforgeSidebar zoomSidebarIn:self by:1]) { return; }
     [iTermAdjustFontSizeHelper biggerFont:self.currentSession];
 }
 - (IBAction)smallerFont:(id)sender {
+    if ([iTermShellforgeSidebar zoomSidebarIn:self by:-1]) { return; }
     [iTermAdjustFontSizeHelper smallerFont:self.currentSession];
 }
 - (IBAction)returnToDefaultSize:(id)sender {
+    if ([iTermShellforgeSidebar zoomSidebarIn:self by:0]) { return; }
     [iTermAdjustFontSizeHelper returnToDefaultSize:self.currentSession
                                      resetRowsCols:[sender isAlternate]];
 }

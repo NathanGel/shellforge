@@ -122,3 +122,4 @@ The sidebar staying dark inside a light iTerm2 is held by `theSidebarDrawsDarkIn
 `theHooksPanelIsDark`. It was not switched live.
 | `README.md` | Shellforge's readme; iTerm2's moved to `README-iTerm2.md` | The repository's front page says what it is |
 | `images/AppIcon/iTerm2 App Icon for {Release,Nightly,Beta}.icon` | Shellforge's forge icon: a graphite fill and the amber anvil as one layer (`forge.png`), cut from `images/AppIcon/shellforge-icon-source.png` | Shellforge's own identity, not iTerm2's mark; the bundle names stay so no build setting changes |
+| `sources/TerminalView/PseudoTerminal.m` (`biggerFont:`, `smallerFont:`, `returnToDefaultSize:`) | Asks `iTermShellforgeSidebar zoomSidebarIn:by:` first and stops when it says YES | ⌘+ / ⌘− / ⌘0 size the sidebar's text while the window's last click was in the sidebar |
