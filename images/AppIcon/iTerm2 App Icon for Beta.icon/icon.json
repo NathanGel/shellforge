@@ -2,8 +2,8 @@
   "color-space-for-untagged-svg-colors" : "display-p3",
   "fill" : {
     "linear-gradient" : [
-      "display-p3:0.00000,0.00000,0.00000,1.00000",
-      "display-p3:0.08178,0.00452,0.09262,1.00000"
+      "display-p3:0.16500,0.17200,0.19200,1.00000",
+      "display-p3:0.05500,0.06000,0.07500,1.00000"
     ]
   },
   "groups" : [
@@ -18,40 +18,10 @@
               }
             }
           ],
-          "image-name" : "cursor@2x 4.png",
-          "name" : "cursor@2x 4",
+          "image-name" : "forge.png",
+          "name" : "forge",
           "position" : {
-            "scale" : 1,
-            "translation-in-points" : [
-              109.0859375,
-              191.1875
-            ]
-          }
-        },
-        {
-          "fill-specializations" : [
-            {
-              "appearance" : "tinted",
-              "value" : {
-                "solid" : "extended-gray:1.00000,1.00000"
-              }
-            }
-          ],
-          "image-name" : "b.png",
-          "name" : "b",
-          "position" : {
-            "scale" : 1,
-            "translation-in-points" : [
-              -255.079833984375,
-              -125.42919921875
-            ]
-          }
-        },
-        {
-          "image-name" : "bezel.png",
-          "name" : "bezel",
-          "position" : {
-            "scale" : 0.67,
+            "scale" : 0.8,
             "translation-in-points" : [
               0,
               0
@@ -64,7 +34,7 @@
         "opacity" : 0.5
       },
       "translucency" : {
-        "enabled" : true,
+        "enabled" : false,
         "value" : 0.5
       }
     }
