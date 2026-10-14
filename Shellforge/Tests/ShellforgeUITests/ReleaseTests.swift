@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import Foundation
 import Testing
@@ -50,4 +51,41 @@ import Testing
         #expect(sheets.count == 0)
         #expect(sheets.present(for: nil) == false)
     }
+
+    /// Thirty windows opened and closed as the app opens them — each a real sidebar view in a real
+    /// window, registered for ⌘B — leave no sidebar behind (M6c's churn).
+    @Test func aChurnOfWindowsLeavesNoSidebars() async throws {
+        let document = WorkspaceDocument(store: WorkspaceStore(folder: TestScratch.root.appendingPathComponent("churn-\(UUID().uuidString)")))
+        let launcher = try GitRepoForUI().launcher
+        let home = TestScratch.root.appendingPathComponent("churn-home-\(UUID().uuidString)")
+        let hooks = AgentHooksModel(integrations: HookIntegrations(home: home, resources: .bundled(resourceURL: nil)), names: [:])
+        let machine = MachineMonitor(sensor: InertMachineSensor(), power: InertPower())
+        let backpack = BackpackController(ports: .inert, settings: BackpackSettings(defaults: nil), toast: { _ in })
+        let sheets = BackpackSheets()
+        var models: [WeakModel] = []
+        for _ in 0..<30 {
+            autoreleasepool {
+                let model = SidebarModel(host: FakeTerminalHost(), document: document, launcher: launcher, jiraSettings: { nil })
+                models.append(WeakModel(model))
+                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 400), styleMask: [.titled],
+                                      backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false
+                window.contentView = ShellforgeSidebar.makeView(model: model, chooseFolder: { nil }, hooks: hooks, machine: machine,
+                                                                backpack: backpack, showBackpack: { [weak window] present in
+                    if let window { sheets.register(window, present) }
+                })
+                window.displayIfNeeded()
+                RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+                window.close()
+                window.contentView = nil
+            }
+        }
+        #expect(sheets.count == 0)
+        #expect(await eventually { models.allSatisfy { $0.model == nil } }, "\(models.filter { $0.model != nil }.count) sidebars outlived their windows")
+    }
+}
+
+private final class WeakModel {
+    weak var model: SidebarModel?
+    init(_ model: SidebarModel) { self.model = model }
 }
