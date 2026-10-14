@@ -131,8 +131,17 @@ const CGFloat PTYTextViewMarginClickGraceWidth = 2.0;
 @end
 
 @implementation PTYTextView {
+    // The selection most recently set by an accessibility client, such as Voice Control selecting
+    // a word to correct. Forgotten on the next keypress or insertion.
+    BOOL _hasAccessibilitySelectedRange;
+    VT100GridAbsCoordRange _accessibilitySelectedRange;
+
     // -refresh does not want to be reentrant.
     BOOL _inRefresh;
+
+    // A cmd-opt-shift drag in a floating pane's text moves the float. Its drags and mouse-up go to
+    // the move rather than the mouse handler.
+    BOOL _movingFloatingPane;
 
     // geometry
     double _lineHeight;
@@ -221,31 +230,6 @@ const CGFloat PTYTextViewMarginClickGraceWidth = 2.0;
 }
 
 
-// This is an attempt to fix performance problems that appeared in macOS 10.14
-// (rdar://45295749, also mentioned in PTYScrollView.m).
-//
-// It seems that some combination of implementing drawRect:, not having a
-// layer, having a frame larger than the clip view, and maybe some other stuff
-// I can't figure out causes terrible performance problems.
-//
-// For a while I worked around this by dismembering the scroll view. The scroll
-// view itself would be hidden, while its scrollers were reparented and allowed
-// to remain visible. This worked around it, but I'm sure it caused crashes and
-// weird behavior. It may have been responsible for issue 8405.
-//
-// After flailing around for a while, I discovered that giving the view a layer
-// and hiding it while using Metal seems to fix the problem (at least on my iMac).
-//
-// My fear is that giving it a layer will break random things because that is a
-// proud tradition of layers on macOS. Time will tell if that is true.
-//
-// The test for whether performance is "good" or "bad" is to use the default
-// app settings and make a maximized window on a 2014 iMac. Run tests/spam.cc.
-// You should get just about 60 fps if it's fast, and 30-45 if it's slow.
-+ (BOOL)useLayerForBetterPerformance {
-    return ![iTermAdvancedSettingsModel dismemberScrollView];
-}
-
 + (NSSize)charSizeForFont:(NSFont *)aFont
         horizontalSpacing:(CGFloat)hspace
           verticalSpacing:(CGFloat)vspace {
@@ -291,9 +275,6 @@ const CGFloat PTYTextViewMarginClickGraceWidth = 2.0;
         // to know I want to keep control over this because debugging it will be horrible. So every
         // draw call (NSRectFill, etc.) does a last-second translation by the virtual offset.
         [super setAlphaValue:0];
-        _focusFollowsMouse = [[iTermFocusFollowsMouse alloc] init];
-        _focusFollowsMouse.delegate = self;
-        [_focusFollowsMouse resetMouseLocationToRefuseFirstResponderAt];
         _drawingHelper = [[iTermTextDrawingHelper alloc] init];
         _drawingHelper.delegate = self;
 
@@ -369,7 +350,8 @@ const CGFloat PTYTextViewMarginClickGraceWidth = 2.0;
         _badgeLabel = [[iTermBadgeLabel alloc] init];
         _badgeLabel.delegate = self;
 
-        [_focusFollowsMouse refuseFirstResponderAtCurrentMouseLocation];
+        // A new view under a still pointer must not take focus from the pane that has it.
+        [[iTermPaneFocusFollowsMouse shared] freeze];
 
         _scrollAccumulator = [[iTermScrollAccumulator alloc] init];
 
@@ -460,7 +442,6 @@ const CGFloat PTYTextViewMarginClickGraceWidth = 2.0;
     [_selectCommandTimer release];
     [_marginColorWidthBuffer release];
     [_marginColorTwiceHeightBuffer release];
-    [_focusFollowsMouse release];
     _cursorSlideAnimator.delegate = nil;
     [_cursorSlideAnimator release];
 
@@ -582,11 +563,11 @@ const CGFloat PTYTextViewMarginClickGraceWidth = 2.0;
         return [_delegate textViewCanCycleWorkgroupPeer];
     }
     if ([item action] == @selector(pasteBase64Encoded:)) {
-        return [[NSPasteboard generalPasteboard] dataForFirstFile] != nil;
+        return [[NSPasteboard generalPasteboard] hasReadableFirstFile];
     }
     if (item.action == @selector(bury:)) {
-        // Disable bury for synthetic sessions - it doesn't work correctly
-        return ![_delegate textViewIsSyntheticSession];
+        // Disabled for synthetic sessions, where it doesn't work correctly, and for tmux floats.
+        return [_delegate textViewCanBury];
     }
     if (item.action == @selector(terminalStateToggleAlternateScreen:) ||
         item.action == @selector(terminalStateToggleFocusReporting:) ||
@@ -597,7 +578,7 @@ const CGFloat PTYTextViewMarginClickGraceWidth = 2.0;
         item.action == @selector(terminalToggleKeyboardMode:) ||
         item.action == @selector(terminalStateToggleLiteralMode:)) {
         item.state = [self.delegate textViewTerminalStateForMenuItem:item] ? NSControlStateValueOn : NSControlStateValueOff;
-        return YES;
+        return [self.delegate textViewCanToggleTerminalStateForMenuItem:item];
     }
     if (item.action == @selector(terminalStateSetEmulationLevel:)) {
         item.state = [self.delegate textViewTerminalStateEmulationLevel] == item.tag;
@@ -789,6 +770,7 @@ const CGFloat PTYTextViewMarginClickGraceWidth = 2.0;
 }
 
 - (void)keyDown:(NSEvent *)event {
+    _hasAccessibilitySelectedRange = NO;
     [_mouseHandler keyDown:event];
     [_keyboardHandler keyDown:event inputContext:self.inputContext];
 }
@@ -1292,14 +1274,15 @@ static NSString *iTermStringForEventPhase(NSEventPhase eventPhase) {
 }
 
 - (void)mouseUp:(NSEvent *)event {
+    if (_movingFloatingPane) {
+        _movingFloatingPane = NO;
+        [_delegate textViewFloatingPaneMoveMouseUp:event];
+        return;
+    }
     [_mouseHandler mouseUp:event];
 }
 
 - (BOOL)wantsMouseMovementEvents {
-    if (_focusFollowsMouse.haveTrackedMovement) {
-        DLog(@"Have a mouse location to refuse first responder at, so track mouse moved");
-        return YES;
-    }
     const NSEventModifierFlags flags = [[iTermApplication sharedApplication] it_modifierFlags];
     const BOOL commandPressed = (flags & NSEventModifierFlagCommand) != 0;
     if (commandPressed) {
@@ -1314,46 +1297,38 @@ static NSString *iTermStringForEventPhase(NSEventPhase eventPhase) {
         DLog(@"Have visible blocks");
         return YES;
     }
-    if (@available(macOS 11, *)) {
-        if ([self hasTerminalButtons]) {
-            DLog(@"Have terminal buttons");
-            return YES;
-        }
+    if ([self hasTerminalButtons]) {
+        DLog(@"Have terminal buttons");
+        return YES;
     }
     return [_mouseHandler wantsMouseMovementEvents] || [self hasTerminalButtons];
 }
 
 - (BOOL)hasTerminalButtons {
-    if (@available(macOS 11, *)) {
-        return _buttons.count > 0 || _hoverBlockCopyButton != nil || _hoverBlockFoldButton != nil;
-    }
-    return NO;
+    return _buttons.count > 0 || _hoverBlockCopyButton != nil || _hoverBlockFoldButton != nil;
 }
 
 - (BOOL)mouseIsOverButtonInEvent:(NSEvent *)event {
-    if (@available(macOS 11, *)) {
-        const NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
-        DLog(@"%@", NSStringFromPoint(point));
-        NSArray<iTermTerminalButton *> *buttons = _buttons;
-        if (_hoverBlockFoldButton) {
-            buttons = [buttons arrayByAddingObject:_hoverBlockFoldButton];
-        }
-        if (_hoverBlockCopyButton) {
-            buttons = [buttons arrayByAddingObject:_hoverBlockCopyButton];
-        }
-        DLog(@"Mouse at %@", NSStringFromPoint(point));
-        // Check direct button hits
-        BOOL directHit = [buttons anyWithBlock:^BOOL(iTermTerminalButton *button) {
-            DLog(@"Button %@ at %@", button, NSStringFromRect(button.desiredFrame));
-            return NSPointInRect(point, button.desiredFrame);
-        }];
-        if (directHit) {
-            return YES;
-        }
-        // Also check pill container areas
-        return [self buttonInPillContainerAtPoint:point] != nil;
+    const NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
+    DLog(@"%@", NSStringFromPoint(point));
+    NSArray<iTermTerminalButton *> *buttons = _buttons;
+    if (_hoverBlockFoldButton) {
+        buttons = [buttons arrayByAddingObject:_hoverBlockFoldButton];
     }
-    return NO;
+    if (_hoverBlockCopyButton) {
+        buttons = [buttons arrayByAddingObject:_hoverBlockCopyButton];
+    }
+    DLog(@"Mouse at %@", NSStringFromPoint(point));
+    // Check direct button hits
+    BOOL directHit = [buttons anyWithBlock:^BOOL(iTermTerminalButton *button) {
+        DLog(@"Button %@ at %@", button, NSStringFromRect(button.desiredFrame));
+        return NSPointInRect(point, button.desiredFrame);
+    }];
+    if (directHit) {
+        return YES;
+    }
+    // Also check pill container areas
+    return [self buttonInPillContainerAtPoint:point] != nil;
 }
 
 // Find the button that should handle a click at the given point if it's within a pill container
@@ -1391,7 +1366,6 @@ static NSString *iTermStringForEventPhase(NSEventPhase eventPhase) {
 // If this changes also update -wantsMouseMovementEvents.
 - (void)mouseMoved:(NSEvent *)event {
     DLog(@"mouseMoved:%@", event);
-    [_focusFollowsMouse mouseMoved:event];
     [self updateUnderlinedURLs:event];
     [self updateButtonHover:event.locationInWindow pressed:!!([NSEvent pressedMouseButtons] & 1)];
     [self updateCursor:event];
@@ -1399,6 +1373,10 @@ static NSString *iTermStringForEventPhase(NSEventPhase eventPhase) {
 }
 
 - (void)mouseDragged:(NSEvent *)event {
+    if (_movingFloatingPane) {
+        [_delegate textViewFloatingPaneMoveMouseDragged:event];
+        return;
+    }
     [self updateButtonHover:event.locationInWindow pressed:YES];
     [_mouseHandler mouseDragged:event];
 }
@@ -1470,9 +1448,6 @@ static NSString *iTermStringForEventPhase(NSEventPhase eventPhase) {
 
 - (void)mouseExited:(NSEvent *)event {
     DLog(@"Mouse exited %@", self);
-    if ([_focusFollowsMouse mouseExited:event]) {
-        [self requestDelegateRedraw];
-    }
     [self updateUnderlinedURLs:event];
 
     [_hoverBlockCopyButton autorelease];
@@ -1490,20 +1465,7 @@ static NSString *iTermStringForEventPhase(NSEventPhase eventPhase) {
 - (void)mouseEntered:(NSEvent *)event {
     DLog(@"Mouse entered %@", self);
     [_mouseHandler mouseEntered:event];
-
-    if ([_focusFollowsMouse mouseWillEnter:event]) {
-        [self requestDelegateRedraw];
-    }
     [self updateUnderlinedURLs:event];
-    NSScrollView *scrollView = self.enclosingScrollView;
-    if ([scrollView hitTest:[scrollView convertPoint:event.locationInWindow fromView:nil]] == nil) {
-        DLog(@"hitTest at %@ in view (%@ in window) gives nil", NSStringFromPoint([self convertPoint:event.locationInWindow fromView:nil]),
-              NSStringFromPoint(event.locationInWindow));
-        DLog(@"Event %@ at window coord %@ failed hit test for view with window coords %@",
-             event, NSStringFromPoint(event.locationInWindow), NSStringFromRect([self convertRect:self.bounds toView:nil]));
-        return;
-    }
-    [_focusFollowsMouse mouseEntered:event];
 }
 
 #pragma mark - NSView Mouse Helpers
@@ -1597,6 +1559,25 @@ static NSString *iTermStringForEventPhase(NSEventPhase eventPhase) {
     return dx > 0 && dx <= cellWidth * (maxCells + 0.5);  // Allow small tolerance
 }
 
+// The smear exists so your eye can follow the cursor after a jump you caused. A
+// program that redraws the screen on its own, like top, moves the cursor just as
+// far without any input, and a frame drawn in the middle of that redraw would
+// smear a streak across the screen. So only animate shortly after user input.
+// This gate varies from frame to frame, so it only decides whether to start an
+// animation, never whether to track the cursor. Issue 13034.
+- (BOOL)smearGateIsOpen {
+    if (self.animateMovementOnlyInInteractiveApps && !self.delegate.textViewInInteractiveApplication) {
+        DLog(@"Not in interactive app");
+        return NO;
+    }
+    const NSTimeInterval sinceInput = [self.delegate textViewTimeSinceLastUserInput];
+    if (sinceInput > [iTermAdvancedSettingsModel cursorAnimationInputWindow]) {
+        DLog(@"No user input in the last %0.2f seconds", sinceInput);
+        return NO;
+    }
+    return YES;
+}
+
 - (void)smearCursorIfNeededWithDrawingHelper:(iTermTextDrawingHelper *)drawingHelper {
     [self smearCursorIfNeededWithDrawingHelper:drawingHelper
                                     legacyView:nil
@@ -1617,13 +1598,17 @@ static NSString *iTermStringForEventPhase(NSEventPhase eventPhase) {
         return;
     }
 
-    const BOOL smearEnabled = (self.animateMovement &&
-                               !(self.animateMovementOnlyInInteractiveApps &&
-                                 !self.delegate.textViewInInteractiveApplication));
+    // animateMovement is the profile switch for “Animate large movements”. It
+    // alone decides whether cursor positions are tracked from frame to frame;
+    // everything that can change while the session runs lives in the gate.
+    const BOOL smearPreferred = self.animateMovement;
     const BOOL smoothSlideEnabled = self.cursorSmoothSlide;
     const BOOL isLegacyPath = (legacyView != nil);
 
-    if (!smearEnabled && !smoothSlideEnabled) {
+    // Keep tracking _previousCursorFrame whenever the smear is preferred, even
+    // while the gate is closed, so the first animation after it reopens starts
+    // from where the cursor actually was on the previous frame.
+    if (!smearPreferred && !smoothSlideEnabled) {
         DLog(@"No cursor animation enabled");
         return;
     }
@@ -1668,7 +1653,7 @@ static NSString *iTermStringForEventPhase(NSEventPhase eventPhase) {
                 // Metal renderer: track animation state, Metal will draw cursor at interpolated position
                 [_cursorSlideAnimator beginMetalAnimationFrom:from to:to];
             }
-        } else if (smearEnabled) {
+        } else if (smearPreferred && [self smearGateIsOpen]) {
             [self.delegate textViewSmearCursorFrom:from
                                                 to:to
                                              color:drawingHelper.cursorColor];
@@ -2013,19 +1998,14 @@ static NSString *iTermStringForEventPhase(NSEventPhase eventPhase) {
     }
     DLog(@"Set suppressDrawing to %@ from %@", @(suppressDrawing), [NSThread callStackSymbols]);
     _suppressDrawing = suppressDrawing;
-    if (PTYTextView.useLayerForBetterPerformance) {
-        if (@available(macOS 10.15, *)) {} {
-            // Using a layer in a view inside a scrollview is a disaster, per macOS
-            // tradition (insane drawing artifacts, especially when scrolling). But
-            // not using a layer makes it godawful slow (see note about
-            // rdar://45295749). So use a layer when the view is hidden, and
-            // remove it when visible.
-            if (suppressDrawing) {
-                self.layer = [[[CALayer alloc] init] autorelease];
-            } else {
-                self.layer = nil;
-            }
-        }
+    // Using a layer in a view inside a scrollview is a disaster, per macOS
+    // tradition (insane drawing artifacts, especially when scrolling). But
+    // not using a layer makes it godawful slow (rdar://45295749).
+    // So use a layer when the view is hidden, and remove it when visible.
+    if (suppressDrawing) {
+        self.layer = [[[CALayer alloc] init] autorelease];
+    } else {
+        self.layer = nil;
     }
     PTYScrollView *scrollView = (PTYScrollView *)self.enclosingScrollView;
     [scrollView.verticalScroller setNeedsDisplay:YES];
@@ -2082,6 +2062,8 @@ static NSString *iTermStringForEventPhase(NSEventPhase eventPhase) {
     helper.minimumContrast = _drawingHelper.minimumContrast;
     helper.transparencyAffectsOnlyDefaultBackgroundColor = _drawingHelper.transparencyAffectsOnlyDefaultBackgroundColor;
     helper.useSmartCursorColor = _drawingHelper.useSmartCursorColor;
+    helper.hdrCursorEnabled = _drawingHelper.hdrCursorEnabled;
+    helper.hdrCursorBrightness = _drawingHelper.hdrCursorBrightness;
 
     if (forOffscreen) {
         // Offscreen rendering: disable all interactive features
@@ -2137,7 +2119,7 @@ static NSString *iTermStringForEventPhase(NSEventPhase eventPhase) {
         helper.textViewIsActiveSession = [self.delegate textViewIsActiveSession];
         helper.textViewIsFirstResponder = self.window.firstResponder == self;
         helper.isInKeyWindow = [self isInKeyWindow];
-        helper.shouldDrawFilledInCursor = ([self.delegate textViewShouldDrawFilledInCursor] || _focusFollowsMouse.haveStolenFocus);
+        helper.shouldDrawFilledInCursor = [self.delegate textViewShouldDrawFilledInCursor];
         helper.isFrontTextView = (self == [[iTermController sharedInstance] frontTextView]);
         helper.drawMarkIndicators = [_delegate textViewShouldShowMarkIndicators];
         helper.useThemeMarkColors = [_delegate textViewShouldUseThemeMarkColors];
@@ -2183,9 +2165,7 @@ static NSString *iTermStringForEventPhase(NSEventPhase eventPhase) {
     }
 
     [_drawingHelper updateCachedMetrics];
-    if (@available(macOS 11, *)) {
-        [self updateTooltipsForButtons:[_drawingHelper updateButtonFrames]];
-    }
+    [self updateTooltipsForButtons:[_drawingHelper updateButtonFrames]];
 
     const VT100GridRange range = [self rangeOfVisibleLines];
     const int topBottomMargin = [iTermPreferences topBottomMargins];
@@ -2223,7 +2203,7 @@ static NSString *iTermStringForEventPhase(NSEventPhase eventPhase) {
     return helper;
 }
 
-- (void)updateTooltipsForButtons:(NSArray<iTermTerminalButton *> *)buttons NS_AVAILABLE_MAC(11_0) {
+- (void)updateTooltipsForButtons:(NSArray<iTermTerminalButton *> *)buttons {
     if (!buttons.count && _haveTooltips) {
         [self removeAllToolTips];
         _haveTooltips = NO;
@@ -2367,6 +2347,17 @@ static NSString *iTermStringForEventPhase(NSEventPhase eventPhase) {
 
     [_indicatorsHelper setIndicator:kiTermIndicatorMaximized
                             visible:[_delegate textViewIsMaximized]
+                     darkBackground:isDark];
+    const NSInteger hiddenFloatingPanes = ([_delegate respondsToSelector:@selector(textViewNumberOfHiddenFloatingPanes)] ?
+                                           [_delegate textViewNumberOfHiddenFloatingPanes] : 0);
+    _indicatorsHelper.hiddenFloatingPaneCount = hiddenFloatingPanes;
+    if (hiddenFloatingPanes > 0 && [_delegate respondsToSelector:@selector(textViewHiddenFloatingPanesBadge)]) {
+        _indicatorsHelper.hiddenFloatingPanesBadge = [_delegate textViewHiddenFloatingPanesBadge];
+    } else {
+        _indicatorsHelper.hiddenFloatingPanesBadge = nil;
+    }
+    [_indicatorsHelper setIndicator:kiTermIndicatorHiddenFloatingPanes
+                            visible:hiddenFloatingPanes > 0
                      darkBackground:isDark];
     const BOOL receivesBroadcasts = [_delegate textViewSessionIsBroadcastingInput:YES];
     const BOOL sendsBroadcasts = [_delegate textViewSessionIsBroadcastingInput:NO];
@@ -2743,6 +2734,22 @@ static NSString *iTermStringForEventPhase(NSEventPhase eventPhase) {
 
 - (BOOL)useSmartCursorColor {
     return _drawingHelper.useSmartCursorColor;
+}
+
+- (void)setHdrCursorEnabled:(BOOL)value {
+    _drawingHelper.hdrCursorEnabled = value;
+}
+
+- (BOOL)hdrCursorEnabled {
+    return _drawingHelper.hdrCursorEnabled;
+}
+
+- (void)setHdrCursorBrightness:(CGFloat)value {
+    _drawingHelper.hdrCursorBrightness = value;
+}
+
+- (CGFloat)hdrCursorBrightness {
+    return _drawingHelper.hdrCursorBrightness;
 }
 
 - (void)setMinimumContrast:(double)value {
@@ -3560,23 +3567,21 @@ static NSString *iTermStringForEventPhase(NSEventPhase eventPhase) {
                         absLineRange:(NSRange)absLineRange
                              changed:(out BOOL *)changedPtr {
     *changedPtr = NO;
-    if (@available(macOS 11, *)) {
-        if (!block) {
-            if (_hoverBlockCopyButton != nil || _hoverBlockFoldButton != nil) {
-                *changedPtr = YES;
-            }
-            _hoverBlockCopyButton = nil;
-            _hoverBlockFoldButton = nil;
-        } else {
-            if (![_hoverBlockCopyButton.blockID isEqualToString:block]) {
-                *changedPtr = YES;
-                [self makeBlockCopyButtonForLine:line block:block];
-            }
-            [self makeOrUpdateBlockFoldButtonForLine:line
-                                               block:block
-                                        absLineRange:absLineRange
-                                             changed:changedPtr];
+    if (!block) {
+        if (_hoverBlockCopyButton != nil || _hoverBlockFoldButton != nil) {
+            *changedPtr = YES;
         }
+        _hoverBlockCopyButton = nil;
+        _hoverBlockFoldButton = nil;
+    } else {
+        if (![_hoverBlockCopyButton.blockID isEqualToString:block]) {
+            *changedPtr = YES;
+            [self makeBlockCopyButtonForLine:line block:block];
+        }
+        [self makeOrUpdateBlockFoldButtonForLine:line
+                                           block:block
+                                    absLineRange:absLineRange
+                                         changed:changedPtr];
     }
 }
 
@@ -3589,7 +3594,7 @@ static NSString *iTermStringForEventPhase(NSEventPhase eventPhase) {
                                                                 blockID:block
                                                                    mark:nil
                                                                    absY:@(i + _dataSource.totalScrollbackOverflow)
-                                                                tooltip:@"Copy block to clipboard"];
+                                                                tooltip:NSLocalizedStringWithDefaultValue(@"PTYTextView.CopyBlockTooltip", nil, [NSBundle mainBundle], @"Copy block to clipboard", @"Tooltip for the button that copies a block to the clipboard")];
     _hoverBlockCopyButton.isFloating = YES;
     __weak __typeof(self) weakSelf = self;
     const long long offset = _dataSource.totalScrollbackOverflow;
@@ -3882,12 +3887,11 @@ static NSString *iTermStringForEventPhase(NSEventPhase eventPhase) {
 
     DLog(@"Total scrollback overflow is %lld", [_dataSource totalScrollbackOverflow]);
 
-    [_selection beginSelectionAtAbsCoord:range.start
-                                    mode:kiTermSelectionModeCharacter
-                                  resume:NO
-                                  append:NO];
-    [_selection moveSelectionEndpointTo:range.end];
-    [_selection endLiveSelection];
+    // `range` is LOGICAL. Commit it as a logical selection rather than driving a
+    // character-mode live selection, which with bidi on would treat these as
+    // visual columns and mis-select on right-to-left lines.
+    [_selection setSelectedLogicalRange:VT100GridAbsWindowedRangeMake(range, 0, 0)
+                                   mode:kiTermSelectionModeCharacter];
     DLog(@"Done selecting output of last command.");
 
     if ([iTermPreferences boolForKey:kPreferenceKeySelectionCopiesText]) {
@@ -3984,6 +3988,20 @@ static NSString *iTermStringForEventPhase(NSEventPhase eventPhase) {
 }
 
 // Returns YES if the selection changed.
+// The mouse reports the column it physically points at (visual). On a
+// bidi-reordered line that differs from the logical cell the selection model
+// stores, which is why a right-to-left selection used to highlight the wrong
+// cells. Returns the input unchanged when bidi is off or the line has no
+// reordering, so left-to-right text is untouched.
+- (VT100GridCoord)logicalCoordForVisualCoord:(VT100GridCoord)visualCoord {
+    if (![iTermPreferences bidiEnabled]) {
+        return visualCoord;
+    }
+    iTermTextExtractor *extractor = [iTermTextExtractor textExtractorWithDataSource:_dataSource];
+    extractor.supportBidi = YES;
+    return [extractor logicalCoordForVisualCoord:visualCoord];
+}
+
 - (BOOL)moveSelectionEndpointToX:(int)x Y:(int)y locationInTextView:(NSPoint)locationInTextView {
     if (!_selection.live) {
         return NO;
@@ -3992,15 +4010,38 @@ static NSString *iTermStringForEventPhase(NSEventPhase eventPhase) {
     DLog(@"Move selection endpoint to %d,%d, coord=%@",
          x, y, [NSValue valueWithPoint:locationInTextView]);
     int width = [_dataSource width];
+    BOOL completingPreviousLine = NO;
     if (locationInTextView.y == 0) {
         x = y = 0;
     } else if (locationInTextView.x < [iTermPreferences sideMargins] && _selection.liveRange.coordRange.start.y < y) {
         // complete selection of previous line
+        completingPreviousLine = YES;
         x = width;
         y--;
     }
-    if (y >= [_dataSource numberOfLines]) {
-        y = [_dataSource numberOfLines] - 1;
+    const int numberOfLines = [_dataSource numberOfLines];
+    if (y >= numberOfLines) {
+        y = numberOfLines - 1;
+    }
+    // The x above is a VISUAL coordinate. Character selections are VISUAL on
+    // bidi lines: the live range stores the columns the user dragged over,
+    // the highlight converts per line, and endLiveSelection decomposes into
+    // logical subselections, so x passes through untouched. Word and line
+    // modes expand from the logical cell, so convert for them; a no-op on
+    // left-to-right lines. Only convert for an on-screen line: selection
+    // auto-scroll can pass a y below the top (negative) or an empty buffer
+    // can leave y = -1, and fetching that line to read its bidi info would
+    // assert.
+    // Convert unless the live range is VISUAL. A new character drag with bidi on
+    // stores visual columns (liveRangeIsVisual == YES), so x passes through. But a
+    // shift-click EXTEND of a character selection restored its range from a
+    // committed LOGICAL subselection (liveRangeIsVisual == NO), so its moving
+    // endpoint must be converted like word/line modes, or the anchor (logical) and
+    // endpoint (visual) mix and select the mirror cells on a right-to-left line.
+    if (!completingPreviousLine && y >= 0 && y < numberOfLines &&
+        !_selection.liveRangeIsVisual &&
+        x >= 0 && x < width) {
+        x = [self logicalCoordForVisualCoord:VT100GridCoordMake(x, y)].x;
     }
     const BOOL hasColumnWindow = (_selection.liveRange.columnWindow.location > 0 ||
                                   _selection.liveRange.columnWindow.length < width);
@@ -4045,7 +4086,13 @@ static NSString *iTermStringForEventPhase(NSEventPhase eventPhase) {
                     range:(VT100GridWindowedRange *)rangePtr
           respectDividers:(BOOL)respectDividers {
     iTermTextExtractor *extractor = [iTermTextExtractor textExtractorWithDataSource:_dataSource];
-    extractor.supportBidi = [iTermPreferences bidiEnabled];
+    // The caller (word selection) passes a coordinate that has already been
+    // converted from visual to logical. Run the extractor in logical space
+    // (supportBidi off) so it neither re-converts the input (which would land on
+    // the mirror-image cell) nor converts the result back to visual. That keeps
+    // the returned word range logical, matching how the selection is stored,
+    // highlighted, and copied.
+    extractor.supportBidi = NO;
     VT100GridCoord coord = VT100GridCoordMake(x, y);
     if (respectDividers) {
         [extractor restrictToLogicalWindowIncludingCoord:coord];
@@ -4377,7 +4424,7 @@ static NSString *iTermStringForEventPhase(NSEventPhase eventPhase) {
 
     NSButton *timestampsButton = [[[NSButton alloc] init] autorelease];
     [timestampsButton setButtonType:NSButtonTypeSwitch];
-    timestampsButton.title = @"Include timestamps";
+    timestampsButton.title = NSLocalizedStringWithDefaultValue(@"PTYTextView.IncludeTimestamps", nil, [NSBundle mainBundle], @"Include timestamps", @"Save panel checkbox to include timestamps in the saved log");
     NSString *userDefaultsKey = @"NoSyncSaveWithTimestamps";
     timestampsButton.state = [[iTermUserDefaults userDefaults] boolForKey:userDefaultsKey] ? NSControlStateValueOn : NSControlStateValueOff;
     [timestampsButton sizeToFit];
@@ -4396,7 +4443,7 @@ static NSString *iTermStringForEventPhase(NSEventPhase eventPhase) {
     NSString *formattedDate = [dateFormatter stringFromDate:[NSDate date]];
     // Stupid mac os can't have colons in filenames
     formattedDate = [formattedDate stringByReplacingOccurrencesOfString:@":" withString:@"-"];
-    NSString *nowStr = [NSString stringWithFormat:@"Log at %@.txt", formattedDate];
+    NSString *nowStr = [NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"PTYTextView.LogFilename", nil, [NSBundle mainBundle], @"Log at %@.txt", @"Default filename for a saved log; %@ is the formatted date"), formattedDate];
 
     // Show the save panel. The first time it's done set the path, and from then on the save panel
     // will remember the last path you used.tmp
@@ -5205,24 +5252,35 @@ static NSString *iTermStringForEventPhase(NSEventPhase eventPhase) {
     if (files.count == 0) {
         return NO;
     }
+    // Bake the copy/scp verb into complete sentences rather than substituting a translated verb into
+    // a translated frame (the verb's placement and any surrounding agreement differ by language). The
+    // remaining %@ are self-contained values (file list, username, host, path), which is fine.
     if (files.count == 1) {
-        text = [NSString stringWithFormat:@"OK to %@\n%@\nto\n%@@%@:%@?",
-                useSSHIntegration ? @"copy" : @"scp",
+        NSString *format = useSSHIntegration
+            ? NSLocalizedStringWithDefaultValue(@"PTYTextView.ConfirmCopySingle", nil, [NSBundle mainBundle], @"OK to copy\n%1$@\nto\n%2$@@%3$@:%4$@?", @"Confirmation prompt to copy a single file over SSH; %@ is the file, username, host, and path")
+            : NSLocalizedStringWithDefaultValue(@"PTYTextView.ConfirmScpSingle", nil, [NSBundle mainBundle], @"OK to scp\n%1$@\nto\n%2$@@%3$@:%4$@?", @"Confirmation prompt to scp a single file; %@ is the file, username, host, and path");
+        text = [NSString stringWithFormat:format,
                 [files componentsJoinedByString:@", "],
                 path.username, path.hostname, path.path];
     } else {
-        text = [NSString stringWithFormat:@"OK to %@ the following files:\n%@\n\nto\n%@@%@:%@?",
-                useSSHIntegration ? @"copy" : @"scp",
+        NSString *format = useSSHIntegration
+            ? NSLocalizedStringWithDefaultValue(@"PTYTextView.ConfirmCopyMultiple", nil, [NSBundle mainBundle], @"OK to copy the following files:\n%1$@\n\nto\n%2$@@%3$@:%4$@?", @"Confirmation prompt to copy multiple files over SSH; %@ is the files, username, host, and path")
+            : NSLocalizedStringWithDefaultValue(@"PTYTextView.ConfirmScpMultiple", nil, [NSBundle mainBundle], @"OK to scp the following files:\n%1$@\n\nto\n%2$@@%3$@:%4$@?", @"Confirmation prompt to scp multiple files; %@ is the files, username, host, and path");
+        text = [NSString stringWithFormat:format,
                 [files componentsJoinedByString:@", "],
                 path.username, path.hostname, path.path];
     }
-    NSAlert *alert = [[[NSAlert alloc] init] autorelease];
-    alert.messageText = text;
-    [alert addButtonWithTitle:@"OK"];
-    [alert addButtonWithTitle:@"Cancel"];
-    [alert layout];
-    NSInteger button = [alert runModal];
-    return (button == NSAlertFirstButtonReturn);
+    const iTermWarningSelection selection =
+        [iTermWarning showWarningWithTitle:@""
+                                   actions:@[ iTermLocalizedOK(), iTermLocalizedCancel() ]
+                             actionMapping:nil
+                                 accessory:nil
+                                identifier:nil
+                               silenceable:kiTermWarningTypePersistent
+                                   heading:text
+                               cancelLabel:iTermLocalizedCancel()
+                                    window:nil];
+    return (selection == kiTermWarningSelection0);
 }
 
 - (void)maybeUpload:(NSArray *)tuple {
@@ -5520,7 +5578,10 @@ static NSString *iTermStringForEventPhase(NSEventPhase eventPhase) {
 - (NSRange)selectedRange {
     if (_selection.hasSelection) {
         DLog(@"Use range of selection");
-        return [self nsRangeForAbsCoordRange:_selection.allSubSelections.lastObject.absRange.coordRange];
+        // logicalSubSelections (not allSubSelections) so an IME/AX poll during an
+        // in-progress bidi character drag reads logical columns, not the raw visual
+        // live range.
+        return [self nsRangeForAbsCoordRange:_selection.logicalSubSelections.lastObject.absRange.coordRange];
     }
     DLog(@"Use range of cursor");
     return [self nsrangeOfCursor];
@@ -5568,46 +5629,21 @@ static NSString *iTermStringForEventPhase(NSEventPhase eventPhase) {
     return [self attributedSubstringForProposedRange:theRange actualRange:NULL];
 }
 
-- (NSAttributedString *)attributedSubstringForProposedRange:(NSRange)proposedRange
-                                                actualRange:(NSRangePointer)actualRange {
-    DLog(@"attributedSubstringForProposedRange:%@", NSStringFromRange(proposedRange));
-
-    // If the requested range overlaps with the IME marked text, return the
-    // marked text content. Otherwise fall through to the screen buffer, which
-    // Voice Control needs during composition to maintain context for spacing.
-    if (_drawingHelper.markedText.length > 0) {
-        NSRange mRange = [self markedRange];
-        NSRange overlap = NSIntersectionRange(proposedRange, mRange);
-        if (overlap.length > 0) {
-            NSUInteger startInMarked = overlap.location - mRange.location;
-            NSRange substringRange = NSMakeRange(startInMarked, overlap.length);
-            if (actualRange) {
-                *actualRange = overlap;
-            }
-            return [_drawingHelper.markedText attributedSubstringFromRange:substringRange];
-        }
-    }
-
-    // Fall back to reading from the terminal screen buffer. This is needed for
-    // Voice Control, which queries text near the cursor to decide whether to
-    // insert spaces between dictation chunks.
-    if (_dataSource.width <= 0 || proposedRange.length == 0) {
-        if (actualRange) {
-            *actualRange = NSMakeRange(NSNotFound, 0);
-        }
+// Returns the screen text in `range`, a range in the NSTextInputClient coordinate space (a flat grid
+// of cells). The result isn't clamped to range.length: a cell can hold more than one UTF-16 code
+// unit, as with a combining mark.
+- (NSString *)screenTextInNSRange:(NSRange)range {
+    if (_dataSource.width <= 0 || range.length == 0) {
         return nil;
     }
 
     // Convert NSRange to grid coordinates using the inverse of nsRangeForAbsCoordRange:.
     const long long overflow = _dataSource.totalScrollbackOverflow;
     const int numberOfLines = [_dataSource numberOfLines];
-    VT100GridAbsCoordRange absRange = [self absCoordRangeForNSRange:proposedRange];
+    VT100GridAbsCoordRange absRange = [self absCoordRangeForNSRange:range];
 
     // Clamp to available lines in the data source.
     if (absRange.start.y - overflow >= numberOfLines || absRange.end.y < overflow) {
-        if (actualRange) {
-            *actualRange = NSMakeRange(NSNotFound, 0);
-        }
         return nil;
     }
     if (absRange.start.y < overflow) {
@@ -5626,9 +5662,6 @@ static NSString *iTermStringForEventPhase(NSEventPhase eventPhase) {
             overflow,
             &valid);
     if (!valid) {
-        if (actualRange) {
-            *actualRange = NSMakeRange(NSNotFound, 0);
-        }
         return nil;
     }
 
@@ -5664,6 +5697,39 @@ static NSString *iTermStringForEventPhase(NSEventPhase eventPhase) {
                                coords:nil
                     deduplicateDECDHL:NO];
         [result appendString:lineContent];
+    }
+    return result;
+}
+
+- (NSAttributedString *)attributedSubstringForProposedRange:(NSRange)proposedRange
+                                                actualRange:(NSRangePointer)actualRange {
+    DLog(@"attributedSubstringForProposedRange:%@", NSStringFromRange(proposedRange));
+
+    // If the requested range overlaps with the IME marked text, return the
+    // marked text content. Otherwise fall through to the screen buffer, which
+    // Voice Control needs during composition to maintain context for spacing.
+    if (_drawingHelper.markedText.length > 0) {
+        NSRange mRange = [self markedRange];
+        NSRange overlap = NSIntersectionRange(proposedRange, mRange);
+        if (overlap.length > 0) {
+            NSUInteger startInMarked = overlap.location - mRange.location;
+            NSRange substringRange = NSMakeRange(startInMarked, overlap.length);
+            if (actualRange) {
+                *actualRange = overlap;
+            }
+            return [_drawingHelper.markedText attributedSubstringFromRange:substringRange];
+        }
+    }
+
+    // Fall back to reading from the terminal screen buffer. This is needed for
+    // Voice Control, which queries text near the cursor to decide whether to
+    // insert spaces between dictation chunks.
+    NSMutableString *result = [[[self screenTextInNSRange:proposedRange] mutableCopy] autorelease];
+    if (!result) {
+        if (actualRange) {
+            *actualRange = NSMakeRange(NSNotFound, 0);
+        }
+        return nil;
     }
 
     // Clamp to the requested length.
@@ -5870,20 +5936,32 @@ static NSString *iTermStringForEventPhase(NSEventPhase eventPhase) {
     return extractor;
 }
 
++ (VT100GridCoordRange)findOnPageSelectionRangeForLogicalMatch:(VT100GridCoordRange)logicalMatch
+                                                   visualMatch:(VT100GridCoordRange)visualMatch {
+    return logicalMatch;
+}
+
 - (void)findOnPageSelectRange:(VT100GridCoordRange)logicalRange
                 logicalWindow:(VT100GridRange)logicalWindow
                       wrapped:(BOOL)wrapped {
-    VT100GridCoordRange range = [self.bidiExtractor visualRangeForLogical:logicalRange];
-    const VT100GridWindowedRange windowedRange = VT100GridWindowedRangeMake(range,
-                                                                            logicalWindow.location,
-                                                                            logicalWindow.length);
+    // The visual range is used only for the on-screen find indicator. The
+    // selection is stored logically, so it must select the logical range.
+    const VT100GridCoordRange visualRange = [self.bidiExtractor visualRangeForLogical:logicalRange];
+    const VT100GridCoordRange selectionRange =
+        [PTYTextView findOnPageSelectionRangeForLogicalMatch:logicalRange visualMatch:visualRange];
+    const VT100GridWindowedRange indicatorWindowedRange = VT100GridWindowedRangeMake(visualRange,
+                                                                                     logicalWindow.location,
+                                                                                     logicalWindow.length);
+    const VT100GridWindowedRange selectionWindowedRange = VT100GridWindowedRangeMake(selectionRange,
+                                                                                     logicalWindow.location,
+                                                                                     logicalWindow.length);
     if (logicalWindow.length > 0) {
         VT100GridAbsWindowedRange absWindowedRange =
-            VT100GridAbsWindowedRangeFromRelative(windowedRange,
+            VT100GridAbsWindowedRangeFromRelative(selectionWindowedRange,
                                                   _dataSource.totalScrollbackOverflow);
         [self selectAbsWindowedCoordRange:absWindowedRange];
     } else {
-        [self selectCoordRange:range];
+        [self selectCoordRange:selectionRange];
     }
     // Let the scrollview scroll if needs to before showing the find indicator. The range is
     // only valid at the current width, so skip the indicator if the width changes first.
@@ -5891,10 +5969,10 @@ static NSString *iTermStringForEventPhase(NSEventPhase eventPhase) {
     dispatch_async(dispatch_get_main_queue(), ^{
         if ([self.dataSource width] != widthAtSelection) {
             DLog(@"Width changed from %@ to %@ before showing find indicator for %@. Skip it.",
-                 @(widthAtSelection), @([self.dataSource width]), VT100GridWindowedRangeDescription(windowedRange));
+                 @(widthAtSelection), @([self.dataSource width]), VT100GridWindowedRangeDescription(indicatorWindowedRange));
             return;
         }
-        [self.delegate textViewShowFindIndicator:windowedRange];
+        [self.delegate textViewShowFindIndicator:indicatorWindowedRange];
     });
     if (!wrapped) {
         [self requestDelegateRedraw];
@@ -6065,7 +6143,15 @@ extendResultsAcrossSoftBoundaries:(BOOL)extendResultsAcrossSoftBoundaries {
     return self.frame.size.height - NSMaxY(self.enclosingScrollView.documentVisibleRect);
 }
 
-- (NSPoint)cursorCenterInScreenCoords {
+- (NSPoint)gridOriginInView:(NSView *)view {
+    NSRect rect = [self rectForGridCoord:VT100GridCoordMake(0, 0)];
+    // Where the grid is when scrolled to the bottom, not where scrollback has moved it.
+    rect.origin.y -= [self verticalOffset];
+    return [self convertPoint:rect.origin toView:view];
+}
+
+// The center of the cursor in this view's coordinates.
+- (NSPoint)cursorCenter {
     NSPoint cursorCenter;
     if ([self hasMarkedText]) {
         cursorCenter = _drawingHelper.imeCursorLastPos;
@@ -6074,7 +6160,11 @@ extendResultsAcrossSoftBoundaries:(BOOL)extendResultsAcrossSoftBoundaries {
     }
     cursorCenter.x += _charWidth / 2;
     cursorCenter.y += _lineHeight / 2;
-    NSPoint cursorCenterInWindowCoords = [self convertPoint:cursorCenter toView:nil];
+    return cursorCenter;
+}
+
+- (NSPoint)cursorCenterInScreenCoords {
+    NSPoint cursorCenterInWindowCoords = [self convertPoint:[self cursorCenter] toView:nil];
     return  [[self window] pointToScreenCoords:cursorCenterInWindowCoords];
 }
 
@@ -6138,6 +6228,7 @@ extendResultsAcrossSoftBoundaries:(BOOL)extendResultsAcrossSoftBoundaries {
     _cursorVisible = YES;
     [self requestDelegateRedraw];
     if (!_findCursorView) {
+        [_delegate textViewFindCursorWillShowAtLocationInWindow:[self convertPoint:[self cursorCenter] toView:nil]];
         [self createFindCursorWindowWithFireworks:forceFireworks];
     }
     if (hold) {
@@ -6161,6 +6252,9 @@ extendResultsAcrossSoftBoundaries:(BOOL)extendResultsAcrossSoftBoundaries {
 }
 
 - (void)endFindCursor {
+    if (_findCursorView) {
+        [_delegate textViewFindCursorDidEnd];
+    }
     [NSAnimationContext beginGrouping];
     NSWindow *theWindow = [_findCursorWindow retain];
     [[NSAnimationContext currentContext] setCompletionHandler:^{
@@ -6257,6 +6351,37 @@ extendResultsAcrossSoftBoundaries:(BOOL)extendResultsAcrossSoftBoundaries {
         }
     }
     [self.delegate textViewLiveSelectionDidEnd];
+}
+
+- (NSIndexSet *)selectionLogicalIndexesForVisualRange:(NSRange)visualRange
+                                       onAbsoluteLine:(long long)absLine {
+    const long long line = absLine - _dataSource.totalScrollbackOverflow;
+    if (line < 0 || line > INT_MAX || ![iTermPreferences bidiEnabled]) {
+        return [NSIndexSet indexSetWithIndexesInRange:visualRange];
+    }
+    iTermBidiDisplayInfo *bidi = [_dataSource bidiInfoForLine:line];
+    if (!bidi) {
+        return [NSIndexSet indexSetWithIndexesInRange:visualRange];
+    }
+    NSMutableIndexSet *logical = [NSMutableIndexSet indexSet];
+    const NSUInteger count = bidi.numberOfCells;
+    for (NSUInteger v = visualRange.location; v < NSMaxRange(visualRange); v++) {
+        if (v < count) {
+            [logical addIndex:[bidi logicalForVisual:(int)v]];
+        } else {
+            // Beyond the mapped cells: identity, like a left-to-right line.
+            [logical addIndex:v];
+        }
+    }
+    return logical;
+}
+
+- (BOOL)selectionParagraphIsRTLOnAbsoluteLine:(long long)absLine {
+    const long long line = absLine - _dataSource.totalScrollbackOverflow;
+    if (line < 0 || line > INT_MAX || ![iTermPreferences bidiEnabled]) {
+        return NO;
+    }
+    return [_dataSource bidiInfoForLine:line].paragraphIsRTL;
 }
 
 - (VT100GridRange)selectionRangeOfTerminalNullsOnAbsoluteLine:(long long)absLineNumber {
@@ -6624,7 +6749,7 @@ extendResultsAcrossSoftBoundaries:(BOOL)extendResultsAcrossSoftBoundaries {
     return NO;
 }
 
-- (NSArray<iTermTerminalButton *> *)drawingHelperTerminalButtons  API_AVAILABLE(macos(11)){
+- (NSArray<iTermTerminalButton *> *)drawingHelperTerminalButtons {
     return [self terminalButtons];
 }
 
@@ -6640,7 +6765,7 @@ extendResultsAcrossSoftBoundaries:(BOOL)extendResultsAcrossSoftBoundaries {
     return _cursorSlideAnimator.animationInProgress;
 }
 
-- (VT100GridAbsCoord)absCoordForButton:(iTermTerminalButton *)button API_AVAILABLE(macos(11)) {
+- (VT100GridAbsCoord)absCoordForButton:(iTermTerminalButton *)button {
     if (!button.mark) {
         NSInteger y = button.transientAbsY;
         if (y >= 0) {
@@ -6716,7 +6841,7 @@ extendResultsAcrossSoftBoundaries:(BOOL)extendResultsAcrossSoftBoundaries {
                                                                                    blockID:place.mark.copyBlockID
                                                                                       mark:place.mark
                                                                                       absY:nil
-                                                                                   tooltip:@"Copy Block to clipboard"] autorelease];
+                                                                                   tooltip:NSLocalizedStringWithDefaultValue(@"PTYTextView.CopyBlockTooltipTitleCase", nil, [NSBundle mainBundle], @"Copy Block to clipboard", @"Tooltip for the button that copies a block to the clipboard")] autorelease];
                 NSString *blockID = [[place.mark.copyBlockID copy] autorelease];
 
                 button.action = ^(NSPoint locationInWindow) {
@@ -6777,7 +6902,7 @@ extendResultsAcrossSoftBoundaries:(BOOL)extendResultsAcrossSoftBoundaries {
 - (NSArray<iTermTerminalButton *> *)commandButtonsForMark:(id<VT100ScreenMarkReading>)mark
                                                      line:(int)markLine
                                               shouldFloat:(BOOL)shouldFloat
-                                                 offByOne:(BOOL)offByOne NS_AVAILABLE_MAC(11)
+                                                 offByOne:(BOOL)offByOne
 {
     const int width = [self.dataSource width];
     const long long offset = self.dataSource.totalScrollbackOverflow;
@@ -6863,11 +6988,11 @@ extendResultsAcrossSoftBoundaries:(BOOL)extendResultsAcrossSoftBoundaries {
 - (void)popCommandSettingsButtonAt:(NSPoint)locationInWindow for:(id<VT100ScreenMarkReading>)mark {
     iTermSimpleContextMenu *menu = [[[iTermSimpleContextMenu alloc] init] autorelease];
     __weak __typeof(self) weakSelf = self;
-    [menu addItemWithTitle:@"Disable Command Selection" action:^{
+    [menu addItemWithTitle:NSLocalizedStringWithDefaultValue(@"PTYTextView.DisableCommandSelection", nil, [NSBundle mainBundle], @"Disable Command Selection", @"Menu item that disables click-to-select-command") action:^{
         [iTermPreferences setBool:NO forKey:kPreferenceKeyClickToSelectCommand];
         [weakSelf.delegate textViewReloadSelectedCommand];
     }];
-    [menu addItemWithTitle:@"Help" action:^{
+    [menu addItemWithTitle:NSLocalizedStringWithDefaultValue(@"PTYTextView.Help", nil, [NSBundle mainBundle], @"Help", @"Menu item that shows help") action:^{
         if (!weakSelf) {
             return;
         }
@@ -6893,18 +7018,18 @@ extendResultsAcrossSoftBoundaries:(BOOL)extendResultsAcrossSoftBoundaries {
     iTermSimpleContextMenu *menu = [[[iTermSimpleContextMenu alloc] init] autorelease];
     if (command.length) {
         __weak __typeof(self) weakSelf = self;
-        [menu addItemWithTitle:@"Copy Command" action:^{
+        [menu addItemWithTitle:NSLocalizedStringWithDefaultValue(@"PTYTextView.CopyCommand", nil, [NSBundle mainBundle], @"Copy Command", @"Menu item that copies a command") action:^{
             [weakSelf copyString:command];
-            [ToastWindowController showToastWithMessage:@"Command Copied"
+            [ToastWindowController showToastWithMessage:NSLocalizedStringWithDefaultValue(@"PTYTextView.CommandCopied", nil, [NSBundle mainBundle], @"Command Copied", @"Toast shown after copying a command")
                                                duration:1.5
                                 topLeftScreenCoordinate:[weakSelf.window convertPointToScreen:locationInWindow]
                                               pointSize:12];
         }];
-        [menu addItemWithTitle:@"Copy Output" action:^{
+        [menu addItemWithTitle:NSLocalizedStringWithDefaultValue(@"PTYTextView.CopyOutput", nil, [NSBundle mainBundle], @"Copy Output", @"Menu item that copies a command's output") action:^{
             iTermRenegablePromise<NSString *> *promise = [self promisedOutputForMark:mark progress:nil];
             [[promise wait] whenFirst:^(NSString * _Nonnull string) {
                 [weakSelf copyString:string];
-                [ToastWindowController showToastWithMessage:@"Output Copied"
+                [ToastWindowController showToastWithMessage:NSLocalizedStringWithDefaultValue(@"PTYTextView.OutputCopied", nil, [NSBundle mainBundle], @"Output Copied", @"Toast shown after copying a command's output")
                                                    duration:1.5
                                     topLeftScreenCoordinate:[weakSelf.window convertPointToScreen:locationInWindow]
                                                   pointSize:12];
@@ -6990,7 +7115,7 @@ extendResultsAcrossSoftBoundaries:(BOOL)extendResultsAcrossSoftBoundaries {
 
 - (void)copyBlock:(NSString *)block absLine:(long long)absLine screenCoordinate:(NSPoint)screenCoordinate {
     if ([self copyBlock:block includingAbsLine:absLine]) {
-        [ToastWindowController showToastWithMessage:@"Copied"
+        [ToastWindowController showToastWithMessage:NSLocalizedStringWithDefaultValue(@"PTYTextView.Copied", nil, [NSBundle mainBundle], @"Copied", @"Toast shown after copying text")
                                            duration:1
                             topLeftScreenCoordinate:screenCoordinate
                                           pointSize:12];
@@ -7029,48 +7154,46 @@ extendResultsAcrossSoftBoundaries:(BOOL)extendResultsAcrossSoftBoundaries {
 - (void)updateButtonHover:(NSPoint)locationInWindow pressed:(BOOL)pressed {
     NSPoint point = [self convertPoint:locationInWindow fromView:nil];
     DLog(@"updateHover location=%@ pressed=%@", NSStringFromPoint(locationInWindow), @(pressed));
-    if (@available(macOS 11, *)) {
-        BOOL changed = NO;
-        // Find which button the mouse is over (including pill container areas)
-        iTermTerminalButton *buttonUnderMouse = nil;
-        for (iTermTerminalButton *button in self.terminalButtons) {
-            if (NSPointInRect(point, button.desiredFrame)) {
-                buttonUnderMouse = button;
-                break;
-            }
+    BOOL changed = NO;
+    // Find which button the mouse is over (including pill container areas)
+    iTermTerminalButton *buttonUnderMouse = nil;
+    for (iTermTerminalButton *button in self.terminalButtons) {
+        if (NSPointInRect(point, button.desiredFrame)) {
+            buttonUnderMouse = button;
+            break;
         }
-        if (!buttonUnderMouse) {
-            buttonUnderMouse = [self buttonInPillContainerAtPoint:point];
-        }
+    }
+    if (!buttonUnderMouse) {
+        buttonUnderMouse = [self buttonInPillContainerAtPoint:point];
+    }
 
-        for (iTermTerminalButton *button in self.terminalButtons) {
-            if (button == buttonUnderMouse) {
-                DLog(@"mouse is over %@", button);
-                // Mouse over button
-                if (pressed) {
-                    changed = [button mouseDownInside] || changed;
-                } else if (button.pressed) {
-                    DLog(@"button was pressed");
-                    [button mouseUpWithLocationInWindow:locationInWindow];
-                    changed = YES;
-                }
-            } else {
-                // Mouse not over button
-                if (pressed) {
-                    changed = [button mouseDownOutside] || changed;
-                } else if (button.pressed) {
-                    DLog(@"button was pressed");
-                    [button mouseUpWithLocationInWindow:locationInWindow];
-                    changed = YES;
-                }
+    for (iTermTerminalButton *button in self.terminalButtons) {
+        if (button == buttonUnderMouse) {
+            DLog(@"mouse is over %@", button);
+            // Mouse over button
+            if (pressed) {
+                changed = [button mouseDownInside] || changed;
+            } else if (button.pressed) {
+                DLog(@"button was pressed");
+                [button mouseUpWithLocationInWindow:locationInWindow];
+                changed = YES;
+            }
+        } else {
+            // Mouse not over button
+            if (pressed) {
+                changed = [button mouseDownOutside] || changed;
+            } else if (button.pressed) {
+                DLog(@"button was pressed");
+                [button mouseUpWithLocationInWindow:locationInWindow];
+                changed = YES;
             }
         }
-        if ([self updateSuppressedTopRightIndicatorsForMouseAt:point overButton:(buttonUnderMouse != nil)]) {
-            changed = YES;
-        }
-        if (changed) {
-            [self requestDelegateRedraw];
-        }
+    }
+    if ([self updateSuppressedTopRightIndicatorsForMouseAt:point overButton:(buttonUnderMouse != nil)]) {
+        changed = YES;
+    }
+    if (changed) {
+        [self requestDelegateRedraw];
     }
 }
 
@@ -7296,21 +7419,52 @@ static NSString *iTermStringFromRange(NSRange range) {
     return accessibilityLineNumber + offset;
 }
 
++ (int)accessibilityLogicalXForVisualX:(int)visualX
+                              bidiInfo:(iTermBidiDisplayInfo *)bidiInfo {
+    return [iTermBidiDisplayInfo logicalColumnForVisualColumn:visualX info:bidiInfo];
+}
+
 // WARNING! accessibilityScreenPosition is idiotic: y=0 is the top of the main screen and it increases going down.
 - (VT100GridCoord)accessibilityHelperCoordForPoint:(NSPoint)accessibilityScreenPosition {
     const NSPoint locationInTextView = [self viewPointFromAccessibilityScreenPoint:accessibilityScreenPosition];
     NSRect visibleRect = [[self enclosingScrollView] documentVisibleRect];
-    int x = (locationInTextView.x - [iTermPreferences sideMargins] - visibleRect.origin.x) / _charWidth;
-    int y = locationInTextView.y / _lineHeight;
+    const int visualX = (locationInTextView.x - [iTermPreferences sideMargins] - visibleRect.origin.x) / _charWidth;
+    const int y = locationInTextView.y / _lineHeight;
+    // The point yields a VISUAL column; the accessibility text model is logical.
+    const int x = [PTYTextView accessibilityLogicalXForVisualX:visualX
+                                                      bidiInfo:[_dataSource bidiInfoForLine:y]];
     return VT100GridCoordMake(x, [self accessibilityHelperAccessibilityLineNumberForLineNumber:y]);
+}
+
++ (VT100GridRange)accessibilityVisualColumnSpanForLogicalStartX:(int)startX
+                                                           endX:(int)endX
+                                                       bidiInfo:(iTermBidiDisplayInfo *)bidiInfo {
+    return [iTermBidiDisplayInfo visualColumnSpanForLogicalStartX:startX endX:endX info:bidiInfo];
 }
 
 - (NSRect)accessibilityHelperFrameForCoordRange:(VT100GridCoordRange)coordRange {
     coordRange.start.y = [self accessibilityHelperLineNumberForAccessibilityLineNumber:coordRange.start.y];
     coordRange.end.y = [self accessibilityHelperLineNumberForAccessibilityLineNumber:coordRange.end.y];
-    NSRect result = NSMakeRect(MAX(0, floor(coordRange.start.x * _charWidth + [iTermPreferences sideMargins])),
+    // coordRange.x is LOGICAL; the frame is drawn at VISUAL columns. Convert the
+    // single-line case to its bounding visual span. Multi-line ranges are left in
+    // LOGICAL columns (raw start column and logical width) as a known limitation:
+    // a two-point rect can't bound bidi-reordered cells across lines, so on an RTL
+    // first line the rect's left edge sits at the mirror-image column. This matches
+    // the pre-refactor behavior and the Companion currentSelectionRange multi-line
+    // branch, which is best-effort for the same reason.
+    int startX = coordRange.start.x;
+    int spanWidth = coordRange.end.x - coordRange.start.x;
+    if (coordRange.start.y == coordRange.end.y) {
+        const VT100GridRange visualSpan =
+            [PTYTextView accessibilityVisualColumnSpanForLogicalStartX:coordRange.start.x
+                                                                  endX:coordRange.end.x
+                                                              bidiInfo:[_dataSource bidiInfoForLine:coordRange.start.y]];
+        startX = visualSpan.location;
+        spanWidth = visualSpan.length;
+    }
+    NSRect result = NSMakeRect(MAX(0, floor(startX * _charWidth + [iTermPreferences sideMargins])),
                                MAX(0, coordRange.start.y * _lineHeight),
-                               MAX(0, (coordRange.end.x - coordRange.start.x) * _charWidth),
+                               MAX(0, spanWidth * _charWidth),
                                MAX(0, (coordRange.end.y - coordRange.start.y + 1) * _lineHeight));
     result = [self convertRect:result toView:nil];
     result = [self.window convertRectToScreen:result];
@@ -7329,14 +7483,16 @@ static NSString *iTermStringFromRange(NSRange range) {
         [self accessibilityHelperLineNumberForAccessibilityLineNumber:coordRange.start.y];
     coordRange.end.y =
         [self accessibilityHelperLineNumberForAccessibilityLineNumber:coordRange.end.y];
-    [_selection clearSelection];
+    // coordRange is LOGICAL. Commit it as a logical selection rather than driving
+    // a character-mode live selection, which with bidi on would treat these as
+    // visual columns and mis-select on right-to-left lines.
     const long long overflow = _dataSource.totalScrollbackOverflow;
-    [_selection beginSelectionAtAbsCoord:VT100GridAbsCoordFromCoord(coordRange.start, overflow)
-                            mode:kiTermSelectionModeCharacter
-                          resume:NO
-                          append:NO];
-    [_selection moveSelectionEndpointTo:VT100GridAbsCoordFromCoord(coordRange.end, overflow)];
-    [_selection endLiveSelection];
+    const VT100GridAbsCoord absStart = VT100GridAbsCoordFromCoord(coordRange.start, overflow);
+    const VT100GridAbsCoord absEnd = VT100GridAbsCoordFromCoord(coordRange.end, overflow);
+    [_selection setSelectedLogicalRange:VT100GridAbsWindowedRangeMake(VT100GridAbsCoordRangeMake(absStart.x, absStart.y, absEnd.x, absEnd.y), 0, 0)
+                                   mode:kiTermSelectionModeCharacter];
+    _hasAccessibilitySelectedRange = _selection.hasSelection;
+    _accessibilitySelectedRange = _selection.logicalSubSelections.lastObject.absRange.coordRange;
 }
 
 - (VT100GridCoordRange)accessibilityRangeOfCursor {
@@ -7345,7 +7501,11 @@ static NSString *iTermStringFromRange(NSRange range) {
 }
 
 - (VT100GridCoordRange)accessibilityHelperSelectedRange {
-    iTermSubSelection *sub = _selection.allSubSelections.lastObject;
+    // logicalSubSelections (not allSubSelections) so VoiceOver reads logical columns
+    // during an in-progress bidi character drag. Otherwise the raw visual live range
+    // is returned as logical and accessibilityHelperFrameForCoordRange maps it
+    // logical->visual a second time, landing the focus rect on the mirror cells.
+    iTermSubSelection *sub = _selection.logicalSubSelections.lastObject;
 
     if (!sub) {
         return [self accessibilityRangeOfCursor];
@@ -7464,6 +7624,7 @@ static NSString *iTermStringFromRange(NSRange range) {
 
 - (void)keyboardHandler:(iTermKeyboardHandler *)keyboardhandler
              insertText:(NSString *)aString {
+    _hasAccessibilitySelectedRange = NO;
     if ([self hasMarkedText]) {
         DLog(@"insertText: clear marked text");
         [self invalidateInputMethodEditorRect];
@@ -7499,10 +7660,72 @@ static NSString *iTermStringFromRange(NSRange range) {
     return self.window.windowNumber;
 }
 
-- (BOOL)keyboardHandler:(iTermKeyboardHandler *)keyboardhandler shouldBackspaceAt:(NSUInteger)location {
+- (BOOL)keyboardHandler:(iTermKeyboardHandler *)keyboardhandler
+    shouldInsertTextReplacingSelectedCharacters:(NSInteger *)count {
+    *count = 0;
+    const BOOL hasAccessibilitySelectedRange = _hasAccessibilitySelectedRange;
+    _hasAccessibilitySelectedRange = NO;
+    const BOOL hasSelection = (_selection.hasSelection && _selection.logicalSubSelections.count == 1);
+    const VT100GridAbsCoordRange selection = hasSelection ? _selection.logicalSubSelections.firstObject.absRange.coordRange : VT100GridAbsCoordRangeMake(0, 0, 0, 0);
+    const long long offset = _dataSource.totalScrollbackOverflow + _dataSource.numberOfScrollbackLines;
+    const VT100GridAbsCoord cursor = VT100GridAbsCoordMake(_dataSource.cursorX - 1, _dataSource.cursorY - 1 + offset);
+    const iTermAccessibilitySelectionReplacementDecision decision =
+        [iTermAccessibilitySelectionReplacement decisionWithAccessibilityRange:_accessibilitySelectedRange
+                                                         hasAccessibilityRange:hasAccessibilitySelectedRange
+                                                                     selection:selection
+                                                                  hasSelection:hasSelection
+                                                                        cursor:cursor
+                                                       softAlternateScreenMode:_dataSource.terminalSoftAlternateScreenMode];
+    switch (decision) {
+        case iTermAccessibilitySelectionReplacementDecisionInsertNormally:
+            return YES;
+        case iTermAccessibilitySelectionReplacementDecisionDrop:
+            DLog(@"Can't replace accessibility selection %@ with cursor at %@",
+                 VT100GridAbsCoordRangeDescription(selection), VT100GridAbsCoordDescription(cursor));
+            return NO;
+        case iTermAccessibilitySelectionReplacementDecisionReplace: {
+            // Read the selected cells directly. -selectedText is the copy path, which can trim
+            // whitespace and would undercount.
+            NSString *selectedText = [self screenTextInNSRange:[self nsRangeForAbsCoordRange:selection]];
+            *count = [selectedText numberOfComposedCharacters];
+            DLog(@"Replace accessibility selection %@ of %@ characters",
+                 VT100GridAbsCoordRangeDescription(selection), @(*count));
+            [_selection clearSelection];
+            return YES;
+        }
+    }
+    return YES;
+}
+
+- (NSInteger)keyboardHandler:(iTermKeyboardHandler *)keyboardhandler
+    numberOfCharactersToReplaceInRange:(NSRange)range {
     const NSRange cursorRange = [self nsrangeOfCursor];
-    DLog(@"cursor range=%@ location=%@", @(NSMaxRange(cursorRange)), @(location));
-    return NSMaxRange(cursorRange) == location;
+    DLog(@"cursor range=%@ range=%@", @(NSMaxRange(cursorRange)), NSStringFromRange(range));
+    // Limitation: these ranges are in cells, but the text input system computes ranges from
+    // offsets into the strings returned by -attributedSubstringForProposedRange:actualRange:,
+    // which are in UTF-16 code units. If a double-width character precedes the cursor in the text
+    // it read, its range ends short of the cursor and we don't backspace.
+    if (NSMaxRange(range) != NSMaxRange(cursorRange)) {
+        return 0;
+    }
+    if (_dataSource.terminalSoftAlternateScreenMode &&
+        ![iTermAdvancedSettingsModel experimentalKeyHandling] &&
+        ![iTermAdvancedSettingsModel enableCharacterAccentMenu]) {
+        // A full-screen app may not treat backspaces as deleting text. Backspace only for the
+        // accent menu (and experimental key handling), where the replaced character was just
+        // typed, as before this path sent backspaces in every mode.
+        DLog(@"In soft alternate screen mode; not backspacing");
+        return 0;
+    }
+    // The range's length is in UTF-16 code units of the text before the cursor. Count the
+    // characters it covers, since the shell deletes one character per backspace. A cell holds at
+    // least one UTF-16 code unit, except the right half of a double-width character, so twice
+    // that many cells is always enough. The text may span rows if it wraps.
+    const NSUInteger cursorLocation = NSMaxRange(cursorRange);
+    const NSUInteger cells = MIN(cursorLocation, range.length * 2);
+    NSString *textBeforeCursor = [self screenTextInNSRange:NSMakeRange(cursorLocation - cells, cells)] ?: @"";
+    return [iTermReplacedTextCounter numberOfCharactersInLastUTF16Units:range.length
+                                                                 ofText:textBeforeCursor];
 }
 
 #pragma mark - iTermBadgeLabelDelegate
@@ -7601,12 +7824,12 @@ static NSString *iTermStringFromRange(NSRange range) {
 #pragma mark - PTYNoteViewControllerDelegate
 
 - (void)noteDidRequestRemoval:(PTYNoteViewController *)note {
-    const iTermWarningSelection selection = [iTermWarning showWarningWithTitle:@"Really remove annotation?"
-                                                                       actions:@[ @"OK", @"Cancel" ]
+    const iTermWarningSelection selection = [iTermWarning showWarningWithTitle:NSLocalizedStringWithDefaultValue(@"PTYTextView.ReallyRemoveAnnotation", nil, [NSBundle mainBundle], @"Really remove annotation?", @"Confirmation title shown before removing an annotation")
+                                                                       actions:@[ iTermLocalizedOK(), iTermLocalizedCancel() ]
                                                                      accessory:nil
                                                                     identifier:@"NoSyncConfirmRemoveAnnotation"
                                                                    silenceable:kiTermWarningTypePermanentlySilenceable
-                                                                       heading:@"Confirm"
+                                                                       heading:NSLocalizedStringWithDefaultValue(@"PTYTextView.Confirm", nil, [NSBundle mainBundle], @"Confirm", @"Heading for a confirmation dialog")
                                                                         window:self.window];
     if (selection == kiTermWarningSelection1) {
         return;
@@ -7747,10 +7970,6 @@ static NSString *iTermStringFromRange(NSRange range) {
 
 @implementation PTYTextView(MouseHandler)
 
-- (void)refuseFirstResponderAtCurrentMouseLocation {
-    [_focusFollowsMouse refuseFirstResponderAtCurrentMouseLocation];
-}
-
 - (BOOL)mouseHandlerViewHasFocus:(PTYMouseHandler *)handler {
     return [[iTermController sharedInstance] frontTextView] == self;
 }
@@ -7766,7 +7985,12 @@ static NSString *iTermStringFromRange(NSRange range) {
     [[self window] makeFirstResponder:self];
 }
 
-- (void)mouseHandlerWillBeginDragPane:(PTYMouseHandler *)handler {
+- (void)mouseHandler:(PTYMouseHandler *)handler willBeginDragPaneWithEvent:(NSEvent *)event {
+    // In a float this moves the float, as dragging its title bar does.
+    if (event.type == NSEventTypeLeftMouseDown && [_delegate textViewFloatingPaneMoveMouseDown:event]) {
+        _movingFloatingPane = YES;
+        return;
+    }
     [_delegate textViewBeginDrag];
 }
 
@@ -8268,6 +8492,12 @@ allowDragBeforeMouseDown:(BOOL)allowDragBeforeMouseDown
                        locationInTextView:locationInTextView];
 }
 
+- (VT100GridCoord)mouseHandler:(PTYMouseHandler *)handler
+    logicalCoordForVisualCoord:(VT100GridCoord)visualCoord {
+    return [self logicalCoordForVisualCoord:visualCoord];
+}
+
+
 - (NSString *)mouseHandler:(PTYMouseHandler *)mouseHandler
         stringForUpOrRight:(BOOL)upOrRight  // if NO, then down/left
                   vertical:(BOOL)vertical
@@ -8440,25 +8670,23 @@ dragSemanticHistoryWithEvent:(NSEvent *)event
         DLog(@"TextView handling mouseDown: not in bounds");
         return NO;
     }
-    if (@available(macOS 11, *)) {
-        // First check direct button hits
-        for (iTermTerminalButton *button in self.terminalButtons) {
-            if (NSPointInRect(point, button.desiredFrame)) {
-                if ([button mouseDownInside]) {
-                    [self requestDelegateRedraw];
-                }
-                return YES;
-            }
-            DLog(@"TextView handling mouseDown: not in %@ with frame %@", button.description, NSStringFromRect(button.desiredFrame));
-        }
-        // Check if click is within a pill container but between buttons
-        iTermTerminalButton *buttonInPill = [self buttonInPillContainerAtPoint:point];
-        if (buttonInPill) {
-            if ([buttonInPill mouseDownInside]) {
+    // First check direct button hits
+    for (iTermTerminalButton *button in self.terminalButtons) {
+        if (NSPointInRect(point, button.desiredFrame)) {
+            if ([button mouseDownInside]) {
                 [self requestDelegateRedraw];
             }
             return YES;
         }
+        DLog(@"TextView handling mouseDown: not in %@ with frame %@", button.description, NSStringFromRect(button.desiredFrame));
+    }
+    // Check if click is within a pill container but between buttons
+    iTermTerminalButton *buttonInPill = [self buttonInPillContainerAtPoint:point];
+    if (buttonInPill) {
+        if ([buttonInPill mouseDownInside]) {
+            [self requestDelegateRedraw];
+        }
+        return YES;
     }
     DLog(@"TextView handling mouseDown: not in anything");
     return NO;
@@ -8479,17 +8707,15 @@ dragSemanticHistoryWithEvent:(NSEvent *)event
 
     }
     BOOL clicked = NO;
-    if (@available(macOS 11, *)) {
-        [self updateButtonHover:locationInWindow pressed:NO];
-        for (iTermTerminalButton *button in self.terminalButtons) {
-            if (!button.pressed) {
-                DLog(@"mouseUp: %@ not pressed", button.description);
-                continue;
-            }
-            clicked = clicked || button.pressed;
-            if ([button mouseUpWithLocationInWindow:locationInWindow]) {
-                [self requestDelegateRedraw];
-            }
+    [self updateButtonHover:locationInWindow pressed:NO];
+    for (iTermTerminalButton *button in self.terminalButtons) {
+        if (!button.pressed) {
+            DLog(@"mouseUp: %@ not pressed", button.description);
+            continue;
+        }
+        clicked = clicked || button.pressed;
+        if ([button mouseUpWithLocationInWindow:locationInWindow]) {
+            [self requestDelegateRedraw];
         }
     }
     return clicked;
@@ -8499,20 +8725,6 @@ dragSemanticHistoryWithEvent:(NSEvent *)event
 
 - (BOOL)isRequestingSecureInput {
     return [self.delegate textViewPasswordInput];
-}
-
-#pragma mark - iTermFocusFollowsMouseDelegate
-
-- (void)focusFollowsMouseDidBecomeFirstResponder {
-    [self.delegate textViewDidBecomeFirstResponder];
-}
-
-- (NSResponder *)focusFollowsMouseDesiredFirstResponder {
-    return self;
-}
-
-- (void)focusFollowsMouseDidChangeMouseLocationToRefusFirstResponderAt {
-    [self.delegate textViewUpdateTrackingAreas];
 }
 
 @end
@@ -8586,7 +8798,7 @@ dragSemanticHistoryWithEvent:(NSEvent *)event
         NSString *copyString = url.absoluteString;
         [pasteboard setString:copyString forType:NSPasteboardTypeString];
         [[PasteboardHistory sharedInstance] save:copyString];
-        [ToastWindowController showToastWithMessage:@"Copied"
+        [ToastWindowController showToastWithMessage:NSLocalizedStringWithDefaultValue(@"PTYTextView.Copied", nil, [NSBundle mainBundle], @"Copied", @"Toast shown after copying text")
                                            duration:1
                                    screenCoordinate:[NSEvent mouseLocation]
                                           pointSize:12];
@@ -8664,6 +8876,10 @@ dragSemanticHistoryWithEvent:(NSEvent *)event
 
 - (void)newHorizontalSplitWithProfile:(NSString *)guid withEvent:(NSEvent *)event {
     [_delegate textViewSplitVertically:NO withProfileGuid:guid];
+}
+
+- (void)newFloatingPaneWithProfile:(NSString *)guid withEvent:(NSEvent *)event {
+    [_delegate textViewNewFloatingPaneWithProfileGuid:guid];
 }
 
 - (void)selectNextPaneWithEvent:(NSEvent *)event {

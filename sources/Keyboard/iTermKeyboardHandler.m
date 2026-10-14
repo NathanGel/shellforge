@@ -170,6 +170,26 @@ static iTermKeyboardHandler *sCurrentKeyboardHandler;
         return;
     }
 
+    // An input method can finish a composition by committing it with
+    // -insertText:replacementRange: and then handing the keystroke back to us as a command
+    // selector. When that happens the key is ours to handle: the composition is already gone
+    // by the time we get here, so the delete would otherwise be dropped and the committed
+    // text left behind. _keyPressHandled distinguishes this from the case where the IME
+    // consumed the keystroke to edit its composition, in which case there is nothing to do.
+    // Issue 13030.
+    if (_keyPressHandled &&
+        _hadMarkedTextBeforeHandlingKeypressEvent &&
+        ![self hasMarkedText] &&
+        _eventBeingHandled &&
+        (aSelector == @selector(deleteBackward:) ||
+         aSelector == @selector(deleteBackwardByDecomposingPreviousCharacter:) ||
+         aSelector == @selector(insertNewline:))) {
+        DLog(@"IME committed and handed back %@; sending to delegate", NSStringFromSelector(aSelector));
+        [self.delegate keyboardHandler:self sendEventToController:_eventBeingHandled];
+        DLog(@"returning from doCommandBySelector:%@", NSStringFromSelector(aSelector));
+        return;
+    }
+
     if ([iTermAdvancedSettingsModel experimentalKeyHandling] || [iTermAdvancedSettingsModel enableCharacterAccentMenu]) {
         // Pass the event to the delegate since doCommandBySelector was called instead of
         // insertText:replacementRange:, unless an IME is in use. An example of when this gets called
@@ -300,24 +320,20 @@ static iTermKeyboardHandler *sCurrentKeyboardHandler;
     DLog(@"PTYTextView insertText:%@", aString);
     if (replacementRange.length > 0 && replacementRange.location != NSNotFound) {
         DLog(@"Replacement range has length %@", @(replacementRange.length));
-        NSEvent *saved = _eventBeingHandled;
-        if ([self.delegate keyboardHandler:self shouldBackspaceAt:NSMaxRange(replacementRange)]) {
-            DLog(@"Delegate allows us to backspace");
-            _eventBeingHandled = [NSEvent keyEventWithType:NSEventTypeKeyDown
-                                                  location:NSZeroPoint
-                                             modifierFlags:0
-                                                 timestamp:0
-                                              windowNumber:[self.delegate keyboardHandlerWindowNumber:self]
-                                                   context:nil
-                                                characters:[NSString stringWithLongCharacter:127]
-                               charactersIgnoringModifiers:[NSString stringWithLongCharacter:127]
-                                                 isARepeat:NO
-                                                   keyCode:kVK_Delete];
-            for (NSInteger i = 0; i < replacementRange.length; i++) {
-                [self doCommandBySelector:@selector(deleteBackward:)];
-            }
-            _eventBeingHandled = saved;
+        const NSInteger count = [self.delegate keyboardHandler:self
+                            numberOfCharactersToReplaceInRange:replacementRange];
+        DLog(@"Backspace over %@ characters", @(count));
+        [self sendBackspaces:count];
+    } else if (replacementRange.location == NSNotFound && !_eventBeingHandled) {
+        // Text inserted outside of a keypress, such as by Voice Control, may be meant to replace
+        // text that an accessibility client selected.
+        NSInteger count = 0;
+        if (![self.delegate keyboardHandler:self shouldInsertTextReplacingSelectedCharacters:&count]) {
+            DLog(@"Delegate says to drop insertion of %@", aString);
+            return;
         }
+        DLog(@"Backspace over %@ selected characters", @(count));
+        [self sendBackspaces:count];
     }
     aString = [_keyMapper transformedTextToInsert:aString];
     [self.delegate keyboardHandler:self insertText:aString];
@@ -328,6 +344,29 @@ static iTermKeyboardHandler *sCurrentKeyboardHandler;
 
 - (BOOL)hasMarkedText {
     return [self.delegate keyboardHandlerMarkedTextRange:self].length > 0;
+}
+
+// Deletes text that was already sent so that the text being inserted replaces it. The backspaces
+// are sent directly rather than through -doCommandBySelector:, which drops the command unless
+// experimental key handling or the accent menu is on. Otherwise the new text, such as a Voice
+// Control correction, would be appended after the old text.
+- (void)sendBackspaces:(NSInteger)count {
+    if (count <= 0) {
+        return;
+    }
+    NSEvent *deleteEvent = [NSEvent keyEventWithType:NSEventTypeKeyDown
+                                            location:NSZeroPoint
+                                       modifierFlags:0
+                                           timestamp:0
+                                        windowNumber:[self.delegate keyboardHandlerWindowNumber:self]
+                                             context:nil
+                                          characters:[NSString stringWithLongCharacter:127]
+                         charactersIgnoringModifiers:[NSString stringWithLongCharacter:127]
+                                           isARepeat:NO
+                                             keyCode:kVK_Delete];
+    for (NSInteger i = 0; i < count; i++) {
+        [self.delegate keyboardHandler:self sendEventToController:deleteEvent];
+    }
 }
 
 #pragma mark - Private
@@ -469,9 +508,9 @@ static iTermKeyboardHandler *sCurrentKeyboardHandler;
     // code or keypad sequence) to the terminal is exactly what bypass is meant to prevent. Let the
     // event fall through to Cocoa so macOS handles it normally. Issue 12884.
     if (!context.hasBypassKeyMapping && [self shouldAllowPreCocoaKeyMappingForEvent:event]) {
-        // In a tmux -CC pane, hand a modifyOtherKeys "other key" to tmux by name
-        // so it re-encodes it in the pane's own key mode + extended-keys-format,
-        // rather than injecting our own (possibly wrong-format) byte encoding.
+        // In a tmux -CC pane, hand the keystroke to tmux by name so it encodes it
+        // for the pane's own key mode, rather than injecting our own (possibly
+        // wrong-format) byte encoding.
         if ([self.delegate keyboardHandler:self sendTmuxControlModeKeyEvent:event]) {
             return;
         }

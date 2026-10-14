@@ -38,6 +38,7 @@ typedef struct {
     NSDictionary<NSString *, BOOL (^)(id)> *validationBlocks;
     NSDictionary<NSString *, id (^)(id)> *conversionBlocks;
     NSDictionary<NSString *, NSString *> *typeHelp;
+    NSSet<NSString *> *colorKeys;
 } iTermProfilePreferencesKeyFuncs;
 
 @implementation iTermProfilePreferences
@@ -218,6 +219,72 @@ typedef struct {
     return self.keyFuncs.typeHelp[key];
 }
 
++ (BOOL)colorKeyHonorsAlpha:(NSString *)key {
+    return ([key hasPrefix:KEY_BADGE_COLOR] || [key hasPrefix:KEY_CURSOR_GUIDE_COLOR]);
+}
+
++ (BOOL)keyIsColor:(NSString *)key {
+    return [self.keyFuncs.colorKeys containsObject:key];
+}
+
++ (NSString *)baseColorKeyForKey:(NSString *)key {
+    for (NSString *suffix in @[ COLORS_LIGHT_MODE_SUFFIX, COLORS_DARK_MODE_SUFFIX ]) {
+        if ([key hasSuffix:suffix]) {
+            return [key substringToIndex:key.length - suffix.length];
+        }
+    }
+    return key;
+}
+
++ (NSArray<NSString *> *)colorVariantKeysForBaseKey:(NSString *)baseKey {
+    return @[ baseKey,
+              [baseKey stringByAppendingString:COLORS_LIGHT_MODE_SUFFIX],
+              [baseKey stringByAppendingString:COLORS_DARK_MODE_SUFFIX] ];
+}
+
+// A KEY_BINDINGS value is either a plain expression string (user-authored) or a
+// dictionary { expression, owner } that this feature writes to record ownership,
+// so palette-created bindings can be told from user-created ones without guessing
+// from the expression text.
+static NSString *const iTermBindingExpressionKey = @"expression";
+static NSString *const iTermBindingOwnerKey = @"owner";
+static NSString *const iTermBindingOwnerPalette = @"palette";
+
++ (NSString *)expressionForBindingValue:(id)value {
+    if ([value isKindOfClass:[NSString class]]) {
+        return value;
+    }
+    if ([value isKindOfClass:[NSDictionary class]]) {
+        return [NSString castFrom:value[iTermBindingExpressionKey]];
+    }
+    return nil;
+}
+
++ (BOOL)bindingValueIsPaletteOwned:(id)value {
+    return ([value isKindOfClass:[NSDictionary class]] &&
+            [value[iTermBindingOwnerKey] isEqual:iTermBindingOwnerPalette]);
+}
+
++ (id)paletteBindingValueWithExpression:(NSString *)expression {
+    return @{ iTermBindingExpressionKey: expression,
+              iTermBindingOwnerKey: iTermBindingOwnerPalette };
+}
+
++ (NSDictionary *)bindings:(NSDictionary *)bindings byRemovingPaletteBindingsForBaseKey:(NSString *)baseKey {
+    NSMutableDictionary *updated = nil;
+    for (NSString *variant in [self colorVariantKeysForBaseKey:baseKey]) {
+        if ([self bindingValueIsPaletteOwned:bindings[variant]]) {
+            if (!updated) {
+                updated = [bindings mutableCopy];
+            }
+            [updated removeObjectForKey:variant];
+        }
+    }
+    // Returns a distinct object only when something changed, so callers can detect
+    // a real change with pointer identity.
+    return updated ?: bindings;
+}
+
 #pragma mark - Private
 
 + (iTermProfilePreferencesKeyFuncs)keyFuncs {
@@ -239,7 +306,7 @@ typedef struct {
                              KEY_DYNAMIC_PROFILE_PARENT_NAME,
                              KEY_DYNAMIC_PROFILE_PARENT_GUID,
                              KEY_DYNAMIC_PROFILE_FILENAME, KEY_TMUX_PANE_TITLE,
-                             KEY_SUBTITLE, KEY_CUSTOM_LOCALE, KEY_INITIAL_URL,
+                             KEY_SUBTITLE, KEY_CUSTOM_LOCALE, KEY_INITIAL_URL, KEY_BELL_SOUND,
                              KEY_BROWSER_EXTENSIONS_ROOT,
                              KEY_PROGRESS_BAR_COLOR_SCHEME];
 
@@ -253,10 +320,9 @@ typedef struct {
                             KEY_CURSOR_GUIDE_COLOR, KEY_BADGE_COLOR, KEY_TAB_COLOR,
                             KEY_UNDERLINE_COLOR, KEY_ACTIVE_PANE_BORDER_COLOR ];
         color = [color flatMapWithBlock:^NSArray *(NSString *key) {
-            return @[ key,
-                      [key stringByAppendingString:COLORS_LIGHT_MODE_SUFFIX],
-                      [key stringByAppendingString:COLORS_DARK_MODE_SUFFIX]];
+            return [self colorVariantKeysForBaseKey:key];
         }];
+        funcs.colorKeys = [NSSet setWithArray:color];
 
         NSArray *booleans = @[
             KEY_USE_CURSOR_GUIDE COLORS_LIGHT_MODE_SUFFIX,
@@ -282,6 +348,10 @@ typedef struct {
             KEY_SMART_CURSOR_COLOR COLORS_LIGHT_MODE_SUFFIX,
             KEY_SMART_CURSOR_COLOR COLORS_DARK_MODE_SUFFIX,
             KEY_SMART_CURSOR_COLOR,
+
+            KEY_HDR_CURSOR COLORS_LIGHT_MODE_SUFFIX,
+            KEY_HDR_CURSOR COLORS_DARK_MODE_SUFFIX,
+            KEY_HDR_CURSOR,
 
             KEY_USE_BOLD_COLOR,
             KEY_USE_BOLD_COLOR COLORS_LIGHT_MODE_SUFFIX,
@@ -327,6 +397,7 @@ typedef struct {
             KEY_SEND_NEW_OUTPUT_ALERT, KEY_SEND_SESSION_ENDED_ALERT,
             KEY_SEND_TERMINAL_GENERATED_ALERT, KEY_FLASHING_BELL, KEY_VISUAL_BELL,
             KEY_SUPPRESS_ALERTS_IN_ACTIVE_SESSION, KEY_SEND_ALERTS_TO_COMPANION,
+            KEY_PREVENT_SLEEP,
 
             KEY_REDUCE_FLICKER, KEY_SHOW_STATUS_BAR, KEY_SEND_CODE_WHEN_IDLE,
             KEY_APPLICATION_KEYPAD_ALLOWED, KEY_ALLOW_MODIFY_OTHER_KEYS,
@@ -375,6 +446,10 @@ typedef struct {
             KEY_CURSOR_BOOST COLORS_LIGHT_MODE_SUFFIX,
             KEY_CURSOR_BOOST COLORS_DARK_MODE_SUFFIX,
             KEY_CURSOR_BOOST,
+
+            KEY_HDR_CURSOR_BRIGHTNESS COLORS_LIGHT_MODE_SUFFIX,
+            KEY_HDR_CURSOR_BRIGHTNESS COLORS_DARK_MODE_SUFFIX,
+            KEY_HDR_CURSOR_BRIGHTNESS,
 
             KEY_CURSOR_TYPE, KEY_THIN_STROKES,
 
@@ -444,6 +519,12 @@ typedef struct {
                 return ([value isKindOfClass:[NSDictionary class]] &&
                         [value isColorValue]);
             };
+            // Only the badge and cursor guide render with alpha. For every other
+            // color we still accept an alpha-bearing value (for example a
+            // with_alpha binding) but drop the alpha so the RGB applies opaquely
+            // instead of the binding silently failing. Transparency thus never
+            // leaks into a color that renders opaque.
+            const BOOL allowsAlpha = [iTermProfilePreferences colorKeyHonorsAlpha:key];
             conversionBlocks[key] = ^id(id value) {
                 NSString *string = [NSString castFrom:value];
                 if (!string) {
@@ -458,7 +539,11 @@ typedef struct {
                     }
                     return nil;
                 }
-                return [[NSColor colorFromHexString:string] dictionaryValue];
+                NSColor *color = [NSColor colorFromHexString:string allowingAlpha:YES];
+                if (color && !allowsAlpha) {
+                    color = [color colorWithAlphaComponent:1.0];
+                }
+                return [color dictionaryValue];
             };
         }
         for (NSString *key in number) {
@@ -611,6 +696,10 @@ typedef struct {
             KEY_USE_ACTIVE_PANE_BORDER COLORS_DARK_MODE_SUFFIX:     @"Whether to show a border around the active pane in dark mode",
             KEY_SMART_CURSOR_COLOR COLORS_LIGHT_MODE_SUFFIX:        @"Whether cursor color is based on underlying text in light mode",
             KEY_SMART_CURSOR_COLOR COLORS_DARK_MODE_SUFFIX:         @"Whether cursor color is based on underlying text in dark mode",
+            KEY_HDR_CURSOR COLORS_LIGHT_MODE_SUFFIX:                @"Whether to draw the cursor as bright HDR white on capable displays in light mode",
+            KEY_HDR_CURSOR COLORS_DARK_MODE_SUFFIX:                 @"Whether to draw the cursor as bright HDR white on capable displays in dark mode",
+            KEY_HDR_CURSOR_BRIGHTNESS COLORS_LIGHT_MODE_SUFFIX:     @"Peak brightness of the HDR cursor as a multiple of reference white in light mode",
+            KEY_HDR_CURSOR_BRIGHTNESS COLORS_DARK_MODE_SUFFIX:      @"Peak brightness of the HDR cursor as a multiple of reference white in dark mode",
             KEY_MINIMUM_CONTRAST COLORS_LIGHT_MODE_SUFFIX:          @"Minimum contrast ratio between text and background in light mode",
             KEY_MINIMUM_CONTRAST COLORS_DARK_MODE_SUFFIX:           @"Minimum contrast ratio between text and background in dark mode",
             KEY_FAINT_TEXT_ALPHA COLORS_LIGHT_MODE_SUFFIX:          @"Opacity of faint (dim) text in light mode",
@@ -676,6 +765,8 @@ typedef struct {
             KEY_ACTIVE_PANE_BORDER_COLOR:                           @"Border color for active pane",
             KEY_USE_ACTIVE_PANE_BORDER:                             @"Whether to show a border around the active pane",
             KEY_SMART_CURSOR_COLOR:                                 @"Whether cursor color is based on underlying text",
+            KEY_HDR_CURSOR:                                         @"Whether to draw the cursor as bright HDR white on capable displays",
+            KEY_HDR_CURSOR_BRIGHTNESS:                              @"Peak brightness of the HDR cursor as a multiple of reference white",
             KEY_MINIMUM_CONTRAST:                                   @"Minimum contrast ratio between text and background",
             KEY_FAINT_TEXT_ALPHA:                                   @"Opacity of faint (dim) text",
             KEY_CURSOR_BOOST:                                       @"Amount to dim non-cursor text to highlight cursor",
@@ -761,6 +852,8 @@ typedef struct {
             KEY_DISABLE_PRINTING:                                   @"Whether to disable printing via escape sequences",
             KEY_DISABLE_SMCUP_RMCUP:                                @"Whether to disable alternate screen mode switching",
             KEY_SILENCE_BELL:                                       @"Whether to silence the terminal bell",
+            KEY_BELL_SOUND:                                         @"The sound the terminal bell plays, or empty for the system alert sound",
+            KEY_PREVENT_SLEEP:                                      @"Whether to prevent system idle sleep while a session with this profile exists",
             KEY_DEFAULT_PANE_LOCKED:                                @"Whether new panes are locked by default",
             KEY_BUFFER_BY_DEFAULT:                                  @"Whether keyboard input should be buffered by default in new sessions",
             KEY_BOOKMARK_USER_NOTIFICATIONS:                        @"Whether to post user notifications for this profile",
@@ -1015,6 +1108,14 @@ typedef struct {
                   KEY_CURSOR_BOOST COLORS_LIGHT_MODE_SUFFIX: @0.0,
                   KEY_CURSOR_BOOST COLORS_DARK_MODE_SUFFIX: @0.0,
 
+                  KEY_HDR_CURSOR: @NO,
+                  KEY_HDR_CURSOR COLORS_LIGHT_MODE_SUFFIX: @NO,
+                  KEY_HDR_CURSOR COLORS_DARK_MODE_SUFFIX: @NO,
+
+                  KEY_HDR_CURSOR_BRIGHTNESS: @(iTermHDRCursorMaximumBrightness),
+                  KEY_HDR_CURSOR_BRIGHTNESS COLORS_LIGHT_MODE_SUFFIX: @(iTermHDRCursorMaximumBrightness),
+                  KEY_HDR_CURSOR_BRIGHTNESS COLORS_DARK_MODE_SUFFIX: @(iTermHDRCursorMaximumBrightness),
+
                   KEY_CURSOR_TYPE: @(CURSOR_BOX),
                   KEY_BLINKING_CURSOR: @NO,
                   KEY_CURSOR_SHADOW: @NO,
@@ -1109,6 +1210,8 @@ typedef struct {
                   KEY_DISABLE_PRINTING: @NO,
                   KEY_DISABLE_SMCUP_RMCUP: @NO,
                   KEY_SILENCE_BELL: @NO,
+                  KEY_BELL_SOUND: @"",
+                  KEY_PREVENT_SLEEP: @NO,
                   KEY_DEFAULT_PANE_LOCKED: @NO,
                   KEY_BUFFER_BY_DEFAULT: @NO,
                   KEY_BOOKMARK_USER_NOTIFICATIONS: @NO,

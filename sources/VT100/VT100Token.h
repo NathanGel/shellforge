@@ -123,6 +123,7 @@ typedef enum {
     VT100CSI_SM,                    // Set Mode
     VT100CSI_TBC,                   // Tabulation Clear
     VT100CSI_DECSCUSR,              // Select the Style of the Cursor
+    VT100CSI_SCP,                   // Select Character Path (CSI Ps1 ; Ps2 SP k), the bidi base direction
     VT100CSI_DECSTR,                // Soft reset
     VT100CSI_DECDSR,                // Device Status Report (DEC specific)
     VT100CSI_SET_MODIFIERS,         // CSI > Ps; Pm m (Whether to set modifiers for different kinds of key presses; no official name)
@@ -185,6 +186,7 @@ typedef enum {
     XTERMCC_REPORT_WIN_STATE,
     XTERMCC_REPORT_WIN_POS,
     XTERMCC_REPORT_WIN_PIX_SIZE,
+    XTERMCC_REPORT_CELL_SIZE_PIX,
     XTERMCC_REPORT_WIN_SIZE,
     XTERMCC_REPORT_SCREEN_SIZE,
     XTERMCC_REPORT_ICON_TITLE,
@@ -224,6 +226,7 @@ typedef enum {
     XTERMCC_SET_HIGHLIGHT_FOREGROUND_COLOR,
     XTERMCC_SET_POINTER_SHAPE,
     XTERMCC_SET_TAB_STATUS,
+    XTERMCC_PROGRAM_STATUS,
 
     // If a sequence is split into multiple tokens, the first will be one of the above whose name
     // includes MULTITOKEN_HEADER, then zero or more of these, and then XTERMCC_MULTITOKEN_END.

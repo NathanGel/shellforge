@@ -56,6 +56,10 @@ typedef void (^iTermServerOriginatedRPCCompletionBlock)(id, NSError *);
 
 + (BOOL)confirmShouldStartServerAndUpdateUserDefaultsForced:(BOOL)forced;
 + (instancetype)sharedInstance;
+
+// Whether a client advertising `libraryVersion` (the x-iterm2-library-version header) knows about
+// floating panes. Older Python libraries loop forever on a focus change to one.
++ (BOOL)libraryVersionUnderstandsFloatingPanes:(NSString *)libraryVersion;
 + (instancetype)sharedInstanceFromExplicitUserAction;
 + (instancetype)sharedInstanceIfEnabled;
 
@@ -84,6 +88,10 @@ typedef NS_ENUM(NSUInteger, iTermNoAuthStatus) {
 // The completion block is called on the main queue with YES if the socket is ready,
 // or NO if it timed out waiting.
 + (void)whenSocketReadyRunBlock:(void (^)(BOOL ready))block;
+
+// Refuses new API socket connections from now on, without creating the helper if it does not
+// already exist. Existing connections are unaffected. Called when the app begins to quit.
++ (void)stopAcceptingConnections;
 
 - (void)postAPINotification:(ITMNotification *)notification toConnectionKey:(NSString *)connectionKey;
 

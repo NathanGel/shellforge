@@ -9,10 +9,17 @@
 #import "ProfilesTerminalPreferencesViewController.h"
 
 #import "ITAddressBookMgr.h"
+#import "NSImage+iTerm.h"
 #import "iTermController.h"
 #import "iTermShellHistoryController.h"
 #import "iTermSizeRememberingView.h"
 #import "iTerm2SharedARC-Swift.h"
+
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+
+// Tag of the bell sound menu item that opens a file chooser instead of naming a sound.
+// Every other item leaves its tag at 0.
+static const NSInteger iTermBellSoundOtherTag = 1;
 
 @interface ProfilesTerminalPreferencesViewController ()<iTermSizeRememberingViewDelegate>
 @end
@@ -41,6 +48,8 @@
     IBOutlet NSButton *_disableWindowResizing;
     IBOutlet NSButton *_disableUnfocusedWindowResizing;
     IBOutlet NSButton *_silenceBell;
+    IBOutlet NSPopUpButton *_bellSound;
+    IBOutlet NSTextField *_bellSoundLabel;
     IBOutlet NSButton *_postNotifications;
     IBOutlet NSButton *_filterAlertsButton;
     IBOutlet NSButton *_flashingBell;
@@ -233,10 +242,44 @@
             relatedView:nil
                    type:kPreferenceInfoTypeCheckbox];
 
-    [self defineControl:_silenceBell
-                    key:KEY_SILENCE_BELL
-            relatedView:nil
-                   type:kPreferenceInfoTypeCheckbox];
+    info = [self defineControl:_silenceBell
+                           key:KEY_SILENCE_BELL
+                   relatedView:nil
+                          type:kPreferenceInfoTypeCheckbox];
+    info.observer = ^() {
+        // The sound popup dims itself through its shouldBeEnabled block, but its label is
+        // not a control the preference machinery knows about.
+        __strong __typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf) {
+            return;
+        }
+        strongSelf->_bellSoundLabel.enabled = ![strongSelf boolForKey:KEY_SILENCE_BELL];
+    };
+
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(installedBellSoundsDidChange:)
+                                                 name:iTermBellSound.installedSoundsDidChangeNotification
+                                               object:nil];
+    [iTermBellSound refreshInstalledSounds];
+    [self rebuildBellSounds];
+    info = [self defineControl:_bellSound
+                           key:KEY_BELL_SOUND
+                   relatedView:_bellSoundLabel
+                          type:kPreferenceInfoTypeStringPopup];
+    info.onUpdate = ^BOOL {
+        // The menu has to already hold the profile’s sound for the normal path to select
+        // it, and a profile naming a file of its own gets an item made for it.
+        [weakSelf rebuildBellSounds];
+        return NO;
+    };
+    info.customSettingChangedHandler = ^(id sender) {
+        [weakSelf bellSoundDidChange];
+    };
+    info.shouldBeEnabled = ^BOOL {
+        return ![weakSelf boolForKey:KEY_SILENCE_BELL];
+    };
+    [info addShouldBeEnabledDependencyOnSetting:KEY_SILENCE_BELL
+                                     controller:self];
 
     info = [self defineControl:_postNotifications
                            key:KEY_BOOKMARK_USER_NOTIFICATIONS
@@ -347,7 +390,7 @@
     
     [self addViewToSearchIndex:_filterAlertsButton
 
-                   displayName:@"Filter alerts"
+                   displayName:NSLocalizedStringWithDefaultValue(@"ProfilesTerminal.FilterAlerts", nil, [NSBundle mainBundle], @"Filter alerts", @"Search index display name for the filter alerts control")
                        phrases:@[ @"bell", @"idle", @"session ended", @"new output"]
                            key:nil];
     [self updateEnabledState];
@@ -381,9 +424,10 @@
 }
 
 - (NSAttributedString *)attributedStringForLocale:(NSString *)lang {
-    NSString *title = [iTermLocaleGuesser titleForLocale:lang] ?: @"(No description available)";
+    NSString *title = [iTermLocaleGuesser titleForLocale:lang] ?: NSLocalizedStringWithDefaultValue(@"ProfilesTerminal.NoLocaleDescription", nil, [NSBundle mainBundle], @"(No description available)", @"Placeholder shown when a locale has no human-readable description");
     NSMutableAttributedString *attributedString = [[NSMutableAttributedString alloc] init];
     NSFont *monoFont = [NSFont userFixedPitchFontOfSize:[NSFont systemFontSize]];
+    // Localization unneeded
     NSAttributedString *langAS = [[NSAttributedString alloc] initWithString:[NSString stringWithFormat:@"LANG=%@", lang]
                                                                  attributes:@{ NSFontAttributeName: monoFont} ];
     NSAttributedString *titleAS = [[NSAttributedString alloc] initWithString:[NSString stringWithFormat:@"\u2002\u2002\u2002%@", title]
@@ -402,15 +446,16 @@
             iTermLocaleGuesser *guesser = [[iTermLocaleGuesser alloc] initWithEncoding:[self unsignedIntegerForKey:KEY_CHARACTER_ENCODING]];
             NSDictionary *env = guesser.dictionaryWithLC_CTYPE;
             if (!env) {
-                _localeName.stringValue = @"Invalid encoding: neither $LC_CTYPE nor $LANG set.";
+                _localeName.stringValue = NSLocalizedStringWithDefaultValue(@"ProfilesTerminal.InvalidEncodingNoLocaleVars", nil, [NSBundle mainBundle], @"Invalid encoding: neither $LC_CTYPE nor $LANG set.", @"Status shown when the encoding cannot be represented by any locale variable");
                 break;
             }
             NSString *ctype = [[guesser dictionaryWithLC_CTYPE] objectForKey:@"LC_CTYPE"];
             if (ctype) {
+                // Localization unneeded
                 _localeName.stringValue = [NSString stringWithFormat:@"LC_CTYPE=%@", ctype];
             } else {
                 RLog(@"enc=%@ %@", @([self unsignedIntegerForKey:KEY_CHARACTER_ENCODING]), [guesser dictionaryWithLC_CTYPE]);
-                _localeName.stringValue = @"Unexpectedly missing LC_CTYPE. Report a bug.";
+                _localeName.stringValue = NSLocalizedStringWithDefaultValue(@"ProfilesTerminal.MissingLCCTYPE", nil, [NSBundle mainBundle], @"Unexpectedly missing LC_CTYPE. Report a bug.", @"Status shown when LC_CTYPE is unexpectedly missing");
             }
             break;
         }
@@ -419,7 +464,7 @@
             if ([self stringForKey:KEY_CUSTOM_LOCALE].length) {
                 _localeName.attributedStringValue = [self attributedStringForLocale:[self stringForKey:KEY_CUSTOM_LOCALE]];
             } else {
-                _localeName.stringValue = @"No locale selected.";
+                _localeName.stringValue = NSLocalizedStringWithDefaultValue(@"ProfilesTerminal.NoLocaleSelected", nil, [NSBundle mainBundle], @"No locale selected.", @"Status shown when no custom locale has been chosen");
             }
             break;
         }
@@ -430,15 +475,125 @@
             if (lang.length) {
                 _localeName.attributedStringValue = [self attributedStringForLocale:lang];
             } else {
-                _localeName.stringValue = @"No valid locale exists for this machine’s language and country.";
+                _localeName.stringValue = NSLocalizedStringWithDefaultValue(@"ProfilesTerminal.NoValidLocale", nil, [NSBundle mainBundle], @"No valid locale exists for this machine’s language and country.", @"Status shown when no valid locale can be automatically determined");
             }
             break;
         }
         case iTermSetLocalVarsModeDoNotSet:
             _changeLocale.hidden = YES;
-            _localeName.stringValue = @"$LANG will not be set.";
+            _localeName.stringValue = NSLocalizedStringWithDefaultValue(@"ProfilesTerminal.LangNotSet", nil, [NSBundle mainBundle], @"$LANG will not be set.", @"Status shown when the locale mode is set to do-not-set");
             break;
     }
+}
+
+#pragma mark - Bell Sound
+
+- (void)viewWillAppear {
+    [super viewWillAppear];
+    // Pick up sounds added to or removed from the Sounds folders since the last scan. The
+    // menu is rebuilt when the scan finishes if anything changed.
+    [iTermBellSound refreshInstalledSounds];
+}
+
+- (void)installedBellSoundsDidChange:(NSNotification *)notification {
+    [self rebuildBellSounds];
+    [self selectCurrentBellSound];
+}
+
+- (void)selectCurrentBellSound {
+    const NSInteger index = [_bellSound indexOfItemWithRepresentedObject:[self stringForKey:KEY_BELL_SOUND] ?: @""];
+    if (index >= 0) {
+        [_bellSound selectItemAtIndex:index];
+    }
+}
+
+- (void)rebuildBellSounds {
+    NSString *const currentValue = [self stringForKey:KEY_BELL_SOUND] ?: @"";
+    NSMenu *const menu = _bellSound.menu;
+    [menu removeAllItems];
+
+    NSMenuItem *systemAlert = [[NSMenuItem alloc] init];
+    systemAlert.title = NSLocalizedStringWithDefaultValue(@"ProfilesTerminal.SystemAlertSound", nil, [NSBundle mainBundle], @"System Alert Sound", @"Name in the bell sound menu of the Mac’s own alert sound, which is what the bell plays by default");
+    systemAlert.representedObject = @"";
+    [menu addItem:systemAlert];
+    [menu addItem:[NSMenuItem separatorItem]];
+
+    for (NSString *name in [iTermBellSound installedSoundNames]) {
+        NSMenuItem *item = [[NSMenuItem alloc] init];
+        item.title = name;  // Localization unneeded: these are the installed sounds’ own names.
+        item.representedObject = name;
+        [menu addItem:item];
+    }
+
+    // A profile can name a file that is not in a Sounds folder, and can outlive the file
+    // it names. Either way it gets an item of its own so the popup shows what the profile
+    // actually says rather than silently reading as the default.
+    if (currentValue.length > 0 && [_bellSound indexOfItemWithRepresentedObject:currentValue] < 0) {
+        [menu addItem:[NSMenuItem separatorItem]];
+        NSMenuItem *item = [[NSMenuItem alloc] init];
+        item.title = [iTermBellSound displayNameForProfileValue:currentValue];
+        item.representedObject = currentValue;
+        if (![iTermBellSound profileValueIsPlayable:currentValue]) {
+            item.image = [NSImage it_imageNamed:@"WarningSign" forClass:self.class];
+            item.toolTip = NSLocalizedStringWithDefaultValue(@"ProfilesTerminal.UnplayableBellSound", nil, [NSBundle mainBundle], @"This sound can’t be played, so the bell plays the system alert sound.", @"Tooltip on the bell sound the profile names when that sound is missing or is not audio that can be played");
+        }
+        [menu addItem:item];
+    }
+
+    [menu addItem:[NSMenuItem separatorItem]];
+    NSMenuItem *other = [[NSMenuItem alloc] init];
+    other.title = NSLocalizedStringWithDefaultValue(@"ProfilesTerminal.OtherBellSound", nil, [NSBundle mainBundle], @"Other…", @"Menu item that opens a file chooser to pick an audio file for the terminal bell");
+    other.tag = iTermBellSoundOtherTag;
+    [menu addItem:other];
+}
+
+- (void)bellSoundDidChange {
+    if (_bellSound.selectedItem.tag == iTermBellSoundOtherTag) {
+        [self browseForBellSound];
+        return;
+    }
+    [self setString:_bellSound.selectedItem.representedObject forKey:KEY_BELL_SOUND];
+    [self previewBellSound];
+}
+
+- (void)browseForBellSound {
+    NSOpenPanel *panel = [NSOpenPanel openPanel];
+    panel.canChooseFiles = YES;
+    panel.canChooseDirectories = NO;
+    panel.allowsMultipleSelection = NO;
+    panel.allowedContentTypes = @[ UTTypeAudio ];
+    panel.message = NSLocalizedStringWithDefaultValue(@"ProfilesTerminal.ChooseBellSound", nil, [NSBundle mainBundle], @"Choose the sound the bell should play.", @"Prompt above the file chooser for the terminal bell’s sound");
+
+    const BOOL chosen = ([panel runModal] == NSModalResponseOK && panel.URL != nil);
+    // The popup is showing “Other…” whether or not a file was chosen, so put it back on
+    // the sound the profile names.
+    [self selectCurrentBellSound];
+    if (!chosen) {
+        return;
+    }
+    // Whether the file can be stored by name depends on what else is in the Sounds
+    // folders, which takes a scan to find out.
+    NSString *const guid = [self stringForKey:KEY_GUID];
+    __weak __typeof(self) weakSelf = self;
+    [iTermBellSound profileValueForURL:panel.URL completion:^(NSString *value) {
+        [weakSelf setBellSound:value forProfileWithGUID:guid];
+    }];
+}
+
+- (void)setBellSound:(NSString *)value forProfileWithGUID:(NSString *)guid {
+    if (![[self stringForKey:KEY_GUID] isEqualToString:guid]) {
+        // A different profile was selected while the Sounds folders were being scanned.
+        return;
+    }
+    [self setString:value forKey:KEY_BELL_SOUND];
+    [self rebuildBellSounds];
+    [self selectCurrentBellSound];
+    [self previewBellSound];
+}
+
+- (void)previewBellSound {
+    // Play it so the sounds can be told apart without leaving Settings.
+    [[iTermBellSoundPlayer sharedInstance] playProfileValue:[self stringForKey:KEY_BELL_SOUND]];
 }
 
 #pragma mark - Character Encoding
@@ -506,19 +661,19 @@ static NSInteger CompareEncodingByLocalizedName(id a, id b, void *unused) {
 - (IBAction)changeCustomLocale:(id)sender {
     iTermLocalePrompt *prompt = [[iTermLocalePrompt alloc] initWithEncoding:[self unsignedIntegerForKey:KEY_CHARACTER_ENCODING]];
     prompt.defaultLocale = [self stringForKey:KEY_CUSTOM_LOCALE];
-    prompt.message = @"Select your preferred locale:";
+    prompt.message = NSLocalizedStringWithDefaultValue(@"ProfilesTerminal.SelectLocaleMessage", nil, [NSBundle mainBundle], @"Select your preferred locale:", @"Prompt asking the user to choose a custom locale");
     prompt.allowRemember = NO;
     [prompt requestLocaleFromUserForProfile:nil inWindow:self.view.window cancelUsesC:NO];
     NSString *locale = prompt.selectedLocale;
     if (locale && [self unsignedIntegerForKey:KEY_CHARACTER_ENCODING] == NSUTF8StringEncoding && ![locale containsString:@"UTF-8"]) {
         NSString *guid = [self stringForKey:KEY_GUID] ?: @"";
         const iTermWarningSelection selection =
-        [iTermWarning showWarningWithTitle:@"Warning! This profile uses a custom locale that doesn't use UTF-8 as its character encoding, but your profile *is* using UTF-8. This can cause error messages and non-ASCII text to appear wrong."
-                                   actions:@[ @"Change Locale", @"Keep This Locale"]
+        [iTermWarning showWarningWithTitle:NSLocalizedStringWithDefaultValue(@"ProfilesTerminal.UTF8MismatchWarning", nil, [NSBundle mainBundle], @"Warning! This profile uses a custom locale that doesn't use UTF-8 as its character encoding, but your profile *is* using UTF-8. This can cause error messages and non-ASCII text to appear wrong.", @"Warning shown when a custom locale does not use UTF-8 but the profile does")
+                                   actions:@[ [iTermWarningAction localOnlyActionWithLabel:NSLocalizedStringWithDefaultValue(@"ProfilesTerminal.ChangeLocaleAction", nil, [NSBundle mainBundle], @"Change Locale", @"Button to change the custom locale")], NSLocalizedStringWithDefaultValue(@"ProfilesTerminal.KeepLocaleAction", nil, [NSBundle mainBundle], @"Keep This Locale", @"Button to keep the current custom locale")]
                                  accessory:nil
                                 identifier:[@"NoSyncUTF8Mismatch_" stringByAppendingString:guid]
                                silenceable:kiTermWarningTypePermanentlySilenceable
-                                   heading:@"Wrong Encoding Detected"
+                                   heading:NSLocalizedStringWithDefaultValue(@"ProfilesTerminal.WrongEncodingHeading", nil, [NSBundle mainBundle], @"Wrong Encoding Detected", @"Heading for the wrong-encoding warning")
                                     window:self.view.window];
         if (selection == kiTermWarningSelection0) {
             [self changeCustomLocale:sender];
@@ -534,7 +689,7 @@ static NSInteger CompareEncodingByLocalizedName(id a, id b, void *unused) {
 }
 
 - (IBAction)shellIntegrationRequired:(id)sender {
-    NSString *html = @"This feature requires shell integration to be installed. <a href=\"https://iterm2.com/documentation-shell-integration.html\">Learn more.</a>";
+    NSString *html = NSLocalizedStringWithDefaultValue(@"ProfilesTerminal.ShellIntegrationRequiredHTML", nil, [NSBundle mainBundle], @"This feature requires shell integration to be installed. <a href=\"https://iterm2.com/documentation-shell-integration.html\">Learn more.</a>", @"Warning shown when a feature requires shell integration");
     NSAttributedString *attributedString = [NSAttributedString attributedStringWithHTML:html
                                                                                    font:[NSFont systemFontOfSize:[NSFont systemFontSize]]
                                                                          paragraphStyle:[NSParagraphStyle defaultParagraphStyle]];

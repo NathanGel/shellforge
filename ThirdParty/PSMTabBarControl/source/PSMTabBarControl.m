@@ -150,9 +150,19 @@ PSMTabBarControlOptionKey PSMTabBarControlOptionPUAFontProvider = @"PSMTabBarCon
 - (void)removeTabProgressBarForCell:(PSMTabBarCell *)cell;
 // Hit-test a group chip (chips are invisible to -cellForPoint:).
 - (PSMTabBarCell *)chipForPoint:(NSPoint)point;
+- (void)clearPreDragSelection;
+- (void)setPreDragSelectedTabViewItem:(NSTabViewItem *)item;
+- (BOOL)tabViewItemIsHiddenInBar:(NSTabViewItem *)item;
 @end
 
+// How long a drag must rest over a tab before that tab is selected.
+static const NSTimeInterval PSMTabBarSpringLoadingDelay = 0.6;
+
 @implementation PSMTabBarControl {
+    // The tab a drag is resting over, which will be selected if it stays there. Not retained: it
+    // is checked against _cells before use.
+    PSMTabBarCell *_springLoadingCell;
+
     // control basics
     NSMutableArray<PSMTabBarCell *> *_cells; // the cells that draw the tabs
     NSButton *_overflowPopUpButton; // for too many tabs
@@ -231,6 +241,14 @@ PSMTabBarControlOptionKey PSMTabBarControlOptionPUAFontProvider = @"PSMTabBarCon
     BOOL _needsUpdateAnimate;
     BOOL _needsUpdate;
     NSInteger _preDragSelectedTabIndex;  // or NSNotFound
+    // The tab that was active when the current drag began, retained, but only
+    // when the drag started on a BACKGROUND (non-active) tab; nil when the
+    // dragged tab was itself the active one. Unlike the index above (which the
+    // out-of-bar restore in -dragWillExitTabBar consumes), this survives a
+    // re-entry so an in-bar drop into a collapsed group can restore it. Set in
+    // -mouseDown:, cleared when the drag ends (-dragDidFinish) or on a plain
+    // -mouseUp:.
+    NSTabViewItem *_preDragSelectedTabViewItem;
     NSMapTable<PSMTabBarCell *, NSView *> *_tabProgressBars;
     NSMutableArray<PSMToolTip *> *_tooltips;
     NSInteger _toolTipCoalescing;
@@ -423,6 +441,9 @@ PSMTabBarControlOptionKey PSMTabBarControlOptionPUAFontProvider = @"PSMTabBarCon
 
 - (void)dealloc {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
+    [NSObject cancelPreviousPerformRequestsWithTarget:self
+                                             selector:@selector(springLoadingTimerDidFire)
+                                               object:nil];
 
 
     // Remove bindings.
@@ -441,6 +462,7 @@ PSMTabBarControlOptionKey PSMTabBarControlOptionPUAFontProvider = @"PSMTabBarCon
     [_overflowPopUpButton release];
     [_cells release];
     [_tabView release];
+    [_preDragSelectedTabViewItem release];
     [_addTabButton release];
     [partnerView release];
     [_lastMouseDownEvent release];
@@ -888,7 +910,197 @@ static NSString *PSMSmartTruncationPrefix(NSString *title, NSInteger length) {
     }
 }
 
+NSRect PSMRectInLayerCoordinates(NSRect rect, NSRect subviewFrame) {
+    return NSMakeRect(NSMinX(rect) - NSMinX(subviewFrame),
+                      NSHeight(subviewFrame) + NSMinY(subviewFrame) - NSMaxY(rect),
+                      NSWidth(rect),
+                      NSHeight(rect));
+}
+
+BOOL PSMVisibleAccessoryInterval(CGFloat accessoryMin, CGFloat accessoryMax,
+                                 CGFloat cellMin, CGFloat cellMax,
+                                 CGFloat leading, CGFloat trailing,
+                                 CGFloat *outMin, CGFloat *outMax) {
+    // The rule is per edge: a cell that lies inside the region does not get its accessory clipped on
+    // that side, and a cell that crosses the boundary gets it clipped exactly there.
+    //
+    // Not clipping a cell that fits is what keeps the first and last tab's ring whole. The Tahoe
+    // progress ring is outset past the pill by progressRingWidth on every side so it can draw around
+    // it (see -progressBarRectForTabCell:), and that outset lands in the gutter the style reserves
+    // for it, so an edge tab's ring reaches past the margin while the tab itself is fully in view.
+    // Clipping a cell that does not fit at the boundary is what keeps a tab that has really scrolled
+    // under the decorations from painting its ring into the band beyond, and matches where -drawRect:
+    // cuts the cell off.
+    //
+    // Compare with a tolerance: a cell that fits exactly does not land on the boundary exactly. Widths
+    // come from a per-tab division rounded to device pixels and are then accumulated through
+    // -floatValue in -_setupCells:, so the last cell's edge lands within a fraction of a point of the
+    // viewport rather than on it. -cellWidthsForHorizontalArrangementWithOverflow: allows itself the
+    // same half point (its fitTolerance) for the same reason. Without this a full-width bar would drop
+    // the last tab's ring cap or keep it depending on the window width.
+    const CGFloat edgeTolerance = 0.5;
+    const CGFloat regionMin = (cellMin >= leading - edgeTolerance) ? accessoryMin : leading;
+    const CGFloat regionMax = (cellMax <= trailing + edgeTolerance) ? accessoryMax : trailing;
+    const CGFloat visibleMin = MAX(accessoryMin, regionMin);
+    const CGFloat visibleMax = MIN(accessoryMax, regionMax);
+    if (visibleMax <= visibleMin) {
+        return NO;
+    }
+    if (outMin) {
+        *outMin = visibleMin;
+    }
+    if (outMax) {
+        *outMax = visibleMax;
+    }
+    return YES;
+}
+
+// The part of an accessory's frame that is inside the scrollable region, in the tab bar's
+// coordinates, or NSZeroRect when none of it is.
+- (NSRect)visiblePartOfAccessoryFrame:(NSRect)accessoryFrame ofCell:(PSMTabBarCell *)cell {
+    if (![self tabBarIsScrollable]) {
+        return accessoryFrame;
+    }
+    const NSRect cellFrame = [cell frame];
+    const BOOL vertical = [self isVerticalOrientation];
+    CGFloat visibleMin;
+    CGFloat visibleMax;
+    if (!PSMVisibleAccessoryInterval(vertical ? NSMinY(accessoryFrame) : NSMinX(accessoryFrame),
+                                     vertical ? NSMaxY(accessoryFrame) : NSMaxX(accessoryFrame),
+                                     vertical ? NSMinY(cellFrame) : NSMinX(cellFrame),
+                                     vertical ? NSMaxY(cellFrame) : NSMaxX(cellFrame),
+                                     [self scrollLeadingMargin],
+                                     [self scrollViewportLength],
+                                     &visibleMin,
+                                     &visibleMax)) {
+        return NSZeroRect;
+    }
+    NSRect visible = accessoryFrame;
+    if (vertical) {
+        visible.origin.y = visibleMin;
+        visible.size.height = visibleMax - visibleMin;
+    } else {
+        visible.origin.x = visibleMin;
+        visible.size.width = visibleMax - visibleMin;
+    }
+    return visible;
+}
+
+// A path from the tab bar's flipped coordinate system as a shape layer in the non-flipped coordinate
+// system of a subview's layer, ready to use as (or inside) that subview's mask.
+static CAShapeLayer *PSMMaskShapeForPath(NSBezierPath *path, NSRect subviewFrame) {
+    NSAffineTransformStruct s = {
+        .m11 = 1,
+        .m12 = 0,
+        .m21 = 0,
+        .m22 = -1,
+        .tX = -subviewFrame.origin.x,
+        .tY = subviewFrame.size.height + subviewFrame.origin.y
+    };
+    NSAffineTransform *transform = [[NSAffineTransform alloc] init];
+    [transform setTransformStruct:s];
+    NSBezierPath *localPath = [transform transformBezierPath:path];
+    [transform release];
+
+    CAShapeLayer *shape = [CAShapeLayer layer];
+    shape.path = [localPath iterm_CGPath];
+    // Even-odd so a clip path with a nested subpath (e.g. the Tahoe ring around the pill) punches out
+    // its interior. Harmless for single-subpath clip paths, where it matches nonzero.
+    shape.fillRule = kCAFillRuleEvenOdd;
+    return shape;
+}
+
+// The style's clip path for a progress bar, or nil when the style doesn't clip its progress bars.
+- (CAShapeLayer *)progressBarShapeMaskForCell:(PSMTabBarCell *)cell frame:(NSRect)frame {
+    if (![self.style respondsToSelector:@selector(progressBarClipPathForTabCell:)]) {
+        return nil;
+    }
+    NSBezierPath *clipPath = [self.style progressBarClipPathForTabCell:cell];
+    if (!clipPath) {
+        return nil;
+    }
+    return PSMMaskShapeForPath(clipPath, frame);
+}
+
+// The shape accessories must stay inside, in the bar's coordinates, or nil when the style has none.
+// Read once per pass and handed to -maskShapesForAccessoryFrame:...: it is the same path for every
+// accessory in the bar, and building it involves a style call and a fresh rounded-rect path.
+- (NSBezierPath *)accessoryClipPath {
+    if (![self.style respondsToSelector:@selector(accessoryClipPathForTabBar:)]) {
+        return nil;
+    }
+    return [self.style accessoryClipPathForTabBar:self];
+}
+
+// Masks an accessory view to the intersection of `shapes` (paths already converted to the view's own
+// coordinates, outermost first; may be empty) and `clipRect` (the part of the view inside the
+// scrollable region, in the same coordinates; a rect containing the view's bounds clips nothing).
+//
+// AppKit has no bezier path intersection, and even-odd winding gives symmetric difference rather than
+// intersection, so the shapes are chained instead: each layer's own mask is the next one, and a mask
+// is rendered as a layer tree whose alpha is what shows through, so the alpha that survives the chain
+// is exactly the intersection. The rect goes on the outside as a container that masksToBounds.
+- (void)setMaskOfAccessory:(NSView *)view
+                  toShapes:(NSArray<CAShapeLayer *> *)shapes
+                 clippedTo:(NSRect)clipRect {
+    // NSContainsRect is NO for an empty second rect, so an accessory with nothing to draw would ask
+    // for a container mask it has no use for. Callers drop empty accessories before getting here, but
+    // the predicate should not read backwards for one.
+    const BOOL clips = !NSIsEmptyRect(view.bounds) && !NSContainsRect(clipRect, view.bounds);
+    if (shapes.count == 0 && !clips) {
+        view.layer.mask = nil;
+        return;
+    }
+    view.wantsLayer = YES;
+    for (NSUInteger i = 0; i + 1 < shapes.count; i++) {
+        shapes[i].mask = shapes[i + 1];
+    }
+    // Only the outermost layer is positioned. A nested one is placed in the coordinate system of the
+    // layer it masks, which is the view's own, the same system its path is already in.
+    CAShapeLayer *outermost = shapes.firstObject;
+    if (!clips) {
+        view.layer.mask = outermost;
+        return;
+    }
+    CALayer *container = [CALayer layer];
+    container.frame = clipRect;
+    container.masksToBounds = YES;
+    if (outermost) {
+        // The path is in the view's coordinates, so shift the shape layer by the container's origin to
+        // keep the two registered.
+        outermost.frame = NSMakeRect(-NSMinX(clipRect),
+                                     -NSMinY(clipRect),
+                                     NSWidth(view.bounds),
+                                     NSHeight(view.bounds));
+        [container addSublayer:outermost];
+    } else {
+        // With no shape the container is the entire mask, so it has to be opaque to let anything
+        // through at all.
+        container.backgroundColor = CGColorGetConstantColor(kCGColorBlack);
+    }
+    view.layer.mask = container;
+}
+
+// The shapes an accessory at `frame` must stay inside: the style's clip path for that kind of
+// accessory (nil for an indicator, which has none), then the bar's own accessory clip.
+//
+// `accessoryClipPath` is shared across the pass, but the layer built from it is not: each accessory's
+// mask lives in that accessory's own coordinate system, so the path is converted per accessory.
+- (NSArray<CAShapeLayer *> *)maskShapesForAccessoryFrame:(NSRect)frame
+                                              styleShape:(CAShapeLayer *)styleShape
+                                       accessoryClipPath:(NSBezierPath *)accessoryClipPath {
+    NSMutableArray<CAShapeLayer *> *shapes = [NSMutableArray array];
+    if (styleShape) {
+        [shapes addObject:styleShape];
+    }
+    if (accessoryClipPath) {
+        [shapes addObject:PSMMaskShapeForPath(accessoryClipPath, frame)];
+    }
+    return shapes;
+}
+
 - (void)syncTabProgressBars {
+    NSBezierPath *accessoryClipPath = [self accessoryClipPath];
     NSMutableSet<PSMTabBarCell *> *visibleCells = [NSMutableSet set];
     for (PSMTabBarCell *cell in _cells) {
         if (![self shouldShowCustomProgressBarForTabCell:cell]) {
@@ -904,41 +1116,25 @@ static NSString *PSMSmartTruncationPrefix(NSString *title, NSInteger length) {
             }
             [_tabProgressBars setObject:progressBar forKey:cell];
         }
-        progressBar.frame = [self.style progressBarRectForTabCell:cell];
+        const NSRect frame = [self.style progressBarRectForTabCell:cell];
+        progressBar.frame = frame;
         [self configureCustomProgressBarView:progressBar forTabCell:cell];
-        if ([self.style respondsToSelector:@selector(progressBarClipPathForTabCell:)]) {
-            NSBezierPath *clipPath = [self.style progressBarClipPathForTabCell:cell];
-            if (clipPath) {
-                // Convert the clip path from the tab bar's flipped coordinate
-                // system to the progress bar layer's non-flipped coordinate system.
-                const NSRect frame = progressBar.frame;
-                NSAffineTransformStruct s = {
-                    .m11 = 1,
-                    .m12 = 0,
-                    .m21 = 0,
-                    .m22 = -1,
-                    .tX = -frame.origin.x,
-                    .tY = frame.size.height + frame.origin.y
-                };
-                NSAffineTransform *transform = [[NSAffineTransform alloc] init];
-                [transform setTransformStruct:s];
-                NSBezierPath *localPath = [transform transformBezierPath:clipPath];
-                CAShapeLayer *mask = [CAShapeLayer layer];
-                mask.path = [localPath iterm_CGPath];
-                // Even-odd so a clip path with a nested subpath (e.g. the Tahoe
-                // ring around the pill) punches out its interior. Harmless for
-                // single-subpath clip paths, where it matches nonzero.
-                mask.fillRule = kCAFillRuleEvenOdd;
-                progressBar.wantsLayer = YES;
-                progressBar.layer.mask = mask;
-                [transform release];
-            } else {
-                progressBar.layer.mask = nil;
-            }
-        } else {
+        // Clip here rather than in -clipAccessoriesToScrollRegion: this is where the bar's frame is
+        // decided, and -setProgress:forTabWithIdentifier: syncs without a following layout pass,
+        // which would otherwise leave a bar unclipped until the next -update:.
+        const NSRect visible = [self visiblePartOfAccessoryFrame:frame ofCell:cell];
+        if (NSIsEmptyRect(visible)) {
             progressBar.layer.mask = nil;
+            progressBar.hidden = YES;
+        } else {
+            CAShapeLayer *ring = [self progressBarShapeMaskForCell:cell frame:frame];
+            [self setMaskOfAccessory:progressBar
+                            toShapes:[self maskShapesForAccessoryFrame:frame
+                                                            styleShape:ring
+                                                     accessoryClipPath:accessoryClipPath]
+                           clippedTo:PSMRectInLayerCoordinates(visible, frame)];
+            progressBar.hidden = NO;
         }
-        progressBar.hidden = NO;
         if (progressBar.superview != self) {
             [self addSubview:progressBar];
         }
@@ -956,8 +1152,72 @@ static NSString *PSMSmartTruncationPrefix(NSString *title, NSInteger length) {
     }
 }
 
-- (void)dragDidFinish {
+- (void)setPreDragSelectedTabViewItem:(NSTabViewItem *)item {
+    if (item == _preDragSelectedTabViewItem) {
+        return;
+    }
+    [_preDragSelectedTabViewItem release];
+    _preDragSelectedTabViewItem = [item retain];
+}
+
+// Forget everything about the pre-drag selection (both the index the out-of-bar
+// restore uses and the retained item the in-bar-drop restore uses).
+- (void)clearPreDragSelection {
     _preDragSelectedTabIndex = NSNotFound;
+    [self setPreDragSelectedTabViewItem:nil];
+}
+
+- (void)dragDidFinish {
+    [self clearPreDragSelection];
+}
+
+- (NSTabViewItem *)preDragSelectedTabViewItem {
+    return _preDragSelectedTabViewItem;
+}
+
+// After an in-bar drop of `droppedItem`: when the tab landed hidden inside a
+// collapsed group AND the drag began on a BACKGROUND (not the active) tab, keep the
+// group collapsed and return YES. Returns NO when the caller should instead select
+// the dropped tab: it did not land in a collapsed group, or it WAS the active tab
+// (so selecting it expands the group -- a collapsed group can't hold the active
+// tab). `sourceBar` is the bar the tab was dragged FROM (== self same-window); its
+// pre-drag active tab (recorded in -mouseDown:) tells whether the dragged tab was a
+// background tab. Reading the SOURCE, not self, is what makes this correct for a
+// cross-window drop, where self (the destination) never recorded this drag.
+- (BOOL)keepCollapsedAfterInBarDropOf:(NSTabViewItem *)droppedItem
+                       draggedFromBar:(PSMTabBarControl *)sourceBar
+          destinationPreDropSelection:(NSTabViewItem *)destinationPreDropSelection {
+    const BOOL droppedHidden = [self tabViewItemIsHiddenInBar:droppedItem];
+    PSMTabBarControl *origin = sourceBar ?: self;
+    const BOOL sameWindow = (origin == self);
+    NSTabViewItem *sourceActive = [[[origin preDragSelectedTabViewItem] retain] autorelease];
+    RLog(@"tabGroup: keepCollapsed dropped=%@ droppedHidden=%d sameBar=%d sourcePreDrag=%@ destPreDrop=%@",
+         [droppedItem label] ?: @"-", (int)droppedHidden, (int)sameWindow,
+         [sourceActive label] ?: @"(nil)", [destinationPreDropSelection label] ?: @"(nil)");
+    if (!droppedHidden) {
+        return NO;  // did not land in a collapsed group -> select the dropped tab
+    }
+    if (sourceActive == nil || sourceActive == droppedItem) {
+        return NO;  // dragged the ACTIVE tab -> select it (expands the group)
+    }
+    // A BACKGROUND tab landed hidden in a collapsed group: keep the group collapsed
+    // by making the RIGHT tab active (so the dropped tab is not). The drop machinery
+    // has ALREADY selected the dropped tab in this bar (see -reallyPerformDragOperation:
+    // cross-window select, and same-window mouse-down), so restore explicitly:
+    //   same-window  -> the tab that was active before the drag (source == self)
+    //   cross-window -> this bar's OWN active tab from just before the drop
+    NSTabViewItem *restore = sameWindow ? sourceActive : destinationPreDropSelection;
+    if (restore == nil || restore == droppedItem ||
+        ![[self.tabView tabViewItems] containsObject:restore] ||
+        [self tabViewItemIsHiddenInBar:restore]) {
+        return NO;  // nothing valid to restore -> let the caller select the dropped tab
+    }
+    if (self.tabView.selectedTabViewItem != restore) {
+        [self.tabView selectTabViewItem:restore];
+    }
+    RLog(@"tabGroup: keepCollapsed restored selection to %@", [restore label] ?: @"-");
+    [origin clearPreDragSelection];
+    return YES;
 }
 
 // YES if `item`'s cell is currently hidden in the bar (overflowed or its group
@@ -1453,7 +1713,14 @@ static NSString *PSMSmartTruncationPrefix(NSString *title, NSInteger length) {
 
 - (void)setFrame:(NSRect)frame {
     [super setFrame:frame];
+    // A resize moves the trailing edge of the scroll region, so accessories need re-clipping against
+    // it rather than waiting for the next -update:. The cells have NOT been laid out for the new size
+    // yet, though -- that happens in the -_setupCells: to come -- so an accessory that measures as
+    // entirely outside right now may just be sitting at its old position. Mask it away (reversible,
+    // and the coming layout pass will mask it back) instead of pulling it out of the bar, which only
+    // -_setupCells: can undo.
     [self syncTabProgressBars];
+    [self clipAccessoriesToScrollRegionRemovingInvisible:NO];
 }
 
 #pragma mark - Scrollable tab bar
@@ -1508,17 +1775,6 @@ static NSString *PSMSmartTruncationPrefix(NSString *title, NSInteger length) {
 
 - (void)clampScrollOffset {
     _scrollOffset = MAX(0, MIN([self maximumScrollOffset], _scrollOffset));
-}
-
-// YES if any part of the frame reaches before the leading margin (under the decorations) or past the
-// trailing edge, along the scroll axis.
-- (BOOL)frameIsOutsideScrollRegion:(NSRect)frame {
-    const CGFloat leading = [self scrollLeadingMargin];
-    const CGFloat trailing = [self scrollViewportLength];
-    if ([self isVerticalOrientation]) {
-        return NSMinY(frame) < leading || NSMaxY(frame) > trailing;
-    }
-    return NSMinX(frame) < leading || NSMaxX(frame) > trailing;
 }
 
 // Paints the bar's own background (and chrome, but no cells) into a scroll-margin strip by asking the
@@ -1622,26 +1878,43 @@ static NSString *PSMSmartTruncationPrefix(NSString *title, NSInteger length) {
 }
 
 // Per-cell accessory subviews (the activity spinner, custom download progress bars) draw on top of
-// drawRect:, so the drawRect clip cannot cover them. A clipping container is not an option here:
-// clipsToBounds forces layer backing, which makes the bar render opaque over a transparent window. So
-// instead, after every layout pass has positioned its subviews, hide any accessory whose final frame
-// reaches above the decoration band or below the bottom edge. Runs last so nothing added or moved
-// after _setupCells can leak one out of the scrollable region.
-- (void)hideAccessoriesOutsideScrollRegion {
-    if (![self tabBarIsScrollable]) {
-        return;
-    }
+// drawRect:, so the drawRect clip cannot cover them. Nor can a clipping container: clipsToBounds on
+// the bar forces layer backing, which makes it render opaque over a transparent window. So instead,
+// after every layout pass has positioned its subviews, mask each accessory to the part of it inside
+// the scrollable region. Masking rather than hiding outright matters for a cell that is only partly
+// scrolled under the decorations: its accessory should be cut off at the margin, not vanish. Runs
+// last so nothing added or moved after _setupCells can leak one out of the scrollable region.
+//
+// Progress bars are clipped by -syncTabProgressBars, which runs just before this and already has the
+// style's clip path in hand; only the indicators are left to do here.
+//
+// An indicator outlives many layout passes and keeps whatever mask it was last given, so this runs
+// even when the bar is not scrollable: -visiblePartOfAccessoryFrame:ofCell: reports everything as
+// visible in that case, which is what clears a mask left over from when it was scrollable.
+//
+// `removeInvisible` is for a caller whose cell frames are current: an indicator with nothing visible
+// is taken out of the bar and its spinner stopped, which is cheaper than keeping an invisible view
+// animating, but only -_setupCells: puts it back. A caller working against a stale layout passes NO
+// and gets a mask covering the whole indicator instead, which the next pass undoes by itself.
+- (void)clipAccessoriesToScrollRegionRemovingInvisible:(BOOL)removeInvisible {
+    NSBezierPath *accessoryClipPath = [self accessoryClipPath];
     for (PSMTabBarCell *cell in _cells) {
-        NSView *indicator = [cell indicator];
-        if (indicator.superview == self && [self frameIsOutsideScrollRegion:indicator.frame]) {
+        PSMProgressIndicator *indicator = [cell indicator];
+        if (indicator.superview != self) {
+            continue;
+        }
+        const NSRect visible = [self visiblePartOfAccessoryFrame:indicator.frame ofCell:cell];
+        if (NSIsEmptyRect(visible) && removeInvisible) {
+            indicator.layer.mask = nil;
+            indicator.animate = NO;
             [indicator removeFromSuperview];
+            continue;
         }
-    }
-    for (NSView *progressBar in _tabProgressBars.objectEnumerator) {
-        if (progressBar.superview == self && !progressBar.isHidden &&
-            [self frameIsOutsideScrollRegion:progressBar.frame]) {
-            progressBar.hidden = YES;
-        }
+        [self setMaskOfAccessory:indicator
+                        toShapes:[self maskShapesForAccessoryFrame:indicator.frame
+                                                        styleShape:nil
+                                                 accessoryClipPath:accessoryClipPath]
+                       clippedTo:PSMRectInLayerCoordinates(visible, indicator.frame)];
     }
 }
 
@@ -1874,7 +2147,7 @@ static NSString *PSMSmartTruncationPrefix(NSString *title, NSInteger length) {
     }
 
     [self syncTabProgressBars];
-    [self hideAccessoriesOutsideScrollRegion];
+    [self clipAccessoriesToScrollRegionRemovingInvisible:YES];
     if (_keepSelectedTabInView && !_adjustingScrollForSelection) {
         // Re-check after each layout so a tab whose width settles asynchronously ends up fully visible.
         _adjustingScrollForSelection = YES;
@@ -2124,6 +2397,13 @@ static CGFloat PSMCollapseEase(CGFloat t) {
     // The interpolated width > 0 keeps a collapsing member laid out (not zeroed)
     // by -_setupCells: so it slides shut/open.
     [self _setupCells:widths];
+    // -_setupCells: just moved the indicators, and an accessory's mask is in its own coordinates, so
+    // it still describes where that indicator was. Re-clip every tick, or a partly clipped spinner
+    // stays sliced for the length of the slide: -finishCollapseAnimation settles only the last
+    // frame. Pass NO because a member interpolating through zero width would otherwise be pulled out
+    // of the bar, and only -_setupCells: puts one back. Progress bars need nothing here, being
+    // hidden for the duration by -hideTabProgressBarsForCollapseAnimation.
+    [self clipAccessoriesToScrollRegionRemovingInvisible:NO];
     [self setNeedsDisplay:YES];
 }
 
@@ -2737,6 +3017,96 @@ typedef struct {
     return regularWidths;
 }
 
+// Width the cell area needs for every cell to be laid out at its minimum with
+// none dropped. Mirrors the three branches of the width builder below -- chips,
+// pinned, plain -- so the two must be edited together or the reservation this
+// feeds will disagree with the layout it is meant to predict.
+//
+// Uneven (sizeCellsToFit) and optimum sizing deliberately have no branch here.
+// -variableCellWidthsWithOverflow: returns nil unless every cell fits at its
+// desired width, and desired is already at least cellMinWidth;
+// -shouldUseOptimalWidthWithOverflow: is only true when optimum already fits.
+// Neither can overflow a bar that this expression says fits, so the overflow
+// threshold is a cellMinWidth question in every branch.
+- (CGFloat)minimumCellAreaWidth {
+    const CGFloat spacing = _style.intercellSpacing;
+    const CGFloat minWidth = self.cellMinWidth;
+
+    if ([self hasTabGroupChipCells]) {
+        // Collapsed members are hidden: no width and no intercell spacing, which
+        // is exactly why a raw tab count overstates what the tabs need.
+        const NSInteger visibleCellCount = [self numberOfCellsContributingIntercellSpacing];
+        CGFloat reserved = 0;
+        NSInteger tabCount = 0;
+        for (NSInteger i = 0; i < (NSInteger)_cells.count; i++) {
+            PSMTabBarCell *cell = _cells[i];
+            if (cell.isCollapsedHidden) {
+                continue;
+            }
+            if (cell.isTabGroupChip) {
+                reserved += [self widthOfTabGroupChipCellAtIndex:i];
+            } else if (cell.isPinned) {
+                reserved += _pinnedTabWidth;
+            } else {
+                tabCount++;
+            }
+        }
+        return reserved + (CGFloat)tabCount * minWidth + spacing * MAX(0.0, (CGFloat)visibleCellCount - 1.0);
+    }
+
+    // Floor at one cell: _cells is briefly empty during teardown, and a zero
+    // minimum would hand a caller the entire bar for a frame.
+    const NSUInteger cellCount = MAX((NSUInteger)1, _cells.count);
+    const NSUInteger pinnedCount = [self numberOfPinnedCells];
+    if (pinnedCount > 0) {
+        const NSUInteger unpinnedCount = cellCount - pinnedCount;
+        return ([self totalPinnedSpaceForPinnedCount:pinnedCount unpinnedCount:unpinnedCount] +
+                (CGFloat)unpinnedCount * minWidth +
+                spacing * MAX(0.0, (CGFloat)unpinnedCount - 1.0));
+    }
+    return (CGFloat)cellCount * minWidth + spacing * MAX(0.0, (CGFloat)cellCount - 1.0);
+}
+
+- (CGFloat)maximumLeftInsetFittingAllCellsMinimallyForWidth:(CGFloat)width {
+    // -availableCellWidthWithOverflow: is frame width less both margins, so the
+    // largest inset that still fits is whatever remains once the margins and the
+    // cells' own minimum are taken out. Asking for the no-overflow right margin
+    // is the point: this answers whether the bar fits *without* degrading.
+    //
+    // The left margin is not simply insets.left: Yosemite returns it unchanged
+    // but Tahoe returns it plus 2. Subtracting self.insets.left leaves only that
+    // per-style constant, which is what a caller about to choose a new inset
+    // needs. Do not simplify either half away -- alone, one reads a stale inset
+    // and the other silently drops the style's own padding.
+    const CGFloat stylePadding = [_style leftMarginForTabBarControl] - self.insets.left;
+    const CGFloat rightMargin = [_style rightMarginForTabBarControlWithOverflow:NO
+                                                                   addTabButton:self.showAddTabButton];
+    return width - stylePadding - rightMargin - [self minimumCellAreaWidth];
+}
+
+// What the bar must keep of its cell area to stay usable. A scrollable bar does
+// not shrink its cells to fit -- every tab keeps -scrollableTabWidth and the
+// ones that do not fit are scrolled to -- so insisting on room for all of them
+// reserves space that no tab would ever be laid out in. One tab's worth is what
+// it actually needs; the rest are a scroll away either way.
+//
+// Never more than the non-scrollable answer, so a caller can only gain room by
+// the bar being scrollable, never lose it.
+- (CGFloat)minimumUsableCellAreaWidth {
+    const CGFloat fittingAll = [self minimumCellAreaWidth];
+    if (![self tabBarIsScrollable] || _orientation != PSMTabBarHorizontalOrientation) {
+        return fittingAll;
+    }
+    return MIN(fittingAll, (CGFloat)_scrollableTabWidth);
+}
+
+- (CGFloat)maximumLeftInsetLeavingTabsUsableForWidth:(CGFloat)width {
+    const CGFloat stylePadding = [_style leftMarginForTabBarControl] - self.insets.left;
+    const CGFloat rightMargin = [_style rightMarginForTabBarControlWithOverflow:NO
+                                                                   addTabButton:self.showAddTabButton];
+    return width - stylePadding - rightMargin - [self minimumUsableCellAreaWidth];
+}
+
 - (NSArray<NSNumber *> *)cellWidthsForHorizontalArrangementWithOverflow:(BOOL)withOverflow {
     if ([self hasTabGroupChipCells]) {
         return [self cellWidthsForHorizontalArrangementWithChipsWithOverflow:withOverflow];
@@ -2939,6 +3309,13 @@ typedef struct {
     if (!updated) {
         [self finishUpdateWithRegularWidths:targetWidths
                          widthsWithOverflow:targetWidths];
+        // -_setupCells: has just moved the cells, and the indicators with them, to the settled
+        // layout, but an accessory's mask is in its own coordinates and was computed for where it
+        // used to be. The synchronous layout paths re-clip at the end of -reallyUpdate:; this timer
+        // bypasses that, so without this the last tab keeps whatever clip it had before the tabs
+        // widened. -finishCollapseAnimation settles the other animator the same way, via -update:.
+        [self syncTabProgressBars];
+        [self clipAccessoriesToScrollRegionRemovingInvisible:YES];
         [timer invalidate];
         _animationTimer = nil;
     }
@@ -3143,8 +3520,8 @@ typedef struct {
             [cell setTabState:tabState];
             [cell setIsInOverflowMenu:NO];
 
-            // indicator (accessories outside the scroll region are hidden later by
-            // hideAccessoriesOutsideScrollRegion)
+            // indicator (accessories outside the scroll region are clipped or dropped later by
+            // -clipAccessoriesToScrollRegionRemovingInvisible:)
             if (![[cell indicator] isHidden] && !_hideIndicators) {
                 [[cell indicator] setFrame:[cell indicatorRectForFrame:cellRect]];
                 if (![[self subviews] containsObject:[cell indicator]]) {
@@ -3315,14 +3692,24 @@ typedef struct {
             [cell setCloseButtonPressed:NO];
             if ([theEvent clickCount] == 1) {
                 const NSEventModifierFlags mask = NSEventModifierFlagOption;
-                if (_selectsTabsOnMouseDown && (theEvent.modifierFlags & mask) == 0) {
-                    if (cell.state != NSControlStateValueOn) {
-                        _preDragSelectedTabIndex = [[self tabView] indexOfTabViewItem:self.tabView.selectedTabViewItem];
-                    } else {
-                        // Because we always want it to switch tabs, don't save
-                        // the index if you're dragging the current tab.
-                        _preDragSelectedTabIndex = NSNotFound;
-                    }
+                const BOOL plainClick = ((theEvent.modifierFlags & mask) == 0);
+                // Record the pre-drag active tab for the keep-a-collapsed-group-
+                // collapsed behavior on EVERY single-click that starts a potential
+                // drag, INDEPENDENT of both select-on-mouse-down AND the Option
+                // modifier (a drag is initiated in -mouseDragged: regardless of
+                // Option, so an Option-drag of a background tab must keep the group
+                // collapsed too). A cross-window drop reads the SOURCE bar's value.
+                // nil means the ACTIVE tab was clicked (dragging it expands the group).
+                [self setPreDragSelectedTabViewItem:(cell.state != NSControlStateValueOn
+                                                     ? self.tabView.selectedTabViewItem
+                                                     : nil)];
+                if (_selectsTabsOnMouseDown && plainClick) {
+                    // _preDragSelectedTabIndex drives restoring the selection if the
+                    // drag is cancelled -- a select-on-mouse-down concern only, so it
+                    // stays gated on that setting (unlike the item above).
+                    _preDragSelectedTabIndex = (cell.state != NSControlStateValueOn
+                                                ? [[self tabView] indexOfTabViewItem:self.tabView.selectedTabViewItem]
+                                                : NSNotFound);
                     [self tabClick:cell];
                 }
             }
@@ -3500,7 +3887,7 @@ typedef struct {
 }
 
 - (void)mouseUp:(NSEvent *)theEvent {
-    _preDragSelectedTabIndex = NSNotFound;
+    [self clearPreDragSelection];
     _haveInitialDragLocation = NO;
     if (_resizing) {
         _resizing = NO;
@@ -3726,6 +4113,7 @@ static CFAbsoluteTime gDragMoveFirstTime = 0;
     } else if ([[self delegate] respondsToSelector:@selector(tabView:draggingEnteredTabBarForSender:)]) {
         NSDragOperation op = [[self delegate] tabView:_tabView draggingEnteredTabBarForSender:sender];
         if (op != NSDragOperationNone) {
+            [self updateSpringLoading];
             [[PSMTabDragAssistant sharedDragAssistant] startAnimationWithOrientation:_orientation width:_cellOptimumWidth];
             [[PSMTabDragAssistant sharedDragAssistant] draggingEnteredTabBar:self atPoint:[self convertPoint:[sender draggingLocation] fromView:nil]];
         }
@@ -3752,6 +4140,7 @@ static CFAbsoluteTime gDragMoveFirstTime = 0;
         return NSDragOperationMove;
     } else if ([[self delegate] respondsToSelector:@selector(tabView:shouldAcceptDragFromSender:)] &&
                [[self delegate] tabView:_tabView shouldAcceptDragFromSender:sender]) {
+        [self updateSpringLoading];
         [[PSMTabDragAssistant sharedDragAssistant] draggingUpdatedInTabBar:self atPoint:[self convertPoint:[sender draggingLocation] fromView:nil]];
         return NSDragOperationMove;
     } else if (cell) {
@@ -3764,7 +4153,82 @@ static CFAbsoluteTime gDragMoveFirstTime = 0;
 }
 
 - (void)draggingExited:(id <NSDraggingInfo>)sender {
+    [self cancelSpringLoading];
     [[PSMTabDragAssistant sharedDragAssistant] draggingExitedTabBar:self];
+}
+
+#pragma mark Spring loading
+
+// A pane or other non-tab drag that rests over a tab selects that tab, so it can be dropped into
+// that tab's content. Tab drags are not spring-loaded: they rearrange the bar.
+- (void)updateSpringLoading {
+    PSMTabBarCell *cell = [self cellForPoint:[self freshDragMouseLocation] cellFrame:nil];
+    if (cell.isPlaceholder ||
+        cell.representedObject == nil ||
+        cell.representedObject == [_tabView selectedTabViewItem]) {
+        cell = nil;
+    }
+    if (cell == _springLoadingCell) {
+        return;
+    }
+    [self cancelSpringLoading];
+    _springLoadingCell = cell;
+    if (cell) {
+        // A drag session runs the run loop in event tracking mode.
+        [self performSelector:@selector(springLoadingTimerDidFire)
+                   withObject:nil
+                   afterDelay:PSMTabBarSpringLoadingDelay
+                      inModes:@[ NSRunLoopCommonModes ]];
+    }
+}
+
+- (void)cancelSpringLoading {
+    [NSObject cancelPreviousPerformRequestsWithTarget:self
+                                             selector:@selector(springLoadingTimerDidFire)
+                                               object:nil];
+    _springLoadingCell = nil;
+}
+
+- (void)springLoadingTimerDidFire {
+    PSMTabBarCell *cell = _springLoadingCell;
+    _springLoadingCell = nil;
+    if (!cell || ![_cells containsObject:cell]) {
+        return;
+    }
+    if ([self cellForPoint:[self freshDragMouseLocation] cellFrame:nil] != cell) {
+        DLog(@"The drag left the tab before it sprang");
+        return;
+    }
+    NSTabViewItem *item = [cell representedObject];
+    if ([[_tabView tabViewItems] containsObject:item]) {
+        DLog(@"Spring-load tab %@", item);
+        [_tabView selectTabViewItem:item];
+        [self markSelectedCellWithoutLayout];
+    }
+}
+
+// During a drag the drag assistant lays out the bar and -update doesn't run, so a tab selected
+// meanwhile, as by spring-loading, has to be marked selected here.
+- (void)markSelectedCellWithoutLayout {
+    NSTabViewItem *selected = [_tabView selectedTabViewItem];
+    PSMTabBarCell *previous = nil;
+    for (PSMTabBarCell *cell in _cells) {
+        const BOOL isSelected = (selected != nil && [[cell representedObject] isEqualTo:selected]);
+        [cell setState:isSelected ? NSControlStateValueOn : NSControlStateValueOff];
+        int tabState = [cell tabState] & ~(PSMTab_SelectedMask | PSMTab_LeftIsSelectedMask | PSMTab_RightIsSelectedMask);
+        if (isSelected) {
+            tabState |= PSMTab_SelectedMask;
+            if (previous) {
+                [previous setTabState:[previous tabState] | PSMTab_RightIsSelectedMask];
+            }
+        }
+        if ([previous state] == NSControlStateValueOn) {
+            tabState |= PSMTab_LeftIsSelectedMask;
+        }
+        [cell setTabState:tabState];
+        previous = cell;
+    }
+    [self setNeedsDisplay:YES];
 }
 
 - (BOOL)prepareForDragOperation:(id <NSDraggingInfo>)sender {
@@ -3785,6 +4249,7 @@ static CFAbsoluteTime gDragMoveFirstTime = 0;
 
 - (BOOL)performDragOperation:(id <NSDraggingInfo>)sender {
     _haveInitialDragLocation = NO;
+    [self cancelSpringLoading];
     if ([[[sender draggingPasteboard] types] indexOfObject:@"com.iterm2.psm.controlitem"] != NSNotFound ||
         [self _delegateAcceptsSender:sender]) {
         [[PSMTabDragAssistant sharedDragAssistant] performDragOperation:sender];
@@ -4552,6 +5017,18 @@ static CFAbsoluteTime gDragMoveFirstTime = 0;
             block(chip, run.memberCount, chip.tabGroupIdentifier);
         }
     }
+}
+
+// The id of the collapsed group the in-flight drag would join if dropped now, or
+// nil. A collapsed group draws no member cells, so the opening-slot affordance is
+// invisible; styles use this to highlight the group's chip as the drop target
+// instead. Only meaningful while this bar is the drag destination.
+- (NSString *)collapsedTabGroupDropTargetIdentifier {
+    PSMTabDragAssistant *assistant = [PSMTabDragAssistant sharedDragAssistant];
+    if (![assistant isDragging] || [assistant destinationTabBar] != self) {
+        return nil;
+    }
+    return [assistant collapsedGroupJoinTargetIdentifier];
 }
 
 // Like NSUnionRect, but a zero-WIDTH rect still contributes its x-position.

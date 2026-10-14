@@ -48,7 +48,7 @@ struct LLMRequestBuilder {
     var headers: [String: String] {
         var result = LLMAuthorizationProvider(provider: provider, apiKey: apiKey).headers
         result["Content-Type"] = "application/json"
-        result = AICustomHeaders.merged(into: result)
+        result = AICustomHeaders.merged(into: result, customHeaders: provider.model.customHeaders)
         return result
     }
 
@@ -107,6 +107,7 @@ struct LLMRequestBuilder {
                                         provider: provider,
                                         functions: functions,
                                         stream: stream,
+                                        shouldThink: shouldThink,
                                         frozenHistoryElements: frozenHistoryElements).body()
         case .deepSeek:
             try DeepSeekRequestBuilder(messages: messagesWithVolatile,

@@ -179,6 +179,10 @@ extern const NSInteger VT100ScreenBigFileDownloadThreshold;
 - (void)enumeratePromptsFrom:(nullable NSString *)maybeFirst
                           to:(nullable NSString *)maybeLast
                        block:(void (^ NS_NOESCAPE)(id<VT100ScreenMarkReading> mark))block;
+// Enumerates prompt marks newest-first, stopping as soon as the block sets
+// *stop. For bounded tail queries (e.g. "the last few commands") that would
+// otherwise walk the entire mark history forward just to keep the suffix.
+- (void)enumeratePromptsBackward:(void (^ NS_NOESCAPE)(id<VT100ScreenMarkReading> mark, BOOL *stop))block;
 - (void)enumeratePortholes:(void (^ NS_NOESCAPE)(id<PortholeMarkReading> mark))block;
 
 // These methods normally only return one object, but if there is a tie, all of the equally-positioned marks/notes are returned.
@@ -235,6 +239,8 @@ extern const NSInteger VT100ScreenBigFileDownloadThreshold;
 - (void)setColorsFromDictionary:(NSDictionary<NSNumber *, id> *)dict harmonize:(BOOL)harmonize;
 - (void)setColor:(nullable NSColor *)color forKey:(int)key;
 - (void)userDidPressReturn;
+// Input (not a report) is about to be written to the pty.
+- (void)inputWillBeWrittenToTask;
 
 - (BOOL)shouldExpectPromptMarks;
 - (BOOL)shouldExpectWorkingDirectoryUpdates;
@@ -269,6 +275,12 @@ typedef NS_ENUM(NSUInteger, VT100ScreenTriggerCheckType) {
 - (void)mutateAsynchronously:(void (^)(VT100Terminal * _Nullable terminal,
                                        VT100ScreenMutableState *mutableState,
                                        id<VT100ScreenDelegate> _Nullable delegate))block;
+// Like mutateAsynchronously: but leaves the session's mode alone. That one is
+// for changes the user made, which also end copy mode and the like; this is for
+// changes that follow from what the program printed.
+- (void)mutateAsynchronouslyKeepingMode:(void (^)(VT100Terminal * _Nullable terminal,
+                                                  VT100ScreenMutableState *mutableState,
+                                                  id<VT100ScreenDelegate> _Nullable delegate))block;
 - (void)setForegroundJobAncestorsForTriggerFiltering:(nullable NSArray<NSString *> *)ancestors;
 - (void)beginEchoProbeWithBackspace:(nullable NSData *)backspace
                            password:(NSString *)password

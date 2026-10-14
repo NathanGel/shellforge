@@ -8,28 +8,17 @@
 struct LLMProvider {
     var model: AIMetadata.Model
 
-    // URL assuming the completions API is in use.
-    private var completionsURL: URL {
-        var value = iTermPreferences.string(forKey: kPreferenceKeyAITermURL) ?? ""
-        if value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            value = "https://api.openai.com/v1/completions"
-        }
-        return URL(string: value) ?? URL(string: "about:empty")!
-    }
-
-    // URL assuming the responses API is in use.
-    private var responsesURL: URL {
-        var value = iTermPreferences.string(forKey: kPreferenceKeyAITermURL) ?? ""
-        if value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            value = "https://api.openai.com/v1/responses"
-        }
-        return URL(string: value) ?? URL(string: "about:empty")!
+    // The model's endpoint. Everything here that reads model.url goes through
+    // this, so the request URL and the vendor host checks below can never be
+    // parsed two different ways.
+    private var parsedModelURL: URL? {
+        return URL(string: model.url)
     }
 
     func url(apiKey: String, streaming: Bool) -> URL {
         switch model.api {
         case .gemini:
-            let url = URL(string: model.url) ?? URL(string: "about:empty")!
+            let url = parsedModelURL ?? URL(string: "about:empty")!
             guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
                 return URL(string: "about:empty")!
             }
@@ -45,7 +34,7 @@ struct LLMProvider {
             }
             return components.url ?? URL(string: "about:empty")!
         default:
-            return URL(string: model.url) ?? URL(string: "about:empty")!
+            return parsedModelURL ?? URL(string: "about:empty")!
         }
     }
 
@@ -101,11 +90,17 @@ struct LLMProvider {
                                                      streaming: false)) {
             return "Anthropic"
         }
+        // The .llama API type is Ollama's native /api/chat dialect regardless of
+        // which model (llama, qwen, ...) is served, so name it for the runner, not
+        // the model family. This is what error prefixes ("Error from Ollama") use.
+        if model.api == .llama {
+            return "Ollama"
+        }
         if model.name.contains("llama") {
             return "Llama"
         }
 
-        return "Unknown Platform"
+        return String(localized: "LLMProvider.UnknownPlatform", defaultValue: "Unknown Platform", comment: "Display name for an unrecognized AI provider")
     }
 
     var dynamicModelsSupported: Bool {
@@ -121,10 +116,9 @@ struct LLMProvider {
     }
 
     var functionsSupported: Bool {
-        // #llama-streaming-functions
-        if model.api == .llama && model.features.contains(.streaming) {
-            return false
-        }
+        // Ollama's native /api/chat (api == .llama) supports tool calls WHILE
+        // streaming as of Ollama's May 2025 release, so streaming no longer
+        // disqualifies function calling; gate purely on the advertised capability.
         return model.features.contains(.functionCalling)
     }
 
@@ -160,7 +154,7 @@ struct LLMProvider {
         if mimeType.hasPrefix("image/") || mimeType.hasPrefix("audio/") || mimeType.hasPrefix("video/") {
             return false
         }
-        if LLMMetadata.hostIsOpenAIAPI(url: URL(string: model.url)) &&
+        if LLMMetadata.hostIsOpenAIAPI(url: parsedModelURL) &&
             (model.api == .responses) &&
             model.vectorStoreConfig != .disabled {
             return true
@@ -219,7 +213,7 @@ struct LLMProvider {
     }
 
     var supportsPDFAttachments: Bool {
-        let url = URL(string: model.url)
+        let url = parsedModelURL
         if LLMMetadata.hostIsOpenAIAPI(url: url) {
             return true
         }
@@ -235,13 +229,20 @@ struct LLMProvider {
     // Whether this vendor's request serializer can carry an inline image
     // content block for any image/* MIME. We send the bytes with their real
     // media type and let the vendor reject sub-formats it doesn't accept
-    // (e.g. Anthropic 400s on image/heic, Gemini on image/tiff). This is
+    // (e.g. Anthropic 400s on image/heic). This is
     // serializer capability, not model capability: every current chat model
     // on these hosts is multimodal, and an unknown future one inherits
     // support here for free. Image-shaped MIMEs that are really text
     // (image/svg+xml) are handled by the textual branch of accepts() first.
     var supportsInlineImageBlock: Bool {
-        let url = URL(string: model.url)
+        // Native Ollama can carry images (message.images[]), but capability is
+        // model-specific for a local runner and can't be inferred from the host,
+        // so gate it on the model's declared Vision feature (the manual editor
+        // checkbox). The cloud hosts stay serializer-capability gated.
+        if model.api == .llama {
+            return model.features.contains(.vision)
+        }
+        let url = parsedModelURL
         return LLMMetadata.hostIsAnthropicAIAPI(url: url)
             || LLMMetadata.hostIsGoogleAIAPI(url: url)
             || LLMMetadata.hostIsOpenAIAPI(url: url)
@@ -249,7 +250,7 @@ struct LLMProvider {
 
     // Gemini accepts video via inlineData; no other wired vendor takes video.
     var supportsInlineVideoBlock: Bool {
-        LLMMetadata.hostIsGoogleAIAPI(url: URL(string: model.url))
+        LLMMetadata.hostIsGoogleAIAPI(url: parsedModelURL)
     }
 
     // Audio is the one modality we still gate by sub-format. Unlike images
@@ -261,7 +262,7 @@ struct LLMProvider {
     // OpenAI audio is also chat-completions-only: the Responses API has no
     // audio input, so it is gated on the protocol too.
     func acceptsInlineAudio(mimeType: String) -> Bool {
-        let url = URL(string: model.url)
+        let url = parsedModelURL
         if LLMMetadata.hostIsGoogleAIAPI(url: url) {
             return true
         }
@@ -287,7 +288,7 @@ struct LLMProvider {
         // Marking them inline here, combined with excluding them from
         // shouldUploadFile above, makes the prep pipeline re-add them as
         // inline .file subparts so the serializer emits the typed block.
-        if LLMMetadata.hostIsOpenAIAPI(url: URL(string: model.url)) &&
+        if LLMMetadata.hostIsOpenAIAPI(url: parsedModelURL) &&
             (model.api == .responses) &&
             model.vectorStoreConfig != .disabled {
             return mimeType == "application/pdf" || mimeType.hasPrefix("image/")

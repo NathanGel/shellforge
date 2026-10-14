@@ -215,7 +215,7 @@ static double EuclideanDistance(NSPoint p1, NSPoint p2) {
             *sideEffects = iTermClickSideEffectsIgnore;
             return NO;
         }
-        [self.mouseDelegate mouseHandlerWillBeginDragPane:self];
+        [self.mouseDelegate mouseHandler:self willBeginDragPaneWithEvent:event];
         DLog(@"Returning because of drag starting");
         *sideEffects = iTermClickSideEffectsIgnore;
         return NO;
@@ -300,10 +300,15 @@ static double EuclideanDistance(NSPoint p1, NSPoint p2) {
         return YES;
     }
 
-    const VT100GridCoord clickPointCoord = [self.mouseDelegate mouseHandler:self
-                                                                 clickPoint:event
-                                                              allowOverflow:YES
-                                                                 firstMouse:_mouseDownWasFirstMouse];
+    // Convert the visual click to a LOGICAL coordinate. The whole selection model
+    // (character drag, word/line/smart ranges, the highlight, and copy) works in
+    // logical space, so every mode begins from the logical coordinate.
+    const VT100GridCoord visualClickPoint = [self.mouseDelegate mouseHandler:self
+                                                                  clickPoint:event
+                                                               allowOverflow:YES
+                                                                  firstMouse:_mouseDownWasFirstMouse];
+    const VT100GridCoord clickPointCoord =
+        [self.mouseDelegate mouseHandler:self logicalCoordForVisualCoord:visualClickPoint];
     const int x = clickPointCoord.x;
     const int y = clickPointCoord.y;
     if ([self.mouseDelegate mouseHandler:self coordIsMutable:VT100GridCoordMake(x, y)] &&
@@ -371,16 +376,30 @@ static double EuclideanDistance(NSPoint p1, NSPoint p2) {
             _imageBeingClickedOn = imageBeingClickedOn;
             _mouseDownOnImage = YES;
             self.selection.appending = NO;
-        } else if (mouseDownOnSelection) {
+        } else if (mouseDownOnSelection &&
+                   (![iTermAdvancedSettingsModel requireCmdForDraggingText] || cmdPressed)) {
             // not holding down shift key but there is an existing selection.
-            // Possibly a drag coming up (if a cmd-drag follows)
+            // Possibly a drag coming up (if a cmd-drag follows). When dragging
+            // text requires Cmd and it isn't held, fall through and start a
+            // new selection instead: otherwise a press on the selection is a
+            // dead end (no drag, no new selection), which reads as selection
+            // being frozen, especially on right-to-left lines where a repeat
+            // drag naturally starts on the previous selection.
             DLog(@"mouse down on selection, returning");
             _mouseDownOnSelection = YES;
             self.selection.appending = NO;
             return YES;
         } else {
             // start a new selection
-            [self.selection beginSelectionAtAbsCoord:VT100GridAbsCoordMake(x, y + overflow)
+            VT100GridCoord anchor = clickPointCoord;
+            if (mode == kiTermSelectionModeCharacter) {
+                // Character selections are VISUAL: the live range stores the
+                // columns the user actually drags over. iTermSelection
+                // converts to logical cells for the highlight per line and
+                // decomposes into logical subselections when the drag ends.
+                anchor = visualClickPoint;
+            }
+            [self.selection beginSelectionAtAbsCoord:VT100GridAbsCoordMake(anchor.x, anchor.y + overflow)
                                                 mode:mode
                                               resume:NO
                                               append:(cmdPressed && !altPressed)];
@@ -649,16 +668,22 @@ static double EuclideanDistance(NSPoint p1, NSPoint p2) {
         } else if ([self.mouseDelegate mouseHandler:self getFindOnPageCursor:&findOnPageCursor] &&
                    ![self.selection hasSelection]) {
             const long long overflow = [_mouseDelegate mouseHandlerTotalScrollbackOverflow:self];
-            [self.selection beginSelectionAtAbsCoord:VT100GridAbsCoordFromCoord(findOnPageCursor, overflow)
-                                                mode:kiTermSelectionModeCharacter
-                                              resume:NO
-                                              append:NO];
-            
-            const VT100GridCoord newEndPoint =
+            const VT100GridCoord visualEndPoint =
             [self.mouseDelegate mouseHandler:self clickPoint:event allowOverflow:YES firstMouse:_mouseDownWasFirstMouse];
-            [self.selection moveSelectionEndpointTo:VT100GridAbsCoordFromCoord(newEndPoint, overflow)];
-            [self.selection endLiveSelection];
-            
+            // BOTH endpoints are VISUAL here: the click obviously is, and the find
+            // cursor is too because the reachable path is "plain click (which cleared
+            // the selection and stored a VISUAL click coord as the find cursor), then
+            // shift-click". Convert both to logical and commit a LOGICAL range, or the
+            // anchor lands on the mirror-image column on a right-to-left line.
+            const VT100GridAbsWindowedRange range =
+            [iTermSelection logicalAbsRangeFromVisualStart:findOnPageCursor
+                                                visualEnd:visualEndPoint
+                                                 overflow:overflow
+                                                converter:^VT100GridCoord(VT100GridCoord visualCoord) {
+                return [self.mouseDelegate mouseHandler:self logicalCoordForVisualCoord:visualCoord];
+            }];
+            [self.selection setSelectedLogicalRange:range mode:kiTermSelectionModeCharacter];
+
             [self.mouseDelegate mouseHandlerResetFindOnPageCursor:self];
             result |= iTermClickSideEffectsMoveFindOnPageCursor | iTermClickSideEffectsModifySelection;
         }

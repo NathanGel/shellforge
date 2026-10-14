@@ -1,21 +1,112 @@
 """Defines interfaces for registering functions."""
+
+from __future__ import annotations
+
 import inspect
 import json
 import traceback
-import typing
+import warnings
+from collections.abc import Awaitable, Callable, Coroutine
+from typing import TYPE_CHECKING, Any, TypeVar, cast
+
 import websockets
 
-import iterm2.capabilities
-import iterm2.notifications
-import iterm2.rpc
+from .capabilities import (
+    check_supports_context_menu_provider,
+    supports_context_menu_submenus_and_visibility,
+)
+from .notifications import (
+    RPC_ROLE_CONTEXT_MENU,
+    RPC_ROLE_GENERIC,
+    RPC_ROLE_SESSION_TITLE,
+    RPC_ROLE_STATUS_BAR_COMPONENT,
+    async_subscribe_to_server_originated_rpc_notification,
+)
+from .rpc import async_send_rpc_result
+
+if TYPE_CHECKING:
+    from typing import ParamSpec, Protocol, TypeAlias
+
+    from .api_pb2 import Notification
+    from .connection import Connection
+    from .notifications import NotificationToken
+    from .statusbar import StatusBarComponent
+
+    _P = ParamSpec("_P")
+    _R = TypeVar("_R")
+    _R_co = TypeVar("_R_co", covariant=True)
+
+    class _RegisteredFunction(Protocol[_P, _R_co]):
+        rpc_token: NotificationToken
+        rpc_connection: Connection
+
+        def __call__(
+            self, *args: _P.args, **kwargs: _P.kwargs
+        ) -> Coroutine[Any, Any, _R_co]: ...
+
+    # async_register is assigned onto the decorated function, so the protocols
+    # declare it as an attribute whose type is a callable protocol rather than
+    # as a method, which can't be assigned to.
+    class _RPCRegister(Protocol):
+        def __call__(
+            self, connection: Connection, timeout: float | None = None
+        ) -> Coroutine[Any, Any, None]: ...
+
+    class _ProviderRegister(Protocol):
+        def __call__(
+            self,
+            connection: Connection,
+            display_name: str,
+            unique_identifier: str,
+            timeout: float | None = None,
+        ) -> Coroutine[Any, Any, None]: ...
+
+    class _ContextMenuRegister(Protocol):
+        def __call__(
+            self,
+            connection: Connection,
+            display_name: str,
+            unique_identifier: str,
+            timeout: float | None = None,
+            submenu: str | None = None,
+            visible_when: str | None = None,
+        ) -> Coroutine[Any, Any, None]: ...
+
+    class _StatusBarRegister(Protocol):
+        def __call__(
+            self,
+            connection: Connection,
+            component: StatusBarComponent,
+            timeout: float | None = None,
+        ) -> Coroutine[Any, Any, None]: ...
+
+    class _RPCFunction(_RegisteredFunction[_P, _R_co], Protocol[_P, _R_co]):
+        async_register: _RPCRegister
+
+    class _ContextMenuProviderRPCFunction(
+        _RegisteredFunction[_P, _R_co], Protocol[_P, _R_co]
+    ):
+        async_register: _ContextMenuRegister
+
+    class _TitleProviderRPCFunction(
+        _RegisteredFunction[_P, _R_co], Protocol[_P, _R_co]
+    ):
+        async_register: _ProviderRegister
+
+    class _StatusBarRPCFunction(_RegisteredFunction[_P, _R_co], Protocol[_P, _R_co]):
+        async_register: _StatusBarRegister
+
+    StatusBarRPCFunction: TypeAlias = _StatusBarRPCFunction[_P, _R]
 
 
-async def generic_handle_rpc(coro, connection, notif):
+async def generic_handle_rpc(
+    coro: Callable[..., Awaitable[Any]], connection: Connection, notif: Notification
+) -> None:
     """Dispatches an inbound RPC message."""
     rpc_notif = notif.server_originated_rpc_notification
     params = {}
     successful = False
-    # pylint: disable=broad-except
+    result = None
     try:
         for arg in rpc_notif.rpc.arguments:
             name = arg.name
@@ -28,19 +119,16 @@ async def generic_handle_rpc(coro, connection, notif):
                 params[name] = None
         result = await coro(**params)
         successful = True
-    except KeyboardInterrupt as exception:
-        raise exception
-    except websockets.exceptions.ConnectionClosed as exception:
-        raise exception
-    except Exception as exception:
+    except (KeyboardInterrupt, websockets.exceptions.ConnectionClosed):
+        raise
+    except Exception as exception:  # pylint: disable=broad-except
         stack_trace = traceback.format_exc()
-        exception = {"reason": repr(exception), "traceback": stack_trace}
-        await iterm2.rpc.async_send_rpc_result(
-            connection, rpc_notif.request_id, True, exception)
+        error = {"reason": repr(exception), "traceback": stack_trace}
+        await async_send_rpc_result(connection, rpc_notif.request_id, True, error)
 
     if successful:
-        await iterm2.rpc.async_send_rpc_result(
-            connection, rpc_notif.request_id, False, result)
+        await async_send_rpc_result(connection, rpc_notif.request_id, False, result)
+
 
 class Reference:  # pylint: disable=too-few-public-methods
     """Defines a reference to a variable for use in the @RPC decorator.
@@ -50,14 +138,18 @@ class Reference:  # pylint: disable=too-few-public-methods
         * Example ":ref:`mousemode_example`"
         * Example ":ref:`statusbar_example`"
     """
-    def __init__(self, name):
-        self.name = name
+
+    def __init__(self, name: str) -> None:
+        self.name: str = name
 
     def __repr__(self):
         # Note: iterm2_encode uses this. Don't break it.
         return self.name
 
-def RPC(func):  # pylint: disable=invalid-name
+
+def RPC(  # pylint: disable=invalid-name
+    func: Callable[_P, Coroutine[Any, Any, _R]],
+) -> _RPCFunction[_P, _R]:
     """
     A decorator that adds an `async_register` value to the coroutine it
     decorates. `async_register` is a coroutine that will register the function
@@ -115,32 +207,41 @@ def RPC(func):  # pylint: disable=invalid-name
           # Remember to call async_register!
           await split_current_session_n_times.async_register(connection)
     """
-    async def async_register(connection, timeout=None):
+    # The protocol's attributes are attached to func dynamically:
+    # async_register below, and rpc_token/rpc_connection when async_register
+    # runs. The cast records that func has that shape.
+    rpc_func = cast("_RPCFunction[_P, _R]", func)
+
+    async def async_register(connection: Connection, timeout: float | None = None):
         signature = inspect.signature(func)
-        defaults = {}
+        defaults: dict[str, Any] = {}
         for key, value in signature.parameters.items():
             if isinstance(value.default, Reference):
                 defaults[key] = value.default.name
 
-        async def handle_rpc(connection, notif):
+        async def handle_rpc(connection: Connection, notif: Notification):
             await generic_handle_rpc(func, connection, notif)
 
-        func.rpc_token = (
-            await iterm2.notifications.
-            async_subscribe_to_server_originated_rpc_notification(
+        rpc_func.rpc_token = (
+            await async_subscribe_to_server_originated_rpc_notification(
                 connection,
                 handle_rpc,
                 func.__name__,
                 signature.parameters.keys(),
                 timeout,
                 defaults,
-                iterm2.notifications.RPC_ROLE_GENERIC))
-        func.rpc_connection = connection
+                RPC_ROLE_GENERIC,
+            )
+        )
+        rpc_func.rpc_connection = connection
 
-    func.async_register = async_register
-    return func
+    rpc_func.async_register = async_register
+    return rpc_func
 
-def ContextMenuProviderRPC(func):  # pylint: disable=invalid-name
+
+def ContextMenuProviderRPC(  # pylint: disable=invalid-name
+    func: Callable[_P, Coroutine[Any, Any, _R]],
+) -> _ContextMenuProviderRPCFunction[_P, _R]:
     """
     A decorator that prepares a function for registration as a context menu
     provider. Similar to :func:`~iterm2.registration.RPC`.
@@ -156,41 +257,103 @@ def ContextMenuProviderRPC(func):  # pylint: disable=invalid-name
     :param unique_identifier: Globally unique identifier for this provider
         (e.g., "com.example.my-provider")
     :param timeout: Max number of seconds to wait, or None to use the default.
+    :param submenu: If given, the item appears in a submenu with this title
+        instead of at the top level of the context menu. Items that share a
+        submenu title are grouped together, even if different scripts
+        registered them. Requires iTerm2 3.7.6 or later; older versions show
+        the item at the top level.
+    :param visible_when: If given, an expression evaluated in the clicked
+        session's context each time the menu opens. The item is shown only if
+        the result is a boolean or number that is true or nonzero, for example
+        ``profileName == "Work"``. A string result hides the item, even
+        ``"1"``. User variables set from the shell (with
+        ``iterm2_set_user_var``) are always strings, so to test a flag write
+        ``user.ezboot_bound == 1``: that works whether the variable was set
+        to ``True`` from Python or to ``1`` from the shell, because ``==``
+        converts numeric strings to numbers. An undefined variable or an
+        evaluation error also hides the item. Because it is evaluated without
+        waiting on any script, it may not call functions. When omitted the
+        item is always shown. Requires iTerm2 3.7.6 or later; older versions
+        always show the item.
+
+    If you pass `submenu` or `visible_when` and the running iTerm2 is too old
+    to honor them, a warning is issued and the item is registered without
+    them. Use
+    :func:`~iterm2.capabilities.supports_context_menu_submenus_and_visibility`
+    to check in advance.
+
+    Example:
+
+      .. code-block:: python
+
+          @iterm2.ContextMenuProviderRPC
+          async def unbind(session_id=iterm2.Reference("id")):
+              ...
+
+          await unbind.async_register(
+              connection,
+              "Unbind this session",
+              "com.example.ezboot.unbind",
+              submenu="EzBoot",
+              visible_when="user.ezboot_bound == 1")
     """
+    # The protocol's attributes are attached to func dynamically:
+    # async_register below, and rpc_token/rpc_connection when async_register
+    # runs. The cast records that func has that shape.
+    rpc_func = cast("_ContextMenuProviderRPCFunction[_P, _R]", func)
+
     async def async_register(
-            connection: iterm2.connection.Connection,
-            display_name: str,
-            unique_identifier: str,
-            timeout: typing.Optional[float] = None):
+        connection: Connection,
+        display_name: str,
+        unique_identifier: str,
+        timeout: float | None = None,
+        submenu: str | None = None,
+        visible_when: str | None = None,
+    ):
         assert unique_identifier
-        iterm2.capabilities.check_supports_context_menu_provider(connection)
+        check_supports_context_menu_provider(connection)
+        if (submenu or visible_when) and not (
+            supports_context_menu_submenus_and_visibility(connection)
+        ):
+            warnings.warn(
+                f"iTerm2 is too old to honor submenu or visible_when for the "
+                f"context menu item “{display_name}”. It will appear at the "
+                f"top level of every session’s context menu. Upgrade to "
+                f"iTerm2 3.7.6 or later."
+            )
         signature = inspect.signature(func)
-        defaults = {}
+        defaults: dict[str, Any] = {}
         for key, value in signature.parameters.items():
             if isinstance(value.default, Reference):
                 defaults[key] = value.default.name
 
-        async def handle_rpc(connection, notif):
+        async def handle_rpc(connection: Connection, notif: Notification):
             await generic_handle_rpc(func, connection, notif)
 
-        func.rpc_token = (
-            await iterm2.notifications.
-            async_subscribe_to_server_originated_rpc_notification(
+        rpc_func.rpc_token = (
+            await async_subscribe_to_server_originated_rpc_notification(
                 connection=connection,
                 callback=handle_rpc,
                 name=func.__name__,
                 arguments=signature.parameters.keys(),
                 timeout_seconds=timeout,
                 defaults=defaults,
-                role=iterm2.notifications.RPC_ROLE_CONTEXT_MENU,
+                role=RPC_ROLE_CONTEXT_MENU,
                 context_menu_display_name=display_name,
-                context_menu_unique_id=unique_identifier))
-        func.rpc_connection = connection
+                context_menu_unique_id=unique_identifier,
+                context_menu_submenu=submenu,
+                context_menu_visible_when=visible_when,
+            )
+        )
+        rpc_func.rpc_connection = connection
 
-    func.async_register = async_register
-    return func
+    rpc_func.async_register = async_register
+    return rpc_func
 
-def TitleProviderRPC(func):  # pylint: disable=invalid-name
+
+def TitleProviderRPC(  # pylint: disable=invalid-name
+    func: Callable[_P, Coroutine[Any, Any, _R]],
+) -> _TitleProviderRPCFunction[_P, _R]:
     """
     A decorator that prepares a function for registration as a session title
     provider. Similar to :func:`~iterm2.registration.RPC`.
@@ -234,37 +397,49 @@ def TitleProviderRPC(func):  # pylint: disable=invalid-name
                   display_name="Upper-case Title",
                   unique_identifier="com.iterm2.example.title-provider")
     """
+    # The protocol's attributes are attached to func dynamically:
+    # async_register below, and rpc_token/rpc_connection when async_register
+    # runs. The cast records that func has that shape.
+    rpc_func = cast("_TitleProviderRPCFunction[_P, _R]", func)
+
     async def async_register(
-            connection, display_name, unique_identifier, timeout=None):
+        connection: Connection,
+        display_name: str,
+        unique_identifier: str,
+        timeout: float | None = None,
+    ):
         assert unique_identifier
         signature = inspect.signature(func)
-        defaults = {}
+        defaults: dict[str, Any] = {}
         for key, value in signature.parameters.items():
             if isinstance(value.default, Reference):
                 defaults[key] = value.default.name
 
-        async def handle_rpc(connection, notif):
+        async def handle_rpc(connection: Connection, notif: Notification):
             await generic_handle_rpc(func, connection, notif)
 
-        func.rpc_token = (
-            await iterm2.notifications.
-            async_subscribe_to_server_originated_rpc_notification(
+        rpc_func.rpc_token = (
+            await async_subscribe_to_server_originated_rpc_notification(
                 connection=connection,
                 callback=handle_rpc,
                 name=func.__name__,
                 arguments=signature.parameters.keys(),
                 timeout_seconds=timeout,
                 defaults=defaults,
-                role=iterm2.notifications.RPC_ROLE_SESSION_TITLE,
+                role=RPC_ROLE_SESSION_TITLE,
                 session_title_display_name=display_name,
-                session_title_unique_id=unique_identifier))
-        func.rpc_connection = connection
+                session_title_unique_id=unique_identifier,
+            )
+        )
+        rpc_func.rpc_connection = connection
 
-    func.async_register = async_register
-    return func
+    rpc_func.async_register = async_register
+    return rpc_func
 
 
-def StatusBarRPC(func):  # pylint: disable=invalid-name
+def StatusBarRPC(  # pylint: disable=invalid-name
+    func: Callable[_P, Coroutine[Any, Any, _R]],
+) -> _StatusBarRPCFunction[_P, _R]:
     """
     A decorator (like :func:`~iterm2.registration.RPC`) that registers a custom
     status bar component.
@@ -327,38 +502,47 @@ def StatusBarRPC(func):  # pylint: disable=invalid-name
                   session_id_status_bar_coro,
                   onclick=my_status_bar_click_handler)
     """
-    async def async_register(connection, component, timeout=None):
+    # The protocol's attributes are attached to func dynamically:
+    # async_register below, and rpc_token/rpc_connection when async_register
+    # runs. The cast records that func has that shape.
+    rpc_func = cast("_StatusBarRPCFunction[_P, _R]", func)
+
+    async def async_register(
+        connection: Connection,
+        component: StatusBarComponent,
+        timeout: float | None = None,
+    ):
         signature = inspect.signature(func)
-        defaults = {}
+        defaults: dict[str, Any] = {}
         for key, value in signature.parameters.items():
             if isinstance(value.default, Reference):
                 defaults[key] = value.default.name
 
-        async def wrapper(**kwargs):
+        async def wrapper(**kwargs: Any):
             """handle_rpc->generic_handle_rpc->wrapper->func"""
             # Fix up knobs to not be JSON
             if "knobs" in kwargs:
                 knobs_json = kwargs["knobs"]
                 kwargs["knobs"] = json.loads(knobs_json)
-            return await func(**kwargs)
+            return await func(**kwargs)  # type: ignore
 
-        async def handle_rpc(connection, notif):
+        async def handle_rpc(connection: Connection, notif: Notification):
             """This gets run first."""
             await generic_handle_rpc(wrapper, connection, notif)
 
-        func.rpc_token = (
-            await iterm2.notifications.
-            async_subscribe_to_server_originated_rpc_notification(
+        rpc_func.rpc_token = (
+            await async_subscribe_to_server_originated_rpc_notification(
                 connection=connection,
                 callback=handle_rpc,
                 name=func.__name__,
                 arguments=signature.parameters.keys(),
                 timeout_seconds=timeout,
                 defaults=defaults,
-                role=iterm2.notifications.RPC_ROLE_STATUS_BAR_COMPONENT,
-                status_bar_component=component))
-        func.rpc_connection = connection
+                role=RPC_ROLE_STATUS_BAR_COMPONENT,
+                status_bar_component=component,
+            )
+        )
+        rpc_func.rpc_connection = connection
 
-    func.async_register = async_register
-
-    return func
+    rpc_func.async_register = async_register
+    return rpc_func

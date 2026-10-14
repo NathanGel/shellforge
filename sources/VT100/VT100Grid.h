@@ -48,6 +48,41 @@
 @property(nonatomic, readonly) VT100GridCoord preferredCursorPosition;
 @property(nonatomic, readonly) VT100GridSize sizeRespectingRegionConditionally;
 @property(nonatomic, readonly) BOOL haveScrolled;
+// Monotonic identity of the grid's -encode: output, for restorable-state delta
+// encoding. Changes on any mutation that -encode: serializes and is preserved
+// across copies, so an unchanged grid can be skipped when saving state.
+@property(nonatomic, readonly) int64_t contentGeneration;
+// Call after mutating grid-wide state (bypassing the grid's own dirtying methods)
+// in a way that changes what -encode: serializes, so the grid is not skipped on
+// the next restorable-state save. For a per-line change use -markLineDidChange:.
+- (void)markContentDidChange;
+// Call after a per-line change that -encode: serializes but does not go through
+// markCharsDirty: (per-line metadata such as rtlFound/lineAttribute, or the
+// continuation/EOL cell). Marks the line dirty over its full width so
+// copyDirtyFromGrid: copies it into the immutable grid, AND bumps the content
+// generation. Both are required; see the implementation.
+- (void)markLineDidChange:(int)line;
+
+// Sets the DECDWL/DECDHL attribute of a line, dirtying it if it changed. The
+// attribute belongs to the line's content, so it has to travel with that
+// content when lines move and be cleared when a line is erased in full.
+- (void)setLineAttribute:(iTermLineAttribute)lineAttribute onLine:(int)line;
+
+// Same, for an inclusive range of lines, clamped to the grid. Call this before
+// blanking those lines: setCharsFrom: preserves the DWL_SPACER layout of a line
+// it still believes is double-width.
+- (void)setLineAttribute:(iTermLineAttribute)lineAttribute
+             onLinesFrom:(int)firstLine
+                      to:(int)lastLine;
+
+// Blanks every cell in the grid with `c` and returns every line to
+// single-width. This is what a caller wants when it blanks the whole grid and
+// then restores only some of the lines (from the line buffer, a DVR frame, and
+// so on): the lines it does not restore would otherwise keep a stale
+// DECDWL/DECDHL attribute, and setCharsFrom: would have written DWL_SPACERs
+// into their supposedly blank odd cells. DECALN deliberately does not use this:
+// xterm's alignment test fills the screen without touching line attributes.
+- (void)clearAllWithChar:(screen_char_t)c;
 @property(nonatomic, readonly) NSDictionary *dictionaryValue;
 @property(nonatomic, readonly) NSArray<VT100LineInfo *> *metadataArray;
 @property(nonatomic, readonly) screen_char_t defaultChar;
@@ -226,6 +261,9 @@ makeCursorLineSoft:(BOOL)makeCursorLineSoft;
 // Mark a specific character dirty. If updateTimestamp is set, then the line's last-modified time is
 // set to the current time.
 - (void)markCharDirty:(BOOL)dirty at:(VT100GridCoord)coord updateTimestamp:(BOOL)updateTimestamp;
+// Marks a cell dirty for redraw without bumping the content generation. Use for a
+// change that affects rendering but not serialized content (e.g. cursor shape).
+- (void)markCharDirtyForRedrawAt:(VT100GridCoord)coord;
 
 // Mark chars dirty in a rectangle, inclusive of endpoints.
 - (void)markCharsDirty:(BOOL)dirty inRectFrom:(VT100GridCoord)from to:(VT100GridCoord)to;
@@ -307,6 +345,20 @@ makeCursorLineSoft:(BOOL)makeCursorLineSoft;
 // Copy everything from another grid if needed.
 - (void)copyDirtyFromGrid:(VT100Grid *)otherGrid didScroll:(BOOL)didScroll;
 
+// Per-line RTL state, for writes that edit a line without going through
+// appendCharsAtCursor (a combining mark merged into its predecessor) and for the
+// bidi analysis pass. These change metadata or cells only; the first and last
+// return whether anything changed so the caller can mark the line changed.
+//
+// Flags the line as containing right-to-left text written under `bidiDirection`.
+- (BOOL)setRTLFoundInLine:(int)line bidiDirection:(iTermBidiDirection)bidiDirection;
+// Makes the line look like it never held right-to-left text: clears the flag,
+// the direction and every cell's RTL status, and marks the line changed.
+- (void)clearRTLStateInLine:(int)line;
+// Resets every cell's RTL status to unknown. Used when a line's bidi info is
+// dropped, since the status is only meaningful alongside a reorder table.
+- (BOOL)resetRTLStatusInLine:(int)line;
+
 // Append a string starting from the cursor's current position.
 // Returns number of scrollback lines dropped from lineBuffer.
 - (int)appendCharsAtCursor:(const screen_char_t *)buffer
@@ -318,7 +370,8 @@ makeCursorLineSoft:(BOOL)makeCursorLineSoft;
                       ansi:(BOOL)ansi
                     insert:(BOOL)insert
     externalAttributeIndex:(id<iTermExternalAttributeIndexReading>)attributes
-                  rtlFound:(BOOL)rtlFound
+                 rtlUpdate:(VT100GridRTLUpdate)rtlUpdate
+             bidiDirection:(iTermBidiDirection)bidiDirection  // SCP direction to record when rtlUpdate is Found
                    dwcFree:(BOOL)dwcFree;
 
 // Delete some number of chars starting at a given location, moving chars to the right of them back.
@@ -415,9 +468,6 @@ makeCursorLineSoft:(BOOL)makeCursorLineSoft;
                                           iTermExternalAttribute **eaOut,
                                           VT100GridCoord coord,
                                           BOOL *stop))block;
-- (void)mutateExtendedAttributesOnLine:(int)line
-                        createIfNeeded:(BOOL)createIfNeeded
-                                 block:(void (^)(iTermExternalAttributeIndex *))block;
 
 - (void)enumerateParagraphs:(void (^)(int startLine, NSArray<MutableScreenCharArray *> *scas))closure;
 - (void)performBlockWithoutScrollRegions:(void (^NS_NOESCAPE)(void))block;

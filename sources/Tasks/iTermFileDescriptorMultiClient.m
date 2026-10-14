@@ -32,6 +32,10 @@
 
 NSString *const iTermFileDescriptorMultiClientErrorDomain = @"iTermFileDescriptorMultiClientErrorDomain";
 
+@interface iTermFileDescriptorMultiClient()
+@property (atomic, readwrite) BOOL didLaunchDaemon;
+@end
+
 @implementation iTermFileDescriptorMultiClient {
     NSString *_socketPath;  // Thread safe because this is only assigned to in -initWithPath:
     iTermThread<iTermFileDescriptorMultiClientState *> *_thread;
@@ -539,31 +543,31 @@ static NSString *iTermMultiServerStringForMessageFromClient(iTermMultiServerClie
     ITAssertWithMessage(original.type == iTermMultiServerRPCTypeLaunch, @"Type is %@", @(original.type));
 
     // Encode and decode the message so we can have our own copy of it.
+    // Parse mallocs its own strings. The temporary buffer is the same one
+    // iTermFileDescriptorMultiServer.c frees after parsing; without this free,
+    // every launch leaks it (malloc in iTermClientServerProtocolMessageInitialize).
     iTermClientServerProtocolMessage temp;
     iTermClientServerProtocolMessageInitialize(&temp);
 
-    {
-        const int status = iTermMultiServerProtocolEncodeMessageFromClient(&original, &temp);
-        ITAssertWithMessage(status == 0, @"On encode: status is %@", @(status));
+    const int encodeStatus = iTermMultiServerProtocolEncodeMessageFromClient(&original, &temp);
+    if (encodeStatus != 0) {
+        iTermClientServerProtocolMessageFree(&temp);
+        ITAssertWithMessage(encodeStatus == 0, @"On encode: status is %@", @(encodeStatus));
     }
 
     iTermMultiServerClientOriginatedMessage messageCopy;
-    {
-        const int status = iTermMultiServerProtocolParseMessageFromClient(&temp, &messageCopy);
-        if (status) {
-            iTermClientServerProtocolMessage temp;
-            iTermClientServerProtocolMessageInitialize(&temp);
-            (void)iTermMultiServerProtocolEncodeMessageFromClient(&original, &temp);
-            NSData *data = [NSData dataWithBytes:temp.ioVectors[0].iov_base
-                                          length:temp.ioVectors[0].iov_len];
-            NSString *description = iTermMultiServerStringForMessageFromClient(&messageCopy);
-            ITAssertWithMessage(status == 0, @"On decode: status is %@ for %@ based on %@",
-                                @(status),
-                                [data debugDescription],
-                                description);
-        }
+    const int status = iTermMultiServerProtocolParseMessageFromClient(&temp, &messageCopy);
+    if (status) {
+        NSData *data = [NSData dataWithBytes:temp.ioVectors[0].iov_base
+                                      length:temp.ioVectors[0].iov_len];
+        NSString *description = iTermMultiServerStringForMessageFromClient(&messageCopy);
+        iTermClientServerProtocolMessageFree(&temp);
+        ITAssertWithMessage(status == 0, @"On decode: status is %@ for %@ based on %@",
+                            @(status),
+                            [data debugDescription],
+                            description);
     }
-
+    iTermClientServerProtocolMessageFree(&temp);
     return messageCopy;
 }
 
@@ -784,10 +788,13 @@ static NSString *iTermMultiServerStringForMessageFromClient(iTermMultiServerClie
         });
         [rateLimit performRateLimitedBlock:^{
             DLog(@"Called");
-            NSAlert *alert = [[NSAlert alloc] init];
-            alert.messageText = @"Problem Starting iTerm2 Daemon";
-            alert.informativeText = message;
-            [alert runModal];
+            [iTermWarning showWarningWithTitle:message
+                                       actions:@[ iTermLocalizedOK() ]
+                                     accessory:nil
+                                    identifier:nil
+                                   silenceable:kiTermWarningTypePersistent
+                                       heading:NSLocalizedStringWithDefaultValue(@"MultiClient.DaemonStartFailed", nil, [NSBundle mainBundle], @"Problem Starting iTerm2 Daemon", @"Alert title shown when the iTerm2 daemon fails to start")
+                                        window:nil];
         }];
     });
 }
@@ -832,7 +839,7 @@ static NSString *iTermMultiServerStringForMessageFromClient(iTermMultiServerClie
     NSString *desiredPath = [self serverPath];
     if (!desiredPath) {
         [self showError:nil
-                message:[NSString stringWithFormat:@"Neither ~/Library/Application Support/iTerm2 nor ~/.iterm2 are writable directories. This prevents the session restoration server from running. Please correct the problem and restart iTerm2."]
+                message:[NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"MultiClient.NoWritableDirectory", nil, [NSBundle mainBundle], @"Neither ~/Library/Application Support/iTerm2 nor ~/.iterm2 are writable directories. This prevents the session restoration server from running. Please correct the problem and restart iTerm2.", @"Error shown when neither support directory is writable")]
                  badURL:nil];
         return nil;
     }
@@ -849,10 +856,10 @@ static NSString *iTermMultiServerStringForMessageFromClient(iTermMultiServerClie
         if (!sourcePath || ![fileManager fileExistsAtPath:sourcePath]) {
             dispatch_sync(dispatch_get_main_queue(), ^{
                 NSAlert *alert = [[NSAlert alloc] init];
-                alert.messageText = @"Required File Missing";
-                alert.informativeText = @"The iTermServer executable is missing from the application bundle. This indicates iTerm2 is corrupted or incomplete. Please reinstall iTerm2 from the official website.";
+                alert.messageText = NSLocalizedStringWithDefaultValue(@"MultiClient.RequiredFileMissingTitle", nil, [NSBundle mainBundle], @"Required File Missing", @"Title of alert shown when iTermServer is missing from the bundle");
+                alert.informativeText = NSLocalizedStringWithDefaultValue(@"MultiClient.RequiredFileMissingBody", nil, [NSBundle mainBundle], @"The iTermServer executable is missing from the application bundle. This indicates iTerm2 is corrupted or incomplete. Please reinstall iTerm2 from the official website.", @"Body of alert shown when iTermServer is missing from the bundle");
                 alert.alertStyle = NSAlertStyleCritical;
-                [alert addButtonWithTitle:@"Quit"];
+                [alert addButtonWithTitle:NSLocalizedStringWithDefaultValue(@"MultiClient.Quit", nil, [NSBundle mainBundle], @"Quit", @"Button to quit iTerm2 when a required file is missing")];
                 [alert runModal];
 
                 // Terminate the application
@@ -867,7 +874,7 @@ static NSString *iTermMultiServerStringForMessageFromClient(iTermMultiServerClie
                               error:&error];
         if (error) {
             [self showError:error
-                    message:[NSString stringWithFormat:@"Could not copy %@ to %@: %@", sourcePath, desiredPath, error.localizedDescription]
+                    message:[NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"MultiClient.CouldNotCopy", nil, [NSBundle mainBundle], @"Could not copy %1$@ to %2$@: %3$@", @"Error message; first %@ is source path, second is destination path, third is the error"), sourcePath, desiredPath, error.localizedDescription]
                      badURL:[NSURL fileURLWithPath:desiredPath]];
             return nil;
         }
@@ -879,7 +886,7 @@ static NSString *iTermMultiServerStringForMessageFromClient(iTermMultiServerClie
         NSDictionary *attributes = [fileManager attributesOfItemAtPath:desiredPath error:&error];
         if (error) {
             [self showError:error
-                    message:[NSString stringWithFormat:@"Could not check permissions on %@", desiredPath]
+                    message:[NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"MultiClient.CouldNotCheckPermissions", nil, [NSBundle mainBundle], @"Could not check permissions on %@", @"Error message; %@ is a file path"), desiredPath]
                      badURL:[NSURL fileURLWithPath:desiredPath]];
             return nil;
         }
@@ -897,7 +904,7 @@ static NSString *iTermMultiServerStringForMessageFromClient(iTermMultiServerClie
                                                 error:&error];
         if (error) {
             [self showError:error
-                    message:[NSString stringWithFormat:@"Could not set 0700 permissions on %@", desiredPath]
+                    message:[NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"MultiClient.CouldNotSetPermissions", nil, [NSBundle mainBundle], @"Could not set 0700 permissions on %@", @"Error message; %@ is a file path"), desiredPath]
                      badURL:[NSURL fileURLWithPath:desiredPath]];
             return nil;
         }
@@ -924,6 +931,10 @@ static NSString *iTermMultiServerStringForMessageFromClient(iTermMultiServerClie
     if (forkState.pid < 0) {
         return NO;
     }
+    // This process is the server's parent, so it is also the responsible process for every
+    // job the server spawns. That attribution dies with us, which is why connections we only
+    // attached to must not be reused for new sessions. See issue 12106.
+    self.didLaunchDaemon = YES;
 
     // Capture locals so the handler block doesn't retain self (the source is owned by
     // `state`), and so we have context to log with.
@@ -968,10 +979,8 @@ static NSString *iTermMultiServerStringForMessageFromClient(iTermMultiServerClie
 #pragma mark - Janitorial
 
 - (void)deleteDisusedServerBinaries {
-    if (@available(macOS 10.15, *)) {
-        [iTermServerDeleter deleteDisusedServersIn:[self serverFolders]
-                                          provider:[iTermProcessCache newProcessCollection]];
-    }
+    [iTermServerDeleter deleteDisusedServersIn:[self serverFolders]
+                                      provider:[iTermProcessCache newProcessCollection]];
 }
 
 #pragma mark - Tear Down

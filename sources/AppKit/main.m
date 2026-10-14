@@ -19,6 +19,11 @@
 #import "legacy_server.h"
 #import "shell_launcher.h"
 
+// Defined in iTermInstanceLock.swift. The Swift header isn't usable from this target.
+@interface iTermInstanceLock : NSObject
++ (void)acquire;
+@end
+
 int main(int argc, const char *argv[]) {
     if (argc >= 2 && !strcmp(argv[1], "--help")) {
         fprintf(stderr, "Usage: iTerm2 [--command=command] [-suite suite-name] [-compare-rendering string]\n");
@@ -57,6 +62,7 @@ int main(int argc, const char *argv[]) {
     // Also set the custom socket prefix for file descriptor sockets
     NSString *prefix = [NSString stringWithFormat:@"%@.socket.", suiteName];
     iTermFileDescriptorSetSocketNamePrefix(prefix.UTF8String);
+    [iTermInstanceLock acquire];
     if ([[iTermUserDefaults userDefaults] boolForKey:@"MetalCaptureEnabled"]) {
         setenv("MTL_CAPTURE_ENABLED", "1", 1);
     }

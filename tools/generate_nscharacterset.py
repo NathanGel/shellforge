@@ -8,7 +8,7 @@ NSCharacterSet+iTerm.m file with up-to-date character set definitions.
 Data sources:
 - UnicodeData.txt: Basic character properties (bidi classes, general categories)
 - DerivedCoreProperties.txt: Derived properties like Grapheme_Base, Default_Ignorable_Code_Point
-- emoji-data.txt: Emoji properties (Emoji, Emoji_Presentation)
+- emoji-data.txt: Emoji properties (Emoji, Emoji_Presentation, Emoji_Modifier_Base)
 - emoji-sequences.txt: Emoji sequences (for VS16 detection)
 - idn-chars.txt: IDN characters for URL detection
 - HangulSyllableType.txt: Conjoining jamo (L/V/T) that must not start their own cell
@@ -37,6 +37,7 @@ EMOJI_DATA_URL = "https://unicode.org/Public/UCD/latest/ucd/emoji/emoji-data.txt
 EMOJI_SEQUENCES_URL = "https://unicode.org/Public/emoji/latest/emoji-sequences.txt"
 IDN_CHARS_URL = "https://unicode.org/reports/tr36/idn-chars.txt"
 HANGUL_SYLLABLE_TYPE_URL = "https://unicode.org/Public/UCD/latest/ucd/HangulSyllableType.txt"
+BIDI_MIRRORING_URL = "https://unicode.org/Public/UCD/latest/ucd/BidiMirroring.txt"
 GRAPHEME_BREAK_PROPERTY_URL = "https://unicode.org/Public/UCD/latest/ucd/auxiliary/GraphemeBreakProperty.txt"
 
 # Cache directory for downloaded files
@@ -149,6 +150,31 @@ def format_c_supp_ranges(nums, indent="    "):
     for start, end in get_ranges(nums):
         lines.append(f"{indent}{{{hex(start)}, {hex(end)}}},")
     return lines
+
+
+def parse_bidi_mirroring(content: str):
+    """Parse BidiMirroring.txt into a sorted list of (code, mirror) pairs."""
+    pairs = []
+    for line in content.splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        left, right = (field.strip() for field in line.split(";"))
+        code = int(left, 16)
+        mirror = int(right, 16)
+        if code > 0xFFFF or mirror > 0xFFFF:
+            # iTermBidiMirroredCounterpart maps a unichar to a unichar, and its
+            # callers substitute the result in place, so a pair with either side
+            # outside the BMP can't be applied. Skip the pair in both directions
+            # (e.g., 221D;1DB10 and 1DB10;221D) so the table stays an involution.
+            continue
+        pairs.append((code, mirror))
+    return sorted(pairs)
+
+
+def format_bidi_mirroring_pairs(pairs, indent="    "):
+    """Format (code, mirror) pairs as C uint16_t array entries."""
+    return [f"{indent}{{0x{code:04X}, 0x{mirror:04X}}}," for code, mirror in pairs]
 
 
 # ============================================================================
@@ -362,6 +388,7 @@ def main():
     emoji_sequences_content = get_cached_or_fetch(EMOJI_SEQUENCES_URL, "emoji-sequences.txt")
     idn_content = get_cached_or_fetch(IDN_CHARS_URL, "idn-chars.txt")
     hangul_syllable_type_content = get_cached_or_fetch(HANGUL_SYLLABLE_TYPE_URL, "HangulSyllableType.txt")
+    bidi_mirroring_content = get_cached_or_fetch(BIDI_MIRRORING_URL, "BidiMirroring.txt")
     grapheme_break_content = get_cached_or_fetch(GRAPHEME_BREAK_PROPERTY_URL, "GraphemeBreakProperty.txt")
 
     print("Parsing Unicode data...")
@@ -414,6 +441,7 @@ def main():
     all_emoji = parse_emoji_data(emoji_data_content, "Emoji")
     emoji_presentation = parse_emoji_data(emoji_data_content, "Emoji_Presentation")
     emoji_vs16_codes = sorted(vs16_emoji | (all_emoji - emoji_presentation))
+    emoji_modifier_base_codes = sorted(parse_emoji_data(emoji_data_content, "Emoji_Modifier_Base"))
 
     bidi_classes = {"R", "AL", "AN", "RLE", "RLO", "RLI", "FSI", "PDF", "PDI", "LRE", "LRO", "LRI"}
     rtl_codes = sorted(
@@ -452,8 +480,10 @@ def main():
     # here. They have Grapheme_Cluster_Break=Extend, so Apple attaches one to whatever
     # precedes it, valid base or not, and CoreText draws a separate swatch glyph when the
     # sequence is not a real emoji modifier sequence. Excluding them outright would
-    # collapse "A" + modifier into a single cell and overlap the swatch. Suppressing that
-    # split correctly requires an Emoji_Modifier_Base check on the preceding code point.
+    # collapse "A" + modifier into a single cell and overlap the swatch. Instead,
+    # iTermFindFirstCodePointWithOwnCell declines to split a modifier that follows an
+    # Emoji_Modifier_Base, using the table generated from emoji_modifier_base_codes.
+    # See issue 13079.
     regional_indicators = parse_derived_props(grapheme_break_content, "Regional_Indicator")
     own_cell_codes = sorted(
         (base_codes | set(spacing_combining_codes) | modifier_letter_codes)
@@ -468,6 +498,8 @@ def main():
     rtl_bmp, rtl_supp = split_bmp_supp(rtl_codes)
     own_cell_bmp, own_cell_supp = split_bmp_supp(own_cell_codes)
 
+    bidi_mirroring_pairs = parse_bidi_mirroring(bidi_mirroring_content)
+
     print("Reading C template...")
     c_template = c_template_path.read_text(encoding="utf-8")
 
@@ -478,11 +510,14 @@ def main():
         "{{EMOJI_VS16_SUPP_RANGES}}": "\n".join(format_c_supp_ranges(vs16_supp)),
         "{{RTL_SUPP_RANGES}}": "\n".join(format_c_supp_ranges(rtl_supp)),
         "{{CODE_POINTS_WITH_OWN_CELL_SUPP_RANGES}}": "\n".join(format_c_supp_ranges(own_cell_supp)),
+        "{{EMOJI_MODIFIER_BASE_RANGES}}": "\n".join(format_c_supp_ranges(emoji_modifier_base_codes)),
         "{{IGNORABLE_BMP_INIT}}": "\n".join(format_c_bmp_init(ignorable_bmp, "sIgnorableBMP")),
         "{{SPACING_COMBINING_MARKS_BMP_INIT}}": "\n".join(format_c_bmp_init(scm_bmp, "sSpacingCombiningMarksBMP")),
         "{{EMOJI_VS16_BMP_INIT}}": "\n".join(format_c_bmp_init(vs16_bmp, "sEmojiAcceptingVS16BMP")),
         "{{RTL_BMP_INIT}}": "\n".join(format_c_bmp_init(rtl_bmp, "sRTLBMP")),
         "{{CODE_POINTS_WITH_OWN_CELL_BMP_INIT}}": "\n".join(format_c_bmp_init(own_cell_bmp, "sCodePointsWithOwnCellBMP")),
+        "{{BIDI_MIRRORING_PAIRS}}": "\n".join(format_bidi_mirroring_pairs(bidi_mirroring_pairs)),
+        "{{BIDI_MIRRORING_PAIR_COUNT}}": str(len(bidi_mirroring_pairs)),
     }
 
     c_output = c_template

@@ -30,6 +30,8 @@ NSString *const iTermVariableKeyApplicationPID = @"pid";
 NSString *const iTermVariableKeyApplicationLocalhostName = @"localhostName";
 NSString *const iTermVariableKeyApplicationEffectiveTheme = @"effectiveTheme";
 NSString *const iTermVariableKeyApplicationBundlePath = @"appBundlePath";
+NSString *const iTermVariableKeyApplicationWorkingSessionCount = @"workingSessionCount";
+NSString *const iTermVariableKeyApplicationWaitingSessionCount = @"waitingSessionCount";
 
 #pragma mark - Tab Context
 
@@ -61,6 +63,7 @@ NSString *const iTermVariableKeySessionTermID = @"termid";
 NSString *const iTermVariableKeySessionProfileName = @"profileName";
 NSString *const iTermVariableKeySessionIconName = @"terminalIconName";
 NSString *const iTermVariableKeySessionTriggerName = @"triggerName";
+NSString *const iTermVariableKeySessionAITitle = @"aiTitle";
 NSString *const iTermVariableKeySessionWindowName = @"terminalWindowName";
 NSString *const iTermVariableKeySessionJob = @"jobName";
 NSString *const iTermVariableKeySessionProcessTitle = @"processTitle";
@@ -69,6 +72,7 @@ NSString *const iTermVariableKeySessionForegroundJobAncestors = @"foregroundJobA
 NSString *const iTermVariableKeySessionCommandLine = @"commandLine";
 NSString *const iTermVariableKeySessionPresentationName = @"presentationName";
 NSString *const iTermVariableKeySessionTmuxPaneTitle = @"tmuxPaneTitle";
+NSString *const iTermVariableKeySessionIsFloating = @"isFloating";
 NSString *const iTermVariableKeySessionTmuxRole = @"tmuxRole";
 NSString *const iTermVariableKeySessionTmuxClientName = @"tmuxClientName";
 NSString *const iTermVariableKeySessionAutoNameFormat = @"autoNameFormat";
@@ -96,6 +100,7 @@ NSString *const iTermVariableKeySSHIntegrationLevel = @"sshIntegrationLevel";
 NSString *const iTermVariableKeyShell = @"shell";
 NSString *const iTermVariableKeyUname = @"uname";
 NSString *const iTermVariableKeyIsBroadcastSource = @"isBroadcastSource";
+NSString *const iTermVariableKeyStatus = @"status";
 
 #pragma mark - Window Context
 

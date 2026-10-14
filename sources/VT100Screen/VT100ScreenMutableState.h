@@ -49,6 +49,10 @@ NS_ASSUME_NONNULL_BEGIN
 
 @interface VT100ScreenMutableState: VT100ScreenState<NSCopying, VT100ScreenMutableState>
 @property (nonatomic, strong, readwrite) iTermOrderEnforcer *currentDirectoryDidChangeOrderEnforcer;
+// Advances whenever the progress changes behind the main thread's back: an
+// OSC 9;4 report, or a reset. A change the main thread queued before it heard
+// of one of those is stale and is dropped (see PTYSession).
+@property (nonatomic) NSInteger progressGeneration;
 @property (nullable, nonatomic, strong) VT100InlineImageHelper *inlineImageHelper;
 @property (nonatomic, strong, readwrite) iTermOrderEnforcer *setWorkingDirectoryOrderEnforcer;
 @property (atomic, weak, nullable) id<VT100ScreenSideEffectPerforming> sideEffectPerformer;
@@ -319,6 +323,15 @@ void VT100ScreenEraseCell(screen_char_t *sct,
 // This is used when sending a command when the previous prompt was detected by a trigger since
 // we won't get any indication of the start/end of a running command.
 - (void)didSendCommand;
+// Bytes from the user (or from iTerm2 on the user's behalf) were written to the
+// pty. Ends the window in which a tokenless OSC 7 is treated as a duplicate of
+// shell integration's verified report for the same prompt. See issue 13117.
+- (void)inputWasWrittenToTask;
+// Ends that window on 133;B or 133;C.
+- (void)closeVerifiedOSC7Window;
+// Safe to call from any thread. Lets the main thread skip -inputWasWrittenToTask
+// when there's no window to close, which is nearly always.
+- (BOOL)verifiedOSC7WindowIsOpen;
 - (void)setCoordinateOfCommandStart:(VT100GridAbsCoord)coord;
 - (void)setCommandStartCoordWithoutSideEffects:(VT100GridAbsCoord)coord;
 - (void)commandDidStartAtScreenCoord:(VT100GridCoord)coord;
@@ -351,6 +364,12 @@ void VT100ScreenEraseCell(screen_char_t *sct,
                          completion:(void (^)(void))completion;
 
 - (void)setWorkingDirectoryFromURLString:(NSString *)URLString;
+
+// Process-wide one-shot for the "AcceptOSC7 is off" shell-integration warning:
+// YES for the first caller per app run, NO thereafter. Reset only exists for
+// tests.
++ (BOOL)consumeOSC7DisabledWarning;
++ (void)resetOSC7DisabledWarningForTesting;
 
 #pragma mark Remote Host
 
@@ -446,6 +465,13 @@ basedAtAbsoluteLineNumber:(long long)absoluteLineNumber
 // happens between the A and the B doesn't corrupt the recorded coord.
 // nil means "no pending range".
 @property (nonatomic, strong, nullable) iTermResilientCoordinate *pendingNonInitialPromptStart;
+
+// YES between an initial OSC 133;A and the B that ends that prompt. A B ends
+// the whole prompt, so a B that closes a right or continuation prompt nested
+// inside the primary prompt (reedline draws its right prompt before its only
+// B) also starts the command. A B that closes a non-initial prompt drawn after
+// the primary B (powerlevel10k's separate RPROMPT bracket) only closes it.
+@property (nonatomic) BOOL primaryPromptAwaitingCommandStart;
 
 // Registry of currently-open command marks keyed by OSC 133 `aid=<id>`.
 // Populated when an aid'd prompt mark is created (at A) and removed when
@@ -585,6 +611,11 @@ lengthExcludingInBandSignaling:(int)lengthExcludingInBandSignaling
 #pragma mark - Tmux
 
 - (void)setTmuxState:(NSDictionary *)state;
+
+// Applies the modifyOtherKeys level from a tmux #{pane_key_mode} value. A value
+// that does not describe one (including the empty string from tmux before 3.5)
+// leaves it alone.
+- (void)applyTmuxPaneKeyMode:(nullable NSString *)paneKeyMode;
 
 #pragma mark - SSH
 

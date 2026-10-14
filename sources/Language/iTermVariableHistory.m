@@ -58,6 +58,7 @@
                                     iTermVariableKeySessionProfileName,
                                     iTermVariableKeySessionIconName,
                                     iTermVariableKeySessionTriggerName,
+                                    iTermVariableKeySessionAITitle,
                                     iTermVariableKeySessionWindowName,
                                     iTermVariableKeySessionJob,
                                     iTermVariableKeySessionProcessTitle,
@@ -68,6 +69,7 @@
                                     iTermVariableKeySessionShowingAlternateScreen,
                                     iTermVariableKeySessionTmuxPaneTitle,
                                     iTermVariableKeySessionTmuxRole,
+                                    iTermVariableKeySessionIsFloating,
                                     iTermVariableKeySessionTmuxClientName,
                                     iTermVariableKeySessionAutoNameFormat,
                                     iTermVariableKeySessionAutoName,
@@ -90,7 +92,8 @@
                                     iTermVariableKeySSHIntegrationLevel,
                                     iTermVariableKeyShell,
                                     iTermVariableKeyUname,
-                                    iTermVariableKeyIsBroadcastSource];
+                                    iTermVariableKeyIsBroadcastSource,
+                                    iTermVariableKeyStatus];
     [names enumerateObjectsUsingBlock:^(NSString * _Nonnull obj, NSUInteger idx, BOOL * _Nonnull stop) {
         [self recordUseOfVariableNamed:obj inContext:iTermVariablesSuggestionContextSession];
     }];
@@ -152,6 +155,8 @@
     [self recordUseOfVariableNamed:iTermVariableKeyApplicationLocalhostName inContext:iTermVariablesSuggestionContextApp];
     [self recordUseOfVariableNamed:iTermVariableKeyApplicationEffectiveTheme inContext:iTermVariablesSuggestionContextApp];
     [self recordUseOfVariableNamed:iTermVariableKeyApplicationBundlePath inContext:iTermVariablesSuggestionContextApp];
+    [self recordUseOfVariableNamed:iTermVariableKeyApplicationWorkingSessionCount inContext:iTermVariablesSuggestionContextApp];
+    [self recordUseOfVariableNamed:iTermVariableKeyApplicationWaitingSessionCount inContext:iTermVariablesSuggestionContextApp];
 }
 
 + (NSSet<NSString *> * _Nonnull (^)(NSString * _Nonnull))pathSourceForContext:(iTermVariablesSuggestionContext)context {

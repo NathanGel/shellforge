@@ -157,10 +157,7 @@ const CGFloat kDefaultTagsWidth = 80;
                                     scrollerStyle:scrollView_.verticalScroller.scrollerStyle];
 
         tableView_ = [[ProfileTableView alloc] initWithFrame:tableViewFrame];
-
-        if (@available(macOS 10.16, *)) {
-            tableView_.style = NSTableViewStyleInset;
-        }
+        tableView_.style = NSTableViewStyleInset;
 
         [tableView_ setMenuHandler:self];
         [tableView_ registerForDraggedTypes:[NSArray arrayWithObject:kProfileTableViewDataType]];
@@ -178,17 +175,13 @@ const CGFloat kDefaultTagsWidth = 80;
         [tableView_ addTableColumn:tableColumn_];
 
         [scrollView_ setDocumentView:tableView_];
-        if (@available(macOS 10.16, *)) {
-            scrollView_.borderType = NSLineBorder;
-        } else {
-            [scrollView_ setBorderType:NSBezelBorder];
-        }
+        scrollView_.borderType = NSLineBorder;
 
         selectedGuids_ = [[NSMutableSet alloc] init];
 
         [tableView_ setDoubleAction:@selector(onDoubleClick:)];
 
-        tableColumn_.title = @"Profile Name";
+        tableColumn_.title = NSLocalizedStringWithDefaultValue(@"ProfileListView.ProfileNameColumn", nil, [NSBundle mainBundle], @"Profile Name", @"Header for the column showing profile names");
 
         [tableView_ sizeLastColumnToFit];
 
@@ -420,7 +413,7 @@ const CGFloat kDefaultTagsWidth = 80;
                         autorelease];
     NSMenuItem *item;
 
-    item = [[[NSMenuItem alloc] initWithTitle:@"Tags"
+    item = [[[NSMenuItem alloc] initWithTitle:NSLocalizedStringWithDefaultValue(@"ProfileListView.TagsMenuItem", nil, [NSBundle mainBundle], @"Tags", @"Menu item heading for the list of profile tags")
                                        action:nil
                                 keyEquivalent:@""] autorelease];
     [item setTarget:self];
@@ -438,7 +431,7 @@ const CGFloat kDefaultTagsWidth = 80;
     }
 
     [cellMenu insertItem:[NSMenuItem separatorItem] atIndex:cellMenu.numberOfItems];
-    [cellMenu addItemWithTitle:@"Search Syntax Help" action:@selector(openHowToSearchHelp:) keyEquivalent:@""];
+    [cellMenu addItemWithTitle:NSLocalizedStringWithDefaultValue(@"ProfileListView.SearchSyntaxHelp", nil, [NSBundle mainBundle], @"Search Syntax Help", @"Menu item that opens help about search syntax") action:@selector(openHowToSearchHelp:) keyEquivalent:@""];
 
     id searchCell = [searchField cell];
     [searchCell setSearchMenuTemplate:cellMenu];
@@ -621,46 +614,43 @@ const CGFloat kDefaultTagsWidth = 80;
                           highlightedAttributes:highlightedNameAttributes] mutableCopy] autorelease];
 
     if (isDefault && !isBrowser) {
+        // Localization unneeded
         NSAttributedString *star = [[[NSAttributedString alloc] initWithString:@"★ "
                                                                     attributes:plainAttributes] autorelease];
         [theAttributedString insertAttributedString:star atIndex:0];
     }
     if (isBrowser) {
         NSAttributedString *browserIcon;
-        if (@available(macOS 11.0, *)) {
-            NSTextAttachment *attachment = [[[NSTextAttachment alloc] init] autorelease];
-            NSString *imageName = isDefault ? SFSymbolGetString(SFSymbolSafariFill) : SFSymbolGetString(SFSymbolSafari);
-            NSImage *image = [NSImage imageWithSystemSymbolName:imageName accessibilityDescription:nil];
-            image.size = NSMakeSize(16, 16);
-            attachment.image = image;
-            NSAttributedString *safari = [NSAttributedString attributedStringWithAttachment:attachment];
-            NSAttributedString *space = [[[NSAttributedString alloc] initWithString:@" "
-                                                           attributes:plainAttributes] autorelease];
-            browserIcon = [safari attributedStringByAppendingAttributedString:space];
-            [theAttributedString insertAttributedString:browserIcon atIndex:0];
-        }
+        NSTextAttachment *attachment = [[[NSTextAttachment alloc] init] autorelease];
+        NSString *imageName = isDefault ? SFSymbolGetString(SFSymbolSafariFill) : SFSymbolGetString(SFSymbolSafari);
+        NSImage *image = [NSImage imageWithSystemSymbolName:imageName accessibilityDescription:nil];
+        image.size = NSMakeSize(16, 16);
+        attachment.image = image;
+        NSAttributedString *safari = [NSAttributedString attributedStringWithAttachment:attachment];
+        NSAttributedString *space = [[[NSAttributedString alloc] initWithString:@" "
+                                                       attributes:plainAttributes] autorelease];
+        browserIcon = [safari attributedStringByAppendingAttributedString:space];
+        [theAttributedString insertAttributedString:browserIcon atIndex:0];
     }
     if (isDynamic) {
-        if (@available(macOS 12.0, *)) {
-            NSTextAttachment *attachment = [[[NSTextAttachment alloc] init] autorelease];
-            NSString *imageName = SFSymbolGetString(SFSymbolTrayAndArrowDown);
-            NSColor *color = [[NSColor labelColor] colorWithAlphaComponent:0.75];
-            NSImageSymbolConfiguration *config = [NSImageSymbolConfiguration configurationWithHierarchicalColor:color];
-            NSImage *image = [[NSImage imageWithSystemSymbolName:imageName accessibilityDescription:nil]
-                              imageWithSymbolConfiguration:config];
-            image.size = NSMakeSize(16, 16);
-            attachment.image = image;
-            NSAttributedString *dynamicIcon = [NSAttributedString attributedStringWithAttachment:attachment];
-            NSMutableAttributedString *dynamicIconWithAttr = [[dynamicIcon mutableCopy] autorelease];
-            [dynamicIconWithAttr addAttribute:iTermDynamicProfileSymbolName
-                                        value:imageName
-                                        range:NSMakeRange(0, dynamicIconWithAttr.length)];
-            NSAttributedString *space = [[[NSAttributedString alloc] initWithString:@" "
-                                                                         attributes:plainAttributes] autorelease];
-            NSMutableAttributedString *spaceWithIcon = [[[NSMutableAttributedString alloc] initWithAttributedString:space] autorelease];
-            [spaceWithIcon appendAttributedString:dynamicIconWithAttr];
-            [theAttributedString appendAttributedString:spaceWithIcon];
-        }
+        NSTextAttachment *attachment = [[[NSTextAttachment alloc] init] autorelease];
+        NSString *imageName = SFSymbolGetString(SFSymbolTrayAndArrowDown);
+        NSColor *color = [[NSColor labelColor] colorWithAlphaComponent:0.75];
+        NSImageSymbolConfiguration *config = [NSImageSymbolConfiguration configurationWithHierarchicalColor:color];
+        NSImage *image = [[NSImage imageWithSystemSymbolName:imageName accessibilityDescription:nil]
+                          imageWithSymbolConfiguration:config];
+        image.size = NSMakeSize(16, 16);
+        attachment.image = image;
+        NSAttributedString *dynamicIcon = [NSAttributedString attributedStringWithAttachment:attachment];
+        NSMutableAttributedString *dynamicIconWithAttr = [[dynamicIcon mutableCopy] autorelease];
+        [dynamicIconWithAttr addAttribute:iTermDynamicProfileSymbolName
+                                    value:imageName
+                                    range:NSMakeRange(0, dynamicIconWithAttr.length)];
+        NSAttributedString *space = [[[NSAttributedString alloc] initWithString:@" "
+                                                                     attributes:plainAttributes] autorelease];
+        NSMutableAttributedString *spaceWithIcon = [[[NSMutableAttributedString alloc] initWithAttributedString:space] autorelease];
+        [spaceWithIcon appendAttributedString:dynamicIconWithAttr];
+        [theAttributedString appendAttributedString:spaceWithIcon];
     }
     if (tags.count) {
         NSAttributedString *newline = [[[NSAttributedString alloc] initWithString:@"\n"
@@ -753,11 +743,12 @@ const CGFloat kDefaultTagsWidth = 80;
             [customCommand isEqualToString:kProfilePreferenceCommandTypeCustomShellValue]) {
             theString = [bookmark objectForKey:KEY_COMMAND_LINE];
         } else if ([customCommand isEqualToString:kProfilePreferenceCommandTypeSSHValue]) {
+            // Localization unneeded
             theString = [NSString stringWithFormat:@"ssh %@", bookmark[KEY_COMMAND_LINE]];
         } else if ([customCommand isEqualToString:kProfilePreferenceCommandTypeLoginShellValue]) {
-            theString = @"Login shell";
+            theString = NSLocalizedStringWithDefaultValue(@"ProfileListView.LoginShell", nil, [NSBundle mainBundle], @"Login shell", @"Command type indicating the profile launches a login shell");
         } else if ([customCommand isEqualToString:kProfilePreferenceCommandTypeBrowserValue]) {
-            theString = @"URL";
+            theString = NSLocalizedStringWithDefaultValue(@"ProfileListView.URLCommandType", nil, [NSBundle mainBundle], @"URL", @"Command type indicating the profile opens a URL");
         }
         return [self attributedStringForCommand:theString
                                        selected:[[tableView_ selectedRowIndexes] containsIndex:rowIndex]
@@ -1040,8 +1031,8 @@ const CGFloat kDefaultTagsWidth = 80;
 
     [tableColumn_ setWidth:250];
 
-    shortcutColumn_.title = @"Shortcut";
-    commandColumn_.title = @"Command";
+    shortcutColumn_.title = NSLocalizedStringWithDefaultValue(@"ProfileListView.ShortcutColumn", nil, [NSBundle mainBundle], @"Shortcut", @"Header for the column showing a profile's keyboard shortcut");
+    commandColumn_.title = NSLocalizedStringWithDefaultValue(@"ProfileListView.CommandColumn", nil, [NSBundle mainBundle], @"Command", @"Header for the column showing a profile's command");
     [tableView_ sizeLastColumnToFit];
 }
 

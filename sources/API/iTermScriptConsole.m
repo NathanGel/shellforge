@@ -68,11 +68,7 @@ typedef NS_ENUM(NSInteger, iTermScriptFilterControlTag) {
 }
 
 - (void)awakeFromNib {
-#ifdef MAC_OS_X_VERSION_10_16
-    if (@available(macOS 10.16, *)) {
-        _tableView.style = NSTableViewStyleInset;
-    }
-#endif
+    _tableView.style = NSTableViewStyleInset;
     _logsView.textColor = [NSColor textColor];
     _callsView.textColor = [NSColor textColor];
     NSScrollView *scrollView = _callsView.enclosingScrollView;
@@ -159,10 +155,10 @@ typedef NS_ENUM(NSInteger, iTermScriptFilterControlTag) {
     [self makeTextViewHorizontallyScrollable:_logsView];
     [self makeTextViewHorizontallyScrollable:_callsView];
 
-    [self setSymbol:SFSymbolGetString(SFSymbolScope) tooltip:@"Inspector" onButton:_inspectorButton];
-    [self setSymbol:SFSymbolGetString(SFSymbolStopCircle) tooltip:@"Terminate" onButton:_terminateButton];
-    [self setSymbol:SFSymbolGetString(SFSymbolArrowClockwise) tooltip:@"Restart" onButton:_startButton];
-    [self setSymbol:SFSymbolGetString(SFSymbolTrash) tooltip:@"Clear Terminated" onButton:_clearTerminatedButton];
+    [self setSymbol:SFSymbolGetString(SFSymbolScope) tooltip:NSLocalizedStringWithDefaultValue(@"ScriptConsole.InspectorTooltip", nil, [NSBundle mainBundle], @"Inspector", @"Tooltip for the inspector button") onButton:_inspectorButton];
+    [self setSymbol:SFSymbolGetString(SFSymbolStopCircle) tooltip:NSLocalizedStringWithDefaultValue(@"ScriptConsole.TerminateTooltip", nil, [NSBundle mainBundle], @"Terminate", @"Tooltip for the terminate button") onButton:_terminateButton];
+    [self setSymbol:SFSymbolGetString(SFSymbolArrowClockwise) tooltip:NSLocalizedStringWithDefaultValue(@"ScriptConsole.RestartTooltip", nil, [NSBundle mainBundle], @"Restart", @"Tooltip for the restart button") onButton:_startButton];
+    [self setSymbol:SFSymbolGetString(SFSymbolTrash) tooltip:NSLocalizedStringWithDefaultValue(@"ScriptConsole.ClearTerminatedTooltip", nil, [NSBundle mainBundle], @"Clear Terminated", @"Tooltip for the clear-terminated button") onButton:_clearTerminatedButton];
 
     [self reloadTableFully];
 }
@@ -529,9 +525,10 @@ typedef NS_ENUM(NSInteger, iTermScriptFilterControlTag) {
 
 - (void)updateButtonsEnabled {
     // The Clear Terminated button acts on the whole list, so its state depends
-    // only on whether any stopped entry exists, not on the current selection.
+    // only on whether any entry it would remove exists, not on the current
+    // selection.
     iTermScriptHistoryEntry *terminated = [[[iTermScriptHistory sharedInstance] entries] objectPassingTest:^BOOL(iTermScriptHistoryEntry *entry, NSUInteger index, BOOL *stop) {
-        return !entry.isRunning;
+        return entry.isFinished;
     }];
     _clearTerminatedButton.enabled = (terminated != nil);
 
@@ -548,9 +545,10 @@ typedef NS_ENUM(NSInteger, iTermScriptFilterControlTag) {
 
 - (NSString *)formatPIDs:(NSArray<NSNumber *> *)pids {
     if (pids.count == 1) {
-        return [NSString stringWithFormat:@"PID %@", pids[0]];
+        return [NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"ScriptConsole.SinglePID", nil, [NSBundle mainBundle], @"PID %@", @"Label for a single process ID; %@ is the PID"), pids[0]];
     }
-    return [NSString stringWithFormat:@"PIDs %@", [pids componentsJoinedByString:@", "]];
+    // Not a count plural: always a list of process IDs.
+    return [NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"ScriptConsole.PIDs", nil, [NSBundle mainBundle], @"PIDs %@", @"Label for a list of process IDs; %@ is the comma-separated list"), [pids componentsJoinedByString:@", "]];
 }
 
 - (void)connectionRejected:(NSNotification *)notification {
@@ -561,20 +559,25 @@ typedef NS_ENUM(NSInteger, iTermScriptFilterControlTag) {
     } else {
         key = [[NSUUID UUID] UUIDString];  // Just needs to be something unique to identify this now-immutable log
     }
-    if (!entry) {
-        NSString *name = [NSString castFrom:notification.userInfo[@"job"]];
-        if (!name) {
-            name = [self formatPIDs:notification.userInfo[@"pids"]];
-        }
-        if (!name) {
-            // Shouldn't happen as there ought to always be a PID
-            name = @"Unknown";
-        }
-        entry = [[iTermScriptHistoryEntry alloc] initWithName:name
-                                                     fullPath:nil
-                                                   identifier:key
-                                                     relaunch:nil];
+    if (entry) {
+        // Other connections may be using this key (it2 over SSH shares one per
+        // session), or it may belong to a launched script, so a rejected request
+        // must not stop the entry or replace its pids. Just log it.
+        [entry addOutput:notification.userInfo[@"reason"] completion:^{}];
+        return;
     }
+    NSString *name = [NSString castFrom:notification.userInfo[@"job"]];
+    if (!name) {
+        name = [self formatPIDs:notification.userInfo[@"pids"]];
+    }
+    if (!name) {
+        // Shouldn't happen as there ought to always be a PID
+        name = NSLocalizedStringWithDefaultValue(@"ScriptConsole.Unknown", nil, [NSBundle mainBundle], @"Unknown", @"Fallback name for a script with no identifiable name");
+    }
+    entry = [[iTermScriptHistoryEntry alloc] initWithName:name
+                                                 fullPath:nil
+                                               identifier:key
+                                                 relaunch:nil];
     entry.pids = notification.userInfo[@"pids"];
     [[iTermScriptHistory sharedInstance] addHistoryEntry:entry];
     [entry addOutput:notification.userInfo[@"reason"] completion:^{}];
@@ -597,7 +600,7 @@ typedef NS_ENUM(NSInteger, iTermScriptFilterControlTag) {
         }
         if (!name) {
             // Shouldn't happen as there ought to always be a PID
-            name = @"Unknown";
+            name = NSLocalizedStringWithDefaultValue(@"ScriptConsole.Unknown", nil, [NSBundle mainBundle], @"Unknown", @"Fallback name for a script with no identifiable name");
         }
         entry = [[iTermScriptHistoryEntry alloc] initWithName:name
                                                      fullPath:nil
@@ -607,9 +610,10 @@ typedef NS_ENUM(NSInteger, iTermScriptFilterControlTag) {
         DLog(@"Add history entry");
         [[iTermScriptHistory sharedInstance] addHistoryEntry:entry];
     }
+    [entry connectionDidOpenWithPIDs:notification.userInfo[@"pids"]];
     entry.websocketConnection = notification.userInfo[@"websocket"];
     DLog(@"Adding output");
-    [entry addOutput:[NSString stringWithFormat:@"Connection accepted: %@\n", notification.userInfo[@"reason"]]
+    [entry addOutput:[NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"ScriptConsole.ConnectionAccepted", nil, [NSBundle mainBundle], @"Connection accepted: %@\n", @"Script Console diagnostic logged when an API connection is accepted; %@ is the peer"), notification.userInfo[@"reason"]]
           completion:^{}];
     DLog(@"Done");
 }
@@ -621,8 +625,8 @@ typedef NS_ENUM(NSInteger, iTermScriptFilterControlTag) {
     if (!entry) {
         return;
     }
-    [entry addOutput:@"\nConnection closed.\n" completion:^{}];
-    [entry stopRunning];
+    [entry addOutput:NSLocalizedStringWithDefaultValue(@"ScriptConsole.ConnectionClosed", nil, [NSBundle mainBundle], @"\nConnection closed.\n", @"Script Console diagnostic logged when an API connection is closed") completion:^{}];
+    [entry connectionDidClose];
 }
 
 #pragma mark - Private

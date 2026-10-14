@@ -54,6 +54,10 @@ private func nullableInteger(_ description: String) -> [String: Any] {
     return ["type": ["integer", "null"], "description": description]
 }
 
+private func nullableNumber(_ description: String) -> [String: Any] {
+    return ["type": ["number", "null"], "description": description]
+}
+
 private func nullableBoolean(_ description: String) -> [String: Any] {
     return ["type": ["boolean", "null"], "description": description]
 }
@@ -157,11 +161,11 @@ extension OrchestratorCommand {
 
         ToolDefinition(
             name: ToolName.sendText.rawValue,
-            description: "Type text into a session as if the user typed it. By default appends a newline. The text supports a small backslash-escape vocabulary so you can send control keys and special characters: \\\\ for a literal backslash, \\n for newline, \\r for carriage return, \\t for tab, and \\uXXXX (four hex digits, JSON-style) for any Unicode scalar. Use this to drive control keys: \\u0003 for Ctrl-C (prefer the dedicated interrupt tool), \\u0004 for Ctrl-D / EOF, \\u001a for Ctrl-Z, \\u000c for Ctrl-L, \\u001b for Escape, etc. When sending a standalone control key, pass append_newline=false so you don't tack an Enter onto it. You may combine control bytes with text and a trailing newline in a single call (e.g. \\u001b:q\\n to quit vim). iTerm2 detects embedded control bytes and sends the payload as a raw keystroke stream rather than a bracketed paste, so the control bytes are interpreted by the target program rather than inserted as literal data. The return value `{\"ack\":{}}` only confirms that the bytes were transmitted; it does NOT confirm the program behaved as you expected. For interactive TUIs (vim, emacs, less, htop, fzf, etc.) always follow up with `get_screen_contents` to verify the effect before telling the user it worked. Requires the user to have approved this chat to control the workgroup; the user is prompted inline on the first send to an unclaimed workgroup.",
+            description: "Type text into a session as if the user typed it. By default presses Return after the text (append_newline=true). A single trailing \\n or \\r in the text also counts as pressing Return rather than as pasted data, so text \\n with append_newline=false presses Return once, and foo\\n submits foo once whether or not append_newline is set. The text supports a small backslash-escape vocabulary so you can send control keys and special characters: \\\\ for a literal backslash, \\n for newline, \\r for carriage return, \\t for tab, and \\uXXXX (four hex digits, JSON-style) for any Unicode scalar. Use this to drive control keys: \\u0003 for Ctrl-C (prefer the dedicated interrupt tool), \\u0004 for Ctrl-D / EOF, \\u001a for Ctrl-Z, \\u000c for Ctrl-L, \\u001b for Escape, etc. When sending a standalone control key, pass append_newline=false so you don't tack an Enter onto it. You may combine control bytes with text and a trailing newline in a single call (e.g. \\u001b:q\\n to quit vim). iTerm2 detects embedded control bytes and sends the payload as a raw keystroke stream rather than a bracketed paste, so the control bytes are interpreted by the target program rather than inserted as literal data. The return value `{\"ack\":{}}` only confirms that the bytes were transmitted; it does NOT confirm the program behaved as you expected. For interactive TUIs (vim, emacs, less, htop, fzf, etc.) always follow up with `get_screen_contents` to verify the effect before telling the user it worked. Requires the user to have approved this chat to control the workgroup; the user is prompted inline on the first send to an unclaimed workgroup.",
             inputSchema: object([
                 ("session_guid", sessionGuidSchema),
                 ("text", stringSchema),
-                ("append_newline", nullableBoolean("Whether to append a newline to the text. Use null for the default true. Set to false when sending control keys (e.g. \\u001b for Escape) by themselves.")),
+                ("append_newline", nullableBoolean("Whether to press Return after the text. Use null for the default true. Set to false when sending control keys (e.g. \\u001b for Escape) by themselves, or when typing a partial line that should not be submitted yet.")),
             ], required: ["session_guid", "text", "append_newline"])),
 
         ToolDefinition(
@@ -196,13 +200,13 @@ extension OrchestratorCommand {
 
         ToolDefinition(
             name: ToolName.startSession.rawValue,
-            description: "Spawn a new terminal session. Use window=\u{201C}new\u{201D} to open a new window, \u{201C}tab\u{201D} (default) to add a tab to the current window, or \u{201C}current\u{201D} to split the current pane vertically. The user is always prompted to approve the spawn (and the command being run, if any). Returns the session_guid of the new session so you can immediately drive it with the other tools (send_text, get_screen_contents, etc.).",
+            description: "Spawn a new terminal session. Use window=\u{201C}new\u{201D} to open a new window, \u{201C}tab\u{201D} (default) to add a tab to the current window, \u{201C}current\u{201D} to split the current pane vertically, or \u{201C}floating\u{201D} to add a floating pane over the current tab. The user is always prompted to approve the spawn (and the command being run, if any). Returns the session_guid of the new session so you can immediately drive it with the other tools (send_text, get_screen_contents, etc.).",
             inputSchema: object([
                 ("profile", nullableString("Optional profile name. Use null to fall back to the default profile.")),
                 ("command", nullableString("Optional command to run in the new session. Use null for the profile's default shell.")),
                 ("cwd", nullableString("Optional working directory. Use null for the default.")),
-                ("window", nullableString("Where to put the new session. \u{201C}new\u{201D} for a new window, \u{201C}current\u{201D} to split the current pane, \u{201C}tab\u{201D} (default) for a new tab in the current window. Use null for tab.",
-                                          enumValues: ["new", "current", "tab"])),
+                ("window", nullableString("Where to put the new session. \u{201C}new\u{201D} for a new window, \u{201C}current\u{201D} to split the current pane, \u{201C}tab\u{201D} (default) for a new tab in the current window, \u{201C}floating\u{201D} for a floating pane over the current tab. Use null for tab.",
+                                          enumValues: ["new", "current", "tab", "floating"])),
             ], required: ["profile", "command", "cwd", "window"])),
 
         // -------- Watchers (async; non-blocking) --------
@@ -227,9 +231,10 @@ extension OrchestratorCommand {
                 ("notify_user", nullableBoolean("Set true when the user asked to be told/alerted when this happens. iTerm2 sends a push notification to their iPhone automatically when the watch fires; you do not need to call notify yourself. Use null when not requested.")),
             ] : []), required: ["session_guid", "target_state", "condition"] + (CompanionPushRegistry.devicePaired ? ["notify_user"] : []))),
 
-        // unregister_watch / list_watches are identical across the orchestration
-        // and session-bound surfaces, so they live in one place and are reused by
-        // both (see sessionBoundWatchToolDefinitions).
+        // register_timer / unregister_watch / list_watches are identical across
+        // the orchestration and session-bound surfaces, so they live in one place
+        // and are reused by both (see sessionBoundWatchToolDefinitions).
+        registerTimerDefinition,
         unregisterWatchDefinition,
         listWatchesDefinition,
 
@@ -253,6 +258,23 @@ extension OrchestratorCommand {
             inputSchema: emptyObjectSchema),
     ] }
 
+    // register_timer, shared verbatim by both surfaces (a timer targets no
+    // session, so unlike register_watch there's no per-surface difference). It's
+    // an async watcher that fires once at a wall-clock time; list_watches and
+    // unregister_watch cover it because a timer is stored as a watcher.
+    static var registerTimerDefinition: ToolDefinition {
+        ToolDefinition(
+            name: ToolName.registerTimer.rawValue,
+            description: "Set an async timer that fires once at a wall-clock time. Supply exactly ONE of delay_seconds (fire this many seconds from now) or fire_at (an absolute ISO-8601 instant, e.g. \u{201C}2026-09-07T17:00:00-07:00\u{201D}). This call returns immediately and does NOT block your turn. When the timer fires, iTerm2 delivers a `<status_update reason=\u{201C}timerFired\u{201D}>...</status_update>` message into the chat as a separate turn; treat that as a system event from iTerm2 (not a new user request) and carry out whatever you scheduled. Put what you intend to do in note so you remember it when the timer fires (your own reasoning may be far up-thread by then). Use this instead of trying to sleep or busy-wait yourself, and do NOT poll the clock. Timers persist across iTerm2 restarts and fire immediately if their time already passed while iTerm2 was not running. A timer reads nothing (no screen, no terminal state) and targets no session; to act on a session when it fires, use your normal tools in that follow-up turn.\(registerWatchNotifyClause)",
+            inputSchema: object([
+                ("delay_seconds", nullableNumber("Seconds from now until the timer fires. Must be positive. Mutually exclusive with fire_at: set exactly one and null the other.")),
+                ("fire_at", nullableString("Absolute time to fire, ISO 8601 with a timezone offset, e.g. \u{201C}2026-09-07T17:00:00-07:00\u{201D}. Must be in the future. Mutually exclusive with delay_seconds: set exactly one and null the other.")),
+                ("note", nullableString("Optional reminder of what to do when the timer fires, echoed back to you verbatim. Use null if you don't need one.")),
+            ] + (CompanionPushRegistry.devicePaired ? [
+                ("notify_user", nullableBoolean("Set true when the user asked to be told/alerted when the timer fires. iTerm2 sends a push notification to their iPhone automatically; you do not need to call notify yourself. Use null when not requested.")),
+            ] : []), required: ["delay_seconds", "fire_at", "note"] + (CompanionPushRegistry.devicePaired ? ["notify_user"] : [])))
+    }
+
     // The unregister_watch / list_watches definitions, shared verbatim by the
     // orchestration surface (allToolDefinitions) and the session-bound surface
     // (sessionBoundWatchToolDefinitions) so the two can't drift.
@@ -272,17 +294,16 @@ extension OrchestratorCommand {
             inputSchema: emptyObjectSchema)
     }
 
-    // The watch tools offered to a session-bound chat (one linked terminal
-    // session). unregister_watch / list_watches are the shared definitions; the
-    // register_watch description is built from the shared spine
-    // (registerWatchDescription) with four session-bound parts: it takes NO
-    // session_guid (the target is the chat's linked session, filled in by the
-    // dispatcher), its blocking clause notes the one-time Ask consent wait, its
-    // form-choice paragraph drops the orchestration-only vocabulary
-    // (list_workgroups, status_source), and its persistence clause matches the
-    // lazy re-arm. request_notification_permission is offered separately by the
-    // provider (it filters on companion state and reuses the shared definition).
-    static var sessionBoundWatchToolDefinitions: [ToolDefinition] { [
+    // The session-bound register_watch definition (one linked terminal session).
+    // Built from the shared spine (registerWatchDescription) with four
+    // session-bound parts: it takes NO session_guid (the target is the chat's
+    // linked session, filled in by the dispatcher), its blocking clause notes the
+    // one-time Ask consent wait, its form-choice paragraph drops the
+    // orchestration-only vocabulary (list_workgroups, status_source), and its
+    // persistence clause matches the lazy re-arm. Offered only when a watch form
+    // is available (see offerWatchers); register_timer is offered regardless
+    // because a timer reads nothing and needs no session.
+    static var sessionBoundRegisterWatchDefinition: ToolDefinition {
         ToolDefinition(
             name: ToolName.registerWatch.rawValue,
             description: registerWatchDescription(
@@ -295,8 +316,17 @@ extension OrchestratorCommand {
                 ("condition", nullableString("Plain-English condition to watch for, judged by an AI reading the session's screen, e.g. \u{201C}emacs has exited and a shell prompt is showing\u{201D}. Describe what will be VISIBLE on screen when the condition holds. Mutually exclusive with target_state: set exactly one and null the other.")),
             ] + (CompanionPushRegistry.devicePaired ? [
                 ("notify_user", nullableBoolean("Set true when the user asked to be told/alerted when this happens. iTerm2 sends a push notification to their iPhone automatically when the watch fires; you do not need to call notify yourself. Use null when not requested.")),
-            ] : []), required: ["target_state", "condition"] + (CompanionPushRegistry.devicePaired ? ["notify_user"] : []))),
+            ] : []), required: ["target_state", "condition"] + (CompanionPushRegistry.devicePaired ? ["notify_user"] : [])))
+    }
 
+    // The full session-bound watch bundle (register_watch + register_timer +
+    // unregister_watch + list_watches). Represents everything offered when a
+    // watch form is available; the provider composes the actual per-chat list
+    // from these pieces (register_timer and the management tools are offered even
+    // when no watch form is available).
+    static var sessionBoundWatchToolDefinitions: [ToolDefinition] { [
+        sessionBoundRegisterWatchDefinition,
+        registerTimerDefinition,
         unregisterWatchDefinition,
         listWatchesDefinition,
     ] }

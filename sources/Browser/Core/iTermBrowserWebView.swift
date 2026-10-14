@@ -7,7 +7,6 @@
 
 import WebKit
 
-@available(macOS 11.0, *)
 @MainActor
 protocol iTermBrowserWebViewDelegate: AnyObject {
     func webViewDidRequestViewSource(_ webView: iTermBrowserWebView)
@@ -51,7 +50,6 @@ protocol iTermEditableTextDetecting {
     var isEditingText: Bool { get }
 }
 
-@available(macOS 11.0, *)
 @MainActor
 class iTermBrowserWebView: iTermBaseWKWebView, iTermEditableTextDetecting {
     enum Event {
@@ -69,7 +67,6 @@ class iTermBrowserWebView: iTermBaseWKWebView, iTermEditableTextDetecting {
     private var mouseDownLocationInWindow: NSPoint?
     private var hoverLinkSecret: String?
     private var trackingArea: NSTrackingArea?
-    private let focusFollowsMouse = iTermFocusFollowsMouse()
     private let contextMenuHelper = iTermBrowserContextMenuHelper()
     var receivingBroadcast = false
     @objc var isEditingText = false
@@ -95,7 +92,6 @@ class iTermBrowserWebView: iTermBaseWKWebView, iTermEditableTextDetecting {
             isInspectable = true
         }
         contextMenuHelper.delegate = self
-        focusFollowsMouse.delegate = self
         allowsMagnification = true
         threeFingerTapGestureRecognizer = ThreeFingerTapGestureRecognizer(target: self,
                                                                           selector: #selector(threeFingerTap(_:)))
@@ -735,7 +731,6 @@ class iTermBrowserWebView: iTermBaseWKWebView, iTermEditableTextDetecting {
 
     // MARK: - Deferred Interaction State
 
-    @available(macOS 12.0, *)
     @discardableResult
     func applyDeferredInteractionStateIfNeeded() -> Bool {
         guard let deferred = deferrableInteractionState else { return false }
@@ -750,73 +745,55 @@ class iTermBrowserWebView: iTermBaseWKWebView, iTermEditableTextDetecting {
 
     @discardableResult
     override func load(_ request: URLRequest) -> WKNavigation? {
-        if #available(macOS 12.0, *) {
-            applyDeferredInteractionStateIfNeeded()
-        }
+        applyDeferredInteractionStateIfNeeded()
         return super.load(request)
     }
 
     @discardableResult
     override func loadHTMLString(_ string: String, baseURL: URL?) -> WKNavigation? {
-        if #available(macOS 12.0, *) {
-            applyDeferredInteractionStateIfNeeded()
-        }
+        applyDeferredInteractionStateIfNeeded()
         return super.loadHTMLString(string, baseURL: baseURL)
     }
 
     @discardableResult
     override func load(_ data: Data, mimeType MIMEType: String, characterEncodingName: String, baseURL: URL) -> WKNavigation? {
-        if #available(macOS 12.0, *) {
-            applyDeferredInteractionStateIfNeeded()
-        }
+        applyDeferredInteractionStateIfNeeded()
         return super.load(data, mimeType: MIMEType, characterEncodingName: characterEncodingName, baseURL: baseURL)
     }
 
     @discardableResult
     override func loadFileURL(_ URL: URL, allowingReadAccessTo readAccessURL: URL) -> WKNavigation? {
-        if #available(macOS 12.0, *) {
-            applyDeferredInteractionStateIfNeeded()
-        }
+        applyDeferredInteractionStateIfNeeded()
         return super.loadFileURL(URL, allowingReadAccessTo: readAccessURL)
     }
 
     @discardableResult
     override func reload() -> WKNavigation? {
-        if #available(macOS 12.0, *) {
-            applyDeferredInteractionStateIfNeeded()
-        }
+        applyDeferredInteractionStateIfNeeded()
         return super.reload()
     }
 
     @discardableResult
     override func reloadFromOrigin() -> WKNavigation? {
-        if #available(macOS 12.0, *) {
-            applyDeferredInteractionStateIfNeeded()
-        }
+        applyDeferredInteractionStateIfNeeded()
         return super.reloadFromOrigin()
     }
 
     @discardableResult
     override func goBack() -> WKNavigation? {
-        if #available(macOS 12.0, *) {
-            applyDeferredInteractionStateIfNeeded()
-        }
+        applyDeferredInteractionStateIfNeeded()
         return super.goBack()
     }
 
     @discardableResult
     override func goForward() -> WKNavigation? {
-        if #available(macOS 12.0, *) {
-            applyDeferredInteractionStateIfNeeded()
-        }
+        applyDeferredInteractionStateIfNeeded()
         return super.goForward()
     }
 
     @discardableResult
     override func go(to item: WKBackForwardListItem) -> WKNavigation? {
-        if #available(macOS 12.0, *) {
-            applyDeferredInteractionStateIfNeeded()
-        }
+        applyDeferredInteractionStateIfNeeded()
         return super.go(to: item)
     }
 
@@ -837,12 +814,9 @@ class iTermBrowserWebView: iTermBaseWKWebView, iTermEditableTextDetecting {
         }
 
         // Create new tracking area for mouse enter/exit
-        var options: NSTrackingArea.Options = [.mouseEnteredAndExited, .activeInKeyWindow]
-        if focusFollowsMouse.focusFollowsMouse {
-            options.insert(.mouseMoved)
-        }
+        // Focus follows mouse is handled by the enclosing SessionView.
         trackingArea = NSTrackingArea(rect: bounds,
-                                      options: options,
+                                      options: [.mouseEnteredAndExited, .activeInKeyWindow],
                                       owner: self,
                                       userInfo: nil)
 
@@ -851,21 +825,9 @@ class iTermBrowserWebView: iTermBaseWKWebView, iTermEditableTextDetecting {
         }
     }
 
-    override func mouseEntered(with event: NSEvent) {
-        super.mouseEntered(with: event)
-        _ = focusFollowsMouse.mouseWillEnter(with: event)
-        focusFollowsMouse.mouseEntered(with: event)
-    }
-
     override func mouseExited(with event: NSEvent) {
         super.mouseExited(with: event)
-        _ = focusFollowsMouse.mouseExited(with: event)
         clearHover()
-    }
-
-    override func mouseMoved(with event: NSEvent) {
-        super.mouseMoved(with: event)
-        focusFollowsMouse.mouseMoved(with: event)
     }
     func clearHover() {
         browserDelegate?.webViewDidHoverURL(self, url: nil, frame: NSZeroRect)
@@ -873,29 +835,6 @@ class iTermBrowserWebView: iTermBaseWKWebView, iTermEditableTextDetecting {
 
 }
 
-@available(macOS 11.0, *)
-@MainActor
-extension iTermBrowserWebView: iTermFocusFollowsMouseDelegate {
-    func focusFollowsMouseDidBecomeFirstResponder() {
-        browserDelegate?.webViewDidBecomeFirstResponder(self)
-    }
-
-    func focusFollowsMouseDesiredFirstResponder() -> NSResponder {
-        return self
-    }
-
-    func focusFollowsMouseDidChangeMouseLocationToRefusFirstResponderAt() {
-    }
-}
-
-@MainActor
-extension iTermBrowserWebView {
-    func refuseFirstResponderAtCurrentMouseLocation() {
-        focusFollowsMouse.refuseFirstResponderAtCurrentMouseLocation()
-    }
-}
-
-@available(macOS 11.0, *)
 @MainActor
 extension iTermBrowserWebView: iTermBrowserContextMenuHelperDelegate {
     func contextMenuCurrentSelection() -> String? {
@@ -1004,7 +943,6 @@ extension iTermBrowserWebView: iTermBrowserContextMenuHelperDelegate {
 
 // MARK: - Internal methods
 
-@available(macOS 11.0, *)
 @MainActor
 extension iTermBrowserWebView {
     func copy(string: String) {

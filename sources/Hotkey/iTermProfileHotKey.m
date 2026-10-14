@@ -312,12 +312,7 @@ static NSString *const kArrangement = @"Arrangement";
         return NSNormalWindowLevel;
     }
     DLog(@"Use main menu window level (I am key, no detected panels are open)");
-    NSWindowLevel windowLevelJustBelowNotificiations;
-    if (@available(macOS 10.16, *)) {
-        windowLevelJustBelowNotificiations = NSMainMenuWindowLevel - 2;
-    } else {
-        windowLevelJustBelowNotificiations = 17;
-    }
+    NSWindowLevel windowLevelJustBelowNotificiations = NSMainMenuWindowLevel - 2;
     // These are the window levels in play:
     //
     // NSStatusWindowLevel (25) -                Floating hotkey panels overlapping a fixed, visible menu bar.
@@ -434,9 +429,15 @@ static NSString *const kArrangement = @"Arrangement";
         case WINDOW_TYPE_LION_FULL_SCREEN:
         case WINDOW_TYPE_MAXIMIZED:
         case WINDOW_TYPE_COMPACT_MAXIMIZED:
+            return [windowController canonicalFrameForScreen:screen];
+
         case WINDOW_TYPE_CENTERED:
         case WINDOW_TYPE_COMPACT_CENTERED:
-            return [windowController canonicalFrameForScreen:screen];
+        case WINDOW_TYPE_CENTERED_NO_TITLE_BAR:
+            // Keep the user's manual resize and only re-center (issue 13125).
+            return [windowController canonicalFrameForScreen:screen
+                                                 windowFrame:windowController.window.frame
+                                                preserveSize:YES];
 
         case WINDOW_TYPE_NORMAL:
         case WINDOW_TYPE_NO_TITLE_BAR:
@@ -466,6 +467,7 @@ static NSString *const kArrangement = @"Arrangement";
     switch (self.windowController.windowType) {
         case WINDOW_TYPE_CENTERED:
         case WINDOW_TYPE_COMPACT_CENTERED:
+        case WINDOW_TYPE_CENTERED_NO_TITLE_BAR:
             return rect.origin;
 
         case WINDOW_TYPE_TOP_PERCENTAGE:
@@ -643,6 +645,7 @@ static NSString *const kArrangement = @"Arrangement";
 
         case WINDOW_TYPE_CENTERED:
         case WINDOW_TYPE_COMPACT_CENTERED:
+        case WINDOW_TYPE_CENTERED_NO_TITLE_BAR:
         case WINDOW_TYPE_NORMAL:
         case WINDOW_TYPE_NO_TITLE_BAR:
         case WINDOW_TYPE_COMPACT:
@@ -657,6 +660,41 @@ static NSString *const kArrangement = @"Arrangement";
 
 - (BOOL)floats {
     return [iTermProfilePreferences boolForKey:KEY_HOTKEY_FLOAT inProfile:self.profile];
+}
+
+// After a display reconfiguration (for example, closing and reopening the laptop lid on a
+// multi-monitor setup) macOS can drop a join-all-spaces window's membership in the active
+// space and pin it to a single space. When that happens, ordering the window front switches
+// the user to that space instead of revealing the window in place (issue 12968).
+//
+// To reveal it on the current space, momentarily clear CanJoinAllSpaces so the window behaves
+// like an ordinary window: ordering an ordinary, currently-hidden window front brings it to
+// the active space. The all-spaces behavior is then restored on the next runloop spin, once
+// the window has been placed.
+//
+// The restore MUST be asynchronous. macOS coalesces collectionBehavior changes made within a
+// single runloop iteration, so clearing and restoring the bit back-to-back is a no-op: macOS
+// never sees the window as an ordinary window and orders it front on its stale space instead.
+- (void)prepareJoinsAllSpacesWindowForRollInOnActiveSpace {
+    if (self.windowController.spaceSetting != iTermProfileJoinsAllSpaces) {
+        return;
+    }
+    NSWindow *window = self.windowController.window;
+    if (window.isOnActiveSpace) {
+        return;
+    }
+    DLog(@"Join-all-spaces hotkey window is off the active space before roll-in. Clear CanJoinAllSpaces so it reveals on the current space, then restore it after a runloop spin.");
+    const NSWindowCollectionBehavior desired = self.windowController.desiredWindowCollectionBehavior;
+    window.collectionBehavior = (desired & ~NSWindowCollectionBehaviorCanJoinAllSpaces);
+    __weak __typeof(self) weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        __strong __typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf.windowController.window) {
+            return;
+        }
+        DLog(@"Restore join-all-spaces collection behavior after roll-in placed the window on the active space.");
+        strongSelf.windowController.window.collectionBehavior = strongSelf.windowController.desiredWindowCollectionBehavior;
+    });
 }
 
 - (void)rollInAnimated:(BOOL)animated {
@@ -676,6 +714,8 @@ static NSString *const kArrangement = @"Arrangement";
         // do this for all window types, but I don't want to risk introducing bugs here.
         [self moveToPreferredScreen];
     }
+    // Must run before ordering the window front, or macOS will switch spaces first (issue 12968).
+    [self prepareJoinsAllSpacesWindowForRollInOnActiveSpace];
     if (self.hotkeyWindowType != iTermHotkeyWindowTypeFloatingPanel) {
         DLog(@"Activate iTerm2 prior to animating hotkey window in");
         _activationPending = YES;
@@ -708,6 +748,7 @@ static NSString *const kArrangement = @"Arrangement";
             case WINDOW_TYPE_NO_TITLE_BAR:
             case WINDOW_TYPE_CENTERED:
             case WINDOW_TYPE_COMPACT_CENTERED:
+            case WINDOW_TYPE_CENTERED_NO_TITLE_BAR:
             case WINDOW_TYPE_COMPACT:
             case WINDOW_TYPE_MAXIMIZED:
             case WINDOW_TYPE_COMPACT_MAXIMIZED:
@@ -773,6 +814,7 @@ static NSString *const kArrangement = @"Arrangement";
             case WINDOW_TYPE_ACCESSORY:
             case WINDOW_TYPE_CENTERED:
             case WINDOW_TYPE_COMPACT_CENTERED:
+            case WINDOW_TYPE_CENTERED_NO_TITLE_BAR:
                 [self fadeOut:causedByKeypress];
                 break;
 
@@ -891,14 +933,12 @@ static NSString *const kArrangement = @"Arrangement";
 - (NSArray<iTermBaseHotKey *> *)hotKeyPressedWithSiblings:(NSArray<iTermBaseHotKey *> *)genericSiblings {
     RLog(@"hotKeypressedWithSiblings called on %@ with siblings %@", self, genericSiblings);
     DLog(@"Secure input=%@", @([[iTermSecureKeyboardEntryController sharedInstance] isEnabled]));
-    if (@available(macOS 12.0, *)) {
-        if ([[iTermSecureKeyboardEntryController sharedInstance] isEnabled] &&
-            ![NSApp isActive]) {
-            DLog(@"Notify");
-            [[iTermNotificationController sharedInstance] notify:@"Hotkeys Unavailable"
-                                                 withDescription:@"Another app has enabled secure keyboard input. That prevents hotkey windows from being shown."];
-            return @[];
-        }
+    if ([[iTermSecureKeyboardEntryController sharedInstance] isEnabled] &&
+        ![NSApp isActive]) {
+        DLog(@"Notify");
+        [[iTermNotificationController sharedInstance] notify:@"Hotkeys Unavailable"
+                                             withDescription:@"Another app has enabled secure keyboard input. That prevents hotkey windows from being shown."];
+        return @[];
     }
     genericSiblings = [genericSiblings arrayByAddingObject:self];
 
@@ -1119,6 +1159,27 @@ static NSString *const kArrangement = @"Arrangement";
     }
 }
 
+// Is there a window other than this hotkey window that AppKit might bring to the front
+// if we order out while iTerm2 is still the active app?
+- (BOOL)hasPromotableBackgroundWindow {
+    NSWindow *myWindow = self.windowController.window;
+    for (NSWindow *window in [NSApp orderedWindows]) {
+        if (window == myWindow) {
+            continue;
+        }
+        if (!window.isVisible || window.isMiniaturized || window.alphaValue == 0) {
+            continue;
+        }
+        if (!window.isOnActiveSpace || !window.canBecomeKeyWindow) {
+            continue;
+        }
+        DLog(@"%@ could be promoted when the hotkey window orders out", window);
+        return YES;
+    }
+    DLog(@"No background window could be promoted");
+    return NO;
+}
+
 - (void)didFinishRollingOut:(BOOL)causedByKeypress {
     DLog(@"didFinishRollingOut");
     _activationPending = NO;
@@ -1136,8 +1197,10 @@ static NSString *const kArrangement = @"Arrangement";
             // ordering out. This keeps issue 11372 fixed (we don't wait a fixed
             // delay; we order out exactly when the app switch lands) while avoiding
             // the flash from issue 5313.
-            if (!NSApp.isActive) {
-                // Already yielded; nothing would be promoted, so order out now.
+            if (!NSApp.isActive || ![self hasPromotableBackgroundWindow]) {
+                // Either we already yielded or there is no other iTerm2 window that could
+                // flash to the front. Waiting would only leave the invisible hotkey window
+                // key, swallowing keystrokes meant for the other app (issue 11372).
                 if (self.rollingOut) {
                     DLog(@"Order out with secure keyboard entry=%@", @(IsSecureEventInputEnabled()));
                     _rollOutCancelable = NO;

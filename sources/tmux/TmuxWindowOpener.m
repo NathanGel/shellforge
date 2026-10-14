@@ -10,6 +10,7 @@
 #import "iTermAdvancedSettingsModel.h"
 #import "iTermController.h"
 #import "iTermPreferences.h"
+#import "iTermWarning.h"
 #import "PseudoTerminal.h"
 #import "PTYTab.h"
 #import "ScreenChar.h"
@@ -18,6 +19,7 @@
 #import "TmuxStateParser.h"
 
 NSString * const kTmuxWindowOpenerStatePendingOutput = @"pending_output";
+NSString * const kTmuxWindowOpenerStateDeferredTokens = @"deferred_tokens";
 
 NSString *const kTmuxWindowOpenerWindowOptionStyle = @"WindowStyle";
 NSString *const kTmuxWindowOpenerWindowOptionStyleValueFullScreen = @"FullScreen";
@@ -47,6 +49,8 @@ NSString *const kTmuxWindowOpenerWindowOptionStyleValueFullScreen = @"FullScreen
     NSMutableDictionary<NSNumber *, TmuxHistory *> *altHistories_;
     NSMutableDictionary *states_;
     PTYTab *tabToUpdate_;
+    // Panes whose state is being fetched to create their sessions. See -[TmuxController willOpenPane:].
+    NSMutableArray<NSNumber *> *_panesBeingOpened;
     id target_;
     SEL selector_;
     BOOL ambiguousIsDoubleWidth_;
@@ -74,6 +78,7 @@ NSString *const kTmuxWindowOpenerWindowOptionStyleValueFullScreen = @"FullScreen
         histories_ = [[NSMutableDictionary alloc] init];
         altHistories_ = [[NSMutableDictionary alloc] init];
         states_ = [[NSMutableDictionary alloc] init];
+        _panesBeingOpened = [[NSMutableArray alloc] init];
     }
     return self;
 }
@@ -87,6 +92,12 @@ NSString *const kTmuxWindowOpenerWindowOptionStyleValueFullScreen = @"FullScreen
     if (!parseTree) {
         return nil;
     }
+    if (!parseTree[kLayoutDictWidthKey] && self.size.width > 0 && self.size.height > 0) {
+        // With one float left, tmux makes it the layout's root, so the layout doesn't give the
+        // window's size. list-windows did.
+        parseTree[kLayoutDictWidthKey] = @(self.size.width);
+        parseTree[kLayoutDictHeightKey] = @(self.size.height);
+    }
     const iTermTmuxPaneBorderStatus status =
         [self.controller paneBorderStatusForWindow:self.windowIndex];
     return [parser parseTree:parseTree adjustedForPaneBorderStatus:status];
@@ -95,12 +106,16 @@ NSString *const kTmuxWindowOpenerWindowOptionStyleValueFullScreen = @"FullScreen
 - (BOOL)openWindows:(BOOL)initial {
     RLog(@"openWindows initial=%d", (int)initial);
     if (!self.layout) {
-        [gateway_ abortWithErrorMessage:[NSString stringWithFormat:@"Can't open window: missing layout"]];
+        [gateway_ abortWithErrorMessage:[NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"WindowOpener.MissingLayout", nil, [NSBundle mainBundle], @"Can't open window: missing layout", @"Error shown when a tmux window cannot be opened because its layout is missing")]];
+        return NO;
+    }
+    if ([[TmuxLayoutParser sharedInstance] layoutHasNoTiledPanes:self.layout]) {
+        RLog(@"Not opening window %d because it has no tiled panes", self.windowIndex);
         return NO;
     }
     self.parseTree = [self parsedAdjustedLayoutFromString:self.layout];
     if (!self.parseTree) {
-        [gateway_ abortWithErrorMessage:[NSString stringWithFormat:@"Error parsing layout %@", self.layout]];
+        [gateway_ abortWithErrorMessage:[NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"WindowOpener.ErrorParsingLayout", nil, [NSBundle mainBundle], @"Error parsing layout %@", @"Error shown when a tmux window layout string cannot be parsed; %@ is the raw layout"), self.layout]];
         return NO;
     }
     NSMutableArray *cmdList = [NSMutableArray array];
@@ -149,10 +164,16 @@ NSString *const kTmuxWindowOpenerWindowOptionStyleValueFullScreen = @"FullScreen
         return NO;
     }
 
+    if ([[TmuxLayoutParser sharedInstance] layoutHasNoTiledPanes:self.layout]) {
+        // The window's tiled panes are gone and only floating ones remain. Leave the tab as it is
+        // until a layout with tiled panes arrives.
+        RLog(@"Ignoring a layout with no tiled panes for window %d", self.windowIndex);
+        return NO;
+    }
     self.parseTree = [self parsedAdjustedLayoutFromString:self.layout];
     if (!self.parseTree) {
         RLog(@"Failed to create parse tree for %@", self.layout);
-        [gateway_ abortWithErrorMessage:[NSString stringWithFormat:@"Error parsing layout %@", self.layout]];
+        [gateway_ abortWithErrorMessage:[NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"WindowOpener.ErrorParsingLayout", nil, [NSBundle mainBundle], @"Error parsing layout %@", @"Error shown when a tmux window layout string cannot be parsed; %@ is the raw layout"), self.layout]];
         return NO;
     }
     if (self.visibleLayout.length > 0) {
@@ -196,6 +217,10 @@ NSString *const kTmuxWindowOpenerWindowOptionStyleValueFullScreen = @"FullScreen
 
 - (void)appendRequestsForWindowPane:(NSNumber *)wp
                             toArray:(NSMutableArray *)cmdList {
+    if (!_unpausingWindowPanes) {
+        [self.controller willOpenPane:wp.intValue];
+        [_panesBeingOpened addObject:wp];
+    }
     [cmdList addObject:[self dictForRequestHistoryForWindowPane:wp alt:NO]];
     [cmdList addObject:[self dictForRequestHistoryForWindowPane:wp alt:YES]];
     [cmdList addObject:[self dictForDumpStateForWindowPane:wp]];
@@ -297,7 +322,16 @@ NSString *const kTmuxWindowOpenerWindowOptionStyleValueFullScreen = @"FullScreen
     }
 }
 
+- (void)didFinishOpeningPanes {
+    if (_panesBeingOpened.count == 0) {
+        return;
+    }
+    [self.controller didFinishOpeningPanes:_panesBeingOpened];
+    [_panesBeingOpened removeAllObjects];
+}
+
 - (void)finishErroneously {
+    [self didFinishOpeningPanes];
     if (self.target) {
         [self.target it_performNonObjectReturningSelector:self.selector
                                                withObject:self];
@@ -333,10 +367,13 @@ NSString *const kTmuxWindowOpenerWindowOptionStyleValueFullScreen = @"FullScreen
         }
     } else {
         dispatch_async(dispatch_get_main_queue(), ^{
-            NSAlert *alert = [[NSAlert alloc] init];
-            alert.messageText = @"Error: malformed history line from tmux.";
-            alert.informativeText = @"See Console.app for details";
-            [alert runModal];
+            [iTermWarning showWarningWithTitle:NSLocalizedStringWithDefaultValue(@"WindowOpener.SeeConsoleForDetails", nil, [NSBundle mainBundle], @"See Console.app for details", @"Alert body directing the user to the macOS Console app for more information")
+                                       actions:@[ iTermLocalizedOK() ]
+                                     accessory:nil
+                                    identifier:nil
+                                   silenceable:kiTermWarningTypePersistent
+                                       heading:NSLocalizedStringWithDefaultValue(@"WindowOpener.MalformedHistoryTitle", nil, [NSBundle mainBundle], @"Error: malformed history line from tmux.", @"Alert title shown when tmux sends a malformed scrollback history line")
+                                        window:nil];
         });
     }
     [self requestDidComplete];
@@ -447,6 +484,22 @@ static int OctalValue(const char *bytes) {
     return nil;
 }
 
+// Output that arrived before the panes had sessions was dropped. Its effect on the screen is in
+// the captured history, but some control sequences change state that only iTerm2 keeps. Hand
+// those to the sessions about to be created from these states.
+- (void)addDeferredTokensToStates {
+    for (NSNumber *wp in [states_ allKeys]) {
+        NSArray<VT100Token *> *tokens = [self.controller takeDeferredTokensForPane:wp.intValue];
+        if (tokens.count == 0) {
+            continue;
+        }
+        DLog(@"Pane %@ has %@ deferred tokens", wp, @(tokens.count));
+        NSMutableDictionary *state = [states_[wp] mutableCopy];
+        state[kTmuxWindowOpenerStateDeferredTokens] = tokens;
+        states_[wp] = state;
+    }
+}
+
 - (void)requestDidComplete {
     --pendingRequests_;
     if (_errorCount) {
@@ -464,6 +517,8 @@ static int OctalValue(const char *bytes) {
                                                withObject:self];
         return;
     }
+    [self addDeferredTokensToStates];
+    [self didFinishOpeningPanes];
     NSWindowController<iTermWindowController> *term = nil;
     BOOL isNewWindow = NO;
     if (!tabToUpdate_) {
@@ -530,7 +585,7 @@ static int OctalValue(const char *bytes) {
     }
     NSMutableDictionary *parseTree = [self parsedAdjustedLayoutFromString:self.layout];
     if (!parseTree) {
-        [gateway_ abortWithErrorMessage:[NSString stringWithFormat:@"Error parsing layout %@", self.layout]];
+        [gateway_ abortWithErrorMessage:[NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"WindowOpener.ErrorParsingLayout", nil, [NSBundle mainBundle], @"Error parsing layout %@", @"Error shown when a tmux window layout string cannot be parsed; %@ is the raw layout"), self.layout]];
         return;
     }
     NSMutableDictionary *visibleParseTree = nil;
@@ -566,7 +621,8 @@ static int OctalValue(const char *bytes) {
                    visibleLayout:visibleParseTree
                           window:windowIndex_
                   tmuxController:controller_
-                            name:name_];
+                            name:name_
+                openInBackground:[self shouldOpenInBackground]];
 
             // Check if we know the position for the window
             NSArray *panes = [[TmuxLayoutParser sharedInstance] windowPanesInParseTree:parseTree];
@@ -621,6 +677,22 @@ static int OctalValue(const char *bytes) {
     if (self.completion) {
         self.completion(windowIndex_);
     }
+}
+
+// A window that tmux created on its own (for example, `tmux new-window` run in a pane) takes focus
+// only if tmux made it the session's current window, so `new-window -d` opens it in the
+// background. This is decided as late as possible because the current window may have changed
+// while the window's contents were being fetched.
+- (BOOL)shouldOpenInBackground {
+    if ([iTermAdvancedSettingsModel tmuxWindowsOpenInBackground]) {
+        return YES;
+    }
+    if (self.initial || !self.anonymous) {
+        return NO;
+    }
+    const BOOL current = [self.controller windowIsCurrentInTmux:windowIndex_];
+    RLog(@"Anonymous window @%d is current in tmux: %@", windowIndex_, @(current));
+    return !current;
 }
 
 // Add info from command responses to leaf nodes of parse tree.

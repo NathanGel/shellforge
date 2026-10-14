@@ -178,11 +178,36 @@ replaceInitialDirectoryForSessionWithGUID:(NSString *)guid
 - (void)refreshSoftwareUpdateUserDefaults;
 
 - (void)addRestorableSession:(iTermRestorableSession *)session;
-- (void)removeSessionFromRestorableSessions:(PTYSession *)session;
+// Call when a session can no longer be revived. If archivePath is nonnil the
+// session was archived there, and undo will restore it from the archive in its
+// place. Otherwise its group can no longer be restored.
+- (void)removeSessionFromRestorableSessions:(PTYSession *)session
+                                archivePath:(NSString *)archivePath;
 - (iTermRestorableSession *)popRestorableSession;
 - (void)commitAndPopCurrentRestorableSession;
 - (void)pushCurrentRestorableSession:(iTermRestorableSession *)session;
 - (void)killRestorableSessions;
+// Makes sessions whose closing could be undone stop being revivable, archiving
+// them if their profiles say to. Archived ones stay undoable.
+- (void)hardStopRestorableSessions;
+// Undo close entries whose sessions were all archived, for app restorable state.
+- (NSArray<NSDictionary *> *)undoCloseRestorableState;
+// Adds undo close entries saved by -undoCloseRestorableState. Windows need not
+// be restored yet: original windows and tabs are looked up on undo.
+- (void)restoreUndoCloseFromState:(NSArray<NSDictionary *> *)state;
+
+// Pause/resume the termination countdown of every restorable session, so a modal
+// alert can be presented without any of them expiring while it is up. Each
+// session preserves its remaining time across the pause. Balanced calls.
+- (void)pauseRestorableSessionTermination;
+- (void)resumeRestorableSessionTermination;
+
+// Runs `block` with restorable-session termination paused, guaranteeing the
+// resume runs even if `block` raises an Objective-C exception (Swift `defer`
+// does not run on ObjC exception unwinding, so callers in Swift must use this
+// rather than pause/resume directly around anything that can throw, e.g.
+// -[iTermWarning runModal]).
+- (void)performBlockWithRestorableSessionTerminationPaused:(void (NS_NOESCAPE ^)(void))block;
 
 - (NSArray<PTYSession *> *)allSessions;
 - (NSArray<PseudoTerminal *> *)terminals;
@@ -311,7 +336,7 @@ typedef NS_OPTIONS(NSUInteger, iTermSingleUseWindowOptions) {
 - (WKWebView *)openSingleUserBrowserWindowWithURL:(NSURL *)url
                                     configuration:(WKWebViewConfiguration *)configuration
                                           options:(iTermSingleUseWindowOptions)options
-                                       completion:(void (^)(void))completion NS_AVAILABLE_MAC(11);
+                                       completion:(void (^)(void))completion;
 
 - (NSWindow *)openWindow:(BOOL)makeWindow
                  command:(NSString *)command

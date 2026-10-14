@@ -30,12 +30,11 @@
 
 @class CRunStorage;
 @class iTermAction;
+@class iTermBidiDisplayInfo;
 @class iTermKittyDnDBridge;
 @class iTermExpect;
 @class iTermFindCursorView;
 @class iTermFindOnPageHelper;
-@class iTermFocusFollowsMouse;
-@protocol iTermFocusFollowsMouseFocusReceiver;
 @class iTermFontTable;
 @class iTermImageWrapper;
 @protocol iTermPathMarkReading;
@@ -137,6 +136,11 @@ extern const CGFloat PTYTextViewMarginClickGraceWidth;
 - (BOOL)textViewIsActiveSession;
 - (BOOL)textViewSessionIsBroadcastingInput:(BOOL)asReceiver;
 - (BOOL)textViewIsMaximized;
+@optional
+// The number of hidden floating panes this pane should show an indicator for.
+- (NSInteger)textViewNumberOfHiddenFloatingPanes;
+- (NSImage *)textViewHiddenFloatingPanesBadge;
+@required
 - (BOOL)textViewIsLocked;
 // YES when the enclosing window's layout is locked.
 - (BOOL)textViewWindowIsLayoutLocked;
@@ -149,6 +153,7 @@ extern const CGFloat PTYTextViewMarginClickGraceWidth;
 - (void)textViewWillNeedUpdateForBlink;
 - (BOOL)textViewDelegateHandlesAllKeystrokes;
 - (void)textViewSplitVertically:(BOOL)vertically withProfileGuid:(NSString *)guid;
+- (void)textViewNewFloatingPaneWithProfileGuid:(NSString *)guid;
 - (void)textViewSelectNextTab;
 - (void)textViewSelectPreviousTab;
 - (void)textViewSelectNextWindow;
@@ -274,7 +279,12 @@ extern const CGFloat PTYTextViewMarginClickGraceWidth;
 - (BOOL)textViewShouldDrawRect;
 - (void)textViewDidHighlightMark;
 - (BOOL)textViewInInteractiveApplication;
+// Seconds since the user last sent input to this session by any route: a
+// keystroke, paste, snippet, Composer command, mouse report, or a mouse action
+// that sends keystrokes. INFINITY if that has never happened.
+- (NSTimeInterval)textViewTimeSinceLastUserInput;
 - (BOOL)textViewTerminalStateForMenuItem:(NSMenuItem *)menuItem;
+- (BOOL)textViewCanToggleTerminalStateForMenuItem:(NSMenuItem *)menuItem;
 - (iTermEmulationLevel)textViewTerminalStateEmulationLevel;
 - (void)textViewToggleTerminalStateForMenuItem:(NSMenuItem *)menuItem;
 - (void)textViewResetTerminal;
@@ -287,6 +297,19 @@ extern const CGFloat PTYTextViewMarginClickGraceWidth;
 - (void)textViewDidUpdateDropTargetVisibility;
 - (void)textViewDidDetectMouseReportingFrustration;
 - (BOOL)textViewCanBury;
+- (BOOL)textViewIsFloating;
+// Find Cursor is about to show the cursor at this point. If a floating pane covers it, the floats
+// are hidden until Find Cursor ends.
+- (void)textViewFindCursorWillShowAtLocationInWindow:(NSPoint)point;
+- (void)textViewFindCursorDidEnd;
+// A cmd-opt-shift drag in a float's text moves the float. Mouse-down returns whether a move may
+// follow; if so, the drags and mouse-up come here too.
+- (BOOL)textViewFloatingPaneMoveMouseDown:(NSEvent *)event;
+- (void)textViewFloatingPaneMoveMouseDragged:(NSEvent *)event;
+- (void)textViewFloatingPaneMoveMouseUp:(NSEvent *)event;
+- (BOOL)textViewCanDockFloatingPane;
+- (void)textViewDockFloatingPane;
+- (void)textViewRaiseFloatingPaneToFront:(BOOL)toFront;
 - (void)textViewFindOnPageLocationsDidChange;
 - (void)textViewFindOnPageSelectedResultDidChange;
 - (CGFloat)textViewBlend;
@@ -471,6 +494,8 @@ extern const CGFloat PTYTextViewMarginClickGraceWidth;
 
 // Should smart cursor color be used.
 @property(nonatomic, assign) BOOL useSmartCursorColor;
+@property(nonatomic, assign) BOOL hdrCursorEnabled;
+@property(nonatomic, assign) CGFloat hdrCursorBrightness;
 
 // Transparency level. 0 to 1.
 @property(nonatomic, assign) double transparency;
@@ -571,7 +596,7 @@ typedef void (^PTYTextViewDrawingHookBlock)(iTermTextDrawingHelper *);
 
 // Checked and at the end of -refresh. Meant to be use when a reentrant call failed.
 @property (nonatomic) BOOL needsUpdateSubviewFrames;
-@property (nonatomic, readonly) NSArray<iTermTerminalButton *> *terminalButtons NS_AVAILABLE_MAC(11);
+@property (nonatomic, readonly) NSArray<iTermTerminalButton *> *terminalButtons;
 @property (nonatomic, readonly) BOOL scrolledToBottom;
 @property (nonatomic, readonly) BOOL shouldBeAlphaedOut;
 @property (nonatomic, readonly) BOOL drawingHelperIsValid;
@@ -597,8 +622,6 @@ typedef void (^PTYTextViewDrawingHookBlock)(iTermTextDrawingHelper *);
 
 // nil if no color is extended into the margins, otherwise the color.
 @property (nonatomic, readonly) NSColor *colorForMargins;
-
-@property (nonatomic, readonly) iTermFocusFollowsMouse *focusFollowsMouse;
 
 // Returns the size of a cell for a given font. hspace and vspace are multipliers and the width
 // and height.
@@ -831,6 +854,30 @@ extendResultsAcrossSoftBoundaries:(BOOL)extendResultsAcrossSoftBoundaries;
 - (void)selectCoordRange:(VT100GridCoordRange)range;
 - (void)selectAbsWindowedCoordRange:(VT100GridAbsWindowedRange)windowedRange;
 
+// Find-on-page selects a match and flashes an indicator over it. The selection
+// model is LOGICAL, so it must select the logical match range; only the on-screen
+// indicator uses the visual range. Feeding the visual range to the selection made
+// the logical draw layer re-map it and highlight the mirror-image cells on
+// right-to-left lines. Exposed as a pure decision for testing.
++ (VT100GridCoordRange)findOnPageSelectionRangeForLogicalMatch:(VT100GridCoordRange)logicalMatch
+                                                   visualMatch:(VT100GridCoordRange)visualMatch;
+
+// Accessibility hit-testing derives a VISUAL column from a screen point, but the
+// accessibility text model is LOGICAL. Convert so range-for-position lands on the
+// correct character on right-to-left lines. Identity when there is no bidi info
+// or the column is past the mapped cells. Exposed for testing.
++ (int)accessibilityLogicalXForVisualX:(int)visualX
+                              bidiInfo:(iTermBidiDisplayInfo *)bidiInfo;
+
+// Best-effort VISUAL column span for a LOGICAL column range on one line, for
+// accessibility bounds. A logical range can be visually discontiguous on a bidi
+// line; this returns the tight bounding visual span (correct for VoiceOver focus
+// in the common contiguous case). Identity when there is no bidi info. Exposed
+// for testing.
++ (VT100GridRange)accessibilityVisualColumnSpanForLogicalStartX:(int)startX
+                                                           endX:(int)endX
+                                                       bidiInfo:(iTermBidiDisplayInfo *)bidiInfo;
+
 - (NSRect)frameForCoord:(VT100GridCoord)coord;
 
 - (iTermLogicalMovementHelper *)logicalMovementHelperForCursorCoordinate:(VT100GridCoord)cursorCoord;
@@ -858,6 +905,9 @@ extendResultsAcrossSoftBoundaries:(BOOL)extendResultsAcrossSoftBoundaries;
 
 - (void)setAlphaValue:(CGFloat)alphaValue NS_UNAVAILABLE;
 - (NSRect)rectForCoord:(VT100GridCoord)coord;
+// The top left of the first visible grid cell in `view`'s coordinates, as it is when scrolled to
+// the bottom.
+- (NSPoint)gridOriginInView:(NSView *)view;
 - (void)updateSubviewFrames;
 - (NSDictionary *(^)(screen_char_t, iTermExternalAttribute *, const iTermImmutableMetadata *))attributeProviderUsingProcessedColors:(BOOL)processed
                                                                         elideDefaultBackgroundColor:(BOOL)elideDefaultBackgroundColor;

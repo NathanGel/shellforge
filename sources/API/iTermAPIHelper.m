@@ -8,6 +8,7 @@
 #import "iTermAPIHelper.h"
 
 #import "iTermAPICreateTabFocusDeferral.h"
+#import "iTerm2SharedARC-Swift.h"
 
 #import "CVector.h"
 #import "DebugLogging.h"
@@ -37,6 +38,7 @@
 #import "iTermBuriedSessions.h"
 #import "iTermColorPresets.h"
 #import "iTermController.h"
+#import "iTermExpressionParser.h"
 #import "iTermDisclosableView.h"
 #import "iTermKeyMappings.h"
 #import "iTermLSOF.h"
@@ -158,6 +160,27 @@ static BOOL iTermAPIHelperLastApplescriptAuthRequiredSetting;
             return NO;
         }
         [args addObject:name];
+    }
+    if (self.roleSpecificAttributesOneOfCase == ITMRPCRegistrationRequest_RoleSpecificAttributes_OneOfCase_ContextMenuAttributes &&
+        self.contextMenuAttributes.visibleWhen.length > 0) {
+        // Parse against placeholders since there is no session yet. The real
+        // evaluation happens synchronously when the menu opens, so function
+        // calls (which may need an RPC) are not allowed.
+        NSString *expression = self.contextMenuAttributes.visibleWhen;
+        iTermParsedExpression *parsed = [[iTermExpressionParser expressionParser] parse:expression
+                                                                                  scope:[[iTermVariablePlaceholderScope alloc] init]];
+        if (parsed.expressionType == iTermParsedExpressionTypeError) {
+            if (error) {
+                *error = newErrorWithReason([NSString stringWithFormat:@"visible_when expression '%@' is invalid: %@", expression, parsed.error.localizedDescription]);
+            }
+            return NO;
+        }
+        if ([parsed containsAnyFunctionCall]) {
+            if (error) {
+                *error = newErrorWithReason([NSString stringWithFormat:@"visible_when expression '%@' may not call functions", expression]);
+            }
+            return NO;
+        }
     }
 
     return YES;
@@ -448,12 +471,15 @@ static BOOL iTermAPIHelperLastApplescriptAuthRequiredSetting;
 
     // "Reveal Preference" is a one-time navigation action and shouldn't be remembered.
     iTermWarning *warning = [[iTermWarning alloc] init];
-    warning.title = @"The location of your Application Support directory appears to have moved or its contents have changed unexpectedly. As a precaution, the authentication mechanism for Python API scripts for iTerm2 has been reverted to always require Automation permission.";
-    warning.actionLabels = @[ @"OK", @"Reveal Preference" ];
+    warning.title = NSLocalizedStringWithDefaultValue(@"APIHelper.AppSupportMovedMessage", nil, [NSBundle mainBundle], @"The location of your Application Support directory appears to have moved or its contents have changed unexpectedly. As a precaution, the authentication mechanism for Python API scripts for iTerm2 has been reverted to always require Automation permission.", @"Warning shown when the Application Support directory has moved");
+    NSString *revealPreference = NSLocalizedStringWithDefaultValue(@"APIHelper.RevealPreference", nil, [NSBundle mainBundle], @"Reveal Preference", @"Button to reveal a preference");
+    warning.actionLabels = @[ iTermLocalizedOK(), revealPreference ];
     warning.identifier = @"NoSyncAppSupportMoved";
     warning.warningType = kiTermWarningTypePermanentlySilenceable;
-    warning.heading = @"Python API Permissions Reset";
-    warning.doNotRememberLabels = @[ @"Reveal Preference" ];
+    warning.heading = NSLocalizedStringWithDefaultValue(@"APIHelper.PermissionsResetHeading", nil, [NSBundle mainBundle], @"Python API Permissions Reset", @"Heading when API permissions were reset");
+    warning.doNotRememberLabels = @[ revealPreference ];
+    // Reveal Preference opens the Settings window on this Mac.
+    warning.notOfferedRemotelyLabels = @[ revealPreference ];
     const iTermWarningSelection selection = [warning runModal];
     if (selection == kiTermWarningSelection1) {
         [[PreferencePanel sharedInstance] openToPreferenceWithKey:kPreferenceKeyAPIAuthentication];
@@ -464,12 +490,12 @@ static BOOL iTermAPIHelperLastApplescriptAuthRequiredSetting;
 
 + (BOOL)createNoAuthFile:(NSWindow *)window {
     const iTermWarningSelection selection =
-    [iTermWarning showWarningWithTitle:@"Do you want to allow all apps running on this machine to use the Python API?\n\nThis will disable the check for Automation permission. If you agree, you’ll be prompted for administrator access to make the change."
-                               actions:@[ @"OK", @"Cancel", @"More Info" ]
+    [iTermWarning showWarningWithTitle:NSLocalizedStringWithDefaultValue(@"APIHelper.DisablePerAppAuthMessage", nil, [NSBundle mainBundle], @"Do you want to allow all apps running on this machine to use the Python API?\n\nThis will disable the check for Automation permission. If you agree, you’ll be prompted for administrator access to make the change.", @"Prompt asking whether to disable per-app API authentication")
+                               actions:@[ iTermLocalizedOK(), iTermLocalizedCancel(), [iTermWarningAction localOnlyActionWithLabel:NSLocalizedStringWithDefaultValue(@"General.MoreInfo", nil, [NSBundle mainBundle], @"More Info", @"More Info button")] ]
                              accessory:nil
                             identifier:@"NoSyncRequireApplescriptAuth"
                            silenceable:kiTermWarningTypePersistent
-                               heading:@"Disable per-app authentication?"
+                               heading:NSLocalizedStringWithDefaultValue(@"APIHelper.DisablePerAppAuthHeading", nil, [NSBundle mainBundle], @"Disable per-app authentication?", @"Heading for dialog to disable per-app authentication")
                                 window:window];
     switch (selection) {
         case kiTermWarningSelection0:
@@ -499,12 +525,12 @@ static BOOL iTermAPIHelperLastApplescriptAuthRequiredSetting;
 
     [self setEnabled:NO];
     const iTermWarningSelection selection =
-    [iTermWarning showWarningWithTitle:[NSString stringWithFormat:@"Failed to remove the file “%@”: %@\n\nPlease remove this file manually to require Automation permission for the Python API.\n\nThe Python API has been disabled for your security.", path, error.localizedDescription]
-                               actions:@[ @"OK", @"Reveal In Finder" ]
+    [iTermWarning showWarningWithTitle:[NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"APIHelper.RemoveNoAuthFailedMessage", nil, [NSBundle mainBundle], @"Failed to remove the file “%1$@”: %2$@\n\nPlease remove this file manually to require Automation permission for the Python API.\n\nThe Python API has been disabled for your security.", @"Error message; first %@ is the file path, second %@ is the error description"), path, error.localizedDescription]
+                               actions:@[ iTermLocalizedOK(), [iTermWarningAction localOnlyActionWithLabel:NSLocalizedStringWithDefaultValue(@"APIHelper.RevealInFinder", nil, [NSBundle mainBundle], @"Reveal In Finder", @"Button to reveal a file in Finder")] ]
                              accessory:nil
                             identifier:@"NoSyncFailedToRemoveNoAuth"
                            silenceable:kiTermWarningTypePersistent
-                               heading:@"Error changing API permissions setting"
+                               heading:NSLocalizedStringWithDefaultValue(@"APIHelper.PermissionsChangeErrorHeading", nil, [NSBundle mainBundle], @"Error changing API permissions setting", @"Heading when changing API permissions fails")
                                 window:window];
     switch (selection) {
         case kiTermWarningSelection0:
@@ -552,27 +578,27 @@ static BOOL iTermAPIHelperLastApplescriptAuthRequiredSetting;
     if (!dict) {
         return YES;
     }
-    [iTermWarning showWarningWithTitle:[NSString stringWithFormat:@"The setting could not be changed: %@", dict[NSAppleScriptErrorBriefMessage]]
-                               actions:@[ @"OK" ]
+    [iTermWarning showWarningWithTitle:[NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"APIHelper.SettingChangeFailedMessage", nil, [NSBundle mainBundle], @"The setting could not be changed: %@", @"Error message when a setting could not be changed; %@ is the error detail"), dict[NSAppleScriptErrorBriefMessage]]
+                               actions:@[ iTermLocalizedOK() ]
                              accessory:nil
                             identifier:@"NoSyncFailedToCreateNoAuth"
                            silenceable:kiTermWarningTypePersistent
-                               heading:@"Failed to make change"
+                               heading:NSLocalizedStringWithDefaultValue(@"APIHelper.SettingChangeFailedHeading", nil, [NSBundle mainBundle], @"Failed to make change", @"Heading when a setting change fails")
                                 window:window];
     return NO;
 }
 
 + (void)reportFunctionCallError:(NSError *)error forInvocation:(NSString *)invocation origin:(NSString *)origin window:(NSWindow *)window {
-    NSString *message = [NSString stringWithFormat:@"Error running “%@”:\n%@",
+    NSString *message = [NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"APIHelper.FunctionCallErrorMessage", nil, [NSBundle mainBundle], @"Error running “%1$@”:\n%2$@", @"Error message; first %@ is the invocation, second %@ is the error description"),
                          invocation, error.localizedDescription];
     NSString *traceback = error.localizedFailureReason;
-    NSArray *actions = @[ @"OK" ];
+    NSArray *actions = @[ iTermLocalizedOK() ];
     if (traceback) {
-        actions = [actions arrayByAddingObject:@"Reveal in Script Console"];
+        actions = [actions arrayByAddingObject:[iTermWarningAction localOnlyActionWithLabel:NSLocalizedStringWithDefaultValue(@"APIHelper.RevealInScriptConsole", nil, [NSBundle mainBundle], @"Reveal in Script Console", @"Button to reveal an error in the Script Console")]];
     }
     NSString *connectionKey = error.userInfo[iTermAPIHelperFunctionCallErrorUserInfoKeyConnection];
     iTermScriptHistoryEntry *entry = [[iTermScriptHistory sharedInstance] entryWithIdentifier:connectionKey];
-    [entry addOutput:[NSString stringWithFormat:@"An error occurred while running the function invocation “%@”:\n%@\n\nTraceback:\n%@",
+    [entry addOutput:[NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"APIHelper.FunctionInvocationError", nil, [NSBundle mainBundle], @"An error occurred while running the function invocation “%1$@”:\n%2$@\n\nTraceback:\n%3$@", @"Script Console diagnostic when an RPC function invocation raises an error; %1$@ is the invocation, %2$@ is the error, %3$@ is the traceback"),
                       invocation,
                       error.localizedDescription,
                       traceback]
@@ -582,7 +608,7 @@ static BOOL iTermAPIHelperLastApplescriptAuthRequiredSetting;
                                                                accessory:nil
                                                               identifier:@"NoSyncFunctionCallError"
                                                              silenceable:kiTermWarningTypeTemporarilySilenceable
-                                                                 heading:[NSString stringWithFormat:@"%@ Function Call Failed", origin]
+                                                                 heading:[NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"APIHelper.FunctionCallFailedHeading", nil, [NSBundle mainBundle], @"%@ Function Call Failed", @"Dialog heading when a function call fails; %@ is the origin/script name"), origin]
                                                                   window:window];
     if (selection == kiTermWarningSelection1) {
         [[iTermScriptConsole sharedInstance] revealTailOfHistoryEntry:entry];
@@ -629,11 +655,11 @@ static BOOL iTermAPIHelperLastApplescriptAuthRequiredSetting;
     // It was not enabled in preferences. Ask the user. If they permanently silence this
     // they'll need to go into prefs to enable it.
     iTermWarning *warning = [[iTermWarning alloc] init];
-    warning.heading = @"Enable Python API?";
-    warning.actionLabels = @[ @"OK", @"Cancel" ];
+    warning.heading = NSLocalizedStringWithDefaultValue(@"APIHelper.EnablePythonAPIHeading", nil, [NSBundle mainBundle], @"Enable Python API?", @"Heading for dialog asking whether to enable the Python API");
+    warning.actionLabels = @[ iTermLocalizedOK(), iTermLocalizedCancel() ];
     warning.identifier = iTermAPIHelperEnablePythonAPIWarningIdentifier;
     warning.warningType = forced ? kiTermWarningTypePersistent : kiTermWarningTypePermanentlySilenceable;
-    warning.title = @"The Python API allows scripts you run to control iTerm2 and access all its data.";
+    warning.title = NSLocalizedStringWithDefaultValue(@"APIHelper.EnablePythonAPIMessage", nil, [NSBundle mainBundle], @"The Python API allows scripts you run to control iTerm2 and access all its data.", @"Body text explaining what enabling the Python API allows");
     static BOOL showing;
     if (showing) {
         // This can happen because the call to -runModal below starts a runloop and a delayed perform can then call this.
@@ -695,6 +721,10 @@ static BOOL iTermAPIHelperLastApplescriptAuthRequiredSetting;
         [[NSNotificationCenter defaultCenter] addObserver:self
                                                  selector:@selector(layoutChanged:)
                                                      name:iTermTabDidChangeWindowNotification
+                                                   object:nil];
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(layoutChanged:)
+                                                     name:iTermTabFloatingPanesDidChangeNotification
                                                    object:nil];
         [[NSNotificationCenter defaultCenter] addObserver:self
                                                  selector:@selector(layoutChanged:)
@@ -807,6 +837,14 @@ static BOOL iTermAPIHelperLastApplescriptAuthRequiredSetting;
     [helper->_apiServer whenReadyRunBlock:^{
         block(YES);
     }];
+}
+
++ (void)stopAcceptingConnections {
+    iTermAPIHelper *helper = sAPIHelperInstance;
+    if (!helper) {
+        return;
+    }
+    [helper->_apiServer stopAcceptingConnections];
 }
 
 - (void)stop {
@@ -1059,7 +1097,37 @@ static BOOL iTermAPIHelperLastApplescriptAuthRequiredSetting;
     ITMFocusChangedNotification *focusChange = [[ITMFocusChangedNotification alloc] init];
     focusChange.session = session.guid;
     // Deferrable: held from a connection that is mid-CreateTab (see the deferral).
-    [self handleFocusChange:focusChange deferrable:YES];
+    [self handleFocusChange:focusChange
+                 deferrable:YES
+      floatingPaneAwareOnly:[session.delegate sessionIsFloating:session]];
+}
+
+// Python library versions before this one do not know about floating panes. A focus change to a
+// session that is missing from its tab's split tree sends them into an endless refresh: refresh,
+// fetch focus, fail to find the session, refresh again.
+static NSString *const iTermAPIFloatingPanesFirstAwarePythonVersion = @"2.26";
+
++ (BOOL)libraryVersionUnderstandsFloatingPanes:(NSString *)libraryVersion {
+    if (libraryVersion.length == 0) {
+        // No header: the in-process runtime, which ships the current library.
+        return YES;
+    }
+    NSArray<NSString *> *parts = [libraryVersion componentsSeparatedByString:@" "];
+    if (parts.count != 2 || ![parts[0] isEqualToString:@"python"]) {
+        return YES;
+    }
+    NSString *version = parts[1];
+    NSCharacterSet *allowed = [NSCharacterSet characterSetWithCharactersInString:@"0123456789."];
+    if (version.length == 0 ||
+        [version rangeOfCharacterFromSet:allowed.invertedSet].location != NSNotFound) {
+        return YES;
+    }
+    return [version compare:iTermAPIFloatingPanesFirstAwarePythonVersion
+                    options:NSNumericSearch] != NSOrderedAscending;
+}
+
+- (BOOL)connectionKeyUnderstandsFloatingPanes:(NSString *)connectionKey {
+    return [iTermAPIHelper libraryVersionUnderstandsFloatingPanes:[_apiServer libraryVersionForConnectionKey:connectionKey]];
 }
 
 - (void)broadcastDomainsDidChange:(NSNotification *)notification {
@@ -1091,10 +1159,20 @@ static BOOL iTermAPIHelperLastApplescriptAuthRequiredSetting;
 // after its response); all other connections receive it normally. Non-deferrable
 // focus changes (window key, app active) always deliver.
 - (void)handleFocusChange:(ITMFocusChangedNotification *)notif deferrable:(BOOL)deferrable {
+    [self handleFocusChange:notif deferrable:deferrable floatingPaneAwareOnly:NO];
+}
+
+// `floatingPaneAwareOnly` withholds the change from clients too old to know about floating panes.
+- (void)handleFocusChange:(ITMFocusChangedNotification *)notif
+               deferrable:(BOOL)deferrable
+    floatingPaneAwareOnly:(BOOL)floatingPaneAwareOnly {
     void (^handle)(void) = ^{
         [self->_focusChangeSubscriptions enumerateKeysAndObjectsUsingBlock:^(id  _Nonnull key, ITMNotificationRequest * _Nonnull obj, BOOL * _Nonnull stop) {
             if (deferrable &&
                 [self->_createTabFocusDeferral shouldHoldFocusNotificationForConnectionGuid:key]) {
+                return;
+            }
+            if (floatingPaneAwareOnly && ![self connectionKeyUnderstandsFloatingPanes:key]) {
                 return;
             }
             ITMNotification *notification = [[ITMNotification alloc] init];
@@ -1522,25 +1600,8 @@ static BOOL iTermAPIHelperLastApplescriptAuthRequiredSetting;
 
 #pragma mark - iTermAPIServerDelegate
 
-- (NSMenuItem *)menuItemWithTitleParts:(NSArray<NSString *> *)titleParts
-                                inMenu:(NSMenu *)menu NS_DEPRECATED_MAC(10_10, 10_11, "Use menuItemWithIdentifier:") {
-    NSString *head = titleParts.firstObject;
-    NSArray<NSString *> *remainingTitleParts = [titleParts subarrayFromIndex:1];
-    for (NSMenuItem *item in [menu itemArray]) {
-        if ([item.title isEqualToString:head]) {
-            if ([item hasSubmenu]) {
-                return [self menuItemWithTitleParts:remainingTitleParts
-                                             inMenu:item.submenu];
-            } else if (remainingTitleParts.count == 0) {
-                return item;
-            }
-        }
-    }
-    return nil;
-}
-
 - (NSMenuItem *)menuItemWithIdentifier:(NSString *)identifier
-                                inMenu:(NSMenu *)menu NS_AVAILABLE_MAC(10_12) {
+                                inMenu:(NSMenu *)menu {
     for (NSMenuItem *item in [menu itemArray]) {
         if ([item hasSubmenu]) {
             NSMenuItem *result = [self menuItemWithIdentifier:identifier inMenu:item.submenu];
@@ -1560,31 +1621,32 @@ static BOOL iTermAPIHelperLastApplescriptAuthRequiredSetting;
                        advisoryName:(NSString *)advisoryName
                              reason:(out NSString *__autoreleasing *)reason
                         displayName:(out NSString *__autoreleasing *)displayName {
-    *displayName = advisoryName ? [@"≈" stringByAppendingString:advisoryName] : @"Unknown";
+    *displayName = advisoryName ? [@"≈" stringByAppendingString:advisoryName] : NSLocalizedStringWithDefaultValue(@"APIHelper.UnknownScriptName", nil, [NSBundle mainBundle], @"Unknown", @"Fallback display name for a script that did not provide a name when authorizing API access");
 
     if (preauthorized) {
-        *reason = @"Script launched by user action";
+        *reason = NSLocalizedStringWithDefaultValue(@"APIHelper.AuthReasonUserLaunched", nil, [NSBundle mainBundle], @"Script launched by user action", @"API authorization reason logged when a script was preauthorized because the user launched it");
         return YES;
     }
     if (![iTermAPIHelper requireApplescriptAuth]) {
-        *reason = @"All apps are allowed to use the API, per “Settings > General > Magic > Allow all apps to connect”.";
+        *reason = NSLocalizedStringWithDefaultValue(@"APIHelper.AuthReasonAllAppsAllowed", nil, [NSBundle mainBundle], @"All apps are allowed to use the API, per “Settings > General > Magic > Allow all apps to connect”.", @"API authorization reason logged when access is granted because the user enabled the allow-all-apps setting");
         return YES;
     }
     if (disableAuthUI) {
-        *reason = @"UI authorization disabled and no valid cookie was presented.";
+        *reason = NSLocalizedStringWithDefaultValue(@"APIHelper.AuthReasonNoCookie", nil, [NSBundle mainBundle], @"UI authorization disabled and no valid cookie was presented.", @"API authorization reason logged when access is denied because the authorization UI is disabled and no valid cookie was presented");
         return NO;
     }
 
     NSString *message =
-        @"Another process is trying to use the iTerm2 API. The API allows a script to control iTerm2 and view and modify its contents. Allow the connection?";
+        NSLocalizedStringWithDefaultValue(@"APIHelper.AllowConnectionMessage", nil, [NSBundle mainBundle], @"Another process is trying to use the iTerm2 API. The API allows a script to control iTerm2 and view and modify its contents. Allow the connection?", @"Prompt asking whether to allow an unknown process to use the API");
 
     if ([iTermAdvancedSettingsModel setCookie]) {
-        message = [NSString stringWithFormat:@"%@\n\nAlthough you have chosen to allow connections automatically, this script has not presented a valid cookie.", message];
+        message = [NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"APIHelper.NoCookieSuffix", nil, [NSBundle mainBundle], @"%@\n\nAlthough you have chosen to allow connections automatically, this script has not presented a valid cookie.", @"Suffix appended when a script did not present a valid cookie; %@ is the base message"), message];
     }
 
-    NSArray<NSString *> *actions = @[ @"OK", @"Cancel", @"More Info" ];
+    // Labels, plus an action for More Info, which opens a web page on this Mac.
+    NSArray *actions = @[ iTermLocalizedOK(), iTermLocalizedCancel(), [iTermWarningAction localOnlyActionWithLabel:NSLocalizedStringWithDefaultValue(@"General.MoreInfo", nil, [NSBundle mainBundle], @"More Info", @"More Info button")] ];
     if (![iTermAdvancedSettingsModel setCookie]) {
-        actions = [actions arrayByAddingObject:@"Always"];
+        actions = [actions arrayByAddingObject:NSLocalizedStringWithDefaultValue(@"APIHelper.Always", nil, [NSBundle mainBundle], @"Always", @"Button to always allow API access")];
     }
     const iTermWarningSelection selection =
     [iTermWarning showWarningWithTitle:message
@@ -1592,38 +1654,38 @@ static BOOL iTermAPIHelperLastApplescriptAuthRequiredSetting;
                              accessory:nil
                             identifier:@"NoSyncAllowPythonAPI"
                            silenceable:kiTermWarningTypePersistent
-                               heading:@"Allow Python API Usage?"
+                               heading:NSLocalizedStringWithDefaultValue(@"APIHelper.AllowPythonAPIHeading", nil, [NSBundle mainBundle], @"Allow Python API Usage?", @"Heading for dialog asking whether to allow API access")
                                 window:nil];
     switch (selection) {
         case kiTermWarningSelection0:
-            *reason = @"Allowed by user";
+            *reason = NSLocalizedStringWithDefaultValue(@"APIHelper.AuthReasonAllowedByUser", nil, [NSBundle mainBundle], @"Allowed by user", @"API authorization reason logged when the user allows a connection in the prompt");
             return YES;
         case kiTermWarningSelection1:
-            *reason = @"Denied by user";
+            *reason = NSLocalizedStringWithDefaultValue(@"APIHelper.AuthReasonDeniedByUser", nil, [NSBundle mainBundle], @"Denied by user", @"API authorization reason logged when the user denies a connection in the prompt");
             return NO;
         case kiTermWarningSelection2:
-            *reason = @"Denied by user";
+            *reason = NSLocalizedStringWithDefaultValue(@"APIHelper.AuthReasonDeniedByUser", nil, [NSBundle mainBundle], @"Denied by user", @"API authorization reason logged when the user denies a connection in the prompt");
             [[NSWorkspace sharedWorkspace] it_openURL:[NSURL URLWithString:@"https://iterm2.com/python-api-security-model"]
                                                target:nil
                                                 style:iTermOpenStyleTab
                                                window:nil];
             return NO;
         case kiTermWarningSelection3:
-            if ([iTermWarning showWarningWithTitle:@"New sessions will contain an environment variable that allows scripts to run without confirmation. Are you sure you want to enable this?"
-                                           actions:@[ @"OK", @"Cancel" ]
+            if ([iTermWarning showWarningWithTitle:NSLocalizedStringWithDefaultValue(@"APIHelper.ConfirmAlwaysAllowMessage", nil, [NSBundle mainBundle], @"New sessions will contain an environment variable that allows scripts to run without confirmation. Are you sure you want to enable this?", @"Confirmation prompt when enabling automatic Python API access")
+                                           actions:@[ iTermLocalizedOK(), iTermLocalizedCancel() ]
                                          accessory:nil
                                         identifier:@"NoSyncConfirmAlways"
                                        silenceable:kiTermWarningTypePersistent
-                                           heading:@"Confirm"
+                                           heading:NSLocalizedStringWithDefaultValue(@"APIHelper.ConfirmHeading", nil, [NSBundle mainBundle], @"Confirm", @"Generic confirmation dialog heading")
                                             window:nil] == kiTermWarningSelection0) {
                 [iTermAdvancedSettingsModel setSetCookie:YES];
-                *reason = @"Allowed by user";
+                *reason = NSLocalizedStringWithDefaultValue(@"APIHelper.AuthReasonAllowedByUser", nil, [NSBundle mainBundle], @"Allowed by user", @"API authorization reason logged when the user allows a connection in the prompt");
                 return YES;
             }
-            *reason = @"Denied by user";
+            *reason = NSLocalizedStringWithDefaultValue(@"APIHelper.AuthReasonDeniedByUser", nil, [NSBundle mainBundle], @"Denied by user", @"API authorization reason logged when the user denies a connection in the prompt");
             return NO;
         default:
-            *reason = @"Internal error";
+            *reason = NSLocalizedStringWithDefaultValue(@"APIHelper.AuthReasonInternalError", nil, [NSBundle mainBundle], @"Internal error", @"API authorization reason logged when an unexpected internal error occurs while authorizing a connection");
             return NO;
     }
 }
@@ -2408,6 +2470,11 @@ static BOOL iTermAPIHelperLastApplescriptAuthRequiredSetting;
             ITMListSessionsResponse_Tab *tabMessage = [[ITMListSessionsResponse_Tab alloc] init];
             tabMessage.tabId = [@(tab.uniqueId) stringValue];
             tabMessage.root = [tab rootSplitTreeNode];
+            // Floats are not in root (protocol 1.21+). Older clients ignore the field.
+            [tabMessage.floatingPanesArray addObjectsFromArray:[tab floatingPaneMessages]];
+            if (tab.floatingPanes.count > 0) {
+                tabMessage.floatingPanesHidden = tab.floatingPanesHidden;
+            }
             // Report the tab's active session so clients know the current
             // session without waiting for a focus notification (protocol 1.18+).
             PTYSession *activeSession = tab.activeSession;
@@ -2425,6 +2492,14 @@ static BOOL iTermAPIHelperLastApplescriptAuthRequiredSetting;
             tabMessage.tmuxWindowId = [@(tab.tmuxWindow) stringValue];
             if (tab.tmuxController) {
                 tabMessage.tmuxConnectionId = tab.tmuxController.clientName;
+            }
+            // Tab group membership (protocol 1.19+). The group's name/color/collapsed
+            // ride on the member tab, so they are meaningful only when tabGroupID is set.
+            if (tab.tabGroupID.length > 0) {
+                tabMessage.tabGroupId = tab.tabGroupID;
+                tabMessage.tabGroupName = tab.tabGroupName ?: @"";
+                tabMessage.tabGroupColor = [(tab.tabGroupColor ?: [NSColor systemBlueColor]) hexStringPreservingColorSpace];
+                tabMessage.tabGroupCollapsed = tab.tabGroupCollapsed;
             }
             [windowMessage.tabsArray addObject:tabMessage];
         }
@@ -2616,12 +2691,27 @@ static BOOL iTermAPIHelperLastApplescriptAuthRequiredSetting;
 - (void)apiServerSplitPane:(ITMSplitPaneRequest *)request handler:(void (^)(ITMSplitPaneResponse *))handler {
     NSArray<PTYSession *> *sessions;
     if ([request.session isEqualToString:@"all"]) {
-        sessions = [self allSessions];
+        // A split aimed at a float goes to a tiled pane, which is already in the list. Leave floats
+        // out so no pane is split twice.
+        sessions = [[self allSessions] filteredArrayUsingBlock:^BOOL(PTYSession *session) {
+            PTYTab *tab = [[[iTermController sharedInstance] terminalWithSession:session] tabForSession:session];
+            return ![tab sessionIsFloating:session];
+        }];
     } else {
         PTYSession *session = [self sessionForAPIIdentifier:request.session includeBuriedSessions:YES];
         if (!session) {
             ITMSplitPaneResponse *response = [[ITMSplitPaneResponse alloc] init];
             response.status = ITMSplitPaneResponse_Status_SessionNotFound;
+            handler(response);
+            return;
+        }
+        // A native float holds one session and can't be split. Other ways of splitting one go to a
+        // tiled pane instead, but a script asked for this pane and should know. tmux makes another
+        // float, except tmux 3.7, which can't.
+        PTYTab *tab = [[[iTermController sharedInstance] terminalWithSession:session] tabForSession:session];
+        if ([tab sessionIsFloating:session] && (!tab.isTmuxTab || ![tab tmuxAllowsChangingFloatingPanes])) {
+            ITMSplitPaneResponse *response = [[ITMSplitPaneResponse alloc] init];
+            response.status = ITMSplitPaneResponse_Status_CannotSplit;
             handler(response);
             return;
         }
@@ -2845,9 +2935,32 @@ static BOOL iTermAPIHelperLastApplescriptAuthRequiredSetting;
         }
         return ITMSetPropertyResponse_Status_Ok;
     };
+    SetSessionPropertyBlock setSessionNote = ^ITMSetPropertyResponse_Status {
+        iTermSessionNoteAPIUpdate *update =
+            [iTermSessionNoteAPIUpdate parse:value];
+        if (!update) {
+            return ITMSetPropertyResponse_Status_InvalidValue;
+        }
+        NSString *resultingText = update.hasText
+            ? update.textValue
+            : (session.sessionNoteModel.text ?: @"");
+        if (resultingText.length == 0 &&
+            ((update.hasVisible && update.visibleValue) ||
+             (update.hasCollapsed && update.collapsedValue))) {
+            return ITMSetPropertyResponse_Status_InvalidValue;
+        }
+        if (update.hasVisible && update.visibleValue && !session.view) {
+            return ITMSetPropertyResponse_Status_Impossible;
+        }
+        if (![session applySessionNoteAPIUpdate:update]) {
+            return ITMSetPropertyResponse_Status_InvalidValue;
+        }
+        return ITMSetPropertyResponse_Status_Ok;
+    };
     NSDictionary<NSString *, SetSessionPropertyBlock> *handlers =
         @{ @"grid_size": setGridSize,
            @"buried": setBuried,
+           @"session_note": setSessionNote,
          };
     SetSessionPropertyBlock block = handlers[name];
     if (block) {
@@ -2977,10 +3090,15 @@ static BOOL iTermAPIHelperLastApplescriptAuthRequiredSetting;
         BOOL isBuried = [[[iTermBuriedSessions sharedInstance] buriedSessions] containsObject:session];
         return [NSJSONSerialization it_jsonStringForObject:@(isBuried)];
     };
+    GetSessionPropertyBlock getSessionNote = ^NSString * {
+        return [NSJSONSerialization
+            it_jsonStringForObject:session.sessionNoteAPIDictionary];
+    };
     NSDictionary<NSString *, GetSessionPropertyBlock> *handlers =
         @{ @"grid_size": getGridSize,
            @"buried": getBuried,
            @"number_of_lines": getNumberOfLines,
+           @"session_note": getSessionNote,
          };
 
     GetSessionPropertyBlock block = handlers[name];
@@ -3098,7 +3216,8 @@ static BOOL iTermAPIHelperLastApplescriptAuthRequiredSetting;
             handler(response);
             return;
         }
-        if (tab.isMaximized && tab.activeSession != session) {
+        // A float shows over a maximized pane, so activating it leaves the maximized pane alone.
+        if (tab.isMaximized && tab.activeSession != session && ![tab sessionIsFloating:session]) {
             [tab unmaximize];
             [tab setActiveSession:session];
             [tab maximize];
@@ -3343,7 +3462,10 @@ static BOOL iTermAPIHelperLastApplescriptAuthRequiredSetting;
     handler(response);
 }
 
-- (void)apiServerFocus:(ITMFocusRequest *)request handler:(void (^)(ITMFocusResponse *))handler {
+- (void)apiServerFocus:(ITMFocusRequest *)request
+        libraryVersion:(NSString *)libraryVersion
+               handler:(void (^)(ITMFocusResponse *))handler {
+    const BOOL understandsFloatingPanes = [iTermAPIHelper libraryVersionUnderstandsFloatingPanes:libraryVersion];
     ITMFocusResponse *response = [[ITMFocusResponse alloc] init];
 
     ITMFocusChangedNotification *focusChange = [[ITMFocusChangedNotification alloc] init];
@@ -3380,6 +3502,10 @@ static BOOL iTermAPIHelperLastApplescriptAuthRequiredSetting;
         [response.notificationsArray addObject:focusChange];
 
         for (PTYTab *tab in term.tabs) {
+            if (!understandsFloatingPanes && [tab sessionIsFloating:tab.activeSession]) {
+                // See iTermAPIFloatingPanesFirstAwarePythonVersion.
+                continue;
+            }
             focusChange = [[ITMFocusChangedNotification alloc] init];
             focusChange.session = tab.activeSession.guid;
             [response.notificationsArray addObject:focusChange];
@@ -3991,7 +4117,10 @@ static BOOL iTermCheckSplitTreesIsomorphic(ITMSplitTreeNode *node1, ITMSplitTree
         selection = nil;
     }
     const NSInteger absoluteOffset = session.screen.totalScrollbackOverflow;
-    for (iTermSubSelection *sub in selection.allSubSelections) {
+    // logicalSubSelections (not allSubSelections) so a get_selection during an
+    // in-progress bidi character drag reports logical buffer coordinates, which
+    // is what a script pairs with the (logical) screen contents.
+    for (iTermSubSelection *sub in selection.logicalSubSelections) {
         ITMSubSelection *subProto = [[ITMSubSelection alloc] init];
         const long long overflow = session.screen.totalScrollbackOverflow;
         const VT100GridWindowedRange relativeRange = VT100GridWindowedRangeFromAbsWindowedRange(sub.absRange, overflow);

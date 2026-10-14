@@ -1,18 +1,67 @@
 """Provides classes for interacting with iTerm2 sessions."""
+
+from __future__ import annotations
+
 import abc
 import json
-import typing
+import math
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any
 
-import iterm2.api_pb2
-import iterm2.capabilities
-import iterm2.connection
-import iterm2.keyboard
-import iterm2.notifications
-import iterm2.profile
-import iterm2.rpc
-import iterm2.screen
-import iterm2.selection
-import iterm2.util
+from . import api_pb2
+from .capabilities import (
+    check_supports_add_annotation,
+    check_supports_browser_scripting,
+    check_supports_coprocesses,
+    check_supports_floating_panes,
+    check_supports_load_url,
+    check_supports_move_session_to_tab_or_window,
+    check_supports_screenshot,
+    check_supports_session_note,
+    supports_multiple_set_profile_properties,
+)
+from .profile import Profile
+from .rpc import (
+    RPCException,
+    async_activate,
+    async_close,
+    async_get_profile,
+    async_get_property,
+    async_get_screen_contents,
+    async_get_selection,
+    async_inject,
+    async_invoke_function,
+    async_invoke_method,
+    async_restart_session,
+    async_screenshot,
+    async_send_text,
+    async_set_profile_properties_json,
+    async_set_profile_property_json,
+    async_set_property,
+    async_set_selection,
+    async_split_pane,
+    async_variable,
+)
+from .screen import ScreenContents, ScreenStreamer
+from .selection import Selection, SelectionMode, SubSelection
+from .util import (
+    CoordRange,
+    Frame,
+    Point,
+    Range,
+    Size,
+    WindowedCoordRange,
+    frame_str,
+    invocation_string,
+    size_str,
+)
+
+if TYPE_CHECKING:
+    from .connection import Connection
+    from .profile import LocalWriteOnlyProfile
+    from .screen import LineContents
+    from .tab import Tab
+    from .window import Window
 
 
 # pylint: disable=too-many-lines
@@ -29,17 +78,17 @@ class Splitter:
     same way.
     """
 
-    def __init__(self, vertical: bool = False):
+    def __init__(self, vertical: bool = False) -> None:
         """
         :param vertical: bool. If true, the divider is vertical, else
             horizontal.
         """
         self.__vertical = vertical
         # Elements are either Splitter or Session
-        self.__children: typing.List[typing.Union['Splitter', 'Session']] = []
+        self.__children: list[Splitter | Session] = []
 
     @staticmethod
-    def from_node(node, connection):
+    def from_node(node: api_pb2.SplitTreeNode, connection: Connection) -> Splitter:
         """Creates a new Splitter from a node.
 
         :param node: :class:`iterm2.api_pb2.SplitTreeNode`
@@ -62,7 +111,7 @@ class Splitter:
         """Are the dividers in this splitter vertical?"""
         return self.__vertical
 
-    def add_child(self, child: typing.Union['Splitter', 'Session']):
+    def add_child(self, child: Splitter | Session) -> None:
         """
         Adds one or more new sessions to a splitter.
 
@@ -71,7 +120,7 @@ class Splitter:
         self.__children.append(child)
 
     @property
-    def children(self) -> typing.List[typing.Union['Splitter', 'Session']]:
+    def children(self) -> list[Splitter | Session]:
         """
         :returns: This splitter's children. A list of :class:`Session` or
             :class:`Splitter` objects.
@@ -79,12 +128,12 @@ class Splitter:
         return self.__children
 
     @property
-    def sessions(self) -> typing.List['Session']:
+    def sessions(self) -> list[Session]:
         """
         :returns: All sessions in this splitter and all nested splitters. A
             list of :class:`Session` objects.
         """
-        result = []
+        result: list[Session] = []
         for child in self.__children:
             if isinstance(child, Session):
                 result.append(child)
@@ -96,39 +145,34 @@ class Splitter:
         """
         :returns: A string describing this splitter. Has newlines.
         """
-        string_value = indent + "Splitter %s\n" % (
-            "|" if self.vertical else "-")
+        string_value = indent + "Splitter %s\n" % ("|" if self.vertical else "-")
         for child in self.__children:
             string_value += child.pretty_str("  " + indent)
         return string_value
 
-    def update_session(self, session):
+    def update_session(self, session: Session) -> bool:
         """
         Finds a session with the same ID as session. If it exists, replace the
             reference with session.
 
         :returns: True if the update occurred.
         """
-        i = 0
-        for child in self.__children:
-            if isinstance(
-                    child, Session) and child.session_id == session.session_id:
+        for i, child in enumerate(self.__children):
+            if isinstance(child, Session) and child.session_id == session.session_id:
                 self.__children[i] = session
                 return True
-            if isinstance(child, Splitter):
-                if child.update_session(session):
-                    return True
-            i += 1
+            if isinstance(child, Splitter) and child.update_session(session):
+                return True
         return False
 
-    def to_protobuf(self):
+    def to_protobuf(self) -> api_pb2.SplitTreeNode:
         """Returns the protobuf representation."""
-        node = iterm2.api_pb2.SplitTreeNode()
+        node = api_pb2.SplitTreeNode()
         node.vertical = self.vertical
 
         # pylint: disable=no-member
-        def make_link(obj):
-            link = iterm2.api_pb2.SplitTreeNode.SplitTreeLink()
+        def make_link(obj: Splitter | Session) -> api_pb2.SplitTreeNode.SplitTreeLink:
+            link = api_pb2.SplitTreeNode.SplitTreeLink()
             if isinstance(obj, Session):
                 link.session.CopyFrom(obj.to_session_summary_protobuf())
             else:
@@ -142,7 +186,8 @@ class Splitter:
 
 class SessionLineInfo:
     """Describes a session's geometry."""
-    def __init__(self, line_info):
+
+    def __init__(self, line_info: Sequence[int]) -> None:
         self.__line_info = line_info
 
     @property
@@ -170,6 +215,30 @@ class SessionLineInfo:
         return self.__line_info[3]
 
 
+class SessionNote:
+    """Describes a session's floating Session Note."""
+
+    def __init__(self, text: str, visible: bool, collapsed: bool) -> None:
+        self.__text = text
+        self.__visible = visible
+        self.__collapsed = collapsed
+
+    @property
+    def text(self) -> str:
+        """The plain-text contents of the note."""
+        return self.__text
+
+    @property
+    def visible(self) -> bool:
+        """Whether the note is currently visible over the terminal."""
+        return self.__visible
+
+    @property
+    def collapsed(self) -> bool:
+        """Whether the note is collapsed to its title bar."""
+        return self.__collapsed
+
+
 class Session:
     """
     Represents an iTerm2 session.
@@ -179,28 +248,31 @@ class Session:
         """
         Provides callbacks for Session.
         """
+
         @abc.abstractmethod
-        def session_delegate_get_tab(
-                self, session) -> typing.Optional['iterm2.Tab']:
+        def session_delegate_get_tab(self, session: Session) -> Tab | None:
             """Returns the tab for a session."""
             ...
 
         @abc.abstractmethod
-        def session_delegate_get_window(
-                self, session) -> typing.Optional['iterm2.Window']:
+        def session_delegate_get_window(self, session: Session) -> Window | None:
             """Returns the window for a session."""
             ...
 
         @abc.abstractmethod
         async def session_delegate_create_session(
-                self, session_id: str) -> typing.Optional['iterm2.session.Session']:
+            self, session_id: str
+        ) -> Session | None:
             """Creates a new Session object given a session ID."""
             ...
 
-    delegate: typing.Optional[Delegate] = None
+    delegate: Delegate | None = None
+    frame: api_pb2.Frame | None
+    name: str
+    buried: bool
 
     @staticmethod
-    def active_proxy(connection: iterm2.connection.Connection) -> 'Session':
+    def active_proxy(connection: Connection) -> ProxySession:
         """
         Use this to register notifications against the currently active
         session.
@@ -212,7 +284,7 @@ class Session:
         return ProxySession(connection, "active")
 
     @staticmethod
-    def all_proxy(connection: iterm2.connection.Connection):
+    def all_proxy(connection: Connection) -> ProxySession:
         """
         Use this to register notifications against all sessions, including
         those not yet created.
@@ -223,21 +295,38 @@ class Session:
         """
         return ProxySession(connection, "all")
 
-    def __init__(self, connection, link, summary=None):
+    def __init__(
+        self,
+        connection: Connection,
+        link: api_pb2.SplitTreeNode.SplitTreeLink | None,
+        summary: api_pb2.SessionSummary | None = None,
+        floating: bool = False,
+    ) -> None:
         """
         Do not call this yourself. Use :class:`~iterm2.app.App` instead.
 
         :param connection: :class:`Connection`
         :param link: :class:`iterm2.api_pb2.SplitTreeNode.SplitTreeLink`
         :param summary: :class:`iterm2.api_pb2.SessionSummary`
+        :param floating: If true, `summary` describes a floating pane, with
+            its frame and grid size.
         """
-        self.connection = connection
+        self.connection: Connection = connection
+        self.floating: bool = floating
+        self.__grid_size: api_pb2.Size | None
+        self.__preferred_size: Size | api_pb2.Size | None
 
         if link is not None:
             self.__session_id = link.session.unique_identifier
             self.frame = link.session.frame
             self.__grid_size = link.session.grid_size
             self.name = link.session.title
+            self.buried = False
+        elif summary is not None and floating:
+            self.__session_id = summary.unique_identifier
+            self.frame = summary.frame
+            self.__grid_size = summary.grid_size
+            self.name = summary.title
             self.buried = False
         elif summary is not None:
             self.__session_id = summary.unique_identifier
@@ -248,41 +337,45 @@ class Session:
         self.__preferred_size = self.grid_size
 
     def __repr__(self):
-        return "<Session name=%s id=%s>" % (self.name, self.__session_id)
+        return f"<Session name={self.name} id={self.__session_id}>"
 
-    def to_session_summary_protobuf(self):
+    def to_session_summary_protobuf(self) -> api_pb2.SessionSummary:
         """Returns the protobuf representation."""
         # pylint: disable=no-member
-        summary = iterm2.api_pb2.SessionSummary()
+        summary = api_pb2.SessionSummary()
         summary.unique_identifier = self.session_id
-        summary.grid_size.width = self.preferred_size.width
-        summary.grid_size.height = self.preferred_size.height
+        preferred_size = self.preferred_size
+        if preferred_size is not None:
+            summary.grid_size.width = preferred_size.width
+            summary.grid_size.height = preferred_size.height
         return summary
 
-    def update_from(self, session):
+    def update_from(self, session: Session) -> None:
         """Replace internal state with that of another session."""
         self.frame = session.frame
         self.__grid_size = session.grid_size
         self.name = session.name
+        self.floating = session.floating
 
     def pretty_str(self, indent: str = "") -> str:
         """
         :returns: A string describing the session.
         """
-        return indent + "Session \"%s\" id=%s %s frame=%s\n" % (
-            self.name,
-            self.__session_id,
-            iterm2.util.size_str(self.grid_size),
-            iterm2.util.frame_str(self.frame))
+        return (
+            f'{indent}Session "{self.name}" '
+            f"id={self.__session_id} "
+            f"{size_str(self.grid_size)} "
+            f"frame={frame_str(self.frame)}\n"
+        )
 
     @property
-    def tab(self) -> typing.Optional['iterm2.Tab']:
+    def tab(self) -> Tab | None:
         """Returns the containing tab."""
         # Note: App sets get_tab on Session when it's created.
         return Session.get_tab(self)
 
     @staticmethod
-    def get_tab(obj: 'iterm2.Session') -> typing.Optional['iterm2.Tab']:
+    def get_tab(obj: Session) -> Tab | None:
         """Returns the tab containing a given session.
 
         Do not call this before creating a :class:`~iterm2.app.App` object.
@@ -292,7 +385,7 @@ class Session:
         return None
 
     @staticmethod
-    def get_window(obj: 'iterm2.Session') -> typing.Optional['iterm2.Window']:
+    def get_window(obj: Session) -> Window | None:
         """Returns the window containing a given session.
 
         Do not call this before creating a :class:`~iterm2.app.App` object.
@@ -302,12 +395,12 @@ class Session:
         return None
 
     @property
-    def window(self) -> typing.Optional['iterm2.Window']:
+    def window(self) -> Window | None:
         """Returns the containing terminal window."""
         return Session.get_window(self)
 
     @property
-    def preferred_size(self) -> iterm2.util.Size:
+    def preferred_size(self) -> Size | api_pb2.Size | None:
         """
         The size in cells to resize to when `Tab.async_update_layout()` is
         called. The size is a :class:`iterm2.util.Size`.
@@ -315,7 +408,7 @@ class Session:
         return self.__preferred_size
 
     @preferred_size.setter
-    def preferred_size(self, value: iterm2.util.Size):
+    def preferred_size(self, value: Size) -> None:
         """
         Sets the size in cells to resize to when `Tab.async_update_layout()` is
         called. The size is a :class:`iterm2.util.Size`.
@@ -329,7 +422,7 @@ class Session:
         """
         return self.__session_id
 
-    async def async_get_screen_contents(self) -> iterm2.screen.ScreenContents:
+    async def async_get_screen_contents(self) -> ScreenContents:
         """
         Returns the contents of the mutable area of the screen.
 
@@ -338,22 +431,20 @@ class Session:
         :throws: :class:`~iterm2.rpc.RPCException` if something goes wrong.
         """
         # pylint: disable=no-member
-        result = await iterm2.rpc.async_get_screen_contents(
-            self.connection,
-            self.session_id,
-            None,
-            True)
-        if (result.get_buffer_response.status ==
-                iterm2.api_pb2.GetBufferResponse.Status.Value("OK")):
-            return iterm2.screen.ScreenContents(result.get_buffer_response)
-        raise iterm2.rpc.RPCException(
-            iterm2.api_pb2.GetBufferResponse.Status.Name(
-                result.get_buffer_response.status))
+        result = await async_get_screen_contents(
+            self.connection, self.session_id, None, True
+        )
+        if result.get_buffer_response.status == api_pb2.GetBufferResponse.Status.Value(
+            "OK"
+        ):
+            return ScreenContents(result.get_buffer_response)
+        raise RPCException(
+            api_pb2.GetBufferResponse.Status.Name(result.get_buffer_response.status)
+        )
 
     async def async_get_contents(
-            self,
-            first_line: int,
-            number_of_lines: int) -> typing.List['iterm2.screen.LineContents']:
+        self, first_line: int, number_of_lines: int
+    ) -> list[LineContents]:
         """
         Returns the contents of the session within a given range of lines.
 
@@ -385,31 +476,31 @@ class Session:
           print(list(map(lambda line: line.string, lines)))
 
         """
-        coord_range = iterm2.util.WindowedCoordRange(
-            iterm2.util.CoordRange(
-                iterm2.util.Point(0, first_line),
-                iterm2.util.Point(0, first_line + number_of_lines)))
+        coord_range = WindowedCoordRange(
+            CoordRange(Point(0, first_line), Point(0, first_line + number_of_lines))
+        )
 
-        response = await iterm2.rpc.async_get_screen_contents(
+        response = await async_get_screen_contents(
             connection=self.connection,
             session=self.session_id,
             windowed_coord_range=coord_range,
-            style=True)
+            style=True,
+        )
         # pylint: disable=no-member
-        if (response.get_buffer_response.status ==
-                iterm2.api_pb2.GetBufferResponse.Status.Value("OK")):
-            contents = iterm2.screen.ScreenContents(
-                response.get_buffer_response)
-            result = []
+        if (
+            response.get_buffer_response.status
+            == api_pb2.GetBufferResponse.Status.Value("OK")
+        ):
+            contents = ScreenContents(response.get_buffer_response)
+            result: list[LineContents] = []
             for i in range(contents.number_of_lines):
                 result.append(contents.line(i))
             return result
-        raise iterm2.rpc.RPCException(
-            iterm2.api_pb2.GetBufferResponse.Status.Name(
-                response.get_buffer_response.status))
+        raise RPCException(
+            api_pb2.GetBufferResponse.Status.Name(response.get_buffer_response.status)
+        )
 
-    def get_screen_streamer(
-            self, want_contents: bool = True) -> iterm2.screen.ScreenStreamer:
+    def get_screen_streamer(self, want_contents: bool = True) -> ScreenStreamer:
         """
         Provides a nice interface for receiving updates to the screen.
 
@@ -432,13 +523,13 @@ class Session:
               do_something(contents)
 
         """
-        return iterm2.screen.ScreenStreamer(
-            self.connection,
-            self.__session_id,
-            want_contents=want_contents)
+        return ScreenStreamer(
+            self.connection, self.__session_id, want_contents=want_contents
+        )
 
     async def async_send_text(
-            self, text: str, suppress_broadcast: bool = False) -> None:
+        self, text: str, suppress_broadcast: bool = False
+    ) -> None:
         """
         Send text as though the user had typed it.
 
@@ -450,8 +541,9 @@ class Session:
             * Example ":ref:`broadcast_example`"
             * Example ":ref:`targeted_input_example`"
         """
-        await iterm2.rpc.async_send_text(
-            self.connection, self.__session_id, text, suppress_broadcast)
+        await async_send_text(
+            self.connection, self.__session_id, text, suppress_broadcast
+        )
 
     async def async_screenshot(self) -> bytes:
         """
@@ -461,26 +553,24 @@ class Session:
 
         :throws: :class:`~iterm2.rpc.RPCException` if something goes wrong.
         """
-        iterm2.capabilities.check_supports_screenshot(self.connection)
+        check_supports_screenshot(self.connection)
         # pylint: disable=no-member
-        result = await iterm2.rpc.async_screenshot(
-            self.connection,
-            self.session_id)
-        if (result.screenshot_response.status ==
-                iterm2.api_pb2.ScreenshotResponse.Status.Value("OK")):
+        result = await async_screenshot(self.connection, self.session_id)
+        if result.screenshot_response.status == api_pb2.ScreenshotResponse.Status.Value(
+            "OK"
+        ):
             return result.screenshot_response.png
-        raise iterm2.rpc.RPCException(
-            iterm2.api_pb2.ScreenshotResponse.Status.Name(
-                result.screenshot_response.status))
+        raise RPCException(
+            api_pb2.ScreenshotResponse.Status.Name(result.screenshot_response.status)
+        )
 
     async def async_split_pane(
-            self,
-            vertical: bool = False,
-            before: bool = False,
-            profile: typing.Union[None, str] = None,
-            profile_customizations: typing.Union[
-                None,
-                iterm2.profile.LocalWriteOnlyProfile] = None) -> 'Session':
+        self,
+        vertical: bool = False,
+        before: bool = False,
+        profile: str | None = None,
+        profile_customizations: LocalWriteOnlyProfile | None = None,
+    ) -> Session:
         """
         Splits the pane, creating a new session.
 
@@ -499,37 +589,40 @@ class Session:
 
         .. seealso:: Example ":ref:`broadcast_example`"
         """
+        custom_dict: dict[str, str] | None
         if profile_customizations is None:
             custom_dict = None
         else:
             custom_dict = profile_customizations.values
 
-        result = await iterm2.rpc.async_split_pane(
+        result = await async_split_pane(
             self.connection,
             self.__session_id,
             vertical,
             before,
             profile,
-            profile_customizations=custom_dict)
+            profile_customizations=custom_dict,
+        )
         # pylint: disable=no-member
-        if (result.split_pane_response.status ==
-                iterm2.api_pb2.SplitPaneResponse.Status.Value("OK")):
+        if result.split_pane_response.status == api_pb2.SplitPaneResponse.Status.Value(
+            "OK"
+        ):
             new_session_id = result.split_pane_response.session_id[0]
             assert Session.delegate
             session = await Session.delegate.session_delegate_create_session(
-                new_session_id)
+                new_session_id
+            )
             if session:
                 return session
-            raise SplitPaneException(
-                "No such session {}".format(new_session_id))
+            raise SplitPaneException(f"No such session {new_session_id}")
         # pylint: disable=no-member
         raise SplitPaneException(
-            iterm2.api_pb2.SplitPaneResponse.Status.Name(
-                result.split_pane_response.status))
+            api_pb2.SplitPaneResponse.Status.Name(result.split_pane_response.status)
+        )
 
     async def async_set_profile_properties(
-            self,
-            write_only_profile: iterm2.profile.LocalWriteOnlyProfile) -> None:
+        self, write_only_profile: LocalWriteOnlyProfile
+    ) -> None:
         """
         Sets the value of properties in this session.
 
@@ -546,40 +639,32 @@ class Session:
           * Example ":ref:`settabcolor_example`"
           * Example ":ref:`increase_font_size_example`"
         """
-        if iterm2.capabilities.supports_multiple_set_profile_properties(
-                self.connection):
-            assignments: typing.List[typing.Tuple[str, str]] = []
-            for key, json_value in write_only_profile.values.items():
-                assignments += [(key, json_value)]
-            response = await iterm2.rpc.async_set_profile_properties_json(
-                self.connection,
-                self.session_id,
-                assignments)
+        if supports_multiple_set_profile_properties(self.connection):
+            assignments = list(write_only_profile.values.items())
+            response = await async_set_profile_properties_json(
+                self.connection, self.session_id, assignments
+            )
             status = response.set_profile_property_response.status
             # pylint: disable=no-member
-            if (status != iterm2.api_pb2.SetProfilePropertyResponse.
-                    Status.Value("OK")):
-                raise iterm2.rpc.RPCException(
-                    iterm2.api_pb2.SetProfilePropertyResponse.Status.Name(
-                        status))
+            if status != api_pb2.SetProfilePropertyResponse.Status.Value("OK"):
+                raise RPCException(
+                    api_pb2.SetProfilePropertyResponse.Status.Name(status)
+                )
             return
 
         # Deprecated code path, in use by 3.3.0beta9 and earlier.
         for key, json_value in write_only_profile.values.items():
-            response = await iterm2.rpc.async_set_profile_property_json(
-                self.connection,
-                self.session_id,
-                key,
-                json_value)
+            response = await async_set_profile_property_json(
+                self.connection, self.session_id, key, json_value
+            )
             status = response.set_profile_property_response.status
             # pylint: disable=no-member
-            if (status != iterm2.api_pb2.SetProfilePropertyResponse.Status.
-                    Value("OK")):
-                raise iterm2.rpc.RPCException(
-                    iterm2.api_pb2.SetProfilePropertyResponse.Status.Name(
-                        status))
+            if status != api_pb2.SetProfilePropertyResponse.Status.Value("OK"):
+                raise RPCException(
+                    api_pb2.SetProfilePropertyResponse.Status.Name(status)
+                )
 
-    async def async_get_profile(self) -> iterm2.profile.Profile:
+    async def async_get_profile(self) -> Profile:
         """
         Fetches the profile of this session
 
@@ -594,20 +679,18 @@ class Session:
             * Example ":ref:`current_preset_example`"
             * Example ":ref:`random_color_example`"
         """
-        response = await iterm2.rpc.async_get_profile(
-            self.connection, self.__session_id)
+        response = await async_get_profile(self.connection, self.__session_id)
         status = response.get_profile_property_response.status
         # pylint: disable=no-member
-        if status == iterm2.api_pb2.GetProfilePropertyResponse.Status.Value(
-                "OK"):
-            return iterm2.profile.Profile(
+        if status == api_pb2.GetProfilePropertyResponse.Status.Value("OK"):
+            return Profile(
                 self.__session_id,
                 self.connection,
-                response.get_profile_property_response.properties)
-        raise iterm2.rpc.RPCException(
-            iterm2.api_pb2.GetProfilePropertyResponse.Status.Name(status))
+                response.get_profile_property_response.properties,
+            )
+        raise RPCException(api_pb2.GetProfilePropertyResponse.Status.Name(status))
 
-    async def async_set_profile(self, profile: iterm2.profile.Profile):
+    async def async_set_profile(self, profile: Profile) -> None:
         """
         Changes this session's profile.
 
@@ -631,18 +714,15 @@ class Session:
 
         .. seealso:: Example ":ref:`cls_example`"
         """
-        response = await iterm2.rpc.async_inject(
-            self.connection, data, [self.__session_id])
+        response = await async_inject(self.connection, data, [self.__session_id])
         status = response.inject_response.status[0]
         # pylint: disable=no-member
-        if status != iterm2.api_pb2.InjectResponse.Status.Value("OK"):
-            raise iterm2.rpc.RPCException(
-                iterm2.api_pb2.InjectResponse.Status.Name(status))
+        if status != api_pb2.InjectResponse.Status.Value("OK"):
+            raise RPCException(api_pb2.InjectResponse.Status.Name(status))
 
     async def async_activate(
-            self,
-            select_tab: bool = True,
-            order_window_front: bool = True) -> None:
+        self, select_tab: bool = True, order_window_front: bool = True
+    ) -> None:
         """
         Makes the session the active session in its tab.
 
@@ -653,14 +733,15 @@ class Session:
 
         .. seealso:: Example ":ref:`broadcast_example`"
         """
-        await iterm2.rpc.async_activate(
+        await async_activate(
             self.connection,
             True,
             select_tab,
             order_window_front,
-            session_id=self.__session_id)
+            session_id=self.__session_id,
+        )
 
-    async def async_set_variable(self, name: str, value: typing.Any):
+    async def async_set_variable(self, name: str, value: Any) -> None:
         """
         Sets a user-defined variable in the session.
 
@@ -674,18 +755,15 @@ class Session:
 
         .. seealso:: Example ":ref:`escindicator_example`"
         """
-        result = await iterm2.rpc.async_variable(
-            self.connection,
-            self.__session_id,
-            [(name, json.dumps(value))],
-            [])
+        result = await async_variable(
+            self.connection, self.__session_id, [(name, json.dumps(value))], []
+        )
         status = result.variable_response.status
         # pylint: disable=no-member
-        if status != iterm2.api_pb2.VariableResponse.Status.Value("OK"):
-            raise iterm2.rpc.RPCException(
-                iterm2.api_pb2.VariableResponse.Status.Name(status))
+        if status != api_pb2.VariableResponse.Status.Value("OK"):
+            raise RPCException(api_pb2.VariableResponse.Status.Name(status))
 
-    async def async_get_variable(self, name: str) -> typing.Any:
+    async def async_get_variable(self, name: str) -> Any:
         """
         Fetches a session variable.
 
@@ -700,13 +778,11 @@ class Session:
 
         .. seealso:: Example ":ref:`colorhost_example`"
         """
-        result = await iterm2.rpc.async_variable(
-            self.connection, self.__session_id, [], [name])
+        result = await async_variable(self.connection, self.__session_id, [], [name])
         status = result.variable_response.status
         # pylint: disable=no-member
-        if status != iterm2.api_pb2.VariableResponse.Status.Value("OK"):
-            raise iterm2.rpc.RPCException(
-                iterm2.api_pb2.VariableResponse.Status.Name(status))
+        if status != api_pb2.VariableResponse.Status.Value("OK"):
+            raise RPCException(api_pb2.VariableResponse.Status.Name(status))
         return json.loads(result.variable_response.values[0])
 
     async def async_restart(self, only_if_exited: bool = False) -> None:
@@ -719,13 +795,13 @@ class Session:
 
         :throws: :class:`~iterm2.rpc.RPCException` if something goes wrong.
         """
-        result = await iterm2.rpc.async_restart_session(
-            self.connection, self.__session_id, only_if_exited)
+        result = await async_restart_session(
+            self.connection, self.__session_id, only_if_exited
+        )
         status = result.restart_session_response.status
         # pylint: disable=no-member
-        if status != iterm2.api_pb2.RestartSessionResponse.Status.Value("OK"):
-            raise iterm2.rpc.RPCException(
-                iterm2.api_pb2.RestartSessionResponse.Status.Name(status))
+        if status != api_pb2.RestartSessionResponse.Status.Value("OK"):
+            raise RPCException(api_pb2.RestartSessionResponse.Status.Name(status))
 
     async def async_close(self, force: bool = False) -> None:
         """
@@ -736,15 +812,15 @@ class Session:
 
         :throws: :class:`~iterm2.rpc.RPCException` if something goes wrong.
         """
-        result = await iterm2.rpc.async_close(
-            self.connection, sessions=[self.__session_id], force=force)
+        result = await async_close(
+            self.connection, sessions=[self.__session_id], force=force
+        )
         status = result.close_response.statuses[0]
         # pylint: disable=no-member
-        if status != iterm2.api_pb2.CloseResponse.Status.Value("OK"):
-            raise iterm2.rpc.RPCException(
-                iterm2.api_pb2.CloseResponse.Status.Name(status))
+        if status != api_pb2.CloseResponse.Status.Value("OK"):
+            raise RPCException(api_pb2.CloseResponse.Status.Name(status))
 
-    async def async_set_grid_size(self, size: iterm2.util.Size) -> None:
+    async def async_set_grid_size(self, size: Size) -> None:
         """Sets the visible size of a session.
 
         Note: This is meant for tabs that contain a single pane. If split panes
@@ -758,7 +834,7 @@ class Session:
         await self._async_set_property("grid_size", size.json)
 
     @property
-    def grid_size(self) -> iterm2.util.Size:
+    def grid_size(self) -> api_pb2.Size | None:
         """Returns the size of the visible part of the session in cells.
 
         :returns: The size of the visible part of the session in cells.
@@ -774,21 +850,67 @@ class Session:
         """
         await self._async_set_property("buried", json.dumps(buried))
 
-    async def _async_set_property(self, key, json_value):
+    async def async_get_session_note(self) -> SessionNote:
+        """Returns this session's Session Note state.
+
+        :throws: :class:`~iterm2.rpc.RPCException` if something goes wrong.
+        """
+        check_supports_session_note(self.connection)
+        response = await async_get_property(
+            self.connection, "session_note", session_id=self.session_id
+        )
+        status = response.get_property_response.status
+        # pylint: disable=no-member
+        if status != api_pb2.GetPropertyResponse.Status.Value("OK"):
+            raise RPCException(api_pb2.GetPropertyResponse.Status.Name(status))
+        value = json.loads(response.get_property_response.json_value)
+        return SessionNote(value["text"], value["visible"], value["collapsed"])
+
+    async def async_set_session_note(
+        self,
+        text: str | None = None,
+        visible: bool | None = None,
+        collapsed: bool | None = None,
+    ) -> None:
+        """Updates selected fields of this session's Session Note.
+
+        Omitted fields retain their current values. Set ``text`` to an empty
+        string to remove the note. Showing a note does not move keyboard focus.
+
+        :param text: New plain-text contents, or ``None`` to preserve them.
+        :param visible: Whether the note is shown, or ``None`` to preserve it.
+        :param collapsed: Whether the note is collapsed, or ``None`` to
+            preserve it.
+        :throws: :class:`ValueError` if no fields are supplied.
+        :throws: :class:`~iterm2.rpc.RPCException` if iTerm2 rejects the update.
+        """
+        check_supports_session_note(self.connection)
+        value: dict[str, str | bool] = {}
+        if text is not None:
+            value["text"] = text
+        if visible is not None:
+            value["visible"] = visible
+        if collapsed is not None:
+            value["collapsed"] = collapsed
+        if not value:
+            raise ValueError("At least one Session Note field is required")
+        await self._async_set_property("session_note", json.dumps(value))
+
+    async def _async_set_property(self, key: str, json_value: str):
         """Sets a property on this session.
 
         :throws: :class:`~iterm2.rpc.RPCException` if something goes wrong.
         """
-        response = await iterm2.rpc.async_set_property(
-            self.connection, key, json_value, session_id=self.session_id)
+        response = await async_set_property(
+            self.connection, key, json_value, session_id=self.session_id
+        )
         status = response.set_property_response.status
         # pylint: disable=no-member
-        if status != iterm2.api_pb2.SetPropertyResponse.Status.Value("OK"):
-            raise iterm2.rpc.RPCException(
-                iterm2.api_pb2.SetPropertyResponse.Status.Name(status))
+        if status != api_pb2.SetPropertyResponse.Status.Value("OK"):
+            raise RPCException(api_pb2.SetPropertyResponse.Status.Name(status))
         return response
 
-    async def async_get_selection(self) -> iterm2.selection.Selection:
+    async def async_get_selection(self) -> Selection:
         """
         :returns: The selected regions of this session. The selection will be
             empty if there is no selected text.
@@ -797,39 +919,39 @@ class Session:
 
         .. seealso:: Example ":ref:`georges_title_example`"
         """
-        response = await iterm2.rpc.async_get_selection(
-            self.connection, self.session_id)
+        response = await async_get_selection(self.connection, self.session_id)
         status = response.selection_response.status
         # pylint: disable=no-member
-        if status != iterm2.api_pb2.SelectionResponse.Status.Value("OK"):
-            raise iterm2.rpc.RPCException(
-                iterm2.api_pb2.SelectionResponse.Status.Name(status))
-        subs = []
-        for sub_proto in (response.selection_response.get_selection_response.
-                          selection.sub_selections):
-            start = iterm2.util.Point(
+        if status != api_pb2.SelectionResponse.Status.Value("OK"):
+            raise RPCException(api_pb2.SelectionResponse.Status.Name(status))
+        subs: list[SubSelection] = []
+        for sub_proto in (
+            response.selection_response.get_selection_response.selection.sub_selections
+        ):
+            start = Point(
                 sub_proto.windowed_coord_range.coord_range.start.x,
-                sub_proto.windowed_coord_range.coord_range.start.y)
-            end = iterm2.util.Point(
+                sub_proto.windowed_coord_range.coord_range.start.y,
+            )
+            end = Point(
                 sub_proto.windowed_coord_range.coord_range.end.x,
-                sub_proto.windowed_coord_range.coord_range.end.y)
-            coord_range = iterm2.util.CoordRange(start, end)
-            column_range = iterm2.util.Range(
+                sub_proto.windowed_coord_range.coord_range.end.y,
+            )
+            coord_range = CoordRange(start, end)
+            column_range = Range(
                 sub_proto.windowed_coord_range.columns.location,
-                sub_proto.windowed_coord_range.columns.length)
-            windowed_coord_range = iterm2.util.WindowedCoordRange(
-                coord_range, column_range)
+                sub_proto.windowed_coord_range.columns.length,
+            )
+            windowed_coord_range = WindowedCoordRange(coord_range, column_range)
 
-            sub = iterm2.SubSelection(
+            sub = SubSelection(
                 windowed_coord_range,
-                iterm2.selection.SelectionMode.from_proto_value(
-                    sub_proto.selection_mode),
-                sub_proto.connected)
+                SelectionMode.from_proto_value(sub_proto.selection_mode),
+                sub_proto.connected,
+            )
             subs.append(sub)
-        return iterm2.Selection(subs)
+        return Selection(subs)
 
-    async def async_get_selection_text(
-            self, selection: iterm2.selection.Selection) -> str:
+    async def async_get_selection_text(self, selection: Selection) -> str:
         """Fetches the text within a selection region.
 
         :param selection: A :class:`~iterm2.selection.Selection` defining a
@@ -841,13 +963,14 @@ class Session:
 
         :returns: A string with the selection's contents. Discontiguous
             selections are combined with newlines."""
+        grid_size = self.grid_size
+        if grid_size is None:
+            raise RPCException("Session has no grid size (it may be buried or a proxy)")
         return await selection.async_get_string(
-            self.connection,
-            self.session_id,
-            self.grid_size.width)
+            self.connection, self.session_id, grid_size.width
+        )
 
-    async def async_set_selection(
-            self, selection: iterm2.selection.Selection) -> None:
+    async def async_set_selection(self, selection: Selection) -> None:
         """
         :param selection: The regions of text to select.
 
@@ -855,13 +978,13 @@ class Session:
 
         .. seealso:: Example ":ref:`zoom_on_screen_example`"
         """
-        response = await iterm2.rpc.async_set_selection(
-            self.connection, self.session_id, selection)
+        response = await async_set_selection(
+            self.connection, self.session_id, selection
+        )
         status = response.selection_response.status
         # pylint: disable=no-member
-        if status != iterm2.api_pb2.SelectionResponse.Status.Value("OK"):
-            raise iterm2.rpc.RPCException(
-                iterm2.api_pb2.SelectionResponse.Status.Name(status))
+        if status != api_pb2.SelectionResponse.Status.Value("OK"):
+            raise RPCException(api_pb2.SelectionResponse.Status.Name(status))
 
     async def async_get_line_info(self) -> SessionLineInfo:
         """
@@ -872,23 +995,23 @@ class Session:
 
         .. seealso:: Example ":ref:`zoom_on_screen_example`"
         """
-        response = await iterm2.rpc.async_get_property(
-            self.connection,
-            "number_of_lines",
-            session_id=self.session_id)
+        response = await async_get_property(
+            self.connection, "number_of_lines", session_id=self.session_id
+        )
         status = response.get_property_response.status
         # pylint: disable=no-member
-        if status != iterm2.api_pb2.GetPropertyResponse.Status.Value("OK"):
-            raise iterm2.rpc.RPCException(
-                iterm2.api_pb2.GetPropertyResponse.Status.Name(status))
+        if status != api_pb2.GetPropertyResponse.Status.Value("OK"):
+            raise RPCException(api_pb2.GetPropertyResponse.Status.Name(status))
         dictionary = json.loads(response.get_property_response.json_value)
-        values = (dictionary["grid"],
-                  dictionary["history"],
-                  dictionary["overflow"],
-                  dictionary["first_visible"])
+        values = (
+            dictionary["grid"],
+            dictionary["history"],
+            dictionary["overflow"],
+            dictionary["first_visible"],
+        )
         return SessionLineInfo(values)
 
-    async def async_set_name(self, name: str):
+    async def async_set_name(self, name: str) -> None:
         """Changes the session's name.
 
         This is equivalent to editing the session's name manually in the Edit
@@ -898,14 +1021,10 @@ class Session:
 
         :throws: :class:`~iterm2.rpc.RPCException` if something goes wrong.
         """
-        invocation = iterm2.util.invocation_string(
-            "iterm2.set_name",
-            {"name": name})
-        await iterm2.rpc.async_invoke_method(
-            self.connection, self.session_id, invocation, -1)
+        invocation = invocation_string("iterm2.set_name", {"name": name})
+        await async_invoke_method(self.connection, self.session_id, invocation, -1)
 
-    async def async_run_tmux_command(
-            self, command: str, timeout: float = -1) -> str:
+    async def async_run_tmux_command(self, command: str, timeout: float = -1) -> str:
         """Invoke a tmux command and return its result. Raises an exception if
         this session is not a tmux integration session.
 
@@ -917,14 +1036,12 @@ class Session:
 
         :throws: :class:`~iterm2.rpc.RPCException` if something goes wrong.
         """
-        invocation = iterm2.util.invocation_string(
-            "iterm2.run_tmux_command",
-            {"command": command})
-        return await iterm2.rpc.async_invoke_method(
-            self.connection, self.session_id, invocation, timeout)
+        invocation = invocation_string("iterm2.run_tmux_command", {"command": command})
+        return await async_invoke_method(
+            self.connection, self.session_id, invocation, timeout
+        )
 
-    async def async_invoke_function(
-            self, invocation: str, timeout: float = -1):
+    async def async_invoke_function(self, invocation: str, timeout: float = -1) -> Any:
         """
         Invoke an RPC. Could be a function registered by this or another
         script, or a built-in function.
@@ -943,37 +1060,38 @@ class Session:
 
         :throws: :class:`~iterm2.rpc.RPCException` if something goes wrong.
         """
-        response = await iterm2.rpc.async_invoke_function(
-            self.connection,
-            invocation,
-            session_id=self.session_id,
-            timeout=timeout)
-        which = response.invoke_function_response.WhichOneof('disposition')
+        response = await async_invoke_function(
+            self.connection, invocation, session_id=self.session_id, timeout=timeout
+        )
+        which = response.invoke_function_response.WhichOneof("disposition")
         # pylint: disable=no-member
-        if which == 'error':
-            if (response.invoke_function_response.error.status ==
-                    iterm2.api_pb2.InvokeFunctionResponse.Status.
-                    Value("TIMEOUT")):
-                raise iterm2.rpc.RPCException("Timeout")
-            raise iterm2.rpc.RPCException("{}: {}".format(
-                iterm2.api_pb2.InvokeFunctionResponse.Status.Name(
-                    response.invoke_function_response.error.status),
-                response.invoke_function_response.error.error_reason))
-        return json.loads(
-            response.invoke_function_response.success.json_result)
+        if which == "error":
+            if (
+                response.invoke_function_response.error.status
+                == api_pb2.InvokeFunctionResponse.Status.Value("TIMEOUT")
+            ):
+                raise RPCException("Timeout")
+            raise RPCException(
+                "{}: {}".format(
+                    api_pb2.InvokeFunctionResponse.Status.Name(
+                        response.invoke_function_response.error.status
+                    ),
+                    response.invoke_function_response.error.error_reason,
+                )
+            )
+        return json.loads(response.invoke_function_response.success.json_result)
 
-    async def async_get_coprocess(self) -> typing.Optional[str]:
+    async def async_get_coprocess(self) -> str | None:
         """
         Returns the command line of the currently running coprocess, if any.
 
         :returns: Whether there is a coprocess currently running.
         """
-        iterm2.capabilities.check_supports_coprocesses(self.connection)
-        invocation = iterm2.util.invocation_string(
-            "iterm2.get_coprocess",
-            {})
-        return await iterm2.rpc.async_invoke_method(
-            self.connection, self.session_id, invocation, -1)
+        check_supports_coprocesses(self.connection)
+        invocation = invocation_string("iterm2.get_coprocess", {})
+        return await async_invoke_method(
+            self.connection, self.session_id, invocation, -1
+        )
 
     async def async_stop_coprocess(self) -> bool:
         """
@@ -981,15 +1099,13 @@ class Session:
 
         :returns: True if a coprocess was stopped or False if non was running.
         """
-        iterm2.capabilities.check_supports_coprocesses(self.connection)
-        invocation = iterm2.util.invocation_string(
-            "iterm2.stop_coprocess",
-            {})
+        check_supports_coprocesses(self.connection)
+        invocation = invocation_string("iterm2.stop_coprocess", {})
         return bool(
-            await iterm2.rpc.async_invoke_method(
-                self.connection, self.session_id, invocation, -1))
+            await async_invoke_method(self.connection, self.session_id, invocation, -1)
+        )
 
-    async def async_add_annotation(self, range: iterm2.util.CoordRange, text: str):
+    async def async_add_annotation(self, range: CoordRange, text: str) -> None:
         """
         Adds an annotation.
 
@@ -1000,15 +1116,16 @@ class Session:
         :param range: The range to annotate.
         :param text: The string to annotate with.
         """
-        iterm2.capabilities.check_supports_add_annotation(self.connection)
-        args = {
+        check_supports_add_annotation(self.connection)
+        args: dict[str, Any] = {
             "startX": range.start.x,
             "startY": range.start.y,
             "endX": range.end.x,
             "endY": range.end.y,
-            "text": text}
-        invocation = iterm2.util.invocation_string("iterm2.add_annotation", args)
-        await iterm2.rpc.async_invoke_method(self.connection, self.session_id, invocation, -1)
+            "text": text,
+        }
+        invocation = invocation_string("iterm2.add_annotation", args)
+        await async_invoke_method(self.connection, self.session_id, invocation, -1)
 
     async def async_run_coprocess(self, command_line: str) -> bool:
         """
@@ -1018,13 +1135,13 @@ class Session:
 
         :returns: True if it was launched or False if one was already running.
         """
-        iterm2.capabilities.check_supports_coprocesses(self.connection)
-        invocation = iterm2.util.invocation_string(
-            "iterm2.run_coprocess",
-            {"commandLine": command_line})
+        check_supports_coprocesses(self.connection)
+        invocation = invocation_string(
+            "iterm2.run_coprocess", {"commandLine": command_line}
+        )
         return bool(
-            await iterm2.rpc.async_invoke_method(
-                self.connection, self.session_id, invocation, -1))
+            await async_invoke_method(self.connection, self.session_id, invocation, -1)
+        )
 
     async def async_load_url(self, url: str) -> None:
         """
@@ -1041,17 +1158,55 @@ class Session:
 
         .. seealso:: Example ":ref:`open_browser_tab_example`"
         """
-        iterm2.capabilities.check_supports_load_url(self.connection)
-        invocation = iterm2.util.invocation_string(
-            "iterm2.load_url",
-            {"url": url})
-        await iterm2.rpc.async_invoke_method(
-            self.connection, self.session_id, invocation, -1)
+        check_supports_load_url(self.connection)
+        invocation = invocation_string("iterm2.load_url", {"url": url})
+        await async_invoke_method(self.connection, self.session_id, invocation, -1)
+
+    async def async_set_browser_toolbar_hidden(self, hidden: bool) -> None:
+        """
+        Hide (or show) the toolbar of a browser session: the navigation
+        buttons and URL bar. When hidden, the page fills the session. The
+        Web > Show Toolbar menu item and Open Location show it again.
+
+        :param hidden: Whether the toolbar should be hidden.
+
+        :raises: :class:`~iterm2.rpc.RPCException` if the session is not a
+            browser session.
+        """
+        invocation = invocation_string(
+            "iterm2.browser_set_toolbar_hidden", {"hidden": 1 if hidden else 0}
+        )
+        await async_invoke_method(self.connection, self.session_id, invocation, -1)
+
+    async def async_eval_javascript(self, js: str) -> Any:
+        """
+        Run JavaScript in the page shown by a browser session and return its result.
+
+        ``js`` is the body of an async function: it may use ``await`` and must
+        ``return`` the value it wants back. The value is JSON-encoded in the page
+        and decoded here, so it must be JSON-serializable.
+
+        Only http and https pages qualify. The first time a script runs
+        JavaScript on a site (such as ``https://example.com``), the user is
+        asked to approve it, and may choose to remember the answer.
+
+        :param js: The function body to run in the page.
+        :returns: The decoded return value.
+
+        :raises: :class:`~iterm2.rpc.RPCException` if the session is not a
+            browser session, the JavaScript throws (the exception's message is
+            included), or the user denies permission.
+        """
+        check_supports_browser_scripting(self.connection)
+        invocation = invocation_string("iterm2.browser_eval_js", {"js": js})
+        result = await async_invoke_method(
+            self.connection, self.session_id, invocation, -1
+        )
+        return json.loads(result) if isinstance(result, str) else result
 
     async def async_move_to_new_tab(
-            self,
-            window: typing.Optional['iterm2.window.Window'] = None,
-            tab_index: typing.Optional[int] = None) -> typing.Optional[str]:
+        self, window: Window | None = None, tab_index: int | None = None
+    ) -> str | None:
         """
         Move this session from a split pane into a new tab.
 
@@ -1072,27 +1227,27 @@ class Session:
             * :meth:`App.async_move_session
                 <iterm2.app.App.async_move_session>`
         """
-        iterm2.capabilities.check_supports_move_session_to_tab_or_window(
-            self.connection)
-        args: typing.Dict[str, typing.Any] = {"session": self.session_id}
+        check_supports_move_session_to_tab_or_window(self.connection)
+        args: dict[str, Any] = {"session": self.session_id}
         if window is not None:
             args["window_id"] = window.window_id
         if tab_index is not None:
             args["tab_index"] = tab_index
-        invocation = iterm2.util.invocation_string(
-            "iterm2.move_session_to_new_tab", args)
-        response = await iterm2.rpc.async_invoke_function(
-            self.connection, invocation)
-        which = response.invoke_function_response.WhichOneof('disposition')
-        if which == 'error':
-            raise iterm2.rpc.RPCException("{}: {}".format(
-                iterm2.api_pb2.InvokeFunctionResponse.Status.Name(
-                    response.invoke_function_response.error.status),
-                response.invoke_function_response.error.error_reason))
-        return json.loads(
-            response.invoke_function_response.success.json_result)
+        invocation = invocation_string("iterm2.move_session_to_new_tab", args)
+        response = await async_invoke_function(self.connection, invocation)
+        which = response.invoke_function_response.WhichOneof("disposition")
+        if which == "error":
+            raise RPCException(
+                "{}: {}".format(
+                    api_pb2.InvokeFunctionResponse.Status.Name(
+                        response.invoke_function_response.error.status
+                    ),
+                    response.invoke_function_response.error.error_reason,
+                )
+            )
+        return json.loads(response.invoke_function_response.success.json_result)
 
-    async def async_move_to_new_window(self) -> typing.Optional[str]:
+    async def async_move_to_new_window(self) -> str | None:
         """
         Move this session from a split pane into a new window.
 
@@ -1109,21 +1264,119 @@ class Session:
             * :meth:`App.async_move_session
                 <iterm2.app.App.async_move_session>`
         """
-        iterm2.capabilities.check_supports_move_session_to_tab_or_window(
-            self.connection)
-        invocation = iterm2.util.invocation_string(
-            "iterm2.move_session_to_new_window",
-            {"session": self.session_id})
-        response = await iterm2.rpc.async_invoke_function(
-            self.connection, invocation)
-        which = response.invoke_function_response.WhichOneof('disposition')
-        if which == 'error':
-            raise iterm2.rpc.RPCException("{}: {}".format(
-                iterm2.api_pb2.InvokeFunctionResponse.Status.Name(
-                    response.invoke_function_response.error.status),
-                response.invoke_function_response.error.error_reason))
-        return json.loads(
-            response.invoke_function_response.success.json_result)
+        check_supports_move_session_to_tab_or_window(self.connection)
+        invocation = invocation_string(
+            "iterm2.move_session_to_new_window", {"session": self.session_id}
+        )
+        response = await async_invoke_function(self.connection, invocation)
+        which = response.invoke_function_response.WhichOneof("disposition")
+        if which == "error":
+            raise RPCException(
+                "{}: {}".format(
+                    api_pb2.InvokeFunctionResponse.Status.Name(
+                        response.invoke_function_response.error.status
+                    ),
+                    response.invoke_function_response.error.error_reason,
+                )
+            )
+        return json.loads(response.invoke_function_response.success.json_result)
+
+    async def async_dock(self) -> None:
+        """
+        Moves this floating pane into its tab's split panes, to the right of
+        the split pane used most recently.
+
+        :throws: :class:`~iterm2.rpc.RPCException` if the session is not in a
+            floating pane or cannot be docked now.
+        """
+        await async_invoke_floating_pane_function(
+            self.connection, "iterm2.dock_floating_pane", {"session": self.session_id}
+        )
+
+    async def async_set_floating_frame(self, frame: Frame) -> None:
+        """
+        Moves and resizes this floating pane.
+
+        :param frame: The new frame in points, with the origin at the tab's
+            top left and y increasing downward, as `frame` reports it. The
+            size is rounded to whole cells and the frame is kept inside the
+            tab.
+
+        :throws: :class:`~iterm2.rpc.RPCException` if the session is not in a
+            floating pane or cannot be moved now.
+        :throws: ValueError if a coordinate or size is not a finite number.
+        """
+        values = [frame.origin.x, frame.origin.y, frame.size.width, frame.size.height]
+        if not all(math.isfinite(value) for value in values):
+            raise ValueError(f"The frame must be finite numbers: {values}")
+        await async_invoke_floating_pane_function(
+            self.connection,
+            "iterm2.set_floating_pane_frame",
+            {
+                "session": self.session_id,
+                "x": frame.origin.x,
+                "y": frame.origin.y,
+                "width": frame.size.width,
+                "height": frame.size.height,
+            },
+        )
+
+    async def async_bring_to_front(self) -> None:
+        """
+        Puts this floating pane in front of the tab's other floating panes.
+
+        :throws: :class:`~iterm2.rpc.RPCException` if the session is not in a
+            floating pane.
+        """
+        await async_invoke_floating_pane_function(
+            self.connection,
+            "iterm2.raise_floating_pane",
+            {"session": self.session_id, "to_front": True},
+        )
+
+    async def async_send_to_back(self) -> None:
+        """
+        Puts this floating pane behind the tab's other floating panes.
+
+        :throws: :class:`~iterm2.rpc.RPCException` if the session is not in a
+            floating pane.
+        """
+        await async_invoke_floating_pane_function(
+            self.connection,
+            "iterm2.raise_floating_pane",
+            {"session": self.session_id, "to_front": False},
+        )
+
+
+async def async_invoke_floating_pane_function(
+    connection: Connection, name: str, args: dict[str, Any]
+):
+    """Invokes one of iTerm2's floating pane functions and returns its result.
+
+    :param connection: A :class:`~iterm2.connection.Connection`.
+    :param name: The name of the floating pane function to invoke.
+    :param args: A dictionary of arguments to pass to the function.
+
+    :returns: The result of the function, or `None` if it returns nothing.
+
+    Do not call this yourself. It is shared by Session and Tab.
+    """
+    check_supports_floating_panes(connection)
+    invocation = invocation_string(name, args)
+    response = await async_invoke_function(connection, invocation)
+    which = response.invoke_function_response.WhichOneof("disposition")
+    if which == "error":
+        raise RPCException(
+            "{}: {}".format(
+                api_pb2.InvokeFunctionResponse.Status.Name(
+                    response.invoke_function_response.error.status
+                ),
+                response.invoke_function_response.error.error_reason,
+            )
+        )
+    result = response.invoke_function_response.success.json_result
+    # A function that returns nothing gives an empty result.
+    return json.loads(result) if result else None
 
 
 class InvalidSessionId(Exception):
@@ -1139,12 +1392,18 @@ class ProxySession(Session):
     functionality since it doesn't make sense to, for example, get the screen
     contents of "all" sessions.
     """
-    def __init__(self, connection, session_id):
-        super().__init__(connection, session_id)
+
+    def __init__(self, connection: Connection, session_id: str) -> None:
+        # Proxies have no split tree link, so describe the abstract session
+        # ID with a summary instead.
+        summary = api_pb2.SessionSummary()
+        summary.unique_identifier = session_id
+        super().__init__(connection, None, summary)
+        self.buried = False
         self.__session_id = session_id
 
     def __repr__(self):
-        return "<ProxySession %s>" % self.__session_id
+        return f"<ProxySession {self.__session_id}>"
 
-    def pretty_str(self, indent=""):
-        return indent + "ProxySession %s" % self.__session_id
+    def pretty_str(self, indent: str = "") -> str:
+        return f"{indent}ProxySession {self.__session_id}"

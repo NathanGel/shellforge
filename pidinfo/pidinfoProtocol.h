@@ -6,6 +6,7 @@
 //
 
 #import <Foundation/Foundation.h>
+#import "iTermShellArguments.h"
 
 @class iTermGitState;
 @class iTermDirectoryEntry;
@@ -34,8 +35,26 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)statFile:(NSString *)path
        withReply:(void (^)(struct stat statbuf, int error))reply;
 
+// Runs a single-command `script` in `shell`. `mode` picks which startup files
+// run (see iTermShellRunMode): bare for the fast path when the exported
+// environment suffices (SSH_AUTH_SOCK); interactive for variables set in the rc
+// files (CLAUDE_CONFIG_DIR); login-interactive for PATH as a terminal session
+// sees it. Note that a login bash reads .bash_profile and not .bashrc unless the
+// profile sources it, so a variable set only in .bashrc is seen in interactive
+// mode but not in login-interactive mode. Anything beyond bare can cost seconds
+// when the startup files are heavy. Either way the command's stdout is
+// captured via a private FIFO, so rc-file/greeting/banner output written to the
+// shell's own stdout is kept out of `output`. `error` is the shell's stderr;
+// `status` is the command's exit status, or a negative sentinel on internal
+// failure (see the implementation) so callers can distinguish "could not run"
+// from "ran and produced nothing".
+//
+// PRECONDITION: `script` must be a single command. The FIFO capture appends a
+// `> fifo` redirect, which in a compound script (`a && b`, `a; b`) would bind
+// only the last command and silently drop earlier output.
 - (void)runShellScript:(NSString *)script
                  shell:(NSString *)shell
+                  mode:(iTermShellRunMode)mode
              withReply:(void (^)(NSData * _Nullable output,
                                  NSData * _Nullable error,
                                  int status))reply;

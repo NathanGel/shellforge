@@ -210,20 +210,27 @@ respectingTimeoutSetting:(BOOL)respectingTimeoutSetting
 }
 
 - (NSData *)didFailToLoadFromURL:(NSURL *)url withError:(NSError *)error {
-    NSAlert *alert = [[NSAlert alloc] init];
-    alert.messageText = @"Failed to load settings from URL. Falling back to local copy.";
-    alert.informativeText = [NSString stringWithFormat:@"HTTP request failed: %@",
-                             [error localizedDescription] ?: @"unknown error"];
-    [alert addButtonWithTitle:@"OK"];
-    [alert addButtonWithTitle:@"Reveal in Settings"];
+    NSString *heading = NSLocalizedStringWithDefaultValue(@"RemotePreferences.FailedToLoadFromURL", nil, [NSBundle mainBundle], @"Failed to load settings from URL. Falling back to local copy.", @"Alert title when settings could not be loaded from a URL");
+    NSString *body = [NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"RemotePreferences.HTTPRequestFailed", nil, [NSBundle mainBundle], @"HTTP request failed: %@", @"Alert detail describing an HTTP request failure; %@ is the error description"),
+                      [error localizedDescription] ?: NSLocalizedStringWithDefaultValue(@"RemotePreferences.UnknownError", nil, [NSBundle mainBundle], @"unknown error", @"Fallback text when the error description is unavailable")];
+    // Labels, or iTermWarningActions for buttons that only make sense at this Mac.
+    NSMutableArray *actions = [NSMutableArray array];
+    [actions addObject:iTermLocalizedOK()];
+    [actions addObject:[iTermWarningAction localOnlyActionWithLabel:NSLocalizedStringWithDefaultValue(@"RemotePreferences.RevealInSettings", nil, [NSBundle mainBundle], @"Reveal in Settings", @"Button that reveals the relevant setting in Settings")]];
     if ([error.domain isEqual:NSURLErrorDomain] && error.code == NSURLErrorTimedOut) {
-        [alert addButtonWithTitle:@"Try Again Without Timeout"];
+        [actions addObject:NSLocalizedStringWithDefaultValue(@"RemotePreferences.TryAgainWithoutTimeout", nil, [NSBundle mainBundle], @"Try Again Without Timeout", @"Button that retries loading without a timeout")];
     }
 
-    const NSModalResponse response = [alert runModal];
-    if (response == NSAlertSecondButtonReturn) {
+    const iTermWarningSelection selection = [iTermWarning showWarningWithTitle:body
+                                                                       actions:actions
+                                                                     accessory:nil
+                                                                    identifier:nil
+                                                                   silenceable:kiTermWarningTypePersistent
+                                                                       heading:heading
+                                                                        window:nil];
+    if (selection == kiTermWarningSelection1) {
         [[PreferencePanel sharedInstance] openToPreferenceWithKey:kPreferenceKeyLoadPrefsFromCustomFolder];
-    } else if (response == NSAlertThirdButtonReturn) {
+    } else if (selection == kiTermWarningSelection2) {
         NSError *innerError = nil;
         NSData *data = [self loadFromURL:url respectingTimeoutSetting:NO error:&innerError];
         if (!data || innerError) {
@@ -247,12 +254,12 @@ respectingTimeoutSetting:(BOOL)respectingTimeoutSetting
         if ([promptURL isEqual:filename]) {
             DLog(@"Prompting");
             NSString *theTitle = [NSString stringWithFormat:
-                                  @"Load settings from URL? Some changes were made to the local copy that will be lost."];
+                                  NSLocalizedStringWithDefaultValue(@"RemotePreferences.LoadFromURLPrompt", nil, [NSBundle mainBundle], @"Load settings from URL? Some changes were made to the local copy that will be lost.", @"Prompt asking whether to load settings from a URL and lose local changes")];
             const iTermWarningSelection selection =
             [iTermWarning showWarningWithTitle:theTitle
-                                       actions:@[ @"Keep Local Changes",
-                                                  @"Disable Loading from URL",
-                                                  @"Discard Local Changes" ]
+                                       actions:@[ NSLocalizedStringWithDefaultValue(@"RemotePreferences.KeepLocalChanges", nil, [NSBundle mainBundle], @"Keep Local Changes", @"Button that keeps local changes"),
+                                                  NSLocalizedStringWithDefaultValue(@"RemotePreferences.DisableLoadingFromURL", nil, [NSBundle mainBundle], @"Disable Loading from URL", @"Button that disables loading settings from a URL"),
+                                                  NSLocalizedStringWithDefaultValue(@"RemotePreferences.DiscardLocalChanges", nil, [NSBundle mainBundle], @"Discard Local Changes", @"Button that discards local changes") ]
                                     identifier:@"NoSyncPromptBeforeLoadingPrefsFromURL"
                                    silenceable:kiTermWarningTypePersistent
                                         window:nil];
@@ -295,20 +302,30 @@ respectingTimeoutSetting:(BOOL)respectingTimeoutSetting
     if (!remotePrefs.count) {
         RLog(@"It's empty");
         if ([[self customFolderOrURL] length] == 0) {
-            NSAlert *alert = [[NSAlert alloc] init];
-            alert.messageText = @"Error Loading Settings";
-            alert.informativeText = @"You have enabled “Load settings from a custom folder or URL” in settings but the location is not set.";
-            [alert addButtonWithTitle:@"Don’t Load Remote Settings"];
-            [alert addButtonWithTitle:@"Cancel"];
-            if ([alert runModal] == NSAlertFirstButtonReturn) {
+            const iTermWarningSelection selection =
+                [iTermWarning showWarningWithTitle:NSLocalizedStringWithDefaultValue(@"RemotePreferences.LocationNotSet", nil, [NSBundle mainBundle], @"You have enabled “Load settings from a custom folder or URL” in settings but the location is not set.", @"Alert detail explaining the custom settings location is not set")
+                                           actions:@[ NSLocalizedStringWithDefaultValue(@"RemotePreferences.DontLoadRemoteSettings", nil, [NSBundle mainBundle], @"Don’t Load Remote Settings", @"Button that disables loading remote settings"),
+                                                      iTermLocalizedCancel() ]
+                                     actionMapping:nil
+                                         accessory:nil
+                                        identifier:nil
+                                       silenceable:kiTermWarningTypePersistent
+                                           heading:NSLocalizedStringWithDefaultValue(@"RemotePreferences.ErrorLoadingSettings", nil, [NSBundle mainBundle], @"Error Loading Settings", @"Alert title when settings could not be loaded")
+                                       cancelLabel:iTermLocalizedCancel()
+                                            window:nil];
+            if (selection == kiTermWarningSelection0) {
                 [iTermPreferences setBool:NO forKey:kPreferenceKeyLoadPrefsFromCustomFolder];
             }
         } else {
-            NSAlert *alert = [[NSAlert alloc] init];
-            alert.messageText = @"Failed to load settings from custom directory. Falling back to local copy.";
-            alert.informativeText = [NSString stringWithFormat:@"Missing or malformed file at \"%@\"",
-                                     [self customFolderOrURL]];
-            [alert runModal];
+            NSString *body = [NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"RemotePreferences.MissingOrMalformedFile", nil, [NSBundle mainBundle], @"Missing or malformed file at “%@”", @"Alert detail naming the missing or malformed file; %@ is the path"),
+                              [self customFolderOrURL]];
+            [iTermWarning showWarningWithTitle:body
+                                       actions:@[ iTermLocalizedOK() ]
+                                     accessory:nil
+                                    identifier:nil
+                                   silenceable:kiTermWarningTypePersistent
+                                       heading:NSLocalizedStringWithDefaultValue(@"RemotePreferences.FailedToLoadFromDirectory", nil, [NSBundle mainBundle], @"Failed to load settings from custom directory. Falling back to local copy.", @"Alert title when settings could not be loaded from the custom directory")
+                                        window:nil];
         }
     }
     DLog(@"Done");
@@ -340,11 +357,11 @@ respectingTimeoutSetting:(BOOL)respectingTimeoutSetting
     DLog(@"saveLocalUserDefaultsToRemotePrefs interactive=%@\n%@", @(interactive), [NSThread callStackSymbols]);
     if ([self remotePrefsHaveChanged]) {
         NSString *theTitle =
-            [NSString stringWithFormat:@"Settings at %@ changed since iTerm2 started. "
-                                       @"Overwrite it?",
+            [NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"RemotePreferences.RemoteChangedOverwritePrompt", nil, [NSBundle mainBundle], @"Settings at %@ changed since iTerm2 started. "
+                                       @"Overwrite it?", @"Prompt asking whether to overwrite remote settings that changed since launch; %@ is the folder or URL"),
                                        [self customFolderOrURL]];
-        if ([iTermWarning showWarningWithTitle:theTitle actions:@[ @"Overwrite",
-                                                                   @"Discard Local Changes" ]
+        if ([iTermWarning showWarningWithTitle:theTitle actions:@[ NSLocalizedStringWithDefaultValue(@"RemotePreferences.Overwrite", nil, [NSBundle mainBundle], @"Overwrite", @"Button that overwrites the remote settings"),
+                                                                   NSLocalizedStringWithDefaultValue(@"RemotePreferences.DiscardLocalChanges", nil, [NSBundle mainBundle], @"Discard Local Changes", @"Button that discards local changes") ]
                                     identifier:nil
                                    silenceable:kiTermWarningTypePersistent
                                         window:nil] == kiTermWarningSelection1) {
@@ -366,24 +383,31 @@ respectingTimeoutSetting:(BOOL)respectingTimeoutSetting
     NSString *folder = [self expandedCustomFolderOrURL];
     if ([folder stringIsUrlLike]) {
         NSString *informativeText =
-            @"To make it available, first quit iTerm2 and then manually "
+            NSLocalizedStringWithDefaultValue(@"RemotePreferences.CannotCopyToURLDetail", nil, [NSBundle mainBundle], @"To make it available, first quit iTerm2 and then manually "
             @"copy ~/Library/Preferences/com.googlecode.iterm2.plist to "
-            @"your hosting provider.";
-        NSAlert *alert = [[NSAlert alloc] init];
-        alert.messageText = @"Settings cannot be copied to a URL.";
-        alert.informativeText = informativeText;
-        [alert runModal];
+            @"your hosting provider.", @"Alert detail explaining that settings must be copied manually when the destination is a URL");
+        [iTermWarning showWarningWithTitle:informativeText
+                                   actions:@[ iTermLocalizedOK() ]
+                                 accessory:nil
+                                identifier:nil
+                               silenceable:kiTermWarningTypePersistent
+                                   heading:NSLocalizedStringWithDefaultValue(@"RemotePreferences.CannotCopyToURL", nil, [NSBundle mainBundle], @"Settings cannot be copied to a URL.", @"Alert title when settings cannot be copied because the destination is a URL")
+                                    window:nil];
         return;
     }
 
     NSString *filename = [self prefsFilenameWithBaseDir:folder];
     NSDictionary *myDict = iTermRemotePreferencesSave(iTermUserDefaultsDictionary(self.preservedKeys), filename);
     if (!myDict) {
-        NSAlert *alert = [[NSAlert alloc] init];
-        alert.messageText = @"Failed to copy settings to custom directory.";
-        alert.informativeText = [NSString stringWithFormat:@"Tried to copy %@ to %@",
-                                 [self remotePrefsLocation], filename];
-        [alert runModal];
+        NSString *body = [NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"RemotePreferences.TriedToCopyDetail", nil, [NSBundle mainBundle], @"Tried to copy %1$@ to %2$@", @"Alert detail describing the failed copy; first %@ is the source, second %@ is the destination"),
+                          [self remotePrefsLocation], filename];
+        [iTermWarning showWarningWithTitle:body
+                                   actions:@[ iTermLocalizedOK() ]
+                                 accessory:nil
+                                identifier:nil
+                               silenceable:kiTermWarningTypePersistent
+                                   heading:NSLocalizedStringWithDefaultValue(@"RemotePreferences.FailedToCopyToDirectory", nil, [NSBundle mainBundle], @"Failed to copy settings to custom directory.", @"Alert title when settings could not be copied to the custom directory")
+                                    window:nil];
     } else {
         self.savedRemotePrefs = myDict;
     }
@@ -798,14 +822,14 @@ static NSDictionary *iTermRemotePreferencesSave(NSDictionary *myDict, NSString *
         return NO;
     }
     NSString *title =
-        [NSString stringWithFormat:@"iTerm2 can also keep your snippets, global notes, and session "
+        [NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"RemotePreferences.SyncDataFilesPrompt", nil, [NSBundle mainBundle], @"iTerm2 can also keep your snippets, global notes, and session "
                                    @"icon customizations in the settings folder “%@” so they sync "
                                    @"across machines. Notes and snippets can contain sensitive text "
-                                   @"such as passwords or tokens. Sync them too?",
+                                   @"such as passwords or tokens. Sync them too?", @"Prompt asking whether to also sync data files to the settings folder; %@ is the folder path"),
                                    [self customFolderOrURL]];
     const iTermWarningSelection selection =
         [iTermWarning showWarningWithTitle:title
-                                   actions:@[ @"Sync These Too", @"Just Settings" ]
+                                   actions:@[ NSLocalizedStringWithDefaultValue(@"RemotePreferences.SyncTheseToo", nil, [NSBundle mainBundle], @"Sync These Too", @"Button to also sync data files"), NSLocalizedStringWithDefaultValue(@"RemotePreferences.JustSettings", nil, [NSBundle mainBundle], @"Just Settings", @"Button to sync only settings") ]
                                 identifier:nil
                                silenceable:kiTermWarningTypePersistent
                                     window:nil];
@@ -1368,13 +1392,13 @@ static NSDictionary *iTermRemotePreferencesSave(NSDictionary *myDict, NSString *
 - (void)resolveDataFileConflictWithRemoteFolder:(NSString *)folder
                                 remoteSignature:(NSString *)remoteSignature {
     NSString *title =
-        [NSString stringWithFormat:@"Snippets, notes, or icon customizations changed both on this Mac "
+        [NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"RemotePreferences.DataFileConflictPrompt", nil, [NSBundle mainBundle], @"Snippets, notes, or icon customizations changed both on this Mac "
                                    @"and in the settings folder “%@” since they were last in sync. "
-                                   @"Which copy would you like to keep?",
+                                   @"Which copy would you like to keep?", @"Prompt shown when data files conflict between the local Mac and the settings folder; %@ is the folder path"),
                                    [self customFolderOrURL]];
     const iTermWarningSelection selection =
         [iTermWarning showWarningWithTitle:title
-                                   actions:@[ @"Use This Mac’s", @"Use Settings Folder’s" ]
+                                   actions:@[ NSLocalizedStringWithDefaultValue(@"RemotePreferences.UseThisMac", nil, [NSBundle mainBundle], @"Use This Mac’s", @"Button to keep this Mac’s copy"), NSLocalizedStringWithDefaultValue(@"RemotePreferences.UseSettingsFolder", nil, [NSBundle mainBundle], @"Use Settings Folder’s", @"Button to keep the settings folder’s copy") ]
                                 identifier:nil
                                silenceable:kiTermWarningTypePersistent
                                     window:nil];
@@ -1676,19 +1700,19 @@ static NSDictionary *iTermRemotePreferencesSave(NSDictionary *myDict, NSString *
             NSString *theTitle =
                 dataFilesDiffer
                     ? [NSString stringWithFormat:
-                       @"Settings and your snippets, notes, or icon customizations have changed. Copy them to %@?",
+                       NSLocalizedStringWithDefaultValue(@"RemotePreferences.SettingsAndDataChangedCopyPrompt", nil, [NSBundle mainBundle], @"Settings and your snippets, notes, or icon customizations have changed. Copy them to %@?", @"Prompt asking whether to copy settings and data files to the settings folder; %@ is the folder path"),
                        [self customFolderOrURL]]
                     : [NSString stringWithFormat:
-                       @"Settings have changed. Copy them to %@?",
+                       NSLocalizedStringWithDefaultValue(@"RemotePreferences.SettingsChangedCopyPrompt", nil, [NSBundle mainBundle], @"Settings have changed. Copy them to %@?", @"Prompt asking whether to copy settings to the settings folder; %@ is the folder path"),
                        [self customFolderOrURL]];
 
             // "Lose Changes" is destructive and shouldn't be remembered.
             iTermWarning *warning = [[iTermWarning alloc] init];
             warning.title = theTitle;
-            warning.actionLabels = @[ @"Copy", @"Lose Changes" ];
+            warning.actionLabels = @[ iTermLocalizedCopy(), NSLocalizedStringWithDefaultValue(@"RemotePreferences.LoseChanges", nil, [NSBundle mainBundle], @"Lose Changes", @"Button that discards local changes") ];
             warning.identifier = @"NoSyncNeverRemindPrefsChangesLostForFile";
             warning.warningType = kiTermWarningTypePermanentlySilenceable;
-            warning.doNotRememberLabels = @[ @"Lose Changes" ];
+            warning.doNotRememberLabels = @[ NSLocalizedStringWithDefaultValue(@"RemotePreferences.LoseChanges", nil, [NSBundle mainBundle], @"Lose Changes", @"Button that discards local changes") ];
             // Suppress background pushes while this modal is up: its runloop can drain a pending
             // debounced save, which would push the data files even though the user may pick "Lose
             // Changes". (The data-only branch below does the same; both must, or "Lose Changes" leaks.)
@@ -1719,14 +1743,14 @@ static NSDictionary *iTermRemotePreferencesSave(NSDictionary *myDict, NSString *
             [self writeDataFilesToRemoteFolder:folder localSignature:localDataSignature];
         } else {
             NSString *theTitle = [NSString stringWithFormat:
-                                  @"Your snippets, notes, or icon customizations changed. Copy them to %@?",
+                                  NSLocalizedStringWithDefaultValue(@"RemotePreferences.CopyDataFilesToFolderPrompt", nil, [NSBundle mainBundle], @"Your snippets, notes, or icon customizations changed. Copy them to %@?", @"Prompt asking whether to copy data files to the settings folder; %@ is the folder path"),
                                   [self customFolderOrURL]];
             iTermWarning *warning = [[iTermWarning alloc] init];
             warning.title = theTitle;
-            warning.actionLabels = @[ @"Copy", @"Lose Changes" ];
+            warning.actionLabels = @[ iTermLocalizedCopy(), NSLocalizedStringWithDefaultValue(@"RemotePreferences.LoseChanges", nil, [NSBundle mainBundle], @"Lose Changes", @"Button that discards local changes") ];
             warning.identifier = @"NoSyncNeverRemindDataFileChangesLostForFile";
             warning.warningType = kiTermWarningTypePermanentlySilenceable;
-            warning.doNotRememberLabels = @[ @"Lose Changes" ];
+            warning.doNotRememberLabels = @[ NSLocalizedStringWithDefaultValue(@"RemotePreferences.LoseChanges", nil, [NSBundle mainBundle], @"Lose Changes", @"Button that discards local changes") ];
             // Suppress background pushes during the modal: its runloop can drain a pending debounced
             // save, which would push the data files even if the user picks "Lose Changes".
             __block iTermWarningSelection selection;

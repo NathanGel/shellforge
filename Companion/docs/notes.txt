@@ -1,6 +1,36 @@
 iTerm2 Buddy (Companion App) Release Notes
 
 New Features:
+- When iTerm2 on your Mac shows a warning and
+  waits for an answer, iTerm2 Buddy now shows it
+  and lets you answer from your phone, including
+  “don’t ask again” when the warning offers it
+  and any value the warning asks you to fill in.
+  That includes password prompts, such as a
+  password manager’s master password or an scp
+  password: you can type the password on your
+  phone.
+  A warning that isn’t holding up the Mac stays
+  out of your way unless it’s about the session
+  you’re viewing; the session list marks sessions
+  with a warning waiting.
+  Before, the app lost its connection until
+  someone dismissed the warning at the Mac. If the
+  Mac is showing a dialog that can’t be answered
+  from the phone, a banner says so and the app
+  waits instead of disconnecting. Requires an
+  up-to-date Mac.
+- iTerm2 Buddy now works with Macs that have AI
+  turned off. You can pair for terminal viewing
+  and control alone: browse sessions, watch live
+  output, and type from your phone. Chat surfaces
+  appear with a short explanation of how to turn
+  AI on, and re-enable live if you do.
+- Long-press one of your own messages in a chat
+  to delete it and everything after it. The
+  change syncs to the Mac and any other device in
+  the same chat. Chats also now update live when
+  you edit or delete a message on the Mac.
 - You can now turn on push notifications from
   your phone. After pairing, iTerm2 Buddy asks
   whether you want to receive notifications, and
@@ -9,6 +39,12 @@ New Features:
   enabling alerts on the Mac.
 
 Bug Fixes:
+- The QR scanner used to show a black preview the
+  first time you granted camera access (notably on
+  iOS 26), because the camera was set up before
+  permission was granted. It now waits for access
+  before configuring the camera, so the live
+  preview appears right away.
 - Opening a session that has already closed now
   shows a “Stream Ended” message explaining the
   session is gone, instead of a blank black
@@ -51,6 +87,14 @@ Bug Fixes:
   email diagnostic logs even when not connected
   to a Mac. It also moved off the chat list into
   a sheet you can open from anywhere.
+- Pairing and reconnecting no longer fail on
+  networks that can’t reach iterm2.com. The app
+  now falls back to a second copy of its server
+  list. If neither can be reached, it says so
+  and suggests another network instead of
+  showing “The request timed out.” Tap Details
+  to see each server it tried and what went
+  wrong with each.
 
 New Features:
 - You can now type into a live session. Tap the

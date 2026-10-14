@@ -98,6 +98,8 @@ static NSString * const kColorGalleryURL = @"https://www.iterm2.com/colorgallery
     IBOutlet NSButton *_useTabColor;
     IBOutlet NSButton *_useUnderlineColor;
     IBOutlet NSButton *_useSmartCursorColor;
+    IBOutlet NSButton *_hdrCursor;
+    IBOutlet NSSlider *_hdrCursorBrightness;
     IBOutlet NSButton *_useThemeMarkColors;
     IBOutlet NSButton *_useActivePaneBorder;
     IBOutlet iTermSettingsColorWell *_activePaneBorderColor;
@@ -201,7 +203,7 @@ static NSString * const kColorGalleryURL = @"https://www.iterm2.com/colorgallery
         PreferenceInfo *info = [self defineControl:colorWell
                                                key:key
                                        relatedView:nil
-                                       displayName:[NSString stringWithFormat:@"%@ color", relatedView.stringValue]
+                                       displayName:[NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"ProfilesColors.ColorWellDisplayName", nil, [NSBundle mainBundle], @"%@ color", @"Search index display name for a color well, where %@ is the color name"), relatedView.stringValue]
                                               type:kPreferenceInfoTypeColorWell
                                     settingChanged:nil
                                             update:nil
@@ -221,8 +223,16 @@ static NSString * const kColorGalleryURL = @"https://www.iterm2.com/colorgallery
             [weakColorWell.window makeFirstResponder:nil];
         };
         __weak __typeof(self) weakSelf = self;
+        __weak iTermSettingsColorWell *weakBindableWell = colorWell;
         info.observer = ^{
             [weakSelf updateHueChromaVisualizationForKey:key];
+        };
+        // onChange fires only from settingChanged: (a user edit), not from the
+        // programmatic re-syncs that also drive info.observer, so the destructive
+        // palette-binding clear can't wipe a binding when an unrelated panel action
+        // re-syncs this well.
+        info.onChange = ^{
+            [weakSelf clearPaletteBindingForColorKey:key well:weakBindableWell];
         };
     }
 
@@ -270,6 +280,17 @@ static NSString * const kColorGalleryURL = @"https://www.iterm2.com/colorgallery
                           type:kPreferenceInfoTypeCheckbox];
     info.observer = ^() { [weakSelf updateColorControlsEnabled]; };
 
+    info = [self defineControl:_hdrCursor
+                           key:KEY_HDR_CURSOR
+                   relatedView:nil
+                          type:kPreferenceInfoTypeCheckbox];
+    info.observer = ^() { [weakSelf updateColorControlsEnabled]; };
+
+    [self defineControl:_hdrCursorBrightness
+                    key:KEY_HDR_CURSOR_BRIGHTNESS
+            displayName:NSLocalizedStringWithDefaultValue(@"ProfilesColors.HDRCursorBrightness", nil, [NSBundle mainBundle], @"HDR cursor brightness", @"Display name for the slider that sets the peak brightness of the HDR cursor, used by settings search")
+                   type:kPreferenceInfoTypeSlider];
+
     [self defineControl:_useThemeMarkColors
                     key:KEY_USE_THEME_MARK_COLORS
             relatedView:nil
@@ -304,18 +325,18 @@ static NSString * const kColorGalleryURL = @"https://www.iterm2.com/colorgallery
 
     info = [self defineControl:_useBrightBold
                            key:KEY_USE_BOLD_COLOR
-                   displayName:@"Custom color for bold text"
+                   displayName:NSLocalizedStringWithDefaultValue(@"ProfilesColors.CustomColorForBold", nil, [NSBundle mainBundle], @"Custom color for bold text", @"Display name for the custom bold color checkbox")
                           type:kPreferenceInfoTypeCheckbox];
     info.observer = ^{ [weakSelf updateColorControlsEnabled]; };
 
     info = [self defineControl:_brightenBoldText
                            key:KEY_BRIGHTEN_BOLD_TEXT
-                   displayName:@"Brighten bold text"
+                   displayName:NSLocalizedStringWithDefaultValue(@"ProfilesColors.BrightenBoldText", nil, [NSBundle mainBundle], @"Brighten bold text", @"Display name for the brighten bold text checkbox")
                           type:kPreferenceInfoTypeCheckbox];
     info.observer = ^{ [weakSelf updateColorControlsEnabled]; };
 
     [self addViewToSearchIndex:_presetsPopupButton
-                   displayName:@"Color presets"
+                   displayName:NSLocalizedStringWithDefaultValue(@"ProfilesColors.ColorPresetsSearch", nil, [NSBundle mainBundle], @"Color presets", @"Search index display name for the color presets control")
                        phrases:@[]
                            key:nil];
 
@@ -453,6 +474,7 @@ static NSString * const kColorGalleryURL = @"https://www.iterm2.com/colorgallery
     _selectedTextColor.enabled = [self boolForKey:KEY_USE_SELECTED_TEXT_COLOR];
     _underlineColor.enabled = [self boolForKey:KEY_USE_UNDERLINE_COLOR];
     _activePaneBorderColor.enabled = [self boolForKey:KEY_USE_ACTIVE_PANE_BORDER];
+    _hdrCursorBrightness.enabled = [self boolForKey:KEY_HDR_CURSOR];
 
     const BOOL smartCursorColorSelected = [self boolForKey:KEY_SMART_CURSOR_COLOR];
     const BOOL shouldEnableSmartCursorColor = ([self intForKey:KEY_CURSOR_TYPE] == CURSOR_BOX);
@@ -538,6 +560,25 @@ static NSString * const kColorGalleryURL = @"https://www.iterm2.com/colorgallery
     ];
 }
 
+// Picking a concrete color in a well must win over an i:N palette binding on that
+// color. That binding lives in KEY_BINDINGS as a palette-owned entry; unless it is
+// removed, the profile reload re-runs makeBindings and the observer overwrites the
+// color the user just chose. This write goes through the preferences model, not the
+// session's setSessionSpecificProfileValues:, so the centralized clear doesn't run.
+// Only palette-owned entries are dropped; a user-authored binding is left alone.
+- (void)clearPaletteBindingForColorKey:(NSString *)key well:(iTermSettingsColorWell *)well {
+    NSDictionary *bindings = [NSDictionary castFrom:[self objectForKey:KEY_BINDINGS]];
+    if (!bindings.count) {
+        return;
+    }
+    NSString *baseKey = [iTermProfilePreferences baseColorKeyForKey:key];
+    NSDictionary *updated = [iTermProfilePreferences bindings:bindings byRemovingPaletteBindingsForBaseKey:baseKey];
+    if (updated != bindings) {
+        [self setObject:updated forKey:KEY_BINDINGS];
+        well.expression = nil;
+    }
+}
+
 - (void)updateHueChromaVisualizationForKey:(NSString *)key {
     if (![self.chromaHueVisualizationKeys containsObject:key]) {
         return;
@@ -567,11 +608,11 @@ static NSString * const kColorGalleryURL = @"https://www.iterm2.com/colorgallery
 
     [_presetsMenu addItem:[NSMenuItem separatorItem]];
 
-    [self addPresetItemWithTitle:@"Import…" action:@selector(importColorPreset:)];
-    [self addPresetItemWithTitle:@"Export…" action:@selector(exportColorPreset:)];
-    [self addPresetItemWithTitle:@"Save As…" action:@selector(saveColorPreset:)];
-    [self addPresetItemWithTitle:@"Delete Preset…" action:@selector(deleteColorPreset:)];
-    [self addPresetItemWithTitle:@"Visit Online Gallery" action:@selector(visitGallery:)];
+    [self addPresetItemWithTitle:NSLocalizedStringWithDefaultValue(@"ProfilesColors.ImportPreset", nil, [NSBundle mainBundle], @"Import…", @"Menu item to import a color preset") action:@selector(importColorPreset:)];
+    [self addPresetItemWithTitle:NSLocalizedStringWithDefaultValue(@"ProfilesColors.ExportPreset", nil, [NSBundle mainBundle], @"Export…", @"Menu item to export a color preset") action:@selector(exportColorPreset:)];
+    [self addPresetItemWithTitle:NSLocalizedStringWithDefaultValue(@"ProfilesColors.SavePresetAs", nil, [NSBundle mainBundle], @"Save As…", @"Menu item to save the current colors as a preset") action:@selector(saveColorPreset:)];
+    [self addPresetItemWithTitle:NSLocalizedStringWithDefaultValue(@"ProfilesColors.DeletePreset", nil, [NSBundle mainBundle], @"Delete Preset…", @"Menu item to delete a color preset") action:@selector(deleteColorPreset:)];
+    [self addPresetItemWithTitle:NSLocalizedStringWithDefaultValue(@"ProfilesColors.VisitGallery", nil, [NSBundle mainBundle], @"Visit Online Gallery", @"Menu item to open the online color preset gallery") action:@selector(visitGallery:)];
     _presetsMenu.delegate = self;
 }
 
@@ -590,6 +631,7 @@ static NSString * const kColorGalleryURL = @"https://www.iterm2.com/colorgallery
                 if (i == 1) {
                     continue;
                 }
+                // Localization unneeded
                 title = [@"☯ " stringByAppendingString:key];
             } else if (i == 0) {
                 continue;
@@ -673,8 +715,8 @@ static NSString * const kColorGalleryURL = @"https://www.iterm2.com/colorgallery
 - (void)showSaveColorPresetAlertWithItems:(NSArray<NSString *> *)items
                                completion:(void (^)(NSString *name))completion {
     NSAlert *alert = [[NSAlert alloc] init];
-    alert.messageText = @"Save Color Preset";
-    alert.informativeText = @"Select preset name";
+    alert.messageText = NSLocalizedStringWithDefaultValue(@"ProfilesColors.SavePresetTitle", nil, [NSBundle mainBundle], @"Save Color Preset", @"Message text of the save color preset dialog");
+    alert.informativeText = NSLocalizedStringWithDefaultValue(@"ProfilesColors.SelectPresetName", nil, [NSBundle mainBundle], @"Select preset name", @"Prompt asking the user to choose a name for the color preset");
     alert.alertStyle = NSAlertStyleInformational;
 
     // Add the ComboBox
@@ -684,8 +726,8 @@ static NSString * const kColorGalleryURL = @"https://www.iterm2.com/colorgallery
 
     alert.accessoryView = comboBox;
 
-    [alert addButtonWithTitle:@"OK"];
-    [alert addButtonWithTitle:@"Cancel"];
+    [alert addButtonWithTitle:iTermLocalizedOK()];
+    [alert addButtonWithTitle:iTermLocalizedCancel()];
 
     [alert beginSheetModalForWindow:self.view.window completionHandler:^(NSModalResponse response) {
         if (response == NSAlertFirstButtonReturn) {
@@ -715,18 +757,22 @@ static NSString * const kColorGalleryURL = @"https://www.iterm2.com/colorgallery
 - (void)deleteColorPreset:(id)sender {
     iTermColorPresetDictionary *customPresets = [iTermColorPresets customColorPresets];
     if (!customPresets || [customPresets count] == 0) {
-        NSAlert *alert = [[NSAlert alloc] init];
-        alert.messageText = @"No deletable color presets.";
-        alert.informativeText = @"You cannot erase the built-in presets and no custom presets have been imported.";
-        [alert addButtonWithTitle:@"OK"];
-        [alert runModal];
+        NSString *const heading = NSLocalizedStringWithDefaultValue(@"ProfilesColors.NoDeletablePresets", nil, [NSBundle mainBundle], @"No deletable color presets.", @"Message text when there are no color presets that can be deleted");
+        NSString *const title = NSLocalizedStringWithDefaultValue(@"ProfilesColors.NoDeletablePresetsDetail", nil, [NSBundle mainBundle], @"You cannot erase the built-in presets and no custom presets have been imported.", @"Detail text when there are no color presets that can be deleted");
+        [iTermWarning showWarningWithTitle:title
+                                   actions:@[ iTermLocalizedOK() ]
+                                 accessory:nil
+                                identifier:nil
+                               silenceable:kiTermWarningTypePersistent
+                                   heading:heading
+                                    window:nil];
         return;
     }
 
     NSAlert *alert = [[NSAlert alloc] init];
-    alert.messageText = @"Select a preset to delete:";
-    [alert addButtonWithTitle:@"OK"];
-    [alert addButtonWithTitle:@"Cancel"];
+    alert.messageText = NSLocalizedStringWithDefaultValue(@"ProfilesColors.SelectPresetToDelete", nil, [NSBundle mainBundle], @"Select a preset to delete:", @"Message text prompting the user to select a preset to delete");
+    [alert addButtonWithTitle:iTermLocalizedOK()];
+    [alert addButtonWithTitle:iTermLocalizedCancel()];
     NSPopUpButton *popUpButton = [[NSPopUpButton alloc] init];
     for (NSString *key in [[customPresets allKeys] sortedArrayUsingSelector:@selector(compare:)]) {
         [popUpButton addItemWithTitle:key];
@@ -768,11 +814,15 @@ static NSString * const kColorGalleryURL = @"https://www.iterm2.com/colorgallery
     NSDictionary *theDict = [self presetDictionaryForCurrentColors];
     [theDict writeToSaveItem:item completionHandler:^(NSError *error) {
         if (error) {
-            NSAlert *alert = [[NSAlert alloc] init];
-            alert.messageText = @"Save Failed.";
-            alert.informativeText = [NSString stringWithFormat:@"Could not save to %@", item.displayName];
-            [alert addButtonWithTitle:@"OK"];
-            [alert runModal];
+            NSString *const heading = NSLocalizedStringWithDefaultValue(@"ProfilesColors.SaveFailed", nil, [NSBundle mainBundle], @"Save Failed.", @"Message text when saving a color preset fails");
+            NSString *const title = [NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"ProfilesColors.CouldNotSave", nil, [NSBundle mainBundle], @"Could not save to %@", @"Detail text when a color preset could not be saved to a destination"), item.displayName];
+            [iTermWarning showWarningWithTitle:title
+                                       actions:@[ iTermLocalizedOK() ]
+                                     accessory:nil
+                                    identifier:nil
+                                   silenceable:kiTermWarningTypePersistent
+                                       heading:heading
+                                        window:nil];
         } else {
             [item revealInFinderIfLocal];
         }
@@ -788,32 +838,32 @@ static NSString * const kColorGalleryURL = @"https://www.iterm2.com/colorgallery
         if (!modes) {
             return YES;
         }
-        NSString *currentMode = currentModeIsDark ? @"Dark Mode" : @"Light Mode";
+        NSString *updateModeOnly = currentModeIsDark ? NSLocalizedStringWithDefaultValue(@"ProfilesColors.UpdateDarkOnly", nil, [NSBundle mainBundle], @"Update Dark Mode Only", @"Button to update colors for dark mode only") : NSLocalizedStringWithDefaultValue(@"ProfilesColors.UpdateLightOnly", nil, [NSBundle mainBundle], @"Update Light Mode Only", @"Button to update colors for light mode only");
         const iTermWarningSelection selection =
-        [iTermWarning showWarningWithTitle:@"This preset has colors for both light mode and dark mode."
-                                   actions:@[ @"Update Both Modes",
-                                              [NSString stringWithFormat:@"Update %@ Only", currentMode]]
+        [iTermWarning showWarningWithTitle:NSLocalizedStringWithDefaultValue(@"ProfilesColors.PresetHasBothModes", nil, [NSBundle mainBundle], @"This preset has colors for both light mode and dark mode.", @"Warning shown when a preset has separate light and dark colors")
+                                   actions:@[ NSLocalizedStringWithDefaultValue(@"ProfilesColors.UpdateBothModes", nil, [NSBundle mainBundle], @"Update Both Modes", @"Button to update colors for both light and dark modes"),
+                                              updateModeOnly]
                              actionMapping:nil
                                  accessory:nil
                                 identifier:@"NoSyncUpdateWhichModes_PresetHasModes"
                                silenceable:kiTermWarningTypePersistent
-                                   heading:@"Update Which Modes?"
+                                   heading:NSLocalizedStringWithDefaultValue(@"ProfilesColors.UpdateWhichModes", nil, [NSBundle mainBundle], @"Update Which Modes?", @"Heading of the warning asking which color modes to update")
                                     window:self.view.window];
         return (selection == 0);
     }
     if (!modes) {
         return NO;
     }
-    NSString *currentMode = currentModeIsDark ? @"Dark Mode" : @"Light Mode";
+    NSString *updateModeOnly = currentModeIsDark ? NSLocalizedStringWithDefaultValue(@"ProfilesColors.UpdateDarkOnly", nil, [NSBundle mainBundle], @"Update Dark Mode Only", @"Button to update colors for dark mode only") : NSLocalizedStringWithDefaultValue(@"ProfilesColors.UpdateLightOnly", nil, [NSBundle mainBundle], @"Update Light Mode Only", @"Button to update colors for light mode only");
     const iTermWarningSelection selection =
-    [iTermWarning showWarningWithTitle:@"This preset does not have separate colors for light mode and dark mode."
-                               actions:@[ @"Update Both Modes",
-                                          [NSString stringWithFormat:@"Update %@ Only", currentMode]]
+    [iTermWarning showWarningWithTitle:NSLocalizedStringWithDefaultValue(@"ProfilesColors.PresetLacksModes", nil, [NSBundle mainBundle], @"This preset does not have separate colors for light mode and dark mode.", @"Warning shown when a preset lacks separate light and dark colors")
+                               actions:@[ NSLocalizedStringWithDefaultValue(@"ProfilesColors.UpdateBothModes", nil, [NSBundle mainBundle], @"Update Both Modes", @"Button to update colors for both light and dark modes"),
+                                          updateModeOnly]
                          actionMapping:nil
                              accessory:nil
                             identifier:@"NoSyncUpdateWhichModes_PresetLacksModes"
                            silenceable:kiTermWarningTypePersistent
-                               heading:@"Update Which Modes?"
+                               heading:NSLocalizedStringWithDefaultValue(@"ProfilesColors.UpdateWhichModes", nil, [NSBundle mainBundle], @"Update Which Modes?", @"Heading of the warning asking which color modes to update")
                                 window:self.view.window];
     return (selection == 0);
 }
@@ -1000,7 +1050,7 @@ static NSString * const kColorGalleryURL = @"https://www.iterm2.com/colorgallery
 }
 
 - (IBAction)showModeWarning:(id)sender {
-    [_modeWarning it_showWarning:@"Your current theme overrides the system light and dark mode setting, so color switching will not occur. You can change it in Settings > Appearance > General > Theme."];
+    [_modeWarning it_showWarning:NSLocalizedStringWithDefaultValue(@"ProfilesColors.ThemeOverridesMode", nil, [NSBundle mainBundle], @"Your current theme overrides the system light and dark mode setting, so color switching will not occur. You can change it in Settings > Appearance > General > Theme.", @"Warning shown when the theme overrides the system light/dark mode setting")];
 }
 
 #pragma mark - Overrides

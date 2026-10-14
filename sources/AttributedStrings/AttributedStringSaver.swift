@@ -79,12 +79,12 @@ class AttributedStringSaver: NSObject {
     }
 
     private func showSaveError(_ error: Error, window: NSWindow) {
-        _ = iTermWarning.show(withTitle: "There was a problem saving the file: \(error.localizedDescription)",
-                              actions: ["OK"],
+        _ = iTermWarning.show(withTitle: String(localized: "AttributedStringSaver.SaveFailed", defaultValue: "There was a problem saving the file: \(error.localizedDescription)", comment: "Error shown when saving a file failed; placeholder is the underlying error message"),
+                              actions: [iTermLocalizedOK()],
                               accessory: nil,
                               identifier: nil,
                               silenceable: .kiTermWarningTypePersistent,
-                              heading: "Could Not Save File",
+                              heading: String(localized: "AttributedStringSaver.SaveFailedHeading", defaultValue: "Could Not Save File", comment: "Heading of the dialog shown when saving a file failed"),
                               window: window)
     }
 }

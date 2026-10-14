@@ -25,7 +25,7 @@ class MoveSessionBuiltInFunction: iTermBuiltInFunction {
                       let before = parameters["before"] as? Bool else {
                     completion(nil, NSError(domain: "com.iterm2.move-session",
                                             code: 1,
-                                            userInfo: [NSLocalizedDescriptionKey: "Invalid argument"]))
+                                            userInfo: [NSLocalizedDescriptionKey: String(localized: "MoveSession.InvalidArgument", defaultValue: "Invalid argument", comment: "Error when a move_session argument is missing or the wrong type")]))
                     return
                 }
                 do {
@@ -47,22 +47,28 @@ class MoveSessionBuiltInFunction: iTermBuiltInFunction {
               let destination = iTermController.sharedInstance().session(withGUID: destinationID) else {
             throw NSError(domain: "com.iterm2.move-session",
                           code: 2,
-                          userInfo: [NSLocalizedDescriptionKey: "Invalid session ID"])
+                          userInfo: [NSLocalizedDescriptionKey: String(localized: "MoveSession.InvalidSessionID", defaultValue: "Invalid session ID", comment: "Error when a session ID does not identify a session")])
         }
         if !source.is(compatibleWith: destination) {
             throw NSError(domain: "com.iterm2.move-session",
                           code: 3,
-                          userInfo: [NSLocalizedDescriptionKey: "Sessions are not compatible"])
+                          userInfo: [NSLocalizedDescriptionKey: String(localized: "MoveSession.Incompatible", defaultValue: "Sessions are not compatible", comment: "Error when source and destination sessions can't be combined")])
         }
         guard let sourceTab = source.delegate as? PTYTab, let destinationTab = destination.delegate as? PTYTab else {
             throw NSError(domain: "com.iterm2.move-session",
                           code: 5,
-                          userInfo: [NSLocalizedDescriptionKey: "Session has no tab"])
+                          userInfo: [NSLocalizedDescriptionKey: String(localized: "MoveSession.NoTab", defaultValue: "Session has no tab", comment: "Error when a session is not in a tab")])
         }
         if sourceTab.lockedSession == source || destinationTab.lockedSession == destination {
             throw NSError(domain: "com.iterm2.move-session",
                           code: 6,
-                          userInfo: [NSLocalizedDescriptionKey: "Can't move locked session"])
+                          userInfo: [NSLocalizedDescriptionKey: String(localized: "MoveSession.Locked", defaultValue: "Can't move locked session", comment: "Error when trying to move a locked session")])
+        }
+        if destinationTab.sessionIsFloating(destination) {
+            // Moving a float is allowed (it docks), but a float cannot be split.
+            throw NSError(domain: "com.iterm2.move-session",
+                          code: 7,
+                          userInfo: [NSLocalizedDescriptionKey: String(localized: "MoveSession.DestinationIsFloating", defaultValue: "Can’t move a session into a floating pane", comment: "Error when the destination of a move_session call is a floating pane, which cannot be split")])
         }
         if destinationTab.hasMaximizedPane() {
             destinationTab.unmaximize()

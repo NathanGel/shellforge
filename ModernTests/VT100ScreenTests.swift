@@ -1662,6 +1662,23 @@ class VT100ScreenTests: XCTestCase {
                        VT100ScreenProgress.warningBase.rawValue + minimumVisibleProgressPercentage)
     }
 
+    // A spinner has no percentage to keep, so it pauses as a spinner rather than
+    // turning into a made-up percentage. Pausing again keeps it there.
+    func testProgressPauseWithoutPercentageOverSpinnerPausesSpinner() {
+        let screen = screen(width: 80, height: 24)
+        feed(screen, "\u{1b}]9;4;3\u{07}")
+        XCTAssertEqual(screenProgress(screen), VT100ScreenProgress.indeterminate.rawValue)
+
+        feed(screen, "\u{1b}]9;4;4\u{07}")
+        XCTAssertEqual(screenProgress(screen), VT100ScreenProgress.pausedIndeterminate.rawValue)
+
+        feed(screen, "\u{1b}]9;4;4\u{07}")
+        XCTAssertEqual(screenProgress(screen), VT100ScreenProgress.pausedIndeterminate.rawValue)
+
+        feed(screen, "\u{1b}]9;4;3\u{07}")
+        XCTAssertEqual(screenProgress(screen), VT100ScreenProgress.indeterminate.rawValue)
+    }
+
     // A percentage of 0 is showing but would be invisible, so it gets the minimum too.
     func testProgressPauseWithoutPercentageFromZeroUsesMinimum() {
         let screen = screen(width: 80, height: 24)
@@ -1759,6 +1776,21 @@ class FakeSession: NSObject, VT100ScreenDelegate {
     /// Raw OSC 72 content strings delivered via screenDidReceiveKittyDragAndDrop,
     /// in order. Used by KittyDnDParsingTests.
     var kittyDragAndDropContents = [String]()
+
+    /// Number of times screenGetWorkingDirectory(completion:) was invoked. Used by
+    /// the OSC 7 receiver tests to assert a pathless report doesn't poll the local
+    /// child process for its cwd.
+    var getWorkingDirectoryCallCount = 0
+
+    /// Set true when screenDidReceiveOSC7WhileDisabled fires, so the acceptOSC7
+    /// gate test can assert the warning path was taken.
+    var didWarnOSC7Disabled = false
+
+    /// OSC 7501 reports delivered via screenReportProgramStatus, in order.
+    var programStatusReports = [ProgramStatusReport]()
+
+    /// Times screenRemoveProgramStatusRecords fired (a full reset).
+    var removeProgramStatusRecordsCount = 0
 
     func screenConvertAbsoluteRange(_ range: VT100GridAbsCoordRange, toTextDocumentOfType type: String?, filename: String?, forceWide: Bool) {
 
@@ -1886,6 +1918,26 @@ class FakeSession: NSObject, VT100ScreenDelegate {
     }
 
     func screenSetTabStatus(_ status: VT100TabStatusUpdate) {
+
+    }
+
+    func screenReportProgramStatus(_ report: ProgramStatusReport) {
+        programStatusReports.append(report)
+    }
+
+    func screenDidClearTabStatusForReset() {
+
+    }
+
+    func screenRemoveProgramStatusRecords() {
+        removeProgramStatusRecordsCount += 1
+    }
+
+    func screenProgressWasReset(withGeneration generation: Int) {
+
+    }
+
+    func screenProgressProtocolDidReport(_ progress: VT100ScreenProgress, generation: Int) {
 
     }
 
@@ -2058,7 +2110,11 @@ class FakeSession: NSObject, VT100ScreenDelegate {
 
     }
     
-    func screenKeyReportingFlagsDidChange() {
+    func screenDidResetKeyReportingLocally() {
+
+    }
+
+    func screenKeyReportingFlagsDidChange(_ wholeValueReplaced: Bool) {
         keyReportingFlagsAtChange.append(screen!.terminalKeyReportingFlags)
     }
     
@@ -2115,6 +2171,7 @@ class FakeSession: NSObject, VT100ScreenDelegate {
     }
     
     func screenGetWorkingDirectory(completion: @escaping (String?) -> Void) {
+        getWorkingDirectoryCallCount += 1
         completion(nil)
     }
     
@@ -2146,8 +2203,12 @@ class FakeSession: NSObject, VT100ScreenDelegate {
         completion()
     }
     
+    /// Number of screenPromptDidStart(atLine:) calls. Used by the OSC 7 receiver
+    /// tests to assert a shell-integration OSC 7 (machineID present) does not
+    /// establish the prompt, while a third-party OSC 7 does.
+    var promptDidStartCallCount = 0
     func screenPromptDidStart(atLine line: Int32) {
-
+        promptDidStartCallCount += 1
     }
 
     func screenPromptOfNonInitialKindDidStart(_ kind: VT100PromptKind) {
@@ -2229,7 +2290,10 @@ class FakeSession: NSObject, VT100ScreenDelegate {
     func screenSetColor(_ color: NSColor?, profileKey: String?) -> Bool {
         true
     }
-    
+
+    @objc func screenSetColorBinding(_ expression: String, forProfileKey profileKey: String) {
+    }
+
     func screenResetColor(withColorMapKey key: Int32, profileKey: String, dark: Bool) -> [NSNumber : Any] {
         [:]
     }
@@ -2391,7 +2455,12 @@ class FakeSession: NSObject, VT100ScreenDelegate {
     func screenDidReset() {
 
     }
-    
+
+    func screenDidReceiveOSC7WhileDisabled() {
+        // The screen has already applied the policy; "presenting" is just a record.
+        didWarnOSC7Disabled = true
+    }
+
     func screenAllowTitleSetting() -> Bool {
         false
     }
@@ -2483,7 +2552,11 @@ class FakeSession: NSObject, VT100ScreenDelegate {
     func screenMoveWindowTopLeftPoint(to point: NSPoint) {
 
     }
-    
+
+    func screenSetWindowFrame(_ frame: NSRect) {
+
+    }
+
     let scope = iTermVariableScope()
     func triggerSideEffectVariableScope() -> iTermVariableScope {
         return scope
@@ -2545,6 +2618,10 @@ class FakeSession: NSObject, VT100ScreenDelegate {
     }
 
     func triggerSideEffectExitWorkgroupLeaderOnly(_ leaderOnly: Bool) {
+
+    }
+
+    func triggerSideEffectSetSessionSpecificProfileBool(_ value: Bool, forKey profileKey: String) {
 
     }
 

@@ -6,6 +6,7 @@
 //
 
 #import <Foundation/Foundation.h>
+#import "iTermShellArguments.h"
 #import "iTermCancelable.h"
 
 @class iTermGitState;
@@ -44,12 +45,33 @@ NS_ASSUME_NONNULL_BEGIN
                          reqid:(int)reqid
                     completion:(void (^)(int rc, NSData *buffer))completion;
 
-// Get the value of an environment variable from the user's shell.
+// Get the value of an environment variable from `shell`, read from the
+// EXPORTED environment via a fast bare -c shell; the startup files are NOT
+// sourced. Right for variables the environment already carries (SSH_AUTH_SOCK).
+// A caller that needs a value set only in the startup files (CLAUDE_CONFIG_DIR
+// in .zshrc, PATH in .zprofile) must instead use runCommandInUserShell:mode:.
+// Delivered exactly once on the main thread; nil if the shell could not be run.
 - (void)exfiltrateEnvironmentVariableNamed:(NSString *)name
                                      shell:(NSString *)shell
-                                completion:(void (^)(NSString *value))completion;
+                                completion:(void (^)(NSString * _Nullable value))completion;
 
+// Runs a single command in the user's shell with a bare -c. rc/banner output is
+// stripped; the reply is the command's own stdout, delivered exactly once on the
+// main thread, or nil if the command could not be run or exited nonzero.
 - (void)runCommandInUserShell:(NSString *)command completion:(void (^)(NSString * _Nullable value))completion;
+
+// Same, but `mode` picks which startup files run (see iTermShellRunMode):
+// interactive for variables in the rc files, such as CLAUDE_CONFIG_DIR;
+// login-interactive for PATH as a terminal session sees it. Both cost the
+// shell's startup time, so use them only when that environment is required.
+- (void)runCommandInUserShell:(NSString *)command
+                         mode:(iTermShellRunMode)mode
+                   completion:(void (^)(NSString * _Nullable value))completion;
+
+// Convenience: YES is iTermShellRunModeInteractive, NO is bare.
+- (void)runCommandInUserShell:(NSString *)command
+                  interactive:(BOOL)interactive
+                   completion:(void (^)(NSString * _Nullable value))completion;
 
 - (void)findCompletionsWithPrefix:(NSString *)prefix
                     inDirectories:(NSArray<NSString *> *)directories

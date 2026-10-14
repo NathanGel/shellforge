@@ -55,8 +55,9 @@ final class APIClient {
             return APIClient.normalizeSessionId(id)
         }
 
-        // Use focus state to find the key window's selected tab, then find
-        // the first session in that tab via ListSessions.
+        // Use focus state to find the key window's selected tab, then its
+        // active session via ListSessions. That can be a floating pane, which
+        // is not in the tab's tree.
         let focus = try fetchFocusState(client: self)
         guard let keyWindowId = focus.keyWindowId else {
             throw IT2Error.targetNotFound("No key window found")
@@ -72,18 +73,53 @@ final class APIClient {
                let tabs = win.tabsArray as? [ITMListSessionsResponse_Tab] {
                 for tab in tabs {
                     if tab.tabId == selectedTabId {
-                        let ids = collectSessionIds(from: tab.root)
+                        if let active = tab.activeSessionId, !active.isEmpty { return active }
+                        let ids = collectSessionIds(in: tab)
                         if let first = ids.first { return first }
                     }
                 }
                 if let firstTab = tabs.first {
-                    let ids = collectSessionIds(from: firstTab.root)
+                    if let active = firstTab.activeSessionId, !active.isEmpty { return active }
+                    let ids = collectSessionIds(in: firstTab)
                     if let first = ids.first { return first }
                 }
             }
         }
 
         throw IT2Error.targetNotFound("No active session found")
+    }
+
+    /// Invokes a built-in function and returns its JSON result, or "" when it
+    /// returned nothing. With a session ID the function runs in that session's
+    /// context; without one it runs in the app context and names its own
+    /// target. `failure` prefixes the reason when the function itself reports
+    /// an error, which throws `IT2Error.functionFailed`. Anything else, such as a
+    /// dropped connection, throws as `send` does.
+    func invoke(_ invocation: String, sessionID: String? = nil, failure: String) throws -> String {
+        let invoke = ITMInvokeFunctionRequest()
+        if let sessionID {
+            let sessionContext = ITMInvokeFunctionRequest_Session()
+            sessionContext.sessionId = sessionID
+            invoke.session = sessionContext
+        } else {
+            invoke.app = ITMInvokeFunctionRequest_App()
+        }
+        invoke.invocation = invocation
+
+        let request = ITMClientOriginatedMessage()
+        request.id_p = nextId()
+        request.invokeFunctionRequest = invoke
+
+        let response = try send(request)
+        guard response.submessageOneOfCase == .invokeFunctionResponse,
+              let invokeResp = response.invokeFunctionResponse else {
+            throw IT2Error.apiError("No invoke function response")
+        }
+        if invokeResp.dispositionOneOfCase == .error {
+            let reason = invokeResp.error?.errorReason ?? "unknown"
+            throw IT2Error.functionFailed("\(failure): \(reason)")
+        }
+        return invokeResp.success?.jsonResult ?? ""
     }
 
     /// Block until the next server message is available. Used by streaming

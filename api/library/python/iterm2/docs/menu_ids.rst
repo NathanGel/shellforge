@@ -26,7 +26,8 @@ iTerm2 > Toggle Debug Logging                                                   
 iTerm2 > Save Retrospective Debug Logs                                                  `Save Retrospective Debug Logs`                                               
 iTerm2 > Copy Performance Stats                                                         `Copy Performance Stats`                                                      
 iTerm2 > Capture GPU Frame                                                              `Capture Metal Frame`                                                         
-iTerm2 > Preferences...                                                                 `Preferences...`                                                              
+iTerm2 > Check Settings Control Truncation                                              `Check Settings Control Truncation`                                           
+iTerm2 > Preferences…                                                                   `Preferences...`                                                              
 iTerm2 > Hide iTerm2                                                                    `Hide iTerm2`                                                                 
 iTerm2 > Hide Others                                                                    `Hide Others`                                                                 
 iTerm2 > Show All                                                                       `Show All`                                                                    
@@ -75,7 +76,7 @@ Shell > tmux > Dashboard                                                        
 Shell > ssh > Disconnect                                                                `ssh.Disconnect`                                                              
 Shell > ssh > Download Files…                                                           `ssh.Download Files`                                                          
 Shell > ssh > Remote host can control iTerm2                                            `ssh.Remote host can control iTerm2`                                          
-Shell > Page Setup...                                                                   `Page Setup...`                                                               
+Shell > Page Setup…                                                                     `Page Setup...`                                                               
 Shell > Print > Screen                                                                  `Print.Screen`                                                                
 Shell > Print > Selection                                                               `Print.Selection`                                                             
 Shell > Print > Buffer                                                                  `Print.Buffer`                                                                
@@ -116,7 +117,7 @@ Edit > Find > Find Next                                                         
 Edit > Find > Find Previous                                                             `Find.Find Previous`                                                          
 Edit > Find > Use Selection for Find                                                    `Find.Use Selection for Find`                                                 
 Edit > Find > Clear Find                                                                `Find.Clear Find`                                                             
-Edit > Find > Find Globally...                                                          `Find.Find Globally...`                                                       
+Edit > Find > Find Globally…                                                            `Find.Find Globally...`                                                       
 Edit > Find > Select Matches                                                            `Find.ConvertMatchesToSelections`                                             
 Edit > Find > Find URLs                                                                 `Find.Find URLs`                                                              
 Edit > Find > Find All Smart Selection Matches                                          `Find.Find All Smart Selection  Matches`                                      

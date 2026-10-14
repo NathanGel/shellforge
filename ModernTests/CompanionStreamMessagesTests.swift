@@ -203,4 +203,224 @@ final class CompanionStreamMessagesTests: XCTestCase {
         XCTAssertEqual(decoded, original)
         XCTAssertEqual(decoded.canResize, false)
     }
+
+    // The host hello carries aiAvailable (revision 13+). Both truth values must
+    // survive a round trip so the phone can read the mac's real AI state.
+    func testHostHelloRoundTripsAIAvailable() throws {
+        for value in [true, false] {
+            guard case let .hello(revision, minimumPeer, wants, aiAvailable, _) =
+                    try roundTripHost(.hello(revision: 13, minimumPeer: 11,
+                                             wantsNotificationPermission: true,
+                                             aiAvailable: value,
+                                             macStatus: nil)) else {
+                return XCTFail("expected .hello")
+            }
+            XCTAssertEqual(revision, 13)
+            XCTAssertEqual(minimumPeer, 11)
+            XCTAssertEqual(wants, true)
+            XCTAssertEqual(aiAvailable, value)
+        }
+    }
+
+    // The unsolicited aiAvailabilityChanged event round-trips both truth values so
+    // a connected phone can flip its chat surfaces live when the mac toggles AI.
+    func testAIAvailabilityChangedRoundTrip() throws {
+        for value in [true, false] {
+            guard case let .aiAvailabilityChanged(available) =
+                    try roundTripHost(.aiAvailabilityChanged(available: value)) else {
+                return XCTFail("expected .aiAvailabilityChanged")
+            }
+            XCTAssertEqual(available, value)
+        }
+    }
+
+    // A pre-13 mac omits aiAvailable (and wantsNotificationPermission). Synthesized
+    // Decodable decodes an absent optional as nil rather than throwing, and the
+    // phone reads nil as "AI available" (a pre-13 mac only ever paired with AI on).
+    // This is the backward-compatibility contract that keeps existing users
+    // unaffected.
+    func testLegacyHostHelloDecodesWithoutAIAvailable() throws {
+        let json = """
+        {"payload":{"hello":{"revision":11,"minimumPeer":11}}}
+        """
+        let decoded = try decoder().decode(HostEnvelope.self, from: Data(json.utf8)).payload
+        guard case let .hello(revision, minimumPeer, wants, aiAvailable, macStatus) = decoded else {
+            return XCTFail("expected .hello")
+        }
+        XCTAssertEqual(revision, 11)
+        XCTAssertEqual(minimumPeer, 11)
+        XCTAssertNil(wants)
+        XCTAssertNil(aiAvailable, "an absent aiAvailable decodes as nil (read as available)")
+        XCTAssertNil(macStatus, "an absent macStatus decodes as nil (read as not blocked, no alerts)")
+    }
+
+    // MARK: Mac status (revision 14)
+
+    private func sampleAlert(id: String = "A1") -> CompanionModalAlert {
+        return CompanionModalAlert(
+            id: id,
+            heading: "Enable Command Safety Checking?",
+            body: "Body text",
+            buttons: [.init(title: "OK", isCancel: false, isDestructive: false, rememberable: true),
+                      .init(title: "Delete", isCancel: false, isDestructive: true, rememberable: false),
+                      .init(title: "Cancel", isCancel: true, isDestructive: false, rememberable: false)],
+            suppressionLabel: "Remember my choice",
+            hasAccessory: true,
+            isAppModal: true)
+    }
+
+    // The host hello carries the mac's status so the phone knows it before it
+    // sends the requests that would time out against a blocked mac.
+    func testHostHelloRoundTripsMacStatus() throws {
+        let status = CompanionMacStatus(modalAlerts: [sampleAlert()], mainBlocked: true)
+        guard case let .hello(_, _, _, _, macStatus) =
+                try roundTripHost(.hello(revision: 14, minimumPeer: 11,
+                                         wantsNotificationPermission: nil,
+                                         aiAvailable: true,
+                                         macStatus: status)) else {
+            return XCTFail("expected .hello")
+        }
+        XCTAssertEqual(macStatus, status)
+    }
+
+    func testMacStatusChangedRoundTrip() throws {
+        for status in [CompanionMacStatus(modalAlerts: [], mainBlocked: false),
+                       CompanionMacStatus(modalAlerts: [], mainBlocked: true),
+                       CompanionMacStatus(modalAlerts: [sampleAlert(id: "A1"), sampleAlert(id: "A2")],
+                                          mainBlocked: true)] {
+            guard case let .macStatusChanged(decoded) = try roundTripHost(.macStatusChanged(status: status)) else {
+                return XCTFail("expected .macStatusChanged")
+            }
+            XCTAssertEqual(decoded, status)
+        }
+    }
+
+    func testModalAlertAnswerRejectedRoundTrip() throws {
+        guard case let .modalAlertAnswerRejected(alertID) =
+                try roundTripHost(.modalAlertAnswerRejected(alertID: "A1")) else {
+            return XCTFail("expected .modalAlertAnswerRejected")
+        }
+        XCTAssertEqual(alertID, "A1")
+    }
+
+    func testAnswerModalAlertRoundTrip() throws {
+        let data = try encoder().encode(ClientEnvelope(
+            requestID: nil, payload: .answerModalAlert(alertID: "A1", buttonIndex: 2, suppress: true,
+                                                       inputs: ["spaces": "8"])))
+        guard case let .answerModalAlert(alertID, buttonIndex, suppress, inputs) =
+                try decoder().decode(ClientEnvelope.self, from: data).payload else {
+            return XCTFail("expected .answerModalAlert")
+        }
+        XCTAssertEqual(alertID, "A1")
+        XCTAssertEqual(buttonIndex, 2)
+        XCTAssertTrue(suppress)
+        XCTAssertEqual(inputs, ["spaces": "8"])
+    }
+
+    func testSuppressionDefaultRoundTripsAndDefaultsToOff() throws {
+        var alert = sampleAlert()
+        alert.suppressionDefault = true
+        let status = CompanionMacStatus(modalAlerts: [alert], mainBlocked: false)
+        guard case let .macStatusChanged(decoded) = try roundTripHost(.macStatusChanged(status: status)) else {
+            return XCTFail("expected .macStatusChanged")
+        }
+        XCTAssertEqual(decoded.modalAlerts.first?.suppressionDefault, true)
+
+        let bare = try decoder().decode(CompanionMacStatus.self, from: Data(#"{"modalAlerts":[{"id":"A1"}]}"#.utf8))
+        XCTAssertEqual(bare.modalAlerts.first?.suppressionDefault, false)
+    }
+
+    func testButtonNotOfferedRoundTripsAndButtonsAreOfferedByDefault() throws {
+        var alert = sampleAlert()
+        alert.buttons = [.init(title: "OK", isCancel: false, isDestructive: false, rememberable: false),
+                         .init(title: "Password Manager", isCancel: false, isDestructive: false, rememberable: false,
+                               offered: false)]
+        let status = CompanionMacStatus(modalAlerts: [alert], mainBlocked: false)
+        guard case let .macStatusChanged(decoded) = try roundTripHost(.macStatusChanged(status: status)) else {
+            return XCTFail("expected .macStatusChanged")
+        }
+        XCTAssertEqual(decoded.modalAlerts.first?.buttons.map { $0.offered }, [true, false])
+
+        let bare = try decoder().decode(CompanionMacStatus.self,
+                                        from: Data(#"{"modalAlerts":[{"id":"A1","buttons":[{"title":"OK"}]}]}"#.utf8))
+        XCTAssertEqual(bare.modalAlerts.first?.buttons.map { $0.offered }, [true])
+    }
+
+    func testSecretInputKindRoundTrips() throws {
+        var alert = sampleAlert()
+        alert.inputs = [.init(id: "password", label: "Password:", kind: CompanionModalAlert.Input.secretKind, value: "")]
+        let status = CompanionMacStatus(modalAlerts: [alert], mainBlocked: true)
+        guard case let .macStatusChanged(decoded) = try roundTripHost(.macStatusChanged(status: status)) else {
+            return XCTFail("expected .macStatusChanged")
+        }
+        XCTAssertEqual(decoded.modalAlerts.first?.inputs.first?.kind, "secret")
+    }
+
+    func testModalAlertSessionGuidsRoundTripAndDefaultToNone() throws {
+        var alert = sampleAlert()
+        alert.sessionGuids = ["session-1"]
+        let status = CompanionMacStatus(modalAlerts: [alert], mainBlocked: false)
+        guard case let .macStatusChanged(decoded) = try roundTripHost(.macStatusChanged(status: status)) else {
+            return XCTFail("expected .macStatusChanged")
+        }
+        XCTAssertEqual(decoded.modalAlerts.first?.sessionGuids, ["session-1"])
+
+        let bare = try decoder().decode(CompanionMacStatus.self, from: Data(#"{"modalAlerts":[{"id":"A1"}]}"#.utf8))
+        XCTAssertEqual(bare.modalAlerts.first?.sessionGuids, [])
+    }
+
+    // An answer to an alert that asks for nothing carries no inputs, and one
+    // sent without the field at all still decodes.
+    func testAnswerModalAlertWithoutInputs() throws {
+        let json = """
+        {"payload":{"answerModalAlert":{"alertID":"A1","buttonIndex":0,"suppress":false}}}
+        """
+        guard case let .answerModalAlert(_, _, _, inputs) =
+                try decoder().decode(ClientEnvelope.self, from: Data(json.utf8)).payload else {
+            return XCTFail("expected .answerModalAlert")
+        }
+        XCTAssertNil(inputs)
+    }
+
+    // The values an alert asks for travel with it, and survive a mac that sends
+    // a kind this phone has not heard of.
+    func testModalAlertInputsRoundTripAndTolerateUnknownFields() throws {
+        var alert = sampleAlert()
+        alert.inputs = [
+            .init(id: "name", label: nil, kind: CompanionModalAlert.Input.textKind, value: ""),
+            .init(id: "spaces", label: "Tab size in spaces:", kind: CompanionModalAlert.Input.integerKind,
+                  value: "4", minimum: 0, maximum: 100),
+        ]
+        let status = CompanionMacStatus(modalAlerts: [alert], mainBlocked: false)
+        guard case let .macStatusChanged(decoded) = try roundTripHost(.macStatusChanged(status: status)) else {
+            return XCTFail("expected .macStatusChanged")
+        }
+        XCTAssertEqual(decoded, status)
+
+        let json = """
+        {"modalAlerts":[{"id":"A1","inputs":[{"id":"x","kind":"slider","future":1}]}]}
+        """
+        let future = try decoder().decode(CompanionMacStatus.self, from: Data(json.utf8))
+        XCTAssertEqual(future.modalAlerts.first?.inputs,
+                       [.init(id: "x", label: nil, kind: "slider", value: "")])
+    }
+
+    // A status from a future mac that drops or adds fields must still decode,
+    // with safe defaults, rather than taking the whole hello down with it: an
+    // alert with no flags is a plain app-modal alert, a button with no flags is
+    // an ordinary button, and a status with no fields is "nothing to report".
+    func testMacStatusDecodesWithMissingFields() throws {
+        let json = """
+        {"modalAlerts":[{"id":"A1","buttons":[{"title":"OK","futureFlag":true}],"futureField":1}]}
+        """
+        let status = try decoder().decode(CompanionMacStatus.self, from: Data(json.utf8))
+        XCTAssertFalse(status.mainBlocked)
+        XCTAssertEqual(status.modalAlerts, [CompanionModalAlert(
+            id: "A1", heading: "", body: "",
+            buttons: [.init(title: "OK", isCancel: false, isDestructive: false, rememberable: false)],
+            suppressionLabel: nil, hasAccessory: false, isAppModal: true)])
+
+        let empty = try decoder().decode(CompanionMacStatus.self, from: Data("{}".utf8))
+        XCTAssertEqual(empty, CompanionMacStatus(modalAlerts: [], mainBlocked: false))
+    }
 }

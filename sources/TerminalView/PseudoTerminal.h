@@ -26,6 +26,7 @@
 @class TabColorPickerState;
 @class iTermBrowserWebView;
 @class iTermPromptOnCloseReason;
+@class iTermUndoCloseArchives;
 @class iTermSessionFactory;
 @class iTermToolbeltView;
 @protocol iTermLargeContentProvider;
@@ -133,6 +134,21 @@ extern NSString *const iTermDidCreateTerminalWindowNotification;
 // Member tabs of the given group, in tab order.
 - (NSArray<PTYTab *> *)tabsInGroup:(NSString *)groupID;
 
+// Python API tab-group mutators, invoked by iTermTabGroupBuiltInFunctions once
+// it has resolved which window hosts the group. They take a hex color string
+// (empty means "pick the next palette color") and a collapsed flag as an
+// NSNumber, and call completion(result, error). Kept window-scoped here so the
+// contiguity/relayout side effects run against the hosting window.
+- (void)apiSetTabGroupNameWithCompletion:(void (^)(id, NSError *))completion
+                                group_id:(NSString *)groupID
+                                    name:(NSString *)name;
+- (void)apiSetTabGroupColorWithCompletion:(void (^)(id, NSError *))completion
+                                 group_id:(NSString *)groupID
+                                    color:(NSString *)colorString;
+- (void)apiSetTabGroupCollapsedWithCompletion:(void (^)(id, NSError *))completion
+                                     group_id:(NSString *)groupID
+                                    collapsed:(NSNumber *)collapsed;
+
 // Put every tab in `tabs` into one brand-new tab group named `name`. A tab
 // that already belonged to a group is moved out of it into the new group.
 // The members are brought together into one contiguous block. No-op for fewer
@@ -190,6 +206,7 @@ extern NSString *const iTermDidCreateTerminalWindowNotification;
 + (instancetype)terminalWithArrangement:(NSDictionary *)arrangement
                                   named:(NSString *)arrangementName
                                sessions:(NSArray *)sessions
+                               archives:(iTermUndoCloseArchives *)archives
                forceOpeningHotKeyWindow:(BOOL)force;
 
 // Register all sessions in the window's arrangement so their contents can be
@@ -377,6 +394,11 @@ extern NSString *const iTermDidCreateTerminalWindowNotification;
 // etc.) change.
 - (void)screenParametersDidChange;
 
+// Called the instant the displays change, before -screenParametersDidChange is
+// scheduled, so a location lock can stop trusting frames while macOS relocates
+// windows.
+- (void)locationLockDisplaysDidChange;
+
 // Changes how input is broadcast.
 - (void)setBroadcastMode:(BroadcastMode)mode;
 - (void)setBroadcastingSessions:(NSArray<NSArray<PTYSession *> *> *)domains;
@@ -419,6 +441,34 @@ extern NSString *const iTermDidCreateTerminalWindowNotification;
 - (void)addSession:(PTYSession *)session inTabAtIndex:(NSNumber *)tabIndex;
 - (void)customizeCollectionBehaviorForProfile:(Profile *)profile;
 
+// Floating panes
+- (BOOL)canCreateFloatingPane;
+- (IBAction)newFloatingPaneWithCurrentProfile:(id)sender;
+// Adds a floating pane to the current tab, starting in the current session's directory.
+- (void)newFloatingPaneWithProfile:(Profile *)profile;
+- (IBAction)bringFloatingPaneToFront:(id)sender;
+- (IBAction)sendFloatingPaneToBack:(id)sender;
+- (IBAction)toggleFloatingPanesHidden:(id)sender;
+- (IBAction)dockFloatingPane:(id)sender;
+- (IBAction)moveFloatingPaneUp:(id)sender;
+- (IBAction)moveFloatingPaneDown:(id)sender;
+- (IBAction)moveFloatingPaneLeft:(id)sender;
+- (IBAction)moveFloatingPaneRight:(id)sender;
+// Opens a web page in a new floating pane in the current tab.
+- (void)openFloatingPaneWithURL:(NSURL *)url
+                         target:(NSString *)target
+                    baseProfile:(Profile *)base;
+// Puts a session that has not been launched yet into the tab as a float, centered and active.
+// The caller launches it.
+- (void)installNewFloatingSession:(PTYSession *)newSession
+                            inTab:(PTYTab *)tab
+                    parentSession:(PTYSession *)parentSession;
+- (PTYSession *)addFloatingPaneToTab:(PTYTab *)tab
+                             profile:(Profile *)profile
+                       parentSession:(PTYSession *)parentSession
+                              oldCWD:(NSString *)oldCWD
+                          completion:(void (^)(PTYSession *, BOOL))completion;
+
 - (IBAction)newTmuxWindow:(id)sender;
 - (IBAction)newTmuxTab:(id)sender;
 - (void)newTmuxTabAtIndex:(NSNumber *)index;
@@ -441,14 +491,20 @@ extern NSString *const iTermDidCreateTerminalWindowNotification;
 - (void)moveSessionToWindow:(id)sender;
 
 - (void)addRevivedSession:(PTYSession *)session;
+// `archives` holds sessions in the arrangement that are restored from archives
+// because they could not be revived. It may be nil.
 - (void)addTabWithArrangement:(NSDictionary *)arrangement
                      uniqueId:(int)tabUniqueId
                      sessions:(NSArray *)sessions
+                     archives:(iTermUndoCloseArchives *)archives
                  predecessors:(NSArray *)predecessors;  // NSInteger of tab uniqueId's that come before this tab.
 - (void)recreateTab:(PTYTab *)tab
     withArrangement:(NSDictionary *)arrangement
            sessions:(NSArray *)sessions
+           archives:(iTermUndoCloseArchives *)archives
              revive:(BOOL)revive;
+// Adds a tab for each archived session.
+- (void)addTabsForArchives:(iTermUndoCloseArchives *)archives;
 
 - (IBAction)toggleToolbeltVisibility:(id)sender;
 
@@ -464,6 +520,9 @@ extern NSString *const iTermDidCreateTerminalWindowNotification;
 
 // Returns the preferred frame for the window if it were on a given screen.
 - (NSRect)canonicalFrameForScreen:(NSScreen *)screen;
+- (NSRect)canonicalFrameForScreen:(NSScreen *)screen
+                      windowFrame:(NSRect)frame
+                     preserveSize:(BOOL)preserveSize;
 
 // Swap pane with another in that direction
 - (void)swapPaneLeft;
@@ -499,7 +558,7 @@ extern NSString *const iTermDidCreateTerminalWindowNotification;
 - (iTermBrowserWebView *)openTabWithURL:(NSURL *)url
                             baseProfile:(Profile *)base
                         nearSessionGuid:(NSString *)sessionGuid
-                          configuration:(WKWebViewConfiguration *)configuration NS_AVAILABLE_MAC(11_0);
+                          configuration:(WKWebViewConfiguration *)configuration;
 
 - (void)openSplitPaneWithURL:(NSURL *)url
                       target:(NSString *)target

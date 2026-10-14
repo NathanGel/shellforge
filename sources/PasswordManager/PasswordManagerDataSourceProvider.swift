@@ -84,6 +84,23 @@ class PasswordManagerDataSourceProvider: NSObject {
         set {
             iTermUserDefaults.userDefaults().set(newValue.rawValue, forKey: dataSourceNameUserDefaultsKey)
             _dataSource = nil
+            prefetchAdapterEnvironmentIfNeeded()
+        }
+    }
+
+    // Adapter CLIs run with the user’s shell PATH, which takes a shell launch to read. Start
+    // that as soon as an adapter is the chosen source so it is cached by the time the first
+    // adapter command runs. Keychain, 1Password and LastPass users pay nothing.
+    private func prefetchAdapterEnvironmentIfNeeded() {
+        switch preferredDataSource {
+        case .keePassXC, .bitwarden, .keeper:
+            AdapterShellEnvironment.shared.prefetch()
+        #if ITERM_DEBUG
+        case .testAdapter:
+            AdapterShellEnvironment.shared.prefetch()
+        #endif
+        case .keychain, .onePassword, .lastPass:
+            break
         }
     }
 
@@ -227,8 +244,95 @@ class PasswordManagerDataSourceProvider: NSObject {
         authenticated = false
     }
 
+    // Whether a previously-successful authentication cached on this singleton may be
+    // reused when opening the password manager again, or whether the open must prompt
+    // afresh. Pure so it can be unit-tested without LocalAuthentication. A cached
+    // authentication is reused unless the user asked to authenticate on every open,
+    // and that preference only applies while authentication is required at all (with
+    // authentication off there is no prompt to force).
+    @objc static func mayReuseAuthentication(authRequired: Bool, requireEveryOpen: Bool) -> Bool {
+        guard authRequired else {
+            return true
+        }
+        return !requireEveryOpen
+    }
+
+    // Live evaluation of mayReuseAuthentication against the current settings.
+    @objc var mayReuseAuthenticationOnOpen: Bool {
+        return Self.mayReuseAuthentication(
+            authRequired: SecureUserDefaults.instance.requireAuthToOpenPasswordmanager.value,
+            requireEveryOpen: SecureUserDefaults.instance.requireAuthEveryOpenPasswordmanager.value)
+    }
+
+    // The settings menu presents the three stored authentication settings as one
+    // set of mutually exclusive choices. Every-open takes precedence over
+    // after-screen-locks because it already prompts on the first open after a lock.
+    // Pure so it can be unit-tested.
+    @objc static func authenticationMode(authRequired: Bool,
+                                         afterScreenLocks: Bool,
+                                         everyOpen: Bool) -> PasswordManagerAuthenticationMode {
+        guard authRequired else {
+            return .never
+        }
+        if everyOpen {
+            return .everyOpen
+        }
+        if afterScreenLocks {
+            return .oncePerLaunchAndAfterScreenLocks
+        }
+        return .oncePerLaunch
+    }
+
+    @objc static var currentAuthenticationMode: PasswordManagerAuthenticationMode {
+        return authenticationMode(
+            authRequired: SecureUserDefaults.instance.requireAuthToOpenPasswordmanager.value,
+            afterScreenLocks: iTermUserDefaults.requireAuthenticationAfterScreenLocks,
+            everyOpen: SecureUserDefaults.instance.requireAuthEveryOpenPasswordmanager.value)
+    }
+
+    // Whether a screen lock should revoke the cached authentication and close an
+    // open password manager window. True for every mode that prompts again after a
+    // lock: with every-open, a window left open across a lock would show passwords
+    // to whoever unlocks the screen without authenticating. Pure so it can be
+    // unit-tested.
+    @objc static func requiresAuthenticationAfterScreenLock(mode: PasswordManagerAuthenticationMode) -> Bool {
+        switch mode {
+        case .oncePerLaunchAndAfterScreenLocks, .everyOpen:
+            return true
+        case .never, .oncePerLaunch:
+            return false
+        }
+    }
+
+    @objc static var requiresAuthenticationAfterScreenLock: Bool {
+        return requiresAuthenticationAfterScreenLock(mode: currentAuthenticationMode)
+    }
+
+    // Stores the settings for `mode`. Changing whether authentication is required,
+    // or whether it is required on every open, prompts for an administrator
+    // password (once, even if both change). If that fails or is canceled the
+    // settings are left as they were.
+    @objc static func setAuthenticationMode(_ mode: PasswordManagerAuthenticationMode) {
+        DLog("Set password manager authentication mode to \(mode.rawValue)")
+        do {
+            try SecureUserDefaults.setPasswordManagerAuthentication(required: mode != .never,
+                                                                    everyOpen: mode == .everyOpen)
+        } catch {
+            RLog("Failed to set password manager authentication mode to \(mode.rawValue): \(error)")
+            SecureUserDefault<Bool>.showSaveFailedWarning(error)
+            return
+        }
+        let afterScreenLocks = (mode == .oncePerLaunchAndAfterScreenLocks)
+        // This setting syncs, so don't write it needlessly: a user who loads settings
+        // from a custom folder may be asked to save them after any change.
+        if iTermUserDefaults.requireAuthenticationAfterScreenLocks != afterScreenLocks {
+            iTermUserDefaults.requireAuthenticationAfterScreenLocks = afterScreenLocks
+        }
+    }
+
     @objc func requestAuthenticationIfNeeded(_ completion: @escaping (Bool) -> ()) {
-        if authenticated {
+        prefetchAdapterEnvironmentIfNeeded()
+        if authenticated && mayReuseAuthenticationOnOpen {
             completion(true)
             return
         }
@@ -242,6 +346,10 @@ class PasswordManagerDataSourceProvider: NSObject {
         var error: NSError? = nil
         if !context.canEvaluatePolicy(policy, error: &error) {
             RLog("Can't evaluate \(policy): \(error?.localizedDescription ?? "(nil)")")
+            // Authentication is impossible here (no biometrics/passcode, MDM-restricted).
+            // Report failure so callers don't hang or silently drop the requested action
+            // waiting on a completion that would otherwise never fire.
+            completion(false)
             return
         }
         iTermApplication.shared().localAuthenticationDialogOpen = true
@@ -274,70 +382,83 @@ class PasswordManagerDataSourceProvider: NSObject {
     }
 
     private func showError(_ error: NSError) {
-        let alert = NSAlert()
         let reason: String
         switch LAError.Code(rawValue: error.code) {
         case .authenticationFailed:
-            reason = "valid credentials weren't supplied.";
+            reason = String(localized: "PasswordManagerAuth.AuthenticationFailed", defaultValue: "valid credentials weren't supplied.", comment: "Authentication failure reason: wrong credentials");
 
         case .userCancel:
-            reason = "password entry was cancelled.";
+            reason = String(localized: "PasswordManagerAuth.UserCancel", defaultValue: "password entry was cancelled.", comment: "Authentication failure reason: user cancelled");
 
         case .userFallback:
-            reason = "password authentication was requested.";
+            reason = String(localized: "PasswordManagerAuth.UserFallback", defaultValue: "password authentication was requested.", comment: "Authentication failure reason: user chose password fallback");
 
         case .systemCancel:
-            reason = "the system cancelled the authentication request.";
+            reason = String(localized: "PasswordManagerAuth.SystemCancel", defaultValue: "the system cancelled the authentication request.", comment: "Authentication failure reason: system cancelled");
 
         case .passcodeNotSet:
-            reason = "no passcode is set.";
+            reason = String(localized: "PasswordManagerAuth.PasscodeNotSet", defaultValue: "no passcode is set.", comment: "Authentication failure reason: no passcode set");
 
         case .touchIDNotAvailable:
-            reason = "touch ID is not available.";
+            reason = String(localized: "PasswordManagerAuth.TouchIDNotAvailable", defaultValue: "touch ID is not available.", comment: "Authentication failure reason: Touch ID not available");
 
         case .biometryNotEnrolled:
-            reason = "touch ID doesn't have any fingers enrolled.";
+            reason = String(localized: "PasswordManagerAuth.BiometryNotEnrolled", defaultValue: "touch ID doesn't have any fingers enrolled.", comment: "Authentication failure reason: no fingerprints enrolled");
 
         case .biometryLockout:
-            reason = "there were too many failed Touch ID attempts.";
+            reason = String(localized: "PasswordManagerAuth.BiometryLockout", defaultValue: "there were too many failed Touch ID attempts.", comment: "Authentication failure reason: too many failed Touch ID attempts");
 
         case .appCancel:
-            reason = "authentication was cancelled by iTerm2.";
+            reason = String(localized: "PasswordManagerAuth.AppCancel", defaultValue: "authentication was cancelled by iTerm2.", comment: "Authentication failure reason: cancelled by the app");
 
         case .invalidContext:
-            reason = "the context is invalid. This is a bug in iTerm2. Please report it.";
+            reason = String(localized: "PasswordManagerAuth.InvalidContext", defaultValue: "the context is invalid. This is a bug in iTerm2. Please report it.", comment: "Authentication failure reason: invalid context");
 
         case .none:
             reason = error.localizedDescription
 
         case .touchIDNotEnrolled:
-            reason = "touch ID is not enrolled."
+            reason = String(localized: "PasswordManagerAuth.TouchIDNotEnrolled", defaultValue: "touch ID is not enrolled.", comment: "Authentication failure reason: Touch ID not enrolled")
 
         case .touchIDLockout:
-            reason = "touch ID is locked out."
+            reason = String(localized: "PasswordManagerAuth.TouchIDLockout", defaultValue: "touch ID is locked out.", comment: "Authentication failure reason: Touch ID locked out")
 
         case .notInteractive:
-            reason = "the required user interface could not be displayed."
+            reason = String(localized: "PasswordManagerAuth.NotInteractive", defaultValue: "the required user interface could not be displayed.", comment: "Authentication failure reason: UI could not be displayed")
 
         case .watchNotAvailable:
-            reason = "watch is not available."
+            reason = String(localized: "PasswordManagerAuth.WatchNotAvailable", defaultValue: "watch is not available.", comment: "Authentication failure reason: Apple Watch not available")
 
         case .biometryNotPaired:
-            reason = "biometry is not paired."
+            reason = String(localized: "PasswordManagerAuth.BiometryNotPaired", defaultValue: "biometry is not paired.", comment: "Authentication failure reason: biometry not paired")
 
         case .biometryDisconnected:
-            reason = "biometry is disconnected."
+            reason = String(localized: "PasswordManagerAuth.BiometryDisconnected", defaultValue: "biometry is disconnected.", comment: "Authentication failure reason: biometry disconnected")
 
         case .invalidDimensions:
-            reason = "invalid dimensions given."
+            reason = String(localized: "PasswordManagerAuth.InvalidDimensions", defaultValue: "invalid dimensions given.", comment: "Authentication failure reason: invalid dimensions")
 
         @unknown default:
             reason = error.localizedDescription
         }
-        alert.messageText = "Authentication Failed"
-        alert.informativeText = "Authentication failed because \(reason)"
-        alert.addButton(withTitle: "OK")
-        alert.runModal()
+        iTermWarning.show(withTitle: String(localized: "PasswordManagerAuth.FailedFormat", defaultValue: "Authentication failed because \(reason)", comment: "Body of the authentication-failed alert; the placeholder is the reason for the failure"),
+                          actions: [iTermLocalizedOK()],
+                          accessory: nil,
+                          identifier: nil,
+                          silenceable: .kiTermWarningTypePersistent,
+                          heading: String(localized: "PasswordManagerAuth.FailedTitle", defaultValue: "Authentication Failed", comment: "Title of the alert shown when unlocking the password manager fails"),
+                          window: nil)
     }
 }
 
+// How often the password manager asks for Touch ID or the login password. This is
+// stored in three independent settings (see
+// PasswordManagerDataSourceProvider.authenticationMode) for compatibility with
+// earlier versions.
+@objc(iTermPasswordManagerAuthenticationMode)
+enum PasswordManagerAuthenticationMode: Int {
+    case never
+    case oncePerLaunch
+    case oncePerLaunchAndAfterScreenLocks
+    case everyOpen
+}

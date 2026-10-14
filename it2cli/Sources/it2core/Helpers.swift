@@ -1,7 +1,19 @@
+import ArgumentParser
 import Foundation
 #if canImport(ProtobufRuntime)
 import ProtobufRuntime  // standalone SwiftPM build; in-app the types come via the bridging header
 #endif
+
+// MARK: - Subcommand Ordering
+
+/// Sort a list of subcommands alphabetically by their command name, so help output lists them
+/// in a predictable order regardless of source declaration order. Use this when building a
+/// `CommandConfiguration.subcommands` array so nobody has to hand-maintain alphabetical order.
+func sortedSubcommands(_ commands: [ParsableCommand.Type]) -> [ParsableCommand.Type] {
+    commands.sorted {
+        ($0.configuration.commandName ?? "") < ($1.configuration.commandName ?? "")
+    }
+}
 
 // MARK: - Split Tree Walking
 
@@ -17,6 +29,25 @@ func walkSplitTree(_ node: ITMSplitTreeNode?, visitor: (ITMSessionSummary) -> Vo
             walkSplitTree(link.node, visitor: visitor)
         }
     }
+}
+
+/// Walk every session in a tab: its split tree, then its floating panes back to front.
+func walkSessions(in tab: ITMListSessionsResponse_Tab, visitor: (ITMSessionSummary) -> Void) {
+    walkSplitTree(tab.root, visitor: visitor)
+    for case let floatingPane as ITMFloatingPane in tab.floatingPanesArray ?? [] {
+        if let s = floatingPane.session {
+            visitor(s)
+        }
+    }
+}
+
+/// Collect the UUIDs of every session in a tab, including floating panes.
+func collectSessionIds(in tab: ITMListSessionsResponse_Tab) -> [String] {
+    var ids: [String] = []
+    walkSessions(in: tab) { s in
+        if let id = s.uniqueIdentifier { ids.append(id) }
+    }
+    return ids
 }
 
 /// Collect all session UUIDs from a split tree.
@@ -73,6 +104,94 @@ func jsonString(_ s: String) -> String {
     let escaped = s.replacingOccurrences(of: "\\", with: "\\\\")
                    .replacingOccurrences(of: "\"", with: "\\\"")
     return "\"\(escaped)\""
+}
+
+/// Quote the body of an interpolated string (such as `\(session.path) "x"`) as a
+/// string literal for an iTerm2 expression. A bare `"` or a trailing `\` in the
+/// literal text is escaped so it can't end the literal early. `\(...)` is copied
+/// unchanged, since quotes in there belong to the embedded expression. The scan
+/// mirrors iTerm2's iTermSwiftyStringParser.
+func swiftyStringLiteral(_ body: String) -> String {
+    enum State {
+        case literal
+        case expression
+        case expressionString
+        case expressionStringEscape
+    }
+    var state = State.literal
+    var parens = 0
+    var parensStack: [Int] = []
+    var result = "\""
+    let chars = Array(body)
+    var i = 0
+    while i < chars.count {
+        let c = chars[i]
+        i += 1
+        switch state {
+        case .literal:
+            if c == "\\" {
+                guard i < chars.count else {
+                    result += "\\\\"
+                    continue
+                }
+                let next = chars[i]
+                i += 1
+                result.append(c)
+                result.append(next)
+                if next == "(" {
+                    parens = 1
+                    state = .expression
+                }
+            } else if c == "\"" {
+                result += "\\\""
+            } else {
+                result.append(c)
+            }
+        case .expression:
+            result.append(c)
+            if c == "(" {
+                parens += 1
+            } else if c == ")" {
+                parens -= 1
+                if parens == 0 {
+                    if let outer = parensStack.popLast() {
+                        parens = outer
+                        state = .expressionString
+                    } else {
+                        state = .literal
+                    }
+                }
+            } else if c == "\"" {
+                state = .expressionString
+            }
+        case .expressionString:
+            result.append(c)
+            if c == "\\" {
+                state = .expressionStringEscape
+            } else if c == "\"" {
+                state = .expression
+            }
+        case .expressionStringEscape:
+            result.append(c)
+            if c == "(" {
+                parensStack.append(parens)
+                parens = 1
+                state = .expression
+            } else {
+                state = .expressionString
+            }
+        }
+    }
+    return result + "\""
+}
+
+/// Decode a JSON value that should be a string, as the API returns variable values
+/// and function results. Nil when it isn't a string (including JSON null).
+func decodeJSONString(_ json: String) -> String? {
+    guard let data = json.data(using: .utf8) else {
+        return nil
+    }
+    return (try? JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed)) as? String
 }
 
 // MARK: - Focus State

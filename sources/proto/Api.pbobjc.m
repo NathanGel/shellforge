@@ -51,6 +51,7 @@ GPBObjCClassDeclaration(ITMCoordRange);
 GPBObjCClassDeclaration(ITMCreateTabRequest);
 GPBObjCClassDeclaration(ITMCreateTabResponse);
 GPBObjCClassDeclaration(ITMCustomEscapeSequenceNotification);
+GPBObjCClassDeclaration(ITMFloatingPane);
 GPBObjCClassDeclaration(ITMFocusChangedNotification);
 GPBObjCClassDeclaration(ITMFocusChangedNotification_Window);
 GPBObjCClassDeclaration(ITMFocusRequest);
@@ -8211,11 +8212,15 @@ typedef struct ITMRPCRegistrationRequest_StatusBarComponentAttributes_Icon__stor
 
 @dynamic hasDisplayName, displayName;
 @dynamic hasUniqueIdentifier, uniqueIdentifier;
+@dynamic hasSubmenu, submenu;
+@dynamic hasVisibleWhen, visibleWhen;
 
 typedef struct ITMRPCRegistrationRequest_ContextMenuAttributes__storage_ {
   uint32_t _has_storage_[1];
   NSString *displayName;
   NSString *uniqueIdentifier;
+  NSString *submenu;
+  NSString *visibleWhen;
 } ITMRPCRegistrationRequest_ContextMenuAttributes__storage_;
 
 // This method is threadsafe because it is initially called
@@ -8239,6 +8244,24 @@ typedef struct ITMRPCRegistrationRequest_ContextMenuAttributes__storage_ {
         .number = ITMRPCRegistrationRequest_ContextMenuAttributes_FieldNumber_UniqueIdentifier,
         .hasIndex = 1,
         .offset = (uint32_t)offsetof(ITMRPCRegistrationRequest_ContextMenuAttributes__storage_, uniqueIdentifier),
+        .flags = GPBFieldOptional,
+        .dataType = GPBDataTypeString,
+      },
+      {
+        .name = "submenu",
+        .dataTypeSpecific.clazz = Nil,
+        .number = ITMRPCRegistrationRequest_ContextMenuAttributes_FieldNumber_Submenu,
+        .hasIndex = 2,
+        .offset = (uint32_t)offsetof(ITMRPCRegistrationRequest_ContextMenuAttributes__storage_, submenu),
+        .flags = GPBFieldOptional,
+        .dataType = GPBDataTypeString,
+      },
+      {
+        .name = "visibleWhen",
+        .dataTypeSpecific.clazz = Nil,
+        .number = ITMRPCRegistrationRequest_ContextMenuAttributes_FieldNumber_VisibleWhen,
+        .hasIndex = 3,
+        .offset = (uint32_t)offsetof(ITMRPCRegistrationRequest_ContextMenuAttributes__storage_, visibleWhen),
         .flags = GPBFieldOptional,
         .dataType = GPBDataTypeString,
       },
@@ -13135,6 +13158,51 @@ void ITMSplitTreeNode_SplitTreeLink_ClearChildOneOfCase(ITMSplitTreeNode_SplitTr
   GPBOneofDescriptor *oneof = [descriptor.oneofs objectAtIndex:0];
   GPBClearOneof(message, oneof);
 }
+#pragma mark - ITMFloatingPane
+
+@implementation ITMFloatingPane
+
+@dynamic hasSession, session;
+
+typedef struct ITMFloatingPane__storage_ {
+  uint32_t _has_storage_[1];
+  ITMSessionSummary *session;
+} ITMFloatingPane__storage_;
+
+// This method is threadsafe because it is initially called
+// in +initialize for each subclass.
++ (GPBDescriptor *)descriptor {
+  static GPBDescriptor *descriptor = nil;
+  if (!descriptor) {
+    static GPBMessageFieldDescription fields[] = {
+      {
+        .name = "session",
+        .dataTypeSpecific.clazz = GPBObjCClass(ITMSessionSummary),
+        .number = ITMFloatingPane_FieldNumber_Session,
+        .hasIndex = 0,
+        .offset = (uint32_t)offsetof(ITMFloatingPane__storage_, session),
+        .flags = GPBFieldOptional,
+        .dataType = GPBDataTypeMessage,
+      },
+    };
+    GPBDescriptor *localDescriptor =
+        [GPBDescriptor allocDescriptorForClass:[ITMFloatingPane class]
+                                     rootClass:[ITMApiRoot class]
+                                          file:ITMApiRoot_FileDescriptor()
+                                        fields:fields
+                                    fieldCount:(uint32_t)(sizeof(fields) / sizeof(GPBMessageFieldDescription))
+                                   storageSize:sizeof(ITMFloatingPane__storage_)
+                                         flags:(GPBDescriptorInitializationFlags)(GPBDescriptorInitializationFlag_UsesClassRefs | GPBDescriptorInitializationFlag_Proto3OptionalKnown)];
+    #if defined(DEBUG) && DEBUG
+      NSAssert(descriptor == nil, @"Startup recursed!");
+    #endif  // DEBUG
+    descriptor = localDescriptor;
+  }
+  return descriptor;
+}
+
+@end
+
 #pragma mark - ITMListSessionsResponse
 
 @implementation ITMListSessionsResponse
@@ -13291,6 +13359,12 @@ typedef struct ITMListSessionsResponse_Window__storage_ {
 @dynamic hasTmuxConnectionId, tmuxConnectionId;
 @dynamic minimizedSessionsArray, minimizedSessionsArray_Count;
 @dynamic hasActiveSessionId, activeSessionId;
+@dynamic hasTabGroupId, tabGroupId;
+@dynamic hasTabGroupName, tabGroupName;
+@dynamic hasTabGroupColor, tabGroupColor;
+@dynamic hasTabGroupCollapsed, tabGroupCollapsed;
+@dynamic floatingPanesArray, floatingPanesArray_Count;
+@dynamic hasFloatingPanesHidden, floatingPanesHidden;
 
 typedef struct ITMListSessionsResponse_Tab__storage_ {
   uint32_t _has_storage_[1];
@@ -13300,6 +13374,10 @@ typedef struct ITMListSessionsResponse_Tab__storage_ {
   NSString *tmuxConnectionId;
   NSMutableArray *minimizedSessionsArray;
   NSString *activeSessionId;
+  NSString *tabGroupId;
+  NSString *tabGroupName;
+  NSString *tabGroupColor;
+  NSMutableArray *floatingPanesArray;
 } ITMListSessionsResponse_Tab__storage_;
 
 // This method is threadsafe because it is initially called
@@ -13361,6 +13439,60 @@ typedef struct ITMListSessionsResponse_Tab__storage_ {
         .offset = (uint32_t)offsetof(ITMListSessionsResponse_Tab__storage_, activeSessionId),
         .flags = GPBFieldOptional,
         .dataType = GPBDataTypeString,
+      },
+      {
+        .name = "tabGroupId",
+        .dataTypeSpecific.clazz = Nil,
+        .number = ITMListSessionsResponse_Tab_FieldNumber_TabGroupId,
+        .hasIndex = 5,
+        .offset = (uint32_t)offsetof(ITMListSessionsResponse_Tab__storage_, tabGroupId),
+        .flags = GPBFieldOptional,
+        .dataType = GPBDataTypeString,
+      },
+      {
+        .name = "tabGroupName",
+        .dataTypeSpecific.clazz = Nil,
+        .number = ITMListSessionsResponse_Tab_FieldNumber_TabGroupName,
+        .hasIndex = 6,
+        .offset = (uint32_t)offsetof(ITMListSessionsResponse_Tab__storage_, tabGroupName),
+        .flags = GPBFieldOptional,
+        .dataType = GPBDataTypeString,
+      },
+      {
+        .name = "tabGroupColor",
+        .dataTypeSpecific.clazz = Nil,
+        .number = ITMListSessionsResponse_Tab_FieldNumber_TabGroupColor,
+        .hasIndex = 7,
+        .offset = (uint32_t)offsetof(ITMListSessionsResponse_Tab__storage_, tabGroupColor),
+        .flags = GPBFieldOptional,
+        .dataType = GPBDataTypeString,
+      },
+      {
+        .name = "tabGroupCollapsed",
+        .dataTypeSpecific.clazz = Nil,
+        .number = ITMListSessionsResponse_Tab_FieldNumber_TabGroupCollapsed,
+        .hasIndex = 8,
+        .offset = 9,  // Stored in _has_storage_ to save space.
+        .flags = GPBFieldOptional,
+        .dataType = GPBDataTypeBool,
+      },
+      {
+        .name = "floatingPanesArray",
+        .dataTypeSpecific.clazz = GPBObjCClass(ITMFloatingPane),
+        .number = ITMListSessionsResponse_Tab_FieldNumber_FloatingPanesArray,
+        .hasIndex = GPBNoHasBit,
+        .offset = (uint32_t)offsetof(ITMListSessionsResponse_Tab__storage_, floatingPanesArray),
+        .flags = GPBFieldRepeated,
+        .dataType = GPBDataTypeMessage,
+      },
+      {
+        .name = "floatingPanesHidden",
+        .dataTypeSpecific.clazz = Nil,
+        .number = ITMListSessionsResponse_Tab_FieldNumber_FloatingPanesHidden,
+        .hasIndex = 10,
+        .offset = 11,  // Stored in _has_storage_ to save space.
+        .flags = GPBFieldOptional,
+        .dataType = GPBDataTypeBool,
       },
     };
     GPBDescriptor *localDescriptor =

@@ -629,14 +629,18 @@ typedef struct {
 // When you get a report, roll back the token (so it will be executed again later) and pause. Force
 // a sync and unpause so the report goes through on re-execution.
 //
-// Coalescing (issue 13013): a report whose value the mutation thread owns (currently only OSC 4
-// color queries, which read colorMap) uses -terminalShouldSendColorReport:. Its sync arms the
-// executor's reportsMaySkipSync flag, which stays armed across a run of such reports so a burst
-// (e.g. herdr querying all 256 palette colors on focus) pays one sync, not one per query. Any state
-// side effect scheduled in the interim disarms it (see TokenExecutor.addSideEffect/
-// addDeferredSideEffect/setSideEffectFlag and addUnmanagedPausedSideEffect - the colorMap-mutating
-// paths all funnel through those), forcing the next coalescible report to re-sync. Report-send side
-// effects use addReportSideEffect so they don't disarm it.
+// Coalescing (issue 13013): a report whose value the mutation thread owns uses
+// -terminalShouldSendCoalescibleReport:. Currently that's OSC 4 color queries (which read the
+// mutation-thread colorMap) and device status reports such as CSI 6 n cursor position (which read
+// the mutation-thread grid cursor); both read constant or mutation-owned state that is always
+// current at token-execution time. Its sync arms the executor's reportsMaySkipSync flag, which stays
+// armed across a run of such reports so a burst (e.g. herdr querying all 256 palette colors on
+// focus, or a program that pipelines many CSI 6 n queries) pays one sync, not one per query. Any
+// state side effect scheduled in the interim disarms it (see TokenExecutor.addSideEffect/
+// addDeferredSideEffect/setSideEffectFlag and addUnmanagedPausedSideEffect - the state-mutating
+// paths, including cursor movement's redraw side effect, all funnel through those), forcing the next
+// coalescible report to re-sync. Report-send side effects use addReportSideEffect so they don't
+// disarm it.
 //
 // IMPORTANT: reports that read main-thread-mirrored state (the config snapshot: cell size, backing
 // scale, window/grid size) must NOT be coalescible. That state is refreshed only by a sync running
@@ -651,7 +655,7 @@ typedef struct {
     return [self shouldSendReport:tmuxAllowed coalescible:NO];
 }
 
-- (BOOL)terminalShouldSendColorReport:(BOOL)tmuxAllowed {
+- (BOOL)terminalShouldSendCoalescibleReport:(BOOL)tmuxAllowed {
     return [self shouldSendReport:tmuxAllowed coalescible:YES];
 }
 
@@ -662,10 +666,10 @@ typedef struct {
         return NO;
     }
     // The one-shot handles the rolled-back report token re-executing after its
-    // sync. It applies to EVERY report, so non-coalescible reports (DSR, DA,
-    // cursor position, cell size, ...) still get delivered. Checked first and
-    // consumed here so a run's leftover cannot leak to the next report. This does
-    // NOT depend on the coalescing flag, so an interleaved state side effect that
+    // sync. It applies to EVERY report, so non-coalescible reports (device
+    // attributes, cell size, ...) still get delivered. Checked first and consumed
+    // here so a run's leftover cannot leak to the next report. This does NOT
+    // depend on the coalescing flag, so an interleaved state side effect that
     // disarms coalescing cannot livelock the re-execution.
     if (self.allowNextReport) {
         DLog(@"Allowing the re-executed report to go through");
@@ -674,9 +678,11 @@ typedef struct {
     }
     if (coalescible && self.tokenExecutor.reportsMaySkipSync) {
         // A joined sync already happened and no state side effect has been
-        // scheduled since, so a mutation-thread-owned value (colorMap) reflects
-        // current state. Let it through without another sync. This is what
-        // collapses herdr's 256-color palette query burst to a single sync.
+        // scheduled since, so a mutation-thread-owned value (colorMap for OSC 4,
+        // the grid cursor for CSI 6 n) reflects current state. Let it through
+        // without another sync. This is what collapses herdr's 256-color palette
+        // query burst, or a pipelined run of cursor-position queries, to a single
+        // sync.
         DLog(@"Allowing coalescible report to go through without a new sync");
         return YES;
     }
@@ -771,15 +777,10 @@ typedef struct {
             // The screen_char_t contents are unchanged, but the row build bakes
             // lineAttribute into the glyph keys (top-half vs bottom-half glyph
             // selection for double-height lines), so a DHL-top → DHL-bottom (or
-            // DWL → DHL) transition changes what is drawn. Mark the line dirty over
-            // its full width, matching the sibling width-changing branch below.
-            // This advances the content generation AND makes copyDirtyFromGrid:
-            // actually copy the changed metadata into the immutable grid the
-            // renderer reads; advancing the generation alone would leave that grid
-            // reporting a fresh identity with the stale lineAttribute.
-            [lineInfo setDirty:YES
-                       inRange:VT100GridRangeMake(0, width)
-             updateTimestampTo:metadata.timestamp];
+            // DWL → DHL) transition changes what is drawn. markLineDidChange: marks
+            // the line dirty (so copyDirtyFromGrid: copies the changed metadata into
+            // the immutable grid the renderer reads) and bumps the content generation.
+            [self.currentGrid markLineDidChange:y];
         }
         return;
     }
@@ -826,9 +827,12 @@ typedef struct {
     iTermMetadata metadata = lineInfo.metadata;
     metadata.lineAttribute = attr;
     lineInfo.metadata = metadata;
-    [lineInfo setDirty:YES
-               inRange:VT100GridRangeMake(0, width)
-      updateTimestampTo:metadata.timestamp];
+    // The in-place cell rewrite and lineAttribute change above are direct
+    // line/cell mutations that bypass the grid's dirtying; markLineDidChange:
+    // dirties the line (so copyDirtyFromGrid: copies it into the immutable grid)
+    // and bumps the content generation. setCursor: below only bumps when the cursor
+    // actually moves (it may not, e.g. at column 0), so it cannot be relied on here.
+    [self.currentGrid markLineDidChange:y];
     [self.currentGrid setCursor:VT100GridCoordMake(newCursorX, y)];
 }
 
@@ -899,6 +903,11 @@ typedef struct {
 - (void)terminalDidReset {
     [self invalidatePendingPromptState];
     self.progress = VT100ScreenProgressStopped;
+    self.progressGeneration += 1;
+    const NSInteger generation = self.progressGeneration;
+    [self addDeferredSideEffect:^(id<VT100ScreenDelegate> delegate) {
+        [delegate screenProgressWasResetWithGeneration:generation];
+    } name:@"progress was reset"];
 }
 
 // Centralized cleanup for OSC 133 in-flight state. Called from the FTCS
@@ -910,12 +919,16 @@ typedef struct {
 - (void)invalidatePendingPromptState {
     self.currentPromptKind = VT100PromptKindInitial;
     self.pendingNonInitialPromptStart = nil;
+    self.primaryPromptAwaitingCommandStart = NO;
 }
 
 - (void)terminalSetCursorType:(ITermCursorType)cursorType {
     DLog(@"begin cursorType=%@", @(cursorType));
     if (self.currentGrid.cursor.x < self.currentGrid.size.width) {
-        [self.currentGrid markCharDirty:YES at:self.currentGrid.cursor updateTimestamp:NO];
+        // Redraw-only: the cursor SHAPE is not part of -[VT100Grid encode:], so use
+        // the non-bumping dirty. A bumping dirty would re-save the whole grid every
+        // time an app toggles cursor style (vim, vi-mode shells do this constantly).
+        [self.currentGrid markCharDirtyForRedrawAt:self.currentGrid.cursor];
     }
     // Use a deferred side effect because the delegate doesn't do anything very important here and
     // programs like changing the cursor type all the time.
@@ -1430,6 +1443,20 @@ typedef struct {
     } name:@"move window top left point"];
 }
 
+- (void)terminalSetWindowFrame:(NSRect)frame {
+    DLog(@"begin %@", NSStringFromRect(frame));
+    [self addUnmanagedPausedSideEffect:^(id<VT100ScreenDelegate>  _Nonnull delegate, iTermTokenExecutorUnpauser * _Nonnull unpauser) {
+        DLog(@"begin side-effect");
+        if ([delegate screenShouldInitiateWindowResize] == PTYSessionResizePermissionAllowed &&
+            ![delegate screenWindowIsFullscreen]) {
+            DLog(@"doing it");
+            [delegate screenSetWindowFrame:frame];
+        }
+        [unpauser unpause];
+    } name:@"terminalSetWindowFrame"];
+
+}
+
 - (void)terminalMiniaturize:(BOOL)mini {
     DLog(@"begin %@", @(mini));
     [self addSideEffect:^(id<VT100ScreenDelegate> delegate) {
@@ -1499,6 +1526,16 @@ typedef struct {
 - (NSPoint)terminalWindowTopLeftPixelCoordinate {
     DLog(@"begin");
     return self.config.windowFrame.origin;
+}
+
+- (NSRect)terminalWindowFrameInPoints {
+    DLog(@"begin");
+    return self.config.globalWindowFrame;
+}
+
+- (NSArray<NSValue *> *)terminalScreenFramesInPoints {
+    DLog(@"begin");
+    return self.config.screenFrames ?: @[];
 }
 
 - (int)terminalWindowWidthInPixels {
@@ -1573,6 +1610,18 @@ typedef struct {
     } name:@"pop title for window"];
 }
 
+// A progress state the program reported through OSC 9;4. Distinct from
+// setting the property directly (as a reset does) because only the program's
+// own report says anything about whether its work is still running.
+- (void)setProgressFromProtocol:(VT100ScreenProgress)progress {
+    self.progressGeneration += 1;
+    const NSInteger generation = self.progressGeneration;
+    [self setProgress:progress];
+    [self addDeferredSideEffect:^(id<VT100ScreenDelegate> delegate) {
+        [delegate screenProgressProtocolDidReportProgress:progress generation:generation];
+    } name:@"progress protocol"];
+}
+
 - (void)terminalPostUserNotification:(NSString *)message {
     NSArray<NSString *> *params = [message componentsSeparatedByString:@";"];
     if (params.count >= 1 && [params[0] isNumeric]) {
@@ -1586,42 +1635,47 @@ typedef struct {
                 const int pr = havePR ? [params[2] intValue] : -1;
                 switch (st) {
                     case 0:
-                        [self setProgress:VT100ScreenProgressStopped];
+                        [self setProgressFromProtocol:VT100ScreenProgressStopped];
                         break;
                     case 1:  // set progress value to pr (number, 0-100)
                         if (pr >= 0 && pr <= 100) {
-                            [self setProgress:VT100ScreenProgressSuccessBase + pr];
+                            [self setProgressFromProtocol:VT100ScreenProgressSuccessBase + pr];
                         }
                         break;
                     case 2:  // set error state in progress. pr is optional
                         if (pr >= 0 && pr <= 100) {
-                            [self setProgress:VT100ScreenProgressErrorBase + pr];
+                            [self setProgressFromProtocol:VT100ScreenProgressErrorBase + pr];
                         } else {
-                            [self setProgress:VT100ScreenProgressError];
+                            [self setProgressFromProtocol:VT100ScreenProgressError];
                         }
                         break;
                     case 3:  // set indeterminate state
-                        [self setProgress:VT100ScreenProgressIndeterminate];
+                        [self setProgressFromProtocol:VT100ScreenProgressIndeterminate];
                         break;
                     case 4: {  // set paused state in progress. pr is optional
                         if (pr >= 0 && pr <= 100) {
-                            [self setProgress:VT100ScreenProgressWarningBase + pr];
+                            [self setProgressFromProtocol:VT100ScreenProgressWarningBase + pr];
                         } else if (!havePR) {
                             // Keep the percentage that is already showing and just recolor it,
                             // as Ghostty does: its docs say the value is used when specified and
-                            // the current one is left unchanged otherwise. There is no encoding
-                            // for a paused state without a percentage, so when there is nothing
-                            // to keep, show the minimum visible amount.
+                            // the current one is left unchanged otherwise. A spinner has no
+                            // percentage to keep, so it pauses as a spinner. When there is
+                            // nothing showing at all, show the minimum visible amount.
+                            if (self.progress == VT100ScreenProgressIndeterminate ||
+                                self.progress == VT100ScreenProgressPausedIndeterminate) {
+                                [self setProgressFromProtocol:VT100ScreenProgressPausedIndeterminate];
+                                break;
+                            }
                             const int currentPercentage = VT100ScreenProgressPercentage(self.progress);
                             const int percentage = currentPercentage > 0 ? currentPercentage : kMinimumVisibleProgressPercentage;
-                            [self setProgress:VT100ScreenProgressWarningBase + percentage];
+                            [self setProgressFromProtocol:VT100ScreenProgressWarningBase + percentage];
                         }
                         // A pr that is present but out of range is ignored, as in case 1.
                         break;
                     }
                 }
             } else if (params.count == 1) {
-                [self setProgress:VT100ScreenProgressStopped];
+                [self setProgressFromProtocol:VT100ScreenProgressStopped];
             }
         } else {
             DLog(@"Ignoring %@", message);
@@ -1797,6 +1851,9 @@ typedef struct {
 
 - (void)terminalSetRemoteHost:(NSString *)remoteHost {
     DLog(@"begin");
+    // Location reported via a proprietary code, so OSC 7 isn't the only path;
+    // suppress the "OSC 7 disabled breaks shell integration" warning.
+    _sawProprietaryLocationCode = YES;
     [self setRemoteHostFromString:remoteHost];
 }
 
@@ -1815,6 +1872,8 @@ typedef struct {
 
 - (void)terminalCurrentDirectoryDidChangeTo:(NSString *)dir {
     DLog(@"begin");
+    // Proprietary CurrentDir code: see -terminalSetRemoteHost:.
+    _sawProprietaryLocationCode = YES;
     [self currentDirectoryDidChangeTo:dir completion:^{}];
 }
 
@@ -2518,6 +2577,7 @@ typedef struct {
     // permanently hides a prompt from navigation/Cmd-Shift-Up.
     if (kind == VT100PromptKindInitial || kind == VT100PromptKindUnknown) {
         self.pendingNonInitialPromptStart = nil;
+        self.primaryPromptAwaitingCommandStart = YES;
         [self promptDidStartAt:VT100GridAbsCoordMake(self.currentGrid.cursor.x,
                                                      self.currentGrid.cursor.y + self.numberOfScrollbackLines + self.cumulativeScrollbackOverflow)
                   wasInCommand:wasInCommand
@@ -2563,6 +2623,7 @@ typedef struct {
 // FTCS B
 - (void)terminalCommandDidStart {
     RLog(@"begin currentPromptKind=%@", @(self.currentPromptKind));
+    [self closeVerifiedOSC7Window];
     const VT100PromptKind kind = self.currentPromptKind;
     self.currentPromptKind = VT100PromptKindInitial;
     // .unknown rides the initial path here too: the A handler above already
@@ -2577,8 +2638,17 @@ typedef struct {
         // subtract these from the typed-command region. PR 4 will plumb
         // through the consumer side.
         [self recordPendingExcludedSubrangeForNonInitialB];
+        if (self.primaryPromptAwaitingCommandStart) {
+            // A B ends the whole prompt, including a non-initial prompt nested
+            // inside it. reedline draws its right prompt between the primary
+            // A and its only B, so this B is also the primary prompt's B.
+            RLog(@"B closes a non-initial prompt nested in the primary prompt; starting command");
+            self.primaryPromptAwaitingCommandStart = NO;
+            [self commandDidStart];
+        }
         return;
     }
+    self.primaryPromptAwaitingCommandStart = NO;
     [self commandDidStart];
 }
 
@@ -2604,10 +2674,20 @@ typedef struct {
         return;
     }
     // Snapshot the closing coord. Build both pool variants below.
-    const VT100GridAbsCoord endCoord =
+    const VT100GridAbsCoord startCoord = pending.coord;
+    VT100GridAbsCoord endCoord =
         VT100GridAbsCoordMake(self.currentGrid.cursor.x,
                               self.currentGrid.cursor.y + self.numberOfScrollbackLines + self.cumulativeScrollbackOverflow);
-    const VT100GridAbsCoord startCoord = pending.coord;
+    if (VT100GridAbsCoordOrder(endCoord, startCoord) == NSOrderedAscending) {
+        // The shell drew this prompt inside a cursor save/restore and put the
+        // cursor back before sending B (reedline's right prompt). The cursor
+        // doesn't say where the prompt ended; it runs to the end of its row.
+        RLog(@"B at %@ precedes its prompt start %@; excluding to end of row",
+             VT100GridAbsCoordDescription(endCoord), VT100GridAbsCoordDescription(startCoord));
+        // The range is half-open, so an end at x == width includes the row's
+        // last cell. The range's end coordinate allows that.
+        endCoord = VT100GridAbsCoordMake(self.width, startCoord.y);
+    }
     const VT100GridAbsCoordRange absRange =
         VT100GridAbsCoordRangeMake(startCoord.x, startCoord.y, endCoord.x, endCoord.y);
 
@@ -2681,6 +2761,7 @@ typedef struct {
 // output<D>
 - (void)terminalCommandDidEnd {
     DLog(@"begin");
+    [self closeVerifiedOSC7Window];
     [self invalidatePendingPromptState];
     [self commandDidEnd];
 }
@@ -2774,7 +2855,7 @@ typedef struct {
 // version is formatted as
 // <version number>;<key>=<value>;<key>=<value>...
 // Older scripts may have only a version number and no key-value pairs.
-// The only defined key is "shell", and the value will be tcsh, bash, zsh, or fish.
+// The only defined key is "shell", and the value will be tcsh, bash, zsh, fish, xonsh, or nu.
 - (void)terminalSetShellIntegrationVersion:(NSString *)version {
     RLog(@"begin %@", version);
     NSArray *parts = [version componentsSeparatedByString:@";"];
@@ -3132,6 +3213,55 @@ typedef struct {
 }
 
 // fg=ff0080,bg=srgb:808080
+static NSCharacterSet *iTermNonASCIIDigitCharacterSet(void) {
+    static NSCharacterSet *set;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        set = [[NSCharacterSet characterSetWithCharactersInString:@"0123456789"] invertedSet];
+    });
+    return set;
+}
+
+static NSCharacterSet *iTermASCIIDigitCharacterSet(void) {
+    static NSCharacterSet *set;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        set = [NSCharacterSet characterSetWithCharactersInString:@"0123456789"];
+    });
+    return set;
+}
+
+static NSCharacterSet *iTermNonASCIIDecimalCharacterSet(void) {
+    static NSCharacterSet *set;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        set = [[NSCharacterSet characterSetWithCharactersInString:@"0123456789."] invertedSet];
+    });
+    return set;
+}
+
+// A non-empty string of only ASCII 0-9. Unlike -isNumeric (which uses
+// decimalDigitCharacterSet), this rejects non-ASCII digits that -integerValue
+// would parse as 0.
+static BOOL iTermStringIsASCIIDigits(NSString *string) {
+    if (string.length == 0) {
+        return NO;
+    }
+    return [string rangeOfCharacterFromSet:iTermNonASCIIDigitCharacterSet()].location == NSNotFound;
+}
+
+// An ASCII decimal: only 0-9 and at most one dot, with at least one digit. Lenient
+// about a leading or trailing dot (".5", "1.").
+static BOOL iTermStringIsASCIIDecimal(NSString *string) {
+    if (string.length == 0 || [string rangeOfCharacterFromSet:iTermNonASCIIDecimalCharacterSet()].location != NSNotFound) {
+        return NO;
+    }
+    if ([[string componentsSeparatedByString:@"."] count] > 2) {
+        return NO;
+    }
+    return [string rangeOfCharacterFromSet:iTermASCIIDigitCharacterSet()].location != NSNotFound;
+}
+
 - (void)terminalSetColorNamed:(NSString *)name to:(NSString *)colorString {
     DLog(@"begin name=%@ colorString=%@", name, colorString);
     if ([name isEqualToString:@"preset"]) {
@@ -3153,69 +3283,149 @@ typedef struct {
         return;
     }
 
-    NSInteger colon = [colorString rangeOfString:@":"].location;
-    NSString *cs;
-    NSString *hex;
-    if (colon != NSNotFound && colon + 1 != colorString.length && colon != 0) {
-        DLog(@"found color space");
-        cs = [colorString substringToIndex:colon];
-        hex = [colorString substringFromIndex:colon + 1];
-    } else {
-        DLog(@"use default color space");
-        if ([iTermAdvancedSettingsModel p3]) {
-            cs = @"p3";
-        } else {
-            cs = @"srgb";
-        }
-        hex = colorString;
-    }
-    NSDictionary *colorSpaces = @{ @"srgb": [NSColorSpace sRGBColorSpace],
-                                   @"rgb": [NSColorSpace genericRGBColorSpace],
-                                   @"p3": [NSColorSpace displayP3ColorSpace] };
-    NSColorSpace *colorSpace = colorSpaces[cs] ?: [NSColorSpace it_defaultColorSpace];
-    if (!colorSpace) {
-        DLog(@"failed to make colorspace from %@", cs);
-        return;
-    }
+    // Colors whose profile key is not in the color map. Resolved directly to a
+    // profile key, used both to decide alpha capability below and to write the
+    // value later.
+    NSDictionary *names2 = @{ @"badge": KEY_BADGE_COLOR };
 
-    DLog(@"hex=%@", hex);
-    CGFloat r, g, b;
-    if (hex.length == 6) {
-        NSScanner *scanner = [NSScanner scannerWithString:hex];
-        unsigned int rgb = 0;
-        if (![scanner scanHexInt:&rgb]) {
+    NSColor *color = nil;
+    NSString *bindingExpression = nil;
+    if ([colorString hasPrefix:@"i:"]) {
+        // Bind this color setting to palette index N so it tracks the live palette
+        // instead of freezing an RGB value. Indices 0-15 follow the loaded preset
+        // and dark mode; 16-255 are the fixed 6x6x6 cube and grayscale ramp. This
+        // writes an expression binding (see iTermColorScopeVariables) rather than
+        // a concrete color. An optional @A suffix (0-1) applies transparency, but
+        // only for colors that honor alpha (currently the badge).
+        NSString *rest = [colorString substringFromIndex:2];
+        NSString *indexString = rest;
+        NSString *alphaString = nil;
+        const NSInteger at = [rest rangeOfString:@"@"].location;
+        if (at != NSNotFound) {
+            indexString = [rest substringToIndex:at];
+            alphaString = [rest substringFromIndex:at + 1];
+        }
+        // Require ASCII digits only. -isNumeric uses decimalDigitCharacterSet,
+        // which matches non-ASCII digits (Arabic-Indic, fullwidth, ...) that
+        // -integerValue then parses as 0, so "i:٣" would silently bind to index 0.
+        if (!iTermStringIsASCIIDigits(indexString)) {
+            DLog(@"non-ASCII-numeric palette index %@", indexString);
             return;
         }
-        r = ((rgb >> 16) & 0xff);
-        g = ((rgb >> 8) & 0xff);
-        b = ((rgb >> 0) & 0xff);
-    } else if (hex.length == 3) {
-        NSScanner *scanner = [NSScanner scannerWithString:hex];
-        unsigned int rgb = 0;
-        if (![scanner scanHexInt:&rgb]) {
+        const NSInteger index = [indexString integerValue];
+        if (index < 0 || index > 255) {
+            DLog(@"palette index %@ out of range", @(index));
             return;
         }
-        r = ((rgb >> 8) & 0xf) | ((rgb >> 4) & 0xf0);
-        g = ((rgb >> 4) & 0xf) | ((rgb >> 0) & 0xf0);
-        b = ((rgb >> 0) & 0xf) | ((rgb << 4) & 0xf0);
+        NSString *paletteExpression = [iTermColorScopeVariables expressionForPaletteIndex:index];
+        // Gate alpha on the single source of truth,
+        // +[iTermProfilePreferences colorKeyHonorsAlpha:], applied to this name's
+        // resolved profile key rather than a hardcoded name. Today only the badge
+        // is both a SetColors target and alpha-honoring; the cursor guide honors
+        // alpha but is not a SetColors target, so it gets alpha via a settings-panel
+        // with_alpha binding. If a future alpha-honoring color becomes a SetColors
+        // target, adding it to the resolution below is enough.
+        // Only profile-only colors (names2) can honor alpha: colorKeyHonorsAlpha:
+        // is YES for badge and cursor guide, and tab is not alpha-honoring, so the
+        // color-map names never reach here.
+        NSString *targetBaseKeyForAlpha = names2[name];
+        const BOOL alphaCapable = (targetBaseKeyForAlpha != nil &&
+                                   [iTermProfilePreferences colorKeyHonorsAlpha:targetBaseKeyForAlpha]);
+        if (alphaString.length > 0 && alphaCapable) {
+            // Validate as an ASCII decimal in [0,1], so non-ASCII digits, which
+            // -doubleValue reads as 0 and would make an invisible badge, are
+            // rejected. Leading/trailing dots (".5", "1.") are accepted here and
+            // fixed by the %g canonicalization below, which also emits a leading
+            // digit the expression grammar requires and is not localized.
+            const double alphaValue = alphaString.doubleValue;
+            if (!iTermStringIsASCIIDecimal(alphaString) || alphaValue < 0.0 || alphaValue > 1.0) {
+                DLog(@"invalid alpha %@", alphaString);
+                return;
+            }
+            // Fixed-point (not %g, which can emit scientific notation like "5e-05"
+            // for a tiny alpha that the expression grammar would reject). Four
+            // decimals exceed 8-bit alpha precision and always parse.
+            NSString *canonicalAlpha = [NSString stringWithFormat:@"%.4f", alphaValue];
+            bindingExpression = [NSString stringWithFormat:@"iterm2.with_alpha(color: %@, alpha: %@)",
+                                 paletteExpression, canonicalAlpha];
+        } else {
+            if (alphaString.length > 0) {
+                DLog(@"alpha ignored: %@ does not honor alpha", name);
+            }
+            bindingExpression = paletteExpression;
+        }
     } else {
-        DLog(@"fail");
-        return;
+        NSInteger colon = [colorString rangeOfString:@":"].location;
+        NSString *cs;
+        NSString *hex;
+        if (colon != NSNotFound && colon + 1 != colorString.length && colon != 0) {
+            DLog(@"found color space");
+            cs = [colorString substringToIndex:colon];
+            hex = [colorString substringFromIndex:colon + 1];
+        } else {
+            DLog(@"use default color space");
+            if ([iTermAdvancedSettingsModel p3]) {
+                cs = @"p3";
+            } else {
+                cs = @"srgb";
+            }
+            hex = colorString;
+        }
+        NSDictionary *colorSpaces = @{ @"srgb": [NSColorSpace sRGBColorSpace],
+                                       @"rgb": [NSColorSpace genericRGBColorSpace],
+                                       @"p3": [NSColorSpace displayP3ColorSpace] };
+        NSColorSpace *colorSpace = colorSpaces[cs] ?: [NSColorSpace it_defaultColorSpace];
+        if (!colorSpace) {
+            DLog(@"failed to make colorspace from %@", cs);
+            return;
+        }
+
+        DLog(@"hex=%@", hex);
+        CGFloat r, g, b;
+        if (hex.length == 6) {
+            NSScanner *scanner = [NSScanner scannerWithString:hex];
+            unsigned int rgb = 0;
+            if (![scanner scanHexInt:&rgb]) {
+                return;
+            }
+            r = ((rgb >> 16) & 0xff);
+            g = ((rgb >> 8) & 0xff);
+            b = ((rgb >> 0) & 0xff);
+        } else if (hex.length == 3) {
+            NSScanner *scanner = [NSScanner scannerWithString:hex];
+            unsigned int rgb = 0;
+            if (![scanner scanHexInt:&rgb]) {
+                return;
+            }
+            r = ((rgb >> 8) & 0xf) | ((rgb >> 4) & 0xf0);
+            g = ((rgb >> 4) & 0xf) | ((rgb >> 0) & 0xf0);
+            b = ((rgb >> 0) & 0xf) | ((rgb << 4) & 0xf0);
+        } else {
+            DLog(@"fail");
+            return;
+        }
+        CGFloat components[4] = { r / 255.0, g / 255.0, b / 255.0, 1.0 };
+        color = [NSColor colorWithColorSpace:colorSpace
+                                  components:components
+                                       count:sizeof(components) / sizeof(*components)];
     }
-    CGFloat components[4] = { r / 255.0, g / 255.0, b / 255.0, 1.0 };
-    NSColor *color = [NSColor colorWithColorSpace:colorSpace
-                                       components:components
-                                            count:sizeof(components) / sizeof(*components)];
-    DLog(@"color=%@", color);
-    if (!color) {
-        return;
+    if (!bindingExpression) {
+        DLog(@"color=%@", color);
+        if (!color) {
+            return;
+        }
     }
 
     if ([name isEqualToString:@"tab"]) {
         [self addUnmanagedPausedSideEffect:^(id<VT100ScreenDelegate>  _Nonnull delegate,
                                              iTermTokenExecutorUnpauser * _Nonnull unpauser) {
-            DLog(@"tab");
-            [delegate screenSetCurrentTabColor:color];
+            if (bindingExpression) {
+                DLog(@"tab binding %@", bindingExpression);
+                [delegate screenSetColorBinding:bindingExpression forProfileKey:KEY_TAB_COLOR];
+            } else {
+                DLog(@"tab");
+                [delegate screenSetCurrentTabColor:color];
+            }
             [unpauser unpause];
         } name:@"set color 3"];
         return;
@@ -3250,9 +3460,6 @@ typedef struct {
                              @"br_cyan": @(kColorMapAnsiCyan + kColorMapAnsiBrightModifier),
                              @"br_white": @(kColorMapAnsiWhite + kColorMapAnsiBrightModifier) };
 
-    // These are profile keys but they have no corresponding value in the color map.
-    NSDictionary *names2 = @{ @"badge": KEY_BADGE_COLOR };
-
     NSNumber *keyNumber = names[name];
     DLog(@"name=%@", name);
     if (!keyNumber && !names2[name]) {
@@ -3274,9 +3481,14 @@ typedef struct {
         } else {
             profileKey = [strongSelf.mainThreadCopy.colorMap profileKeyForBaseKey:names2[name]];
         }
-        DLog(@"set %@=%@", profileKey, color);
-        [delegate screenSetColor:color
-                      profileKey:profileKey];
+        if (bindingExpression) {
+            DLog(@"bind %@=%@", profileKey, bindingExpression);
+            [delegate screenSetColorBinding:bindingExpression forProfileKey:profileKey];
+        } else {
+            DLog(@"set %@=%@", profileKey, color);
+            [delegate screenSetColor:color
+                          profileKey:profileKey];
+        }
         [unpauser unpause];
     } name:@"set color 4"];
 }
@@ -3514,14 +3726,22 @@ typedef struct {
     } name:@"change send modifiers"];
 }
 
-- (void)terminalKeyReportingFlagsDidChange {
+- (void)terminalDidResetKeyReportingLocally {
+    DLog(@"begin");
+    [self addJoinedSideEffect:^(id<VT100ScreenDelegate>  _Nonnull delegate) {
+        DLog(@"begin side-effect");
+        [delegate screenDidResetKeyReportingLocally];
+    } name:@"key reporting reset locally"];
+}
+
+- (void)terminalKeyReportingFlagsDidChange:(BOOL)wholeValueReplaced {
     DLog(@"begin");
     // It's safe to do this because it won't be reeentrant and it's necessary because it syncs
     // afterwards (this change is reporable). It's joined so we get the updated config and can
     // respond to DCS_REQUEST_TERMCAP_TERMINFO properly.
     [self addJoinedSideEffect:^(id<VT100ScreenDelegate>  _Nonnull delegate) {
         DLog(@"begin side-effect");
-        [delegate screenKeyReportingFlagsDidChange];
+        [delegate screenKeyReportingFlagsDidChange:wholeValueReplaced];
     } name:@"key reporting flags did change"];
 }
 
@@ -4098,6 +4318,20 @@ willExecuteToken:(VT100Token *)token
         [delegate screenExecDidFail];
         [unpauser unpause];
     } name:@"execDidFail"];
+}
+
+- (void)terminalRemoveProgramStatusRecords {
+    DLog(@"begin");
+    [self addDeferredSideEffect:^(id<VT100ScreenDelegate> delegate) {
+        [delegate screenRemoveProgramStatusRecords];
+    } name:@"remove program status records"];
+}
+
+- (void)terminalReportProgramStatus:(iTermProgramStatusReport *)report {
+    DLog(@"begin %@", report);
+    [self addDeferredSideEffect:^(id<VT100ScreenDelegate> delegate) {
+        [delegate screenReportProgramStatus:report];
+    } name:@"report program status"];
 }
 
 - (void)terminalSetTabStatus:(VT100TabStatusUpdate *)status {

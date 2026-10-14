@@ -17,6 +17,8 @@ extern NSString *const iTermVariableKeyApplicationPID;
 extern NSString *const iTermVariableKeyApplicationLocalhostName;
 extern NSString *const iTermVariableKeyApplicationEffectiveTheme;
 extern NSString *const iTermVariableKeyApplicationBundlePath;
+extern NSString *const iTermVariableKeyApplicationWorkingSessionCount;
+extern NSString *const iTermVariableKeyApplicationWaitingSessionCount;
 
 extern NSString *const iTermVariableKeyTabTitleOverride;
 extern NSString *const iTermVariableKeyTabTitleOverrideFormat;
@@ -49,6 +51,7 @@ extern NSString *const iTermVariableKeySessionAutoNameFormat;  // Defaults to pr
 extern NSString *const iTermVariableKeySessionAutoName;  // Evaluated value of autoNameFormat
 extern NSString *const iTermVariableKeySessionIconName;  // set by esc code
 extern NSString *const iTermVariableKeySessionTriggerName;
+extern NSString *const iTermVariableKeySessionAITitle;
 extern NSString *const iTermVariableKeySessionWindowName;  // set by esc code
 extern NSString *const iTermVariableKeySessionJob;  // name of the deepest foreground job attached to the tty (stdin/stdout is the terminal), not affected by modifying argv[0]
 extern NSString *const iTermVariableKeySessionProcessTitle;  // process title, affected by modifying argv[0]. see issue 4214 for details.
@@ -57,6 +60,7 @@ extern NSString *const iTermVariableKeySessionForegroundJobAncestors;  // Newlin
 extern NSString *const iTermVariableKeySessionCommandLine;  // Current foreground job with arguments
 extern NSString *const iTermVariableKeySessionPresentationName;  // What's shown in the session title view
 extern NSString *const iTermVariableKeySessionTmuxPaneTitle;  // #{pane_title} for a particular session
+extern NSString *const iTermVariableKeySessionIsFloating;  // NSNumber. Whether the session is in a floating pane.
 extern NSString *const iTermVariableKeySessionTmuxRole;  // Unset (normal session), "gateway" (where you ran tmux -CC), or "client".
 extern NSString *const iTermVariableKeySessionTmuxClientName;  // Set on tmux gateways. Gives a name for the tmux session.
 extern NSString *const iTermVariableKeySessionTmuxWindowPane;  // NSNumber. Window pane number #{pane_id}. Set if the session is a tmux session;
@@ -82,6 +86,7 @@ extern NSString *const iTermVariableKeySSHIntegrationLevel;  // NSNumber. 0=none
 extern NSString *const iTermVariableKeyShell;  // NSString. Value of last path component of $SHELL
 extern NSString *const iTermVariableKeyUname;  // NSString. Value of uname -a
 extern NSString *const iTermVariableKeyIsBroadcastSource;  // Bool. True when session is a broadcast source for input broadcasting.
+extern NSString *const iTermVariableKeyStatus;  // String. idle, working, waiting are typical values but it can be anything.
 
 extern NSString *const iTermVariableKeyWindowTitleOverrideFormat;
 extern NSString *const iTermVariableKeyWindowCurrentTab;

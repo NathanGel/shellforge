@@ -200,10 +200,7 @@ static CGFloat iTermAreaOfIntersection(NSRect r1, NSRect r2) {
 }
 
 - (CGFloat)notchHeight {
-    if (@available(macOS 12.0, *)) {
-        return self.safeAreaInsets.top;
-    }
-    return 0;
+    return self.safeAreaInsets.top;
 }
 
 - (NSRect)frameExceptNotch {
@@ -214,12 +211,9 @@ static CGFloat iTermAreaOfIntersection(NSRect r1, NSRect r2) {
 }
 
 - (CGFloat)it_menuBarHeight {
-    if (@available(macOS 12, *)) {
-        // When the "current" screen has a notch, there doesn't seem to be a way to get the height
-        // of the menu bar on other screens :(
-        return MAX(24, self.safeAreaInsets.top);
-    }
-    return NSApp.mainMenu.menuBarHeight;
+    // When the "current" screen has a notch, there doesn't seem to be a way to get the height
+    // of the menu bar on other screens :(
+    return MAX(24, self.safeAreaInsets.top);
 }
 
 - (NSRect)frameExceptMenuBar {
@@ -464,6 +458,22 @@ static CGFloat iTermAreaOfIntersection(NSRect r1, NSRect r2) {
         }
     }
     return nil;
+}
+
+- (BOOL)it_hasEDRHeadroom {
+    return self.maximumPotentialExtendedDynamicRangeColorComponentValue > 1;
+}
+
+- (CGColorSpaceRef)it_extendedDynamicRangeColorSpace {
+    static CGColorSpaceRef p3;
+    static CGColorSpaceRef srgb;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        p3 = CGColorSpaceCreateWithName(kCGColorSpaceExtendedDisplayP3);
+        srgb = CGColorSpaceCreateWithName(kCGColorSpaceExtendedSRGB);
+    });
+    const BOOL wide = [self canRepresentDisplayGamut:NSDisplayGamutP3];
+    return wide ? p3 : srgb;
 }
 
 @end
