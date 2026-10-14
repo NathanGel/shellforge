@@ -85,11 +85,11 @@ import Testing
     /// A notice's timer clears only its own: the same words said again stay their full time.
     @Test func aRepeatedNoticeStaysItsFullTime() async throws {
         let (model, _, _) = try await setup(originAhead: 0)
-        model.noticeLifetime = .milliseconds(400)
+        model.noticeLifetime = .seconds(1)
         model.show(notice: "main is already up to date.")
-        try await Task.sleep(for: .milliseconds(250))
+        try await Task.sleep(for: .milliseconds(600))
         model.show(notice: "main is already up to date.")
-        try await Task.sleep(for: .milliseconds(250))
+        try await Task.sleep(for: .milliseconds(600))
         #expect(model.notice == "main is already up to date.", "the first timer has fired, and left the second")
         #expect(await eventually { model.notice == nil })
     }
@@ -110,6 +110,24 @@ import Testing
         try git(repo, ["reset", "-q", "--hard", "HEAD~1"])
         await model.pullDefault(project: project)
         #expect(model.lastError == nil)
+    }
+
+    /// Two projects refused in the same words: one's good pull leaves the other's error, which is
+    /// the one shown.
+    @Test func aPullClearsOnlyTheErrorItOwns() async throws {
+        let (model, a, repoA) = try await setup(originAhead: 1)
+        try git(repoA, ["commit", "-q", "--allow-empty", "-m", "mine"])
+        let (other, _, repoB) = try await setup(originAhead: 1)
+        _ = other
+        try git(repoB, ["commit", "-q", "--allow-empty", "-m", "mine"])
+        await model.addProject(folder: repoB.path)
+        let b = try #require(model.document.workspace.projects.last).id
+        await model.pullDefault(project: a)
+        await model.pullDefault(project: b)
+        let shown = try #require(model.lastError)
+        try git(repoA, ["reset", "-q", "--hard", "HEAD~1"])
+        await model.pullDefault(project: a)
+        #expect(model.lastError == shown, "B's refusal, in A's words, stays")
     }
 
     /// Only a project whose menu offers Pull has its default branch read at launch.

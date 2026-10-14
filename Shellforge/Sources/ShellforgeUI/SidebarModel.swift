@@ -97,8 +97,9 @@ public final class SidebarModel: ObservableObject {
     var noticeLifetime: Duration = .seconds(6)
     /// Which notice is up: a notice's timer clears only its own, not the same words said again.
     var noticeGeneration = 0
-    /// Each project's last pull failure, as said: its next good pull clears it, and only it.
-    var pullErrors: [UUID: String] = [:]
+    /// The pull failure last said, and whose: that project's next good pull clears it while it is
+    /// still the error shown. Owned, not matched by words: two projects can fail in the same ones.
+    var shownPullError: (project: UUID, text: String)?
     /// Each project's default branch, read with its provider, for the menu's "Pull main".
     @Published var defaultBranches: [UUID: String] = [:]
     /// What the daemon says about the sessions: every dot is read from it.
@@ -516,7 +517,7 @@ public final class SidebarModel: ObservableObject {
         if providers[id] != nil { providers[id] = nil }
         if defaultBranches[id] != nil { defaultBranches[id] = nil }
         detecting.remove(id)
-        pullErrors[id] = nil
+        if shownPullError?.project == id { shownPullError = nil }
     }
 
     public func status(ofTask id: UUID) -> SessionState { sessions.status(ofTask: id) }

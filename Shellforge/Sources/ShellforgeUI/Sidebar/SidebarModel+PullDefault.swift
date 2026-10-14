@@ -39,11 +39,14 @@ extension SidebarModel {
         switch result.1 {
         case .success(let outcome):
             // Its own earlier failure goes; another action's error stays.
-            if let said = pullErrors.removeValue(forKey: id), lastError == said { lastError = nil }
+            if let shown = shownPullError, shown.project == id {
+                if lastError == shown.text { lastError = nil }
+                shownPullError = nil
+            }
             show(notice: outcome.summary)
         case .failure(let error):
             let said = "Couldn’t pull \(result.0 ?? "the default branch"). " + Self.reason(of: error)
-            pullErrors[id] = said
+            shownPullError = (id, said)
             lastError = said
         }
         return true
