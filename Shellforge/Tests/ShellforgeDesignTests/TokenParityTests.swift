@@ -15,10 +15,10 @@ import Testing
     static let ported = ["Palette", "Metrics", "Surface", "InterfaceScale", "Logos", "IconSource", "Badge", "Hairline",
                          "SidebarHeading", "SymbolMark", "FormField", "Input", "Select", "SegmentedControl", "Kbd", "SearchField"]
     /// Ported files that differ from AiTerm's on purpose (ledgered).
-    static let changed: Set = ["FormField", "Input", "SegmentedControl", "Palette", "IconSource", "SidebarHeading", "Metrics", "Surface"]
+    static let changed: Set = ["FormField", "Input", "SegmentedControl", "Palette", "IconSource", "SidebarHeading", "Metrics", "Surface", "Badge"]
     /// SHA-256 of each ported file, normalised, as reviewed.
     static let baseline: [String: String] = [
-        "Badge": "cde41a8fd041703814a5212741732e5cdd33108a0f5a34e811a15d7f27d67081",
+        "Badge": "8d82c1df4269c88794a80451715afc2a1dd54b5c8f5fa5fec6036c0c0075ff78",
         "FormField": "d2450a5864c2a2acb674de92b35abcf2e6d081ff5cb2c8daf67dc2872fbbf46f",
         "Hairline": "ab5976604f277a70104f15faa8d6d8effaa90519135e36862a2d24d48231e4f0",
         "Input": "efe2209ee6317b2f79eb518517aa611c250e29d164861d3d23bc8c872cad4cce",

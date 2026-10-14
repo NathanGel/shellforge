@@ -116,6 +116,9 @@ public struct Badge: View {
     /// The wash a badge draws, isolated as a pure function so the colour rule is testable without
     /// rendering a view. A quiet badge draws none at rest and the ordinary hovered wash under the
     /// pointer.
+    /// Badges are capsules, as macOS 26's are.
+    static let isCapsule = true
+
     static func fill(surface: Surface, hovered: Bool, style: Style = .boxed) -> Color {
         if hovered { return surface.badgeWashHovered }
         return style == .quiet ? .clear : surface.badgeWash
@@ -159,7 +162,7 @@ public struct Badge: View {
         // The content shape makes a quiet badge's gaps clickable, where its clear wash would not be.
         content
             .contentShape(Rectangle())
-            .background(RoundedRectangle(cornerRadius: scale(Radius.chip))
+            .background(Capsule()
                 .fill(Self.fill(surface: surface, hovered: hovered, style: style))
                 .padding(.horizontal, style == .quiet ? -scale(Space.tight) : 0))
     }
