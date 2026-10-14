@@ -1,18 +1,15 @@
 import AppKit
 import SwiftUI
 
-/// A sheet in a panel of its own, dark like the sidebar. SwiftUI's `.sheet` would hang a sheet from
-/// iTerm2's window in that window's appearance; this one keeps AiTerm's, and leaves iTerm2's alone.
+/// A sheet in a panel of its own, on its parent window, in that window's appearance.
 @MainActor
-public enum DarkPanel {
+public enum ShellforgePanel {
     /// Shows `view` as a sheet on `parent`, or on its own when there is no parent window.
     @discardableResult
     public static func present(_ view: some View, over parent: NSWindow?) -> NSPanel {
         let panel = NSPanel(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
         panel.isReleasedWhenClosed = false
-        panel.appearance = NSAppearance(named: .darkAqua)
         let host = NSHostingView(rootView: view)
-        host.appearance = NSAppearance(named: .darkAqua)
         panel.contentView = host
         panel.setContentSize(host.fittingSize)
         if let parent { parent.beginSheet(panel) } else { panel.center(); panel.makeKeyAndOrderFront(nil) }
@@ -37,7 +34,7 @@ public final class PanelSlot {
     @discardableResult
     public func present<V: View>(over parent: NSWindow?, _ make: (@escaping @MainActor () -> Void) -> V) -> NSPanel {
         if let panel { return panel }
-        let shown = DarkPanel.present(make { [weak self] in self?.dismiss() }, over: parent)
+        let shown = ShellforgePanel.present(make { [weak self] in self?.dismiss() }, over: parent)
         panel = shown
         return shown
     }
@@ -45,18 +42,16 @@ public final class PanelSlot {
     public func dismiss() {
         guard let shown = panel else { return }
         panel = nil
-        DarkPanel.dismiss(shown)
+        ShellforgePanel.dismiss(shown)
         shown.contentView = nil
     }
 }
 
-/// Folder choosing for Add Project, dark like the sidebar. The open panel is app-modal, so it would
-/// otherwise take the application's appearance — iTerm2's — not the sidebar's.
+/// Folder choosing for Add Project, in the app's appearance.
 @MainActor
 public enum FolderChooser {
     public static func panel() -> NSOpenPanel {
         let panel = NSOpenPanel()
-        panel.appearance = NSAppearance(named: .darkAqua)
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.prompt = "Add Project"
@@ -70,7 +65,7 @@ public enum FolderChooser {
     }
 }
 
-/// The window a SwiftUI view is drawn in, for presenting a `DarkPanel` from it.
+/// The window a SwiftUI view is drawn in, for presenting a `ShellforgePanel` from it.
 final class WindowAnchor {
     weak var window: NSWindow?
 }

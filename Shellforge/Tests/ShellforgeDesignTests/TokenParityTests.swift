@@ -15,7 +15,7 @@ import Testing
     static let ported = ["Palette", "Metrics", "Surface", "InterfaceScale", "Logos", "IconSource", "Badge", "Hairline",
                          "SidebarHeading", "SymbolMark", "FormField", "Input", "Select", "SegmentedControl", "Kbd", "SearchField"]
     /// Ported files that differ from AiTerm's on purpose (ledgered).
-    static let changed: Set = ["FormField", "Input", "SegmentedControl"]
+    static let changed: Set = ["FormField", "Input", "SegmentedControl", "Palette", "IconSource"]
     /// SHA-256 of each ported file, normalised, as reviewed.
     static let baseline: [String: String] = [
         "Badge": "cde41a8fd041703814a5212741732e5cdd33108a0f5a34e811a15d7f27d67081",
@@ -26,11 +26,11 @@ import Testing
         "SearchField": "be937c4cb1723ca16f8b44691b96edd587f447a5139e6b478efc0b6b03db8c13",
         "SegmentedControl": "2c2d22dc1bc22cb14ce260f2792f6ff6c9f668922176dccfba1847b7c5b4ab4a",
         "Select": "1dd66bc87b8fdd973eb9dc19cdbf9ba6273a329a17b6895bd3ee0e96544621dd",
-        "IconSource": "0c382ef8d9e44a1d3ba36767a8aa73ff1d9bdf0fb89217efe798e52267134794",
+        "IconSource": "1c4233822c68d94be0a1d95aefdf0c27242b2a14b31839c4a5ef13c59be093df",
         "InterfaceScale": "8cd10c61121676480e5fae9e24d5e9499ee7babcb165739c16514f3174cda745",
         "Logos": "af2e1ee98ac438ca5bc59b58aa2fcffca6269ad502c2b1c73f78b875dfd7a4f5",
         "Metrics": "a763271398c338d01e3b9776a8b393ca1c5c64aba662a05358dcdabaf2587805",
-        "Palette": "ed932e6ded1316e4e0058a34875684ba3219587b5bd3754daa62aa5f6150d9fa",
+        "Palette": "5691566a98751c9cbe03b00e14fe9528fe91fd87505c20850215926b08224a1b",
         "SidebarHeading": "8ad7d4a95d09e4f7fdb6ca01ac287f59a03ec0b7511ed9ccf0866d60b19d772b",
         "Surface": "9c7e52c35f0b007b2750a5f455243811e1065f53ea57948dd3d4f5ed11f4c282",
         "SymbolMark": "4e2801b33a0284b0ab889398eaac1a6164465feed0a8a177922b41501ae61cc5",

@@ -72,4 +72,46 @@ import Testing
         #expect(abs(white.contrast(with: black) - 21) < 0.01)
         #expect(abs(black.contrast(with: black) - 1) < 0.0001)
     }
+
+    private let light = NSAppearance(named: .aqua)
+
+    @Test func theLightBackgroundIsAStepLighterThanTheLightSidebar() throws {
+        var surface = SRGB(red: 0, green: 0, blue: 0)
+        try #require(light).performAsCurrentDrawingAppearance {
+            surface = SRGB(TerminalSource.surface, over: SRGB(red: 0, green: 0, blue: 0))
+        }
+        let background = try #require(ShellforgeTerminalPalette.colors(in: light)[.background])
+        #expect(background == ShellforgeTerminalPalette.background(beside: surface))
+        #expect(background != surface, "the terminal reads apart from the light sidebar")
+    }
+
+    /// Review fix: on macOS 26 the light sidebar is pure white, which lightening cannot move.
+    @Test func aWhiteSidebarStillGetsAStep() {
+        let white = SRGB(red: 1, green: 1, blue: 1)
+        let background = ShellforgeTerminalPalette.background(beside: white)
+        #expect(background != white)
+        #expect(background.contrast(with: white) < 1.2, "a step, not a different colour")
+    }
+
+    @Test func aLightGreySidebarGetsALighterTerminal() {
+        let grey = SRGB(red: 0.92, green: 0.92, blue: 0.92)
+        #expect(ShellforgeTerminalPalette.background(beside: grey) == grey.lightened(by: ShellforgeTerminalPalette.backgroundStep))
+    }
+
+    @Test func everyTextColourIsReadableOnTheLightBackground() throws {
+        let colors = ShellforgeTerminalPalette.colors(in: light)
+        let background = try #require(colors[.background])
+        for role in TerminalColorRole.all where role.needsContrast {
+            let color = try #require(colors[role])
+            #expect(color.contrast(with: background) >= ShellforgeTerminalPalette.minimumContrast, "\(role)")
+        }
+    }
+
+    @Test func aLightColourIsDarkenedOnALightBackground() {
+        let background = SRGB(red: 0.97, green: 0.97, blue: 0.97)
+        let pale = SRGB(red: 0.9, green: 0.75, blue: 0.75)
+        let readable = ShellforgeTerminalPalette.readable(pale, on: background)
+        #expect(readable.contrast(with: background) >= ShellforgeTerminalPalette.minimumContrast)
+        #expect(readable.red < pale.red, "darkened, not lightened")
+    }
 }

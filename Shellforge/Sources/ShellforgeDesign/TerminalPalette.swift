@@ -51,6 +51,10 @@ public struct SRGB: Equatable, Sendable {
         return 0.2126 * linear(red) + 0.7152 * linear(green) + 0.0722 * linear(blue)
     }
 
+    /// Whether text on this colour should be dark: past 0.18 luminance, where black and white text
+    /// have equal contrast on it ((L + 0.05) / 0.05 = 1.05 / (L + 0.05)).
+    var luminanceIsLight: Bool { luminance > 0.18 }
+
     /// WCAG 2 contrast ratio, 1…21.
     public func contrast(with other: SRGB) -> Double {
         let (a, b) = (luminance + 0.05, other.luminance + 0.05)
@@ -85,9 +89,9 @@ enum TerminalSource {
                                                         (4, .systemBlue), (5, .systemPurple), (6, .systemTeal)]
 }
 
-/// Shellforge's terminal colours: the sidebar's own macOS colours, read under `appearance` (dark,
-/// as the sidebar always is) each time they are asked for, so they follow the accent colour and
-/// Increase Contrast.
+/// Shellforge's terminal colours: the sidebar's own macOS colours, read under `appearance` each
+/// time they are asked for — light or dark, as the window is — so they follow the accent colour,
+/// Increase Contrast and the appearance.
 public enum ShellforgeTerminalPalette {
     public static let minimumContrast = 4.5
     /// How much black the terminal's background mixes into the sidebar's surface: a step darker, so
@@ -101,7 +105,7 @@ public enum ShellforgeTerminalPalette {
         }
         draw {
             let opaqueBlack = SRGB(red: 0, green: 0, blue: 0)
-            let background = SRGB(TerminalSource.surface, over: opaqueBlack).darkened(by: backgroundStep)
+            let background = background(beside: SRGB(TerminalSource.surface, over: opaqueBlack))
             func read(_ color: NSColor) -> SRGB { SRGB(color, over: background) }
             colors[.background] = background
             colors[.foreground] = read(TerminalSource.text)
@@ -125,11 +129,22 @@ public enum ShellforgeTerminalPalette {
         return colors
     }
 
-    /// `color`, lightened in 5 % steps until it reaches `minimumContrast` on `background`.
+    /// The terminal's background beside a sidebar of `surface`: a step off it, so the two read
+    /// apart. Darker beside a dark sidebar; lighter beside a light one, unless the sidebar is too
+    /// near white for lightening to show (macOS 26's light sidebar is pure white), then darker.
+    public static func background(beside surface: SRGB) -> SRGB {
+        guard surface.luminanceIsLight else { return surface.darkened(by: backgroundStep) }
+        let lighter = surface.lightened(by: backgroundStep)
+        return lighter.contrast(with: surface) >= 1.005 ? lighter : surface.darkened(by: backgroundStep)
+    }
+
+    /// `color`, moved in 5 % steps until it reaches `minimumContrast` on `background`: lightened on a
+    /// dark background, darkened on a light one.
     public static func readable(_ color: SRGB, on background: SRGB) -> SRGB {
         var color = color
+        let towardBlack = background.luminanceIsLight
         for _ in 0..<100 where color.contrast(with: background) < minimumContrast {
-            color = color.lightened(by: 0.05)
+            color = towardBlack ? color.darkened(by: 0.05) : color.lightened(by: 0.05)
         }
         return color
     }

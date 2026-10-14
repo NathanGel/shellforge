@@ -6,6 +6,9 @@ import AppKit
 /// an enum member, so it reads as what it is — a number, not a colour — rather than sitting among
 /// `Palette`'s colour members.
 private let rowHoverAlpha = 0.06
+/// The black wash a hovered row takes in the light appearance: lighter than the dark's white one,
+/// because black on a light grey reads stronger than white on a dark one.
+private let rowHoverLightAlpha = 0.05
 
 /// Semantic native colors resolve in the app's dark appearance and honor increased contrast.
 /// Brand marks keep their vendor colors; terminal-background matching remains opt-in.
@@ -13,6 +16,14 @@ public enum Palette {
     /// `0xRRGGBB` as a colour. `Brand` reads it too, so a vendor's number is decoded one way.
     fileprivate static func hex(_ value: UInt32) -> Color {
         Color(red: Double((value >> 16) & 0xFF) / 255, green: Double((value >> 8) & 0xFF) / 255, blue: Double(value & 0xFF) / 255)
+    }
+
+    /// A colour with one value in the light appearance and another in the dark, resolved by AppKit
+    /// wherever it is drawn.
+    static func adaptive(light: NSColor, dark: NSColor) -> Color {
+        Color(nsColor: NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
+        })
     }
 
     /// The window, the sidebar and any control drawn flush on them. Also covers the deleted
@@ -31,10 +42,10 @@ public enum Palette {
     /// The background of a secondary (unemphasized) selection — a selected row that is not first
     /// responder. Kept neutral; the accent is reserved for the current step and focus.
     public static let controlActive = Color(nsColor: .unemphasizedSelectedContentBackgroundColor)
-    /// The command preview block in a sheet, kept visually distinct from the surrounding surface.
-    /// In the app's dark appearance, AppKit's text background resolves too close to the window
-    /// background.
-    public static let codeBackground = hex(0x141519)
+    /// The command preview block in a sheet, kept visually distinct from the surrounding surface:
+    /// AppKit's text background resolves too close to the window background in both appearances.
+    public static let codeBackground = adaptive(light: NSColor(srgbRed: 0.949, green: 0.949, blue: 0.957, alpha: 1),
+                                                dark: NSColor(srgbRed: 0x14 / 255.0, green: 0x15 / 255.0, blue: 0x19 / 255.0, alpha: 1))
 
     /// The default label colour: row titles, field values, button labels and most on-screen text.
     /// Also covers the deleted `textStrong` — both were `.labelColor`.
@@ -131,7 +142,7 @@ public enum Palette {
     /// GitHub's mark, in white: GitHub's mark is monochrome, and the app is dark-only. A brand
     /// mark, not a UI colour; reserved for the GitHub logo/badge only. A light ground — the
     /// Integrations disc — tints it `markInk`.
-    public static let github = Brand("github", 0xFFFFFF, path: Logos.githubPath, fallbackSymbol: "chevron.left.forwardslash.chevron.right")
+    public static let github = Brand("github", 0xFFFFFF, path: Logos.githubPath, fallbackSymbol: "chevron.left.forwardslash.chevron.right", followsAppearance: true)
     /// Microsoft's vendor colour for the VS Code mark — a brand mark, not a UI colour; used only
     /// where the VS Code badge appears.
     public static let vscode = Brand("vscode", 0x23A9F2, path: Logos.vscodePath, fallbackSymbol: "chevron.left.forwardslash.chevron.right")
@@ -148,42 +159,36 @@ public enum Palette {
     public static let badge = Color.primary.opacity(0.08)
     /// The same badge wash, brighter, drawn when its row is selected.
     public static let badgeSelected = Color.white.opacity(0.2)
-    /// A badge under the pointer, on any ground but the accent.
-    public static let badgeHovered = Color.white.opacity(0.14)
+    /// A badge under the pointer, on any ground but the accent: a white wash in dark, a black one
+    /// in light.
+    public static let badgeHovered = adaptive(light: NSColor(white: 0, alpha: 0.08), dark: NSColor(white: 1, alpha: 0.14))
     /// A badge under the pointer on a selected row: stronger than `badgeSelected`, as
     /// `badgeHovered` is than `badge`.
     public static let badgeSelectedHovered = Color.white.opacity(0.28)
     /// The sidebar's own background; equal to `surface` but named separately so sidebar styling
     /// reads locally.
     public static let sidebar = surface
-    /// The translucent white wash painted behind a sidebar row while the pointer is over it.
-    /// Literal white, not `.primary`: `.primary` carries its own intrinsic alpha (≈0.847), which
-    /// compounds with `.opacity()`, so `Color.primary.opacity(0.06)` was really ≈5.1%. That drift is
-    /// what made `rowHoverSolid` wrong below — it never actually matched this wash.
-    public static let rowHover = Color.white.opacity(rowHoverAlpha)
+    /// The wash painted behind a sidebar row while the pointer is over it: literal white in dark,
+    /// literal black in light. Not `.primary`, whose own alpha (≈0.847) compounds with an opacity.
+    public static let rowHover = adaptive(light: NSColor(white: 0, alpha: rowHoverLightAlpha), dark: NSColor(white: 1, alpha: rowHoverAlpha))
     /// The opaque colour a hovered row's avatar ring is painted: `rowHover` composited over
-    /// `sidebar`. Derived, not hardcoded, so the two can never drift again. Resolved once, under the
-    /// forced `.darkAqua` AiTerm always draws in — the answer cannot change, so it is a `static let`
-    /// rather than a composite recomputed on every read.
+    /// `sidebar`, in whichever appearance it is drawn. Derived, not hardcoded, so the two can never
+    /// drift.
     ///
     /// Composited by hand in sRGB, not with `NSColor.blended(withFraction:of:)`: that method
-    /// converts through `NSCalibratedRGBColorSpace`, whose gamma differs from sRGB enough to
-    /// materially distort a dark base colour (measured: it barely moved `sidebar` toward white at
-    /// all). sRGB is also the space the wash actually paints in on screen, so blending its
-    /// components directly is the faithful composite, not an approximation.
-    public static let rowHoverSolid: Color = {
-        let appearance = NSAppearance(named: .darkAqua) ?? NSAppearance.currentDrawing()
-        var blended = NSColor(sidebar)
+    /// converts through `NSCalibratedRGBColorSpace`, whose gamma distorts a dark base colour.
+    public static let rowHoverSolid = Color(nsColor: NSColor(name: nil) { appearance in
+        let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        var base = NSColor.windowBackgroundColor
         appearance.performAsCurrentDrawingAppearance {
-            let base = NSColor(sidebar).usingColorSpace(.sRGB) ?? NSColor(sidebar)
-            blended = NSColor(
-                srgbRed: base.redComponent * (1 - rowHoverAlpha) + rowHoverAlpha,
-                green: base.greenComponent * (1 - rowHoverAlpha) + rowHoverAlpha,
-                blue: base.blueComponent * (1 - rowHoverAlpha) + rowHoverAlpha,
-                alpha: 1)
+            base = NSColor.windowBackgroundColor.usingColorSpace(.sRGB) ?? NSColor.windowBackgroundColor
         }
-        return Color(nsColor: blended)
-    }()
+        let (wash, alpha): (CGFloat, CGFloat) = dark ? (1, rowHoverAlpha) : (0, rowHoverLightAlpha)
+        return NSColor(srgbRed: base.redComponent * (1 - alpha) + wash * alpha,
+                       green: base.greenComponent * (1 - alpha) + wash * alpha,
+                       blue: base.blueComponent * (1 - alpha) + wash * alpha,
+                       alpha: 1)
+    })
 
     /// A collapsed project's status-count chips (`StatusCountChips`): a fill and a stroke per
     /// status family, each a wash of that family's colour. The three pairs strengthen with urgency —
@@ -237,6 +242,9 @@ public struct Brand: Sendable, Hashable {
     /// opt-in, since most vendor marks are already correct under SVG's default nonzero winding rule.
     /// Only Grok's mark sets this.
     public let evenOdd: Bool
+    /// Whether the mark is drawn in the text colour rather than its own: GitHub's mark is white on
+    /// dark and black on light, by GitHub's own rules, so on a light sheet it is not lost.
+    public let followsAppearance: Bool
 
     /// The brand's colour as a faint wash, behind a label in the brand's own ink: a ticket's or a
     /// merge request's lane in a picker — neutral information in the vendor's colour, not a warning.
@@ -245,9 +253,11 @@ public struct Brand: Sendable, Hashable {
     public static func == (lhs: Brand, rhs: Brand) -> Bool { lhs.name == rhs.name }
     public func hash(into hasher: inout Hasher) { hasher.combine(name) }
 
-    public init(_ name: String, _ value: UInt32, path: String, fallbackSymbol: String, evenOdd: Bool = false) {
+    public init(_ name: String, _ value: UInt32, path: String, fallbackSymbol: String, evenOdd: Bool = false,
+                followsAppearance: Bool = false) {
         self.name = name
-        color = Palette.hex(value)
+        color = followsAppearance ? Palette.text : Palette.hex(value)
+        self.followsAppearance = followsAppearance
         hex = String(format: "#%06X", value)
         self.path = path
         self.fallbackSymbol = fallbackSymbol

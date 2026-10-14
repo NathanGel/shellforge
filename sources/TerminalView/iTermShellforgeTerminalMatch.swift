@@ -26,8 +26,25 @@ final class iTermShellforgeTerminalMatch: NSObject {
                                                using: recolourIfOn)
         NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
                                                           object: nil, queue: .main, using: recolourIfOn)
+        // Under the Minimal theme iTerm2 pins each session view's appearance to its background, so a
+        // session may never see the app's appearance change: the match watches the app itself.
+        // Only a change between light and dark counts, and it only reloads the sessions: the full
+        // recolour sets the app's appearance itself, which would bring this straight back.
+        appearanceObservation = NSApp.observe(\.effectiveAppearance) { app, _ in
+            MainActor.assumeIsolated {
+                let dark = app.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                defer { appearanceWasDark = dark }
+                if settings.isOn, dark != appearanceWasDark { reloadSessions() }
+            }
+        }
         return settings
     }()
+
+    /// Recolours every session when the app's appearance changes, while the match is on.
+    private static var appearanceObservation: NSKeyValueObservation?
+    /// The appearance the sessions were last coloured for, so an appearance set again without a
+    /// change from light to dark does nothing.
+    private static var appearanceWasDark: Bool?
 
     /// Posted after every session has been recoloured: Settings › Appearance greys its Theme control.
     @objc static let didChangeNotification = NSNotification.Name("iTermShellforgeTerminalMatchDidChange")
@@ -44,7 +61,7 @@ final class iTermShellforgeTerminalMatch: NSObject {
     @objc static func profile(forColors profile: [AnyHashable: Any], keeping overridden: Set<String>?) -> [AnyHashable: Any] {
         guard settings.isOn else { return profile }
         var result = profile
-        for (role, color) in ShellforgeTerminalPalette.colors() {
+        for (role, color) in ShellforgeTerminalPalette.colors(in: NSApp.effectiveAppearance) {
             let value = nsColor(color).dictionaryValue
             let base = key(for: role)
             for key in [base, base + COLORS_LIGHT_MODE_SUFFIX, base + COLORS_DARK_MODE_SUFFIX] where overridden?.contains(key) != true {
@@ -59,7 +76,7 @@ final class iTermShellforgeTerminalMatch: NSObject {
 
     /// The palette's colour for an iTerm2 base colour key, for host tests.
     static func paletteColor(forKey key: String) -> NSColor? {
-        ShellforgeTerminalPalette.colors().first { self.key(for: $0.key) == key }.map { nsColor($0.value) }
+        ShellforgeTerminalPalette.colors(in: NSApp.effectiveAppearance).first { self.key(for: $0.key) == key }.map { nsColor($0.value) }
     }
 
     /// The profile key iTerm2 keeps `role` under.
@@ -82,11 +99,17 @@ final class iTermShellforgeTerminalMatch: NSObject {
 
     /// Every open session reloads its colours from its own profile, through the hook, and its Minimal
     /// appearance; then iTerm2 redraws its windows as it does when its theme setting changes.
-    private static func recolour() {
+    /// Every open session reloads its colours from its own profile, through the hook, and its
+    /// Minimal appearance, which follows its background.
+    private static func reloadSessions() {
         for session in iTermController.sharedInstance()?.allSessions() ?? [] {
             if let profile = session.profile { session.loadColors(fromProfile: profile) }
             session.themeDidChange()
         }
+    }
+
+    private static func recolour() {
+        reloadSessions()
         (NSApp as? iTermApplication)?.updateAppearance()
         NotificationCenter.default.post(name: .refreshTerminal, object: nil)
         // The theme's other listeners — the status bar, Profiles › Colors, the effectiveTheme

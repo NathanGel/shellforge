@@ -237,7 +237,7 @@ struct ProviderIcon: View {
             case .gitlab:
                 Icon(.gitlabTanuki, size: scale(Self.logoSize))
             case .github:
-                Icon(.brand(Palette.github), size: scale(Self.logoSize))
+                Icon(.brand(Palette.github), size: scale(Self.logoSize), tint: surface.ink)
             case .git: Icon(.symbol("arrow.triangle.branch"), size: scale(Self.glyphSize), tint: surface.secondaryInk)
             case .none: Icon(.symbol("folder.fill"), size: scale(Self.glyphSize), tint: surface.secondaryInk)
             }

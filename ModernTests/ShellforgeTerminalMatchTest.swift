@@ -138,4 +138,26 @@ final class ShellforgeTerminalMatchTest: XCTestCase {
         let background = try XCTUnwrap(session.colorFgBgVariable?.split(separator: ";").last.flatMap { Int($0) })
         XCTAssertTrue((0...6).contains(background) || background == 8, "a dark background index, got \(session.colorFgBgVariable ?? "nil")")
     }
+
+    func testAnAppearanceChangeRecoloursASession() throws {
+        let session = try XCTUnwrap(fixture.terminal.currentSession())
+        let previous = NSApp.appearance
+        defer { NSApp.appearance = previous }
+        NSApp.appearance = NSAppearance(named: .darkAqua)
+        iTermShellforgeTerminalMatch.setOn(true)
+        let dark = try XCTUnwrap(background(session)?.usingColorSpace(.sRGB))
+        NSApp.appearance = NSAppearance(named: .aqua)
+        let lightened = expectation(description: "the session takes the light palette")
+        lightened.assertForOverFulfill = false
+        func check() {
+            if let now = background(session)?.usingColorSpace(.sRGB), now.brightnessComponent > dark.brightnessComponent + 0.3 {
+                lightened.fulfill()
+            } else {
+                DispatchQueue.main.async(execute: check)
+            }
+        }
+        DispatchQueue.main.async(execute: check)
+        wait(for: [lightened], timeout: 10)
+        try assertSame(background(session), iTermShellforgeTerminalMatch.paletteColor(forKey: KEY_BACKGROUND_COLOR), "the light palette")
+    }
 }

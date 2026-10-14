@@ -27,9 +27,6 @@ public enum ShellforgeSidebar {
                                   backpack: backpack, terminalMatch: terminalMatch, showBackpack: showBackpack, hideSidebar: hideSidebar)
         let host = SidebarHostingView(rootView: ZoomedSidebar(zoom: zoom, sidebar: sidebar))
         host.frame = NSRect(x: 0, y: 0, width: width, height: 400)
-        // AiTerm is dark-only and forced the whole app dark; here only the sidebar is, so iTerm2's
-        // own windows keep the appearance the user chose. Every colour below resolves against this.
-        host.appearance = NSAppearance(named: .darkAqua)
         host.autoresizingMask = [.height]
         return host
     }
