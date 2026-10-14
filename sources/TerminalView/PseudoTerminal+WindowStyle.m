@@ -1032,10 +1032,12 @@ BOOL iTermWindowTypeIsCompact(iTermWindowType windowType) {
             case WINDOW_TYPE_TRADITIONAL_FULL_SCREEN:
             case WINDOW_TYPE_LION_FULL_SCREEN:
             case WINDOW_TYPE_ACCESSORY:
+                return NO;
             case WINDOW_TYPE_NORMAL:
             case WINDOW_TYPE_MAXIMIZED:
             case WINDOW_TYPE_CENTERED:
-                return NO;
+                // Shellforge: the title strip over the terminal draws the title beside the floating sidebar.
+                return [iTermShellforgeSidebar floats];
             case WINDOW_TYPE_NO_TITLE_BAR:
             case WINDOW_TYPE_CENTERED_NO_TITLE_BAR:
             case WINDOW_TYPE_TOP_PERCENTAGE:
@@ -1105,6 +1107,10 @@ BOOL iTermWindowTypeIsCompact(iTermWindowType windowType) {
 
         case WINDOW_TYPE_MAXIMIZED:
         case WINDOW_TYPE_CENTERED:
+            // Shellforge: on macOS 26 the floating sidebar's window runs its content under the title bar.
+            if ([iTermShellforgeSidebar floats]) {
+                mask |= NSWindowStyleMaskFullSizeContentView;
+            }
             return (mask |
                     NSWindowStyleMaskTitled |
                     NSWindowStyleMaskClosable |
@@ -1114,14 +1120,21 @@ BOOL iTermWindowTypeIsCompact(iTermWindowType windowType) {
         case WINDOW_TYPE_LION_FULL_SCREEN:
         case WINDOW_TYPE_ACCESSORY:
         case WINDOW_TYPE_NORMAL:
-            if ([self windowTypeHasFullSizeContentView:iTermThemedWindowType(savedWindowType)]) {
-                mask |= NSWindowStyleMaskFullSizeContentView;
+            {
+                // Shellforge: on macOS 26 the floating sidebar's window runs its content under the title bar —
+                // a normal window, or one in Lion full screen from a normal window; not an accessory window.
+                const BOOL shellforgeFloats = [iTermShellforgeSidebar floats] &&
+                    (windowType == WINDOW_TYPE_NORMAL ||
+                     (windowType == WINDOW_TYPE_LION_FULL_SCREEN && iTermThemedWindowType(savedWindowType) == WINDOW_TYPE_NORMAL));
+                if ([self windowTypeHasFullSizeContentView:iTermThemedWindowType(savedWindowType)] || shellforgeFloats) {
+                    mask |= NSWindowStyleMaskFullSizeContentView;
+                }
+                return (mask |
+                        NSWindowStyleMaskTitled |
+                        NSWindowStyleMaskClosable |
+                        NSWindowStyleMaskMiniaturizable |
+                        resizable);
             }
-            return (mask |
-                    NSWindowStyleMaskTitled |
-                    NSWindowStyleMaskClosable |
-                    NSWindowStyleMaskMiniaturizable |
-                    resizable);
     }
 }
 

@@ -547,6 +547,11 @@ typedef struct {
                               self.frame.size.height - height + insets.bottom + 1,
                               [self widthForStandardButtonsView],
                               iTermStandardButtonsViewHeight);
+    // Shellforge: iTerm2's own window buttons (compact windows) move in with the floating panel.
+    if ([iTermShellforgeSidebar floats] && self.shellforgeSidebarWidth > 0) {
+        frame.origin.x += [iTermShellforgeSidebar floatingInset];
+        frame.origin.y -= [iTermShellforgeSidebar floatingInset];
+    }
     return [self retinaRoundRect:frame];
 }
 
@@ -780,8 +785,11 @@ typedef struct {
     // to have an inset on the right otherwise so if the title doesn't fit then
     // left-align it and make it as wide as the available space.
     // This mirrors what NSWindow's title does.
-    const CGFloat mostGenerousInset = MAX(MAX(insets.left, insets.right), iTermRootTerminalViewWindowNumberLabelMargin);
-    const CGFloat containerWidth = NSWidth(self.frame) - ([self shouldShowToolbelt] ? NSWidth(_toolbelt.frame) : 0);
+    // Shellforge: beside the sidebar the strip starts at the sidebar's column, and the window
+    // buttons, inside the panel, are not in its way.
+    const CGFloat sidebarColumn = self.shellforgeSidebarWidth;
+    const CGFloat mostGenerousInset = sidebarColumn > 0 ? iTermRootTerminalViewWindowNumberLabelMargin : MAX(MAX(insets.left, insets.right), iTermRootTerminalViewWindowNumberLabelMargin);
+    const CGFloat containerWidth = NSWidth(self.frame) - sidebarColumn - ([self shouldShowToolbelt] ? NSWidth(_toolbelt.frame) : 0);
     const NSSize fittingSize = textField.fittingSize;
     const CGFloat desiredWidth = fittingSize.width;
     CGFloat leftInset = mostGenerousInset;
@@ -810,7 +818,7 @@ typedef struct {
             y -= 1.5;
         }
     }
-    NSRect rect = NSMakeRect([self retinaRound:leftInset],
+    NSRect rect = NSMakeRect([self retinaRound:sidebarColumn + leftInset],
                              y,
                              ceil(MAX(0, containerWidth - leftInset - rightInset)),
                              ceil(fittingSize.height));

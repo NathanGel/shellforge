@@ -1193,7 +1193,8 @@ ITERM_WEAKLY_REFERENCEABLE
     if (self.anyFullScreen) {
         return NO;
     }
-    if (!iTermWindowTypeIsCompact(self.windowType)) {
+    // Shellforge: the floating sidebar's window draws its title in the strip, as compact windows do.
+    if (!iTermWindowTypeIsCompact(self.windowType) && ![iTermShellforgeSidebar floats]) {
         return NO;
     }
     if (self.tabBarShouldBeVisible) {
@@ -9479,6 +9480,11 @@ hidingToolbeltShouldResizeWindow:(BOOL)hidingToolbeltShouldResizeWindow
 }
 
 + (BOOL)titleBarShouldAppearTransparentForWindowType:(iTermWindowType)windowType {
+    // Shellforge: the floating sidebar's title bar is transparent, over the panel and the title strip.
+    if ([iTermShellforgeSidebar floats] &&
+        (windowType == WINDOW_TYPE_NORMAL || windowType == WINDOW_TYPE_MAXIMIZED || windowType == WINDOW_TYPE_CENTERED)) {
+        return YES;
+    }
     switch (iTermThemedWindowType(windowType)) {
         case WINDOW_TYPE_NORMAL:
         case WINDOW_TYPE_MAXIMIZED:

@@ -35,4 +35,51 @@ final class ShellforgeFloatingSidebarTest: XCTestCase {
         XCTAssertEqual(frame.minY, inset)
         XCTAssertEqual(frame.maxY, root.bounds.height - inset)
     }
+
+    func testOnlyTitledTypesGainFullSizeContent() throws {
+        try XCTSkipUnless(iTermShellforgeSidebar.floats)
+        for type in [iTermWindowType.WINDOW_TYPE_NORMAL, .WINDOW_TYPE_MAXIMIZED, .WINDOW_TYPE_CENTERED] {
+            let mask = PseudoTerminal.styleMask(for: type, savedWindowType: type, hotkeyWindowType: .none)
+            XCTAssertTrue(mask.contains(.fullSizeContentView), "\(type.rawValue)")
+        }
+        let accessory = PseudoTerminal.styleMask(for: .WINDOW_TYPE_ACCESSORY, savedWindowType: .WINDOW_TYPE_ACCESSORY,
+                                                 hotkeyWindowType: .none)
+        XCTAssertFalse(accessory.contains(.fullSizeContentView), "an accessory window stays as upstream has it")
+    }
+
+    func testTheWindowsTitleBarGivesWayToThePanel() throws {
+        try XCTSkipUnless(iTermShellforgeSidebar.floats)
+        XCTAssertTrue(fixture.window.styleMask.contains(.fullSizeContentView))
+        XCTAssertEqual(fixture.window.titleVisibility, .hidden)
+        XCTAssertTrue(fixture.window.titlebarAppearsTransparent)
+    }
+
+    /// The current session's view, in the root view's coordinates.
+    private func terminalFrame() throws -> NSRect {
+        let view = try XCTUnwrap(fixture.terminal.currentSession()?.view)
+        return view.convert(view.bounds, to: root)
+    }
+
+    func testTheTerminalStartsBelowTheTitleStrip() throws {
+        try XCTSkipUnless(iTermShellforgeSidebar.floats)
+        let terminal = try terminalFrame()
+        XCTAssertLessThan(terminal.maxY, root.bounds.height - 10, "the strip is above the terminal")
+        XCTAssertGreaterThanOrEqual(terminal.minX, root.shellforgeSidebarFrame.maxX)
+    }
+
+    func testAHiddenSidebarLeavesNoGap() throws {
+        try XCTSkipUnless(iTermShellforgeSidebar.floats)
+        root.toggleShellforgeSidebar()
+        defer { root.toggleShellforgeSidebar() }
+        root.layoutSubtreeIfNeeded()
+        XCTAssertLessThan(try terminalFrame().minX, 30, "the terminal takes the sidebar's place")
+        XCTAssertTrue(fixture.window.styleMask.contains(.fullSizeContentView), "the window's style stays while hidden")
+    }
+
+    func testTheDragHandleFollowsThePanel() throws {
+        try XCTSkipUnless(iTermShellforgeSidebar.floats)
+        let handle = iTermShellforgeSidebar.dragHandleFrame(forSidebar: root.shellforgeSidebarFrame)
+        XCTAssertEqual(handle.minY, root.shellforgeSidebarFrame.minY)
+        XCTAssertEqual(handle.height, root.shellforgeSidebarFrame.height)
+    }
 }
