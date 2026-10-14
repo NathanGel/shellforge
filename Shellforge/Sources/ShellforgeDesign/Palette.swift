@@ -165,6 +165,9 @@ public enum Palette {
     /// A badge under the pointer on a selected row: stronger than `badgeSelected`, as
     /// `badgeHovered` is than `badge`.
     public static let badgeSelectedHovered = Color.white.opacity(0.28)
+    /// The footer card's ground: a faint wash, black in light and white in dark, that sets the
+    /// footer apart from the rows above it without a rule.
+    public static let footerCard = adaptive(light: NSColor(white: 0, alpha: 0.04), dark: NSColor(white: 1, alpha: 0.05))
     /// The sidebar's own background; equal to `surface` but named separately so sidebar styling
     /// reads locally.
     public static let sidebar = surface

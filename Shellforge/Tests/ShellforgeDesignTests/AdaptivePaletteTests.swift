@@ -6,7 +6,7 @@ import Testing
 /// The colours that only worked on AiTerm's dark sidebar now read in light too; their dark values
 /// are what they always were.
 @MainActor @Suite struct AdaptivePaletteTests {
-    @Test(arguments: ["rowHover", "badgeHovered", "codeBackground", "rowHoverSolid"])
+    @Test(arguments: ["rowHover", "badgeHovered", "codeBackground", "rowHoverSolid", "footerCard"])
     func theColourDiffersInLightAndDark(name: String) {
         let color = Self.colors[name] ?? .clear
         #expect(ColorProbe.rgba(color, in: .aqua) != ColorProbe.rgba(color, in: .darkAqua), "\(name)")
@@ -15,6 +15,7 @@ import Testing
     private static let colors: [String: Color] = [
         "rowHover": Palette.rowHover, "badgeHovered": Palette.badgeHovered,
         "codeBackground": Palette.codeBackground, "rowHoverSolid": Palette.rowHoverSolid,
+        "footerCard": Palette.footerCard,
     ]
 
     @Test func darkIsUnchanged() {

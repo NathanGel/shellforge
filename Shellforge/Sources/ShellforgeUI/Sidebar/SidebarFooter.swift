@@ -83,7 +83,7 @@ struct SidebarFooter: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .overlay(alignment: .top) { Hairline() }
+
     }
 
     /// The Mac's readings under its mark, read out as one element: its readings in words, then the

@@ -52,6 +52,7 @@ struct PaletteDistinctionTests {
         ("sidebar", Palette.sidebar),
         ("rowHover", Palette.rowHover),
         ("rowHoverSolid", Palette.rowHoverSolid),
+        ("footerCard", Palette.footerCard),
         ("statusChipQuietFill", Palette.statusChipQuietFill),
         ("statusChipQuietStroke", Palette.statusChipQuietStroke),
         ("statusChipAttentionFill", Palette.statusChipAttentionFill),
