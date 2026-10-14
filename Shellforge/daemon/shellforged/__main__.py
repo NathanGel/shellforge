@@ -13,6 +13,7 @@ from typing import Any
 
 from . import __version__, protocol
 from .rpc_server import AlreadyRunning
+from .log_repeats import RepeatFilter
 
 #: Exit status for "another daemon already owns the socket". Kept distinct from the
 #: generic failure status so a supervisor can adopt the running daemon instead of
@@ -145,7 +146,11 @@ async def run_daemon(ns: argparse.Namespace) -> None:
 def main(argv: list[str] | None = None) -> int:
     ns = build_parser().parse_args(argv)
     if ns.command == "run":
-        logging.basicConfig(level=ns.log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+        # A failure on every 2 s tick is one line every five minutes, not thousands a day. On the
+        # helper's own handler only: basicConfig installs it only when nothing else has one.
+        handler = logging.StreamHandler()
+        handler.addFilter(RepeatFilter())
+        logging.basicConfig(level=ns.log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s", handlers=[handler])
         try:
             asyncio.run(run_daemon(ns))
         except AlreadyRunning as exc:
