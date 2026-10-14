@@ -132,9 +132,18 @@ public final class DaemonLink: ObservableObject {
     }
 
     /// What the banner says of a failed tunnel call: the helper's refusal in the words its code
-    /// has, or plainly that the connection dropped — never "The operation couldn't be completed".
+    /// has; a cancelled call or an unreadable reply as what it is; an error with words of its own
+    /// in them; and anything else — a socket gone — plainly as the connection dropping. Never
+    /// "The operation couldn't be completed".
     nonisolated static func tunnelMessage(_ verb: String, _ alias: String, _ error: Error) -> String {
-        let reason = error is DaemonError ? error.localizedDescription : "the connection to Shellforge’s helper dropped."
+        let reason: String
+        switch error {
+        case is DaemonError: reason = error.localizedDescription
+        case is CancellationError: reason = "the call was cancelled."
+        case is DecodingError: reason = "the helper’s reply couldn’t be read."
+        case let worded as LocalizedError where worded.errorDescription != nil: reason = worded.errorDescription!
+        default: reason = "the connection to Shellforge’s helper dropped."
+        }
         return "Couldn’t \(verb) tunnel \(alias): \(reason)"
     }
 
