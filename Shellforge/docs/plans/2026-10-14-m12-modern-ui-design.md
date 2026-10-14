@@ -81,8 +81,8 @@ screen; a host test that a sidebar window has the full-size content style only o
 
 ## Step 3: the sidebar's content
 
-- **Rows:** the macOS 26 sidebar row: a rounded selection in the system selection colour (accent
-  while the sidebar has focus, unemphasized otherwise), heights and padding from `Metrics`, icons as
+- **Rows:** the macOS 26 sidebar row: a rounded selection in the system selection colour (accent while its window is key, unemphasized otherwise — the sidebar is rarely first
+  responder, since a row click hands the keyboard to the terminal, so focus would leave it grey), heights and padding from `Metrics`, icons as
   SF Symbols in hierarchical rendering.
 - **Status dots** stay, drawn in system colours that read in both appearances.
 - **Headings:** “PROJECTS” and “OTHER TABS” become section headers in sentence case, “Projects”

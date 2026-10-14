@@ -19,4 +19,11 @@ import ShellforgeDesign
         #expect(RowPill.fill(for: .hover) == Palette.rowHover)
         #expect(RowPill.fill(for: .sidebar) == .clear)
     }
+    /// Review fix: only the key window's selection is the accent, as AppKit's tables do; a window that
+    /// is main but not key (another panel is key) shows the grey selection.
+    @Test func onlyTheKeyWindowIsActive() {
+        #expect(RowPill.windowActive(.key))
+        #expect(!RowPill.windowActive(.active))
+        #expect(!RowPill.windowActive(.inactive))
+    }
 }

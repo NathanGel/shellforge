@@ -114,6 +114,10 @@ struct RowPill: ViewModifier {
         return hovered ? .hover : .sidebar
     }
 
+    /// Whether a window in `state` shows the emphasized (accent) selection: only the key window, as
+    /// AppKit's own tables — a window that is main while another panel is key shows grey.
+    static func windowActive(_ state: ControlActiveState) -> Bool { state == .key }
+
     /// The pill's fill on `surface`.
     static func fill(for surface: Surface) -> Color {
         switch surface {
@@ -125,7 +129,7 @@ struct RowPill: ViewModifier {
     }
 
     func body(content: Content) -> some View {
-        let windowActive = controlActiveState == .key || controlActiveState == .active
+        let windowActive = Self.windowActive(controlActiveState)
         let surface = Self.surface(selected: selected, hovered: hovered, windowActive: windowActive)
         content
             .surface(surface)

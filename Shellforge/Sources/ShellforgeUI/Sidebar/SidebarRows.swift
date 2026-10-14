@@ -303,10 +303,10 @@ struct SidebarBanner: View {
     @Environment(\.interfaceScale) private var scale
     @Environment(\.surface) private var surface
 
-    private var ink: Color {
+    /// The notice's text colour: readable on its tinted ground; the colour is the symbol's.
+    static func textInk(for tone: Tone) -> Color {
         switch tone {
-        case .error: Palette.text
-        case .warning: Palette.amber
+        case .error, .warning: Palette.text
         case .info: Palette.muted
         }
     }
@@ -330,7 +330,7 @@ struct SidebarBanner: View {
     }
 
     /// The symbol's colour: the tone's own.
-    private var symbolInk: Color {
+    static func symbolInk(for tone: Tone) -> Color {
         switch tone {
         case .error: Palette.destructive
         case .warning: Palette.amber
@@ -340,9 +340,9 @@ struct SidebarBanner: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: scale(Space.snug)) {
-            Image(systemName: Self.symbol(for: tone)).font(Typography.help).foregroundStyle(symbolInk)
+            Image(systemName: Self.symbol(for: tone)).font(Typography.help).foregroundStyle(Self.symbolInk(for: tone))
                 .accessibilityHidden(true)
-            Text(text).font(Typography.help).foregroundStyle(ink).textSelection(.enabled)
+            Text(text).font(Typography.help).foregroundStyle(Self.textInk(for: tone)).textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
             if let dismiss {
                 Button(action: dismiss) {
