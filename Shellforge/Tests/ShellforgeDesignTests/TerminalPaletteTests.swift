@@ -13,12 +13,21 @@ import Testing
         #expect(Set(colors.keys) == Set(TerminalColorRole.all))
     }
 
-    @Test func theBackgroundIsTheSidebarsSurface() throws {
+    @Test func theBackgroundIsAStepDarkerThanTheSidebar() throws {
         var surface = SRGB(red: 0, green: 0, blue: 0)
         try #require(dark).performAsCurrentDrawingAppearance {
             surface = SRGB(TerminalSource.surface, over: SRGB(red: 0, green: 0, blue: 0))
         }
-        #expect(ShellforgeTerminalPalette.colors(in: dark)[.background] == surface)
+        let background = try #require(ShellforgeTerminalPalette.colors(in: dark)[.background])
+        #expect(background == surface.darkened(by: ShellforgeTerminalPalette.backgroundStep))
+        #expect(background != surface, "the terminal reads apart from the sidebar")
+        #expect(background.contrast(with: surface) < 1.2, "a step, not a different colour")
+    }
+
+    @Test func darkenedMixesInBlack() {
+        let grey = SRGB(red: 0.5, green: 0.4, blue: 0.2)
+        #expect(grey.darkened(by: 0.5) == SRGB(red: 0.25, green: 0.2, blue: 0.1))
+        #expect(grey.darkened(by: 0) == grey)
     }
 
     @Test func theCursorTextIsTheBackground() {

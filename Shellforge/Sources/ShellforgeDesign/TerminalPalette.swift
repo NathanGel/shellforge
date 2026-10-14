@@ -61,6 +61,11 @@ public struct SRGB: Equatable, Sendable {
     public func lightened(by fraction: Double) -> SRGB {
         SRGB(red: red + (1 - red) * fraction, green: green + (1 - green) * fraction, blue: blue + (1 - blue) * fraction)
     }
+
+    /// Mixed with `fraction` black.
+    public func darkened(by fraction: Double) -> SRGB {
+        SRGB(red: red * (1 - fraction), green: green * (1 - fraction), blue: blue * (1 - fraction))
+    }
 }
 
 /// The macOS colours Shellforge's terminal palette is read from: the sidebar's own, so a matched
@@ -85,6 +90,9 @@ enum TerminalSource {
 /// Increase Contrast.
 public enum ShellforgeTerminalPalette {
     public static let minimumContrast = 4.5
+    /// How much black the terminal's background mixes into the sidebar's surface: a step darker, so
+    /// the sidebar reads as its own panel beside the terminal, still one family.
+    public static let backgroundStep = 0.06
 
     public static func colors(in appearance: NSAppearance? = NSAppearance(named: .darkAqua)) -> [TerminalColorRole: SRGB] {
         var colors: [TerminalColorRole: SRGB] = [:]
@@ -93,7 +101,7 @@ public enum ShellforgeTerminalPalette {
         }
         draw {
             let opaqueBlack = SRGB(red: 0, green: 0, blue: 0)
-            let background = SRGB(TerminalSource.surface, over: opaqueBlack)
+            let background = SRGB(TerminalSource.surface, over: opaqueBlack).darkened(by: backgroundStep)
             func read(_ color: NSColor) -> SRGB { SRGB(color, over: background) }
             colors[.background] = background
             colors[.foreground] = read(TerminalSource.text)

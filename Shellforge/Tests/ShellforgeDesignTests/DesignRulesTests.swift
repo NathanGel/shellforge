@@ -67,6 +67,8 @@ struct DesignRulesTests {
                   reason: "Font.Weight.black mapped to NSFont.Weight.black: a weight, not a colour"),
         Exception(file: "ShellforgeDesign/Hairline.swift", rule: .length, line: ".frame(height: 1)",
                   reason: "the hairline is a one-point stroke, which does not scale, not a length on the scale"),
+        Exception(file: "ShellforgeUI/ShellforgeSidebar.swift", rule: .length, line: "Rectangle().fill(Palette.border).frame(width: 1)",
+                  reason: "the sidebar's edge is the hairline's vertical twin: a one-point stroke, which does not scale"),
         Exception(file: "ShellforgeDesign/IconSource.swift", rule: .font, line: ".font(.system(size: size))",
                   reason: "an SF Symbol drawn at the icon's size, which its caller passes from Metrics"),
         Exception(file: "ShellforgeDesign/Logos.swift", rule: .font, line: ".font(.system(size: size * 0.9",

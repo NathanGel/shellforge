@@ -11,7 +11,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
   - View › Hide Sidebar / Show Sidebar.
 - **Getting it back.** While the sidebar is hidden, the same icon sits in the window's title bar, beside the window buttons. In full screen there is no title bar, so use ⌃⌘S or the View menu.
 - **New windows** open the way the last toggle left them.
-- **Width.** Drag the sidebar's right edge to resize it.
+- **Width.** Drag the sidebar's right edge, marked by a thin line, to resize it.
   - The default width is 420 pt, the minimum 360 and the maximum 720.
   - Each window keeps its own width. The last width you dragged is the starting width for new windows.
 - **Text size.** Click anywhere in the sidebar, then use ⌘+ / ⌘− to make its text bigger or smaller, and ⌘0 for normal size.
@@ -229,7 +229,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
   - Files change only when you click, and each is backed up once as `.shellforge-backup`.
   - The files are `~/.claude/settings.json`, `~/.codex/config.toml`, `~/.grok/config.toml` and `~/.pi/agent/extensions/shellforge-status.ts`.
 - **Terminal.** Settings › Core › Terminal › Match the terminal to Shellforge, off by default, takes effect on Save.
-  - Every terminal, including tabs opened later, uses Shellforge's colours: the sidebar's background, its text and selection colours, the macOS accent colour for the cursor, and macOS's system colours for the 16 terminal colours, each readable on the background.
+  - Every terminal, including tabs opened later, uses Shellforge's colours: a background one step darker than the sidebar, the sidebar's text and selection colours, the macOS accent colour for the cursor, and macOS's system colours for the 16 terminal colours, each readable on the background.
   - iTerm2 uses its Minimal theme, so the title bar and window edges match. Settings › Appearance's Theme is greyed out while it is on.
   - Your profiles and your theme setting are not changed. Switching it off brings them back at once.
   - A colour set for one tab (Edit Session, the Python API) still wins.

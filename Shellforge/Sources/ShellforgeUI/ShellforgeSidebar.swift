@@ -93,6 +93,14 @@ struct ZoomedSidebar: View {
     var body: some View { sidebar.interfaceScale(zoom.scale) }
 }
 
+/// The sidebar's right edge: one hairline, so the sidebar reads apart from the terminal beside it.
+/// `Hairline` is horizontal and AiTerm's (TokenParityTests); this is its vertical twin.
+struct SidebarEdge: View {
+    var body: some View {
+        Rectangle().fill(Palette.border).frame(width: 1)
+    }
+}
+
 /// The sidebar's host: where `NativeRowHighlight` stops looking for its list.
 final class SidebarHostingView<Content: View>: NSHostingView<Content>, RowHighlightBoundary {}
 
@@ -128,6 +136,7 @@ struct SidebarView: View {
                               toggleMac: { BackpackToggle(backpack: backpack, presentSheet: presentBackpack).run() },
                               openMacSettings: showMacSettings)
         }
+        .overlay(alignment: .trailing) { SidebarEdge() }
         .frame(minWidth: scale(Size.sidebarMinWidth), maxHeight: .infinity, alignment: .top)
         .background(Palette.sidebar)
         .surface(.sidebar)
