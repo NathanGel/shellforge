@@ -392,6 +392,13 @@ extension iTermShellforgeSidebar {
         for model in sidebars.allObjects { model.environmentChanged() }
     }
 
+    /// Removes the agent-session markers Shellforge inherited from whoever started it, before any
+    /// window is restored or shell started: every tab, and every login-shell read, starts from this
+    /// process's environment (InheritedEnvironment).
+    @objc static func scrubInheritedEnvironment() {
+        for name in InheritedEnvironment.agentMarkers(in: ProcessInfo.processInfo.environment) { unsetenv(name) }
+    }
+
     /// Starts the helper and the report tick; both stop at iTermApplicationWillTerminate.
     @objc static func startHelper() {
         // ModernTests run inside the app; a test run must not start, adopt or stop a real helper.
