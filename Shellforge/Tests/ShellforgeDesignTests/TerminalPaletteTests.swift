@@ -16,7 +16,7 @@ import Testing
     @Test func theBackgroundIsTheSidebarsSurface() throws {
         var surface = SRGB(red: 0, green: 0, blue: 0)
         try #require(dark).performAsCurrentDrawingAppearance {
-            surface = SRGB(NSColor.windowBackgroundColor, over: SRGB(red: 0, green: 0, blue: 0))
+            surface = SRGB(TerminalSource.surface, over: SRGB(red: 0, green: 0, blue: 0))
         }
         #expect(ShellforgeTerminalPalette.colors(in: dark)[.background] == surface)
     }

@@ -63,6 +63,23 @@ public struct SRGB: Equatable, Sendable {
     }
 }
 
+/// The macOS colours Shellforge's terminal palette is read from: the sidebar's own, so a matched
+/// terminal and the sidebar read as one surface. `NSColor`s, not `Palette`'s `Color`s, because the
+/// palette resolves them under an appearance into iTerm2's sRGB values. Each line is a
+/// `DesignRulesTests` exception: `Palette.swift` stays AiTerm's (TokenParityTests).
+enum TerminalSource {
+    static let surface = NSColor.windowBackgroundColor
+    static let text = NSColor.labelColor
+    static let cursor = NSColor.controlAccentColor
+    static let selection = NSColor.selectedContentBackgroundColor
+    static let black = NSColor.underPageBackgroundColor
+    static let brightBlack = NSColor.tertiaryLabelColor
+    static let white = NSColor.secondaryLabelColor
+    /// ANSI 1–6; their bright versions (9–14) are these, lightened.
+    static let hues: [(index: Int, color: NSColor)] = [(1, .systemRed), (2, .systemGreen), (3, .systemYellow),
+                                                        (4, .systemBlue), (5, .systemPurple), (6, .systemTeal)]
+}
+
 /// Shellforge's terminal colours: the sidebar's own macOS colours, read under `appearance` (dark,
 /// as the sidebar always is) each time they are asked for, so they follow the accent colour and
 /// Increase Contrast.
@@ -76,22 +93,20 @@ public enum ShellforgeTerminalPalette {
         }
         draw {
             let opaqueBlack = SRGB(red: 0, green: 0, blue: 0)
-            let background = SRGB(NSColor.windowBackgroundColor, over: opaqueBlack)
+            let background = SRGB(TerminalSource.surface, over: opaqueBlack)
             func read(_ color: NSColor) -> SRGB { SRGB(color, over: background) }
             colors[.background] = background
-            colors[.foreground] = read(.labelColor)
-            colors[.bold] = read(.labelColor)
-            colors[.cursor] = read(.controlAccentColor)
+            colors[.foreground] = read(TerminalSource.text)
+            colors[.bold] = read(TerminalSource.text)
+            colors[.cursor] = read(TerminalSource.cursor)
             colors[.cursorText] = background
-            colors[.selection] = read(.selectedContentBackgroundColor)
-            colors[.selectedText] = read(.labelColor)
-            colors[.ansi(0)] = read(.underPageBackgroundColor)
-            colors[.ansi(8)] = read(.tertiaryLabelColor)
-            colors[.ansi(7)] = read(.secondaryLabelColor)
-            colors[.ansi(15)] = read(.labelColor)
-            let hues: [(Int, NSColor)] = [(1, .systemRed), (2, .systemGreen), (3, .systemYellow),
-                                          (4, .systemBlue), (5, .systemPurple), (6, .systemTeal)]
-            for (index, hue) in hues {
+            colors[.selection] = read(TerminalSource.selection)
+            colors[.selectedText] = read(TerminalSource.text)
+            colors[.ansi(0)] = read(TerminalSource.black)
+            colors[.ansi(8)] = read(TerminalSource.brightBlack)
+            colors[.ansi(7)] = read(TerminalSource.white)
+            colors[.ansi(15)] = read(TerminalSource.text)
+            for (index, hue) in TerminalSource.hues {
                 colors[.ansi(index)] = read(hue)
                 colors[.ansi(index + 8)] = read(hue).lightened(by: 0.2)
             }
