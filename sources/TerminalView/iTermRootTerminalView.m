@@ -215,6 +215,8 @@ typedef struct {
     iTermWindowSizeView *_windowSizeView;
 
     iTermLayerBackedSolidColorView *_titleBackgroundView;
+    // Shellforge: the terminal's colour behind a floating sidebar.
+    iTermLayerBackedSolidColorView *_shellforgeColumnBackground;
     NSVisualEffectView *_titleBackgroundVEV;
 
     iTermWindowBorderView *_windowBorderView;
@@ -787,7 +789,7 @@ typedef struct {
     // This mirrors what NSWindow's title does.
     // Shellforge: beside the sidebar the strip starts at the sidebar's column, and the window
     // buttons, inside the panel, are not in its way.
-    const CGFloat sidebarColumn = self.shellforgeSidebarWidth;
+    const CGFloat sidebarColumn = self.shellforgeColumnWidth;
     // Shellforge: without the sidebar, a floating window's title clears macOS's window buttons and
     // the Show Sidebar button beside them — the Tahoe tab-bar insets do not count them.
     CGFloat shellforgeButtonsInset = 0;
@@ -1012,7 +1014,7 @@ typedef struct {
     const CGFloat height = [_delegate rootTerminalViewHeightOfTabBar:self];
     // Shellforge: the title strip's background starts at the sidebar's column, so it does not show
     // through the floating panel.
-    const CGFloat sidebarColumn = self.shellforgeSidebarWidth;
+    const CGFloat sidebarColumn = self.shellforgeColumnWidth;
     return NSMakeRect(sidebarColumn,
                       self.frame.size.height - height,
                       MAX(0, self.frame.size.width - sidebarColumn),
@@ -1045,7 +1047,9 @@ typedef struct {
             _titleBackgroundView = [[iTermLayerBackedSolidColorView alloc] initWithFrame:self.frameForTitleBackgroundView];
             _titleBackgroundView.autoresizingMask = NSViewWidthSizable | NSViewMinYMargin;
         }
-        _titleBackgroundView.color = [_delegate rootTerminalViewTabBarBackgroundColorIgnoringTabColor:NO];
+        // Shellforge: beside a floating sidebar the strip is the terminal's own colour.
+        _titleBackgroundView.color = [_delegate rootTerminalViewShellforgeSurfaceColorForStrip:YES] ?:
+            [_delegate rootTerminalViewTabBarBackgroundColorIgnoringTabColor:NO];
         _titleBackgroundView.frame = self.frameForTitleBackgroundView;
         if (_titleBackgroundView.superview != self) {
             [self insertSubview:_titleBackgroundView atIndex:1];
@@ -1084,6 +1088,28 @@ typedef struct {
 
     [self updateBorderViews];
     [self updateTextColors];
+    [self updateShellforgeColumnBackground];
+}
+
+// Shellforge: the terminal's colour behind a floating sidebar, so the panel floats over the same
+// surface as the terminal rather than in a frame of the window's colour (often see-through).
+- (void)updateShellforgeColumnBackground {
+    const CGFloat column = self.shellforgeColumnWidth;
+    NSColor *color = column > 0 ? [_delegate rootTerminalViewShellforgeSurfaceColorForStrip:NO] : nil;
+    if (!color) {
+        _shellforgeColumnBackground.hidden = YES;
+        return;
+    }
+    if (!_shellforgeColumnBackground) {
+        _shellforgeColumnBackground = [[iTermLayerBackedSolidColorView alloc] initWithFrame:NSZeroRect color:color];
+        _shellforgeColumnBackground.identifier = iTermRootTerminalView.shellforgeColumnBackgroundIdentifier;
+    }
+    if (_shellforgeColumnBackground.superview != self) {
+        [self addSubview:_shellforgeColumnBackground positioned:NSWindowBelow relativeTo:nil];
+    }
+    _shellforgeColumnBackground.color = color;
+    _shellforgeColumnBackground.frame = NSMakeRect(0, 0, column, NSHeight(self.bounds));
+    _shellforgeColumnBackground.hidden = NO;
 }
 
 // A plain #rrggbb value carries no alpha and is drawn at 75% opacity for
@@ -1174,6 +1200,10 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
     }
 
     _windowBorderView.hidden = NO;
+    // Shellforge: the floating panel's corners follow the window's, as measured.
+    if (_shellforgeSidebar) {
+        [iTermShellforgeSidebar updatePanelCornerRadiusIn:_shellforgeSidebar windowRadius:[self resolvedWindowBorderCornerRadius]];
+    }
     // The border view's autoresizing does not reliably track the root view (it
     // can be left at a stale size from an earlier window size), which would
     // stroke the heavy border as an inner rectangle inset from the real window
@@ -1603,6 +1633,14 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
     return [self tabBarShouldBeVisibleEvenWhenOnLoan];
 }
 
++ (NSUserInterfaceItemIdentifier)shellforgeColumnBackgroundIdentifier {
+    return @"ShellforgeColumnBackground";
+}
+
+- (NSView *)shellforgeSidebarView {
+    return _shellforgeSidebar;
+}
+
 - (NSRect)shellforgeSidebarFrame {
     return _shellforgeSidebar.frame;
 }
@@ -1625,6 +1663,16 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
     return [iTermShellforgeSidebar widthForPreferred:_shellforgeSidebarPreferredWidth
                                          windowWidth:NSWidth(self.bounds)
                                        toolbeltWidth:toolbeltWidth];
+}
+
+// Shellforge: how far right of the window's edge the terminal's column starts: the sidebar and,
+// when it floats, the gap it keeps from the terminal. 0 while the sidebar is hidden.
+- (CGFloat)shellforgeColumnWidth {
+    const CGFloat sidebar = self.shellforgeSidebarWidth;
+    if (sidebar <= 0) {
+        return 0;
+    }
+    return sidebar + ([iTermShellforgeSidebar floats] ? [iTermShellforgeSidebar floatingInset] : 0);
 }
 
 // Shellforge: the narrowest the window may be dragged while the sidebar shows; 0 when hidden.
@@ -2215,6 +2263,10 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
     _shellforgeSidebar.hidden = _shellforgeSidebarHidden;
     [self updateShellforgeSidebarDragHandle];
     [self updateShellforgeShowSidebarButton];
+    [self updateShellforgeColumnBackground];
+    if (_shellforgeSidebar) {
+        [iTermShellforgeSidebar updateWindowControlsIn:_shellforgeSidebar];
+    }
     const CGFloat notchHeight = [self notchInset];
     _notchMask.hidden = (notchHeight == 0);
     _notchMask.frame = NSMakeRect(0, NSHeight(self.bounds) - notchHeight, NSWidth(self.bounds), notchHeight);

@@ -17,6 +17,8 @@ struct SidebarHeader: View {
     let showMacSettings: () -> Void
     /// ⌃⌘S as a button; while hidden, the window's title bar shows the same icon to bring it back.
     var hideSidebar: () -> Void = {}
+    /// Set while the window's buttons sit inside the sidebar: the header shares their row.
+    var windowControls: SidebarWindowControls? = nil
     @Environment(\.interfaceScale) private var scale
     @Environment(\.surface) private var surface
 
@@ -51,8 +53,29 @@ struct SidebarHeader: View {
             .help("Hide Sidebar (⌃⌘S)")
             .accessibilityLabel("Hide Sidebar")
         }
-        .frame(height: scale(Size.menuRow)).padding(.leading, scale(Space.base)).padding(.trailing, SidebarRowLayout.trailingInset(scale))
-        .padding(.top, scale(Space.base)).padding(.bottom, scale(Space.tight))
+        .frame(height: scale(Size.menuRow))
+        .modifier(HeaderPlacement(windowControls: windowControls, scale: scale))
+    }
+}
+
+/// The header's place: a row of the list as before, or — while the window's buttons sit inside the
+/// sidebar — their band, pinned above the list: the title a gap past the zoom button, the row
+/// centred on the buttons, its trailing buttons in line with the rows' below.
+private struct HeaderPlacement: ViewModifier {
+    let windowControls: SidebarWindowControls?
+    let scale: InterfaceScale
+
+    func body(content: Content) -> some View {
+        if let windowControls {
+            content
+                .padding(.leading, windowControls.headerLeading)
+                .padding(.trailing, SidebarRowLayout.trailingInset(scale) + SidebarRowLayout.listInset)
+                .frame(height: windowControls.bandHeight)
+        } else {
+            content
+                .padding(.leading, scale(Space.base)).padding(.trailing, SidebarRowLayout.trailingInset(scale))
+                .padding(.top, scale(Space.base)).padding(.bottom, scale(Space.tight))
+        }
     }
 }
 

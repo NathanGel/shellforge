@@ -24,12 +24,41 @@ public enum ShellforgeSidebar {
                                 terminalMatch: TerminalMatchSettings, panelCornerRadius: CGFloat? = nil,
                                 showBackpack: @escaping @MainActor (@escaping @MainActor () -> Void) -> Void = { _ in },
                                 hideSidebar: @escaping @MainActor () -> Void = {}) -> NSView {
+        let chrome = SidebarChrome()
+        chrome.panelCornerRadius = panelCornerRadius
         let sidebar = SidebarView(model: model, chooseFolder: chooseFolder, hooks: hooks, machine: machine,
-                                  backpack: backpack, terminalMatch: terminalMatch, panelCornerRadius: panelCornerRadius, showBackpack: showBackpack, hideSidebar: hideSidebar)
+                                  backpack: backpack, terminalMatch: terminalMatch,
+                                  chrome: chrome, showBackpack: showBackpack, hideSidebar: hideSidebar)
         let host = SidebarHostingView(rootView: ZoomedSidebar(zoom: zoom, sidebar: sidebar))
+        host.chrome = chrome
         host.frame = NSRect(x: 0, y: 0, width: width, height: 400)
         host.autoresizingMask = [.height]
         return host
+    }
+
+    /// Where the window's buttons sit inside the sidebar `view` (one `makeView` made), or nil while
+    /// they are not inside it. The header moves onto their row.
+    public static func setWindowControls(_ controls: SidebarWindowControls?, on view: NSView) {
+        guard let host = view as? SidebarHostingView<ZoomedSidebar>, host.chrome?.windowControls != controls else { return }
+        host.chrome?.windowControls = controls
+    }
+
+    /// The floating panel's corner radius in the sidebar `view`; it stays square where it was made
+    /// without one (the sidebar does not float).
+    public static func setPanelCornerRadius(_ radius: CGFloat, on view: NSView) {
+        guard let host = view as? SidebarHostingView<ZoomedSidebar>, let chrome = host.chrome,
+              chrome.panelCornerRadius != nil, chrome.panelCornerRadius != radius else { return }
+        chrome.panelCornerRadius = radius
+    }
+
+    /// What `setPanelCornerRadius` last set on `view`.
+    public static func panelCornerRadius(of view: NSView) -> CGFloat? {
+        (view as? SidebarHostingView<ZoomedSidebar>)?.chrome?.panelCornerRadius
+    }
+
+    /// What `setWindowControls` last set on `view`.
+    public static func windowControls(of view: NSView) -> SidebarWindowControls? {
+        (view as? SidebarHostingView<ZoomedSidebar>)?.chrome?.windowControls
     }
 
     /// Whether `view` is a sidebar `makeView` made, or inside one.
@@ -82,11 +111,12 @@ struct SidebarFooterHost: View {
                                                         hotspot: backpack.network, wifi: backpack.currentNetwork),
                           toggleMac: toggleMac, openMacSettings: openMacSettings)
         }
-        // The footer on a rounded card, inside its own frame, so the footer's geometry is unchanged.
+        // The footer on a rounded card, inside its own frame, so the footer's geometry is unchanged;
+        // its edges in line with the rows' pills, at the list's inset.
         .background {
             RoundedRectangle(cornerRadius: scale(Radius.group), style: .continuous)
                 .fill(Palette.footerCard)
-                .padding(.horizontal, scale(Space.base))
+                .padding(.horizontal, SidebarRowLayout.listInset)
                 .padding(.bottom, scale(Space.base))
         }
     }
@@ -136,6 +166,8 @@ final class SidebarHostingView<Content: View>: NSHostingView<Content>, RowHighli
     /// A floating sidebar's window moves by its background; a click in the sidebar is the
     /// sidebar's, never the start of a window drag.
     override var mouseDownCanMoveWindow: Bool { false }
+    /// The share of the window's chrome the sidebar draws by.
+    var chrome: SidebarChrome?
 }
 
 /// AiTerm's sidebar, inside iTerm2's window: the PROJECTS header, each project with its tasks and
@@ -147,7 +179,7 @@ struct SidebarView: View {
     let machine: MachineMonitor
     let backpack: BackpackController
     let terminalMatch: TerminalMatchSettings
-    let panelCornerRadius: CGFloat?
+    @ObservedObject var chrome: SidebarChrome
     let showBackpack: @MainActor (@escaping @MainActor () -> Void) -> Void
     let hideSidebar: @MainActor () -> Void
     /// The window the sidebar is drawn in, which the Agent hooks panel hangs from.
@@ -157,11 +189,11 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // With the window's buttons inside the panel, the header is their row, pinned.
+            if let controls = chrome.windowControls { header(controls) }
             SidebarBanners(model: model)
             List {
-                SidebarHeader(addProject: addProject, addDivider: showAddDivider, canAddDivider: model.can(.addDivider),
-                              showHooks: showHooks, showMacSettings: showMacSettings,
-                              hideSidebar: hideSidebar)
+                if chrome.windowControls == nil { header(nil) }
                 ForEach(model.rows) { row in rowView(row) }
             }
             .listStyle(.sidebar)
@@ -171,9 +203,11 @@ struct SidebarView: View {
                               toggleMac: { BackpackToggle(backpack: backpack, presentSheet: presentBackpack).run() },
                               openMacSettings: showMacSettings)
         }
-        .overlay(alignment: .trailing) { if panelCornerRadius == nil { SidebarEdge() } }
+        // The header places itself on the buttons' row, so the title bar's safe area is not wanted.
+        .ignoresSafeArea(.container, edges: chrome.windowControls == nil ? [] : .top)
+        .overlay(alignment: .trailing) { if chrome.panelCornerRadius == nil { SidebarEdge() } }
         .frame(minWidth: scale(Size.sidebarMinWidth), maxHeight: .infinity, alignment: .top)
-        .background { SidebarGround(cornerRadius: panelCornerRadius) }
+        .background { SidebarGround(cornerRadius: chrome.panelCornerRadius) }
         .surface(.sidebar)
         .tint(Palette.accent)
         .background(WindowReader(anchor: anchor))
@@ -192,6 +226,12 @@ struct SidebarView: View {
             case .addDivider: showAddDivider()
             }
         }
+    }
+
+    private func header(_ controls: SidebarWindowControls?) -> SidebarHeader {
+        SidebarHeader(addProject: addProject, addDivider: showAddDivider, canAddDivider: model.can(.addDivider),
+                      showHooks: showHooks, showMacSettings: showMacSettings, hideSidebar: hideSidebar,
+                      windowControls: controls)
     }
 
     @ViewBuilder private func rowView(_ row: SidebarRow) -> some View {

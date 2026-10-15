@@ -56,14 +56,18 @@ final class ShellforgeSidebarLayoutTest: XCTestCase {
         XCTAssertEqual(outputs.leftPanelFrame, CGRect(x: 8, y: 8, width: 232, height: 584))
     }
 
-    func testTheInsetMovesNothingElse() {
+    /// M12g: the panel stands off the terminal by its inset too, so everything right of it moves
+    /// over by the inset and narrows by as much.
+    func testTheInsetIsAlsoTheGapBeforeTheTerminal() {
         var inset = inputs(sidebar: 240)
         inset.leftPanelInset = 8
         let flush = iTermLayoutCalculator.calculateLayout(with: inputs(sidebar: 240))
         let moved = iTermLayoutCalculator.calculateLayout(with: inset)
-        XCTAssertEqual(moved.tabViewFrame, flush.tabViewFrame)
-        XCTAssertEqual(moved.toolbeltFrame, flush.toolbeltFrame)
-        XCTAssertEqual(moved.tabBarFrame, flush.tabBarFrame)
+        for (a, b) in [(moved.tabViewFrame, flush.tabViewFrame), (moved.tabBarFrame, flush.tabBarFrame)] {
+            XCTAssertEqual(a.minX, b.minX + 8)
+            if b.width > 0 { XCTAssertEqual(a.maxX, b.maxX) }
+        }
+        if flush.toolbeltFrame.width > 0 { XCTAssertEqual(moved.toolbeltFrame.maxX, flush.toolbeltFrame.maxX) }
     }
 
     func testTheInsetPanelInFullScreen() {

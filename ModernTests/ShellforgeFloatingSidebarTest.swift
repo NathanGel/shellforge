@@ -67,6 +67,204 @@ final class ShellforgeFloatingSidebarTest: XCTestCase {
         XCTAssertGreaterThanOrEqual(terminal.minX, root.shellforgeSidebarFrame.maxX)
     }
 
+    /// The panel stands off the terminal as it stands off the window's edges, and the drag handle
+    /// lies in that gap rather than over the glass or the text.
+    func testThePanelStandsOffTheTerminalByItsInset() throws {
+        try XCTSkipUnless(iTermShellforgeSidebar.floats)
+        let panel = root.shellforgeSidebarFrame, inset = iTermShellforgeSidebar.floatingInset
+        XCTAssertEqual(try terminalFrame().minX, panel.maxX + inset, accuracy: 0.5)
+        let handle = iTermShellforgeSidebar.dragHandleFrame(forSidebar: panel)
+        XCTAssertEqual(handle.minX, panel.maxX, accuracy: 0.5)
+        XCTAssertEqual(handle.maxX, panel.maxX + inset, accuracy: 0.5)
+    }
+
+    private func sameColor(_ a: NSColor?, _ b: NSColor?) -> Bool {
+        guard let a = a?.usingColorSpace(.sRGB), let b = b?.usingColorSpace(.sRGB) else { return false }
+        return abs(a.redComponent - b.redComponent) + abs(a.greenComponent - b.greenComponent) + abs(a.blueComponent - b.blueComponent) < 0.01
+    }
+
+    /// One surface: the terminal's background runs behind the panel and under the title strip, so
+    /// the panel floats over the terminal rather than in a frame of the window's colour.
+    func testThePanelAndTheStripSitOnTheTerminalsColour() throws {
+        try XCTSkipUnless(iTermShellforgeSidebar.floats)
+        root.updateTitleAndBorderViews()
+        root.layoutSubtreeIfNeeded()
+        let session = try XCTUnwrap(fixture.terminal.currentSession())
+        let background = try XCTUnwrap(session.processedBackgroundColor)
+        let panel = root.shellforgeSidebarFrame
+        let solid = root.subviews.compactMap { $0 as? iTermLayerBackedSolidColorView }.filter { !$0.isHidden }
+        let column = try XCTUnwrap(solid.first { $0.identifier == iTermRootTerminalView.shellforgeColumnBackgroundIdentifier },
+                                   "a view behind the panel")
+        XCTAssertEqual(column.frame.minX, 0)
+        XCTAssertEqual(column.frame.maxX, panel.maxX + iTermShellforgeSidebar.floatingInset, accuracy: 0.5)
+        XCTAssertTrue(sameColor(column.color, background), "column \(String(describing: column.color)), terminal \(background)")
+        let strip = try XCTUnwrap(solid.first { $0.frame.maxY >= root.bounds.height - 0.5 && $0.frame.minX > panel.maxX }, "the title strip")
+        XCTAssertTrue(sameColor(strip.color, background), "strip \(String(describing: strip.color)), terminal \(background)")
+    }
+
+    /// The surface follows the terminal's background when it changes — the colour match, a profile.
+    /// A background change reaches the surface through the window's own hook — the colour match,
+    /// a profile edit, an escape sequence — not only through the next layout: a stale colour is
+    /// replaced by the hook alone.
+    func testTheSurfaceFollowsABackgroundChange() throws {
+        try XCTSkipUnless(iTermShellforgeSidebar.floats)
+        root.layoutSubtreeIfNeeded()
+        let session = try XCTUnwrap(fixture.terminal.currentSession())
+        let column = try XCTUnwrap(root.subviews.compactMap { $0 as? iTermLayerBackedSolidColorView }
+            .first { $0.identifier == iTermRootTerminalView.shellforgeColumnBackgroundIdentifier })
+        column.color = .systemRed
+        // In the app the text view reports the change once the screen's state reaches it, which a
+        // test window with no running terminal never does: report it as the tab then does.
+        let tab = try XCTUnwrap(fixture.terminal.currentTab())
+        fixture.terminal.tabSessionDidChangeBackgroundColor(tab)
+        XCTAssertTrue(sameColor(column.color, session.processedBackgroundColor),
+                      "column \(String(describing: column.color)), terminal \(String(describing: session.processedBackgroundColor))")
+    }
+
+    func testTheColourMatchKeepsAWindowNormal() throws {
+        try XCTSkipUnless(iTermShellforgeSidebar.floats)
+        let saved = iTermUserDefaults.userDefaults().object(forKey: kPreferenceKeyTabStyle)
+        defer { iTermUserDefaults.userDefaults().set(saved, forKey: kPreferenceKeyTabStyle); iTermShellforgeTerminalMatch.setOn(false) }
+        iTermUserDefaults.userDefaults().set(Int(iTermPreferencesTabStyle.TAB_STYLE_AUTOMATIC.rawValue), forKey: kPreferenceKeyTabStyle)
+        iTermShellforgeTerminalMatch.setOn(true)
+        XCTAssertEqual(iTermThemedWindowType(.WINDOW_TYPE_NORMAL), .WINDOW_TYPE_NORMAL)
+        XCTAssertEqual(iTermThemedWindowType(.WINDOW_TYPE_MAXIMIZED), .WINDOW_TYPE_MAXIMIZED)
+        // Minimal of the user's own choosing stays iTerm2's compact window.
+        iTermUserDefaults.userDefaults().set(Int(iTermPreferencesTabStyle.TAB_STYLE_MINIMAL.rawValue), forKey: kPreferenceKeyTabStyle)
+        XCTAssertEqual(iTermThemedWindowType(.WINDOW_TYPE_NORMAL), .WINDOW_TYPE_COMPACT)
+    }
+
+    /// The window's buttons, in the root view's coordinates (origin top-left, as the eye reads them).
+    private func buttonFrame(_ type: NSWindow.ButtonType) throws -> NSRect {
+        let button = try XCTUnwrap(fixture.window.standardWindowButton(type))
+        let frame = button.convert(button.bounds, to: nil)
+        return NSRect(x: frame.minX, y: fixture.window.frame.height - frame.maxY, width: frame.width, height: frame.height)
+    }
+
+    /// Finder's inset: the buttons sit as far in from the panel's left edge as from its top, well
+    /// clear of its corner, rather than at the title bar's own spot a point inside it.
+    func testTheWindowButtonsSitEvenlyInsideThePanel() throws {
+        try XCTSkipUnless(iTermShellforgeSidebar.floats)
+        root.layoutSubtreeIfNeeded()
+        let close = try buttonFrame(.closeButton), panel = root.shellforgeSidebarFrame
+        let fromLeft = close.minX - panel.minX, fromTop = close.minY - (root.bounds.height - panel.maxY)
+        XCTAssertGreaterThanOrEqual(fromTop, 8, "clear of the panel's top")
+        XCTAssertEqual(fromLeft, fromTop, accuracy: 1.5)
+    }
+
+    /// The strip is the buttons' band, and the window's title is centred on the buttons' row.
+    func testTheStripIsTheButtonsBand() throws {
+        try XCTSkipUnless(iTermShellforgeSidebar.floats)
+        root.updateTitleAndBorderViews()
+        root.layoutSubtreeIfNeeded()
+        let close = try buttonFrame(.closeButton)
+        let terminalTop = root.bounds.height - (try terminalFrame().maxY)
+        XCTAssertEqual(terminalTop, close.midY * 2, accuracy: 1, "the terminal starts below a band centred on the buttons")
+        let title = root.shellforgeWindowTitleFrame
+        XCTAssertEqual(root.bounds.height - title.midY, close.midY, accuracy: 2, "the title sits on the buttons' row")
+    }
+
+    /// The sidebar hears where the window's buttons sit in it, so its header shares their row.
+    func testTheSidebarKnowsWhereTheButtonsSit() throws {
+        try XCTSkipUnless(iTermShellforgeSidebar.floats)
+        root.layoutSubviews()
+        let sidebar = try XCTUnwrap(root.shellforgeSidebarView)
+        let controls = try XCTUnwrap(iTermShellforgeSidebar.reportedWindowControls(of: sidebar), "the buttons are inside the panel")
+        let zoom = try buttonFrame(.zoomButton), close = try buttonFrame(.closeButton), panel = root.shellforgeSidebarFrame
+        XCTAssertEqual(controls.buttonsMaxX, zoom.maxX - panel.minX, accuracy: 0.5)
+        XCTAssertEqual(controls.buttonsMidY, close.midY - (root.bounds.height - panel.maxY), accuracy: 0.5)
+    }
+
+    /// Glass in light mode over a dark terminal turns murky with dark text on it: behind the panel
+    /// the terminal's colour stands only when its lightness agrees with the window's.
+    func testADarkTerminalInALightWindowKeepsTheWindowColourBehindThePanel() throws {
+        try XCTSkipUnless(iTermShellforgeSidebar.floats)
+        let session = try XCTUnwrap(fixture.terminal.currentSession())
+        let saved = fixture.window.appearance
+        defer { fixture.window.appearance = saved }
+        let dark = try XCTUnwrap(session.processedBackgroundColor).isDark
+        fixture.window.appearance = NSAppearance(named: dark ? .aqua : .darkAqua)
+        root.updateTitleAndBorderViews()
+        let column = try XCTUnwrap(root.subviews.compactMap { $0 as? iTermLayerBackedSolidColorView }
+            .first { $0.identifier == iTermRootTerminalView.shellforgeColumnBackgroundIdentifier })
+        XCTAssertFalse(column.isHidden == false && sameColor(column.color, session.processedBackgroundColor),
+                       "the terminal's colour behind the panel in a window of the other lightness")
+        // The strip too: its title is inked for the window's lightness, not the terminal's.
+        let strip = try XCTUnwrap(root.subviews.compactMap { $0 as? iTermLayerBackedSolidColorView }
+            .first { !$0.isHidden && $0.frame.maxY >= root.bounds.height - 0.5 && $0.frame.minX > root.shellforgeSidebarFrame.maxX })
+        XCTAssertFalse(sameColor(strip.color, session.processedBackgroundColor), "the strip in a window of the other lightness")
+    }
+
+    /// The panel's corners are concentric with the window's: its radius less the inset, never below 0.
+    func testThePanelCornerFollowsTheWindowsRadius() {
+        XCTAssertEqual(iTermShellforgeSidebar.panelCornerRadius(forWindowRadius: 26), 26 - iTermShellforgeSidebar.floatingInset)
+        XCTAssertEqual(iTermShellforgeSidebar.panelCornerRadius(forWindowRadius: 4), 0)
+    }
+
+    /// A toolbar rounds a macOS 26 window's corners further, so a radius measured without one must
+    /// not stand for a window with one.
+    func testTheMeasuredRadiusIsKeptPerToolbar() {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 100), styleMask: [.titled], backing: .buffered, defer: true)
+        window.isReleasedWhenClosed = false
+        let bare = iTermWindowCornerRadiusDetector.cacheKey(for: window)
+        window.toolbar = NSToolbar(identifier: "test")
+        XCTAssertNotEqual(iTermWindowCornerRadiusDetector.cacheKey(for: window), bare)
+    }
+
+    /// The sidebar draws its panel with the window's radius as measured: a radius in the detector's
+    /// cache for this window reaches the panel, less the inset.
+    func testTheSidebarHearsThePanelRadius() throws {
+        try XCTSkipUnless(iTermShellforgeSidebar.floats)
+        let saved = iTermUserDefaults.windowCornerRadiusCache
+        defer { iTermUserDefaults.windowCornerRadiusCache = saved }
+        var cache = saved ?? [:]
+        cache[iTermWindowCornerRadiusDetector.cacheKey(for: fixture.window)] = 27
+        iTermUserDefaults.windowCornerRadiusCache = cache
+        root.updateTitleAndBorderViews()
+        let sidebar = try XCTUnwrap(root.shellforgeSidebarView)
+        XCTAssertEqual(iTermShellforgeSidebar.reportedPanelCornerRadius(of: sidebar),
+                       27 - iTermShellforgeSidebar.floatingInset)
+    }
+
+    func testFittingTheWindowToItsTabsKeepsTheColumns() throws {
+        try XCTSkipUnless(iTermShellforgeSidebar.floats)
+        let session = try XCTUnwrap(fixture.terminal.currentSession())
+        root.layoutSubtreeIfNeeded()
+        let columns = session.screen.width()
+        for _ in 0..<2 {
+            fixture.terminal.fitWindow(toTabsExcludingTmuxTabs: false)
+            root.layoutSubtreeIfNeeded()
+        }
+        XCTAssertEqual(session.screen.width(), columns)
+    }
+
+    /// A see-through terminal keeps iTerm2's own see-through window: a solid block of its colour
+    /// behind the panel would be the opposite of one surface.
+    func testASeeThroughTerminalGetsNoSolidColumn() throws {
+        try XCTSkipUnless(iTermShellforgeSidebar.floats)
+        let session = try XCTUnwrap(fixture.terminal.currentSession())
+        session.setSessionSpecificProfileValues([KEY_TRANSPARENCY: 0.4])
+        root.updateTitleAndBorderViews()
+        let column = root.subviews.compactMap { $0 as? iTermLayerBackedSolidColorView }
+            .first { $0.identifier == iTermRootTerminalView.shellforgeColumnBackgroundIdentifier }
+        XCTAssertTrue(column?.isHidden ?? true, "transparency \(session.textview?.transparencyAlpha ?? 1)")
+    }
+
+    /// The header shares the toolbar's band, but a click there is the sidebar's: the window's title
+    /// bar must not take it for a drag or let it fall through to nothing.
+    func testAClickOnTheHeaderReachesTheSidebar() throws {
+        try XCTSkipUnless(iTermShellforgeSidebar.floats)
+        root.layoutSubviews()
+        let sidebar = try XCTUnwrap(root.shellforgeSidebarView)
+        let controls = try XCTUnwrap(iTermShellforgeSidebar.reportedWindowControls(of: sidebar))
+        let frameView = try XCTUnwrap(fixture.window.contentView?.superview)
+        let panel = root.shellforgeSidebarFrame
+        // On the header's row, among its trailing buttons, in window coordinates.
+        let point = NSPoint(x: panel.maxX - 40, y: panel.maxY - controls.buttonsMidY)
+        let hit = try XCTUnwrap(frameView.hitTest(frameView.convert(point, from: root)))
+        XCTAssertTrue(hit === sidebar || hit.isDescendant(of: sidebar), "the click lands on \(hit)")
+    }
+
     func testAHiddenSidebarLeavesNoGap() throws {
         try XCTSkipUnless(iTermShellforgeSidebar.floats)
         root.toggleShellforgeSidebar()
@@ -89,8 +287,10 @@ final class ShellforgeFloatingSidebarTest: XCTestCase {
         try XCTSkipUnless(iTermShellforgeSidebar.floats)
         root.layoutSubtreeIfNeeded()
         let sidebar = root.shellforgeSidebarFrame
+        // M12g: the one view meant to be there is the terminal's own colour behind the panel.
         let covering = root.subviews.filter {
             !$0.isHidden && $0 is iTermLayerBackedSolidColorView && $0.frame.minX < sidebar.maxX && $0.frame.maxY > sidebar.maxY - 20 && $0.frame.width > 0
+                && $0.identifier != iTermRootTerminalView.shellforgeColumnBackgroundIdentifier
         }
         XCTAssertEqual(covering.map { NSStringFromRect($0.frame) }, [])
     }

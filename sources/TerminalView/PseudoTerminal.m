@@ -13179,6 +13179,26 @@ static BOOL iTermApproximatelyEqualRects(NSRect lhs, NSRect rhs, double epsilon)
     return NO;
 }
 
+- (NSColor *)rootTerminalViewShellforgeSurfaceColorForStrip:(BOOL)forStrip {
+    if (![iTermShellforgeSidebar floatsWindowOfType:self.windowType]) {
+        return nil;
+    }
+    if (forStrip && self.currentSession.tabColor) {
+        return nil;
+    }
+    // A see-through terminal keeps iTerm2's own see-through window and strip.
+    if (self.currentSession.textview.transparencyAlpha < 1) {
+        return nil;
+    }
+    NSColor *background = self.currentSession.processedBackgroundColor;
+    // The terminal's colour stands only when its lightness agrees with the window's: light glass
+    // over a dark terminal turns murky, and the strip's title is inked for the window's lightness.
+    if (background && background.isDark != self.window.effectiveAppearance.it_isDark) {
+        return forStrip ? nil : [NSColor windowBackgroundColor];
+    }
+    return background;
+}
+
 - (NSColor *)rootTerminalViewTabBarBackgroundColorIgnoringTabColor:(BOOL)ignoreTabColor {
     // This is for the fake title bar and for the status bar background color.
     return [[iTermTheme sharedInstance] tabBarBackgroundColorForTabColor:ignoreTabColor ? nil : self.currentSession.tabColor
@@ -13248,6 +13268,11 @@ static BOOL iTermApproximatelyEqualRects(NSRect lhs, NSRect rhs, double epsilon)
 }
 
 - (CGFloat)_desiredTabBarHeight {
+    // Shellforge: beside a floating sidebar the title strip is the toolbar's band, so the title sits
+    // on the window buttons' row.
+    if ([iTermShellforgeSidebar floatsWindowOfType:self.windowType] && [self rootTerminalViewShouldDrawWindowTitleInPlaceOfTabBar]) {
+        return [iTermShellforgeSidebar titlebarBandHeight];
+    }
     if ([self shouldHaveTallTabBar]) {
         return [iTermAdvancedSettingsModel compactMinimalTabBarHeight];
     }
@@ -13754,6 +13779,10 @@ static BOOL iTermApproximatelyEqualRects(NSRect lhs, NSRect rhs, double epsilon)
     // Shellforge: the sidebar takes width from the window like a left tab bar does, so fitting the
     // window to its tabs must add it back, or every new or closed tab shrinks the window by it.
     decorationSize.width += _contentView.shellforgeSidebarPreferredWidth;
+    // A floating panel also keeps its inset from the terminal.
+    if (_contentView.shellforgeSidebarPreferredWidth > 0 && [iTermShellforgeSidebar floats]) {
+        decorationSize.width += [iTermShellforgeSidebar floatingInset];
+    }
 
     if (!_contentView.tabBarControl.flashing &&
         [self tabBarShouldBeVisibleWithAdditionalTabs:tabViewItemsBeingAdded]) {
@@ -16159,6 +16188,10 @@ typedef NS_ENUM(NSUInteger, iTermBroadcastCommand) {
     }
     [self updateToolbeltAppearance];
     [self updateForTransparency:self.ptyWindow];
+    // Shellforge: the floating sidebar's surface is the terminal's background.
+    if ([iTermShellforgeSidebar floatsWindowOfType:self.windowType]) {
+        [_contentView updateTitleAndBorderViews];
+    }
 }
 
 - (void)tab:(PTYTab *)tab didChangeToState:(PTYTabState)newState {

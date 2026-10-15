@@ -639,11 +639,28 @@ extension iTermShellforgeSidebar {
         floats && (type == .WINDOW_TYPE_NORMAL || type == .WINDOW_TYPE_MAXIMIZED || type == .WINDOW_TYPE_CENTERED)
     }
 
+    /// The band an empty unified toolbar gives a window's title bar on macOS 26, which the window
+    /// buttons are centred in: the title strip beside a floating sidebar is as tall.
+    @objc static var titlebarBandHeight: CGFloat { 52 }
+
     /// How far the floating panel stands off the window's edges.
     @objc static var floatingInset: CGFloat { Space.base }
 
     /// The panel's corners, concentric with the window's.
-    static var panelCornerRadius: CGFloat { max(0, iTermWindowCornerRadiusDetector.fallbackCornerRadius - floatingInset) }
+    static var panelCornerRadius: CGFloat { panelCornerRadius(forWindowRadius: iTermWindowCornerRadiusDetector.fallbackCornerRadius) }
+
+    /// The panel's corner radius in a window whose own is `windowRadius`: concentric with it.
+    static func panelCornerRadius(forWindowRadius windowRadius: CGFloat) -> CGFloat { max(0, windowRadius - floatingInset) }
+
+    /// Tells the floating `sidebar` its window's corner radius as now measured, so the panel's
+    /// corners stay concentric with the window's — a toolbar rounds them further on macOS 26.
+    @objc static func updatePanelCornerRadius(in sidebar: NSView, windowRadius: CGFloat) {
+        guard floats else { return }
+        ShellforgeSidebar.setPanelCornerRadius(panelCornerRadius(forWindowRadius: windowRadius), on: sidebar)
+    }
+
+    /// What the sidebar last heard as its panel's radius, for host tests.
+    static func reportedPanelCornerRadius(of sidebar: NSView) -> CGFloat? { ShellforgeSidebar.panelCornerRadius(of: sidebar) }
 
     /// The width a window of `windowWidth` gives a sidebar that prefers `preferred`, with a
     /// toolbelt of `toolbeltWidth` showing on the right.
@@ -657,8 +674,34 @@ extension iTermShellforgeSidebar {
         SidebarLayoutSettings.minimumWindowWidth(beside: toolbeltWidth, toolbeltMaxFraction: 0.5)
     }
 
+    /// Tells the floating `sidebar` where the window's buttons sit inside it, so its header shares
+    /// their row; nil while they are not inside it — hidden in a compact window or full screen, or
+    /// not over the sidebar at all.
+    @objc static func updateWindowControls(in sidebar: NSView) {
+        ShellforgeSidebar.setWindowControls(windowControls(in: sidebar), on: sidebar)
+    }
+
+    /// What the sidebar last heard, for host tests: the zoom button's right edge and the buttons'
+    /// centre from the sidebar's top.
+    static func reportedWindowControls(of sidebar: NSView) -> (buttonsMaxX: CGFloat, buttonsMidY: CGFloat)? {
+        ShellforgeSidebar.windowControls(of: sidebar).map { ($0.buttonsMaxX, $0.buttonsMidY) }
+    }
+
+    private static func windowControls(in sidebar: NSView) -> SidebarWindowControls? {
+        guard floats, !sidebar.isHidden, let window = sidebar.window, !window.styleMask.contains(.fullScreen),
+              let zoom = window.standardWindowButton(.zoomButton), !zoom.isHidden, zoom.superview != nil else { return nil }
+        let frame = zoom.convert(zoom.bounds, to: sidebar)
+        let midY = sidebar.isFlipped ? frame.midY : sidebar.bounds.height - frame.midY
+        guard frame.minX >= 0, midY > 0, frame.maxX < sidebar.bounds.width else { return nil }
+        return SidebarWindowControls(buttonsMaxX: frame.maxX, buttonsMidY: midY)
+    }
+
     /// The drag handle's frame for a sidebar of `frame`.
     @objc static func dragHandleFrame(forSidebar frame: NSRect) -> NSRect {
+        if floats {
+            // The gap between the floating panel and the terminal, so it covers neither.
+            return NSRect(x: frame.maxX, y: frame.minY, width: floatingInset, height: frame.height)
+        }
         let handle = SidebarLayoutSettings.dragHandle(edge: frame.maxX, margin: CGFloat(iTermPreferences.sideMargins()))
         return NSRect(x: handle.x, y: frame.minY, width: handle.width, height: frame.height)
     }

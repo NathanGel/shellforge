@@ -21,6 +21,15 @@ enum SidebarRowLayout {
     }
     /// The project row's own leading disclosure chevron width.
     static func chevronWidth(_ scale: InterfaceScale) -> CGFloat { scale(Size.chevron) }
+    /// How far macOS insets a sidebar row's own selection — and the ring a right-click draws — from
+    /// the row's sides (measured on macOS 26). The row pill is that rectangle.
+    static var highlightInset: CGFloat { Space.inset }
+
+    /// How far a sidebar `List` insets its rows from its edges — the system's, unscaled: 16 pt on
+    /// macOS 26 (measured, `SidebarListInsetTests`), 10 before.
+    static var listInset: CGFloat {
+        ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 26 ? Space.block : Space.inset
+    }
 }
 
 /// The add glyph, drawn identically wherever it appears. `.borderlessButton` hands the label to
@@ -80,12 +89,9 @@ struct SelectableRow<Content: View>: View {
             .padding(.leading, scale(Space.base)).padding(.trailing, SidebarRowLayout.trailingInset(scale))
             .padding(.vertical, scale(Space.base))
             .frame(minHeight: scale(Size.row))
-            .modifier(RowPill(selected: selected, hovered: drawsHover))
-            // The pill is inset from the project row, so the indent goes *outside* the background —
-            // painting it inside made the blue run all the way to the sidebar's edge. Selection is drawn
-            // here too, not by the list: AppKit's own row highlight covers the whole row rect, which is
-            // 26 pt wider on the leading edge and 8 pt taller than this pill. One painter, one rectangle.
+            // The indent moves the content, not the pill: the pill is the row's own rectangle.
             .padding(.leading, scale(Space.section))
+            .modifier(RowPill(selected: selected, hovered: drawsHover))
             .contentShape(Rectangle())
             .onHover { hovered = $0 }
             .onTapGesture(perform: activate)
@@ -133,8 +139,11 @@ struct RowPill: ViewModifier {
         let surface = Self.surface(selected: selected, hovered: hovered, windowActive: windowActive)
         content
             .surface(surface)
-            // macOS 26's sidebar selection: a little rounder than a control.
-            .background(RoundedRectangle(cornerRadius: scale(Radius.group), style: .continuous).fill(Self.fill(for: surface)))
+            // macOS 26's sidebar selection, as the row's own background: the full row, inset from its
+            // sides as macOS insets its selection — the rectangle a right-click's ring is drawn around.
+            .listRowBackground(RoundedRectangle(cornerRadius: scale(Radius.group), style: .continuous)
+                .fill(Self.fill(for: surface))
+                .padding(.horizontal, SidebarRowLayout.highlightInset))
     }
 }
 

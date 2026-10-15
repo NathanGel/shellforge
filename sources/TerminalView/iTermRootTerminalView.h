@@ -49,6 +49,10 @@
 - (NSColor *)rootTerminalViewTabBarTextColorForTitle;
 - (NSColor *)rootTerminalViewTabBarTextColorForWindowNumber;
 - (NSColor *)rootTerminalViewTabBarBackgroundColorIgnoringTabColor:(BOOL)ignoreTabColor;
+// Shellforge: the terminal's background, which a floating sidebar's window runs behind the panel
+// and, unless the tab has a colour of its own (`forStrip`), under the title strip. nil where the
+// sidebar does not float.
+- (NSColor *)rootTerminalViewShellforgeSurfaceColorForStrip:(BOOL)forStrip;
 - (BOOL)rootTerminalViewWindowNumberLabelShouldBeVisible;
 - (BOOL)rootTerminalViewShouldDrawWindowTitleInPlaceOfTabBar;
 
@@ -112,6 +116,7 @@ extern const NSInteger iTermRootTerminalViewWindowNumberLabelWidth;
 @property(nonatomic, readonly) BOOL hasShellforgeSidebar;
 // Shellforge: the sidebar's width, or 0 without one; part of the window's decorations.
 @property(nonatomic, readonly) CGFloat shellforgeSidebarWidth;
+@property(nonatomic, readonly) NSView *shellforgeSidebarView;
 // Shellforge: ⌃⌘S hides the sidebar in this window.
 @property(nonatomic, readonly) BOOL shellforgeSidebarHidden;
 // Shellforge: the sidebar's frame, for tests.
@@ -185,6 +190,8 @@ extern const NSInteger iTermRootTerminalViewWindowNumberLabelWidth;
 - (void)windowDidResize;
 - (CGFloat)leftTabBarWidthForPreferredWidth:(CGFloat)preferredWidth contentWidth:(CGFloat)contentWidth;
 - (void)updateTitleAndBorderViews;
+// Shellforge: the identifier of the view that draws the terminal's colour behind a floating sidebar.
+@property(class, nonatomic, readonly) NSUserInterfaceItemIdentifier shellforgeColumnBackgroundIdentifier;
 - (void)setSubtitle:(NSString *)subtitle;
 - (void)setCurrentSessionAlpha:(CGFloat)alpha;
 - (void)updateProxyIcon;

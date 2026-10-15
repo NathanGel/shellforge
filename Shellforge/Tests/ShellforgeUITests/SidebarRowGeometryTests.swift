@@ -13,13 +13,17 @@ import Testing
 @MainActor @Suite struct SidebarRowGeometryTests {
     /// The box of everything drawn that is not the sidebar's ground.
     private func paintedBox(selected: Bool, hovered: Bool) throws -> CGRect {
-        let row = SelectableRow(selected: selected, activate: {}) { Text(" ").frame(maxWidth: .infinity) }
-            .environment(\.rowHovered, hovered)
-            .frame(width: Size.sidebarWidth)
-            .background(Palette.sidebar)
+        // In a sidebar list, as the sidebar draws it: the pill is the row's own background.
+        let row = List {
+            SelectableRow(selected: selected, activate: {}) { Text(" ").frame(maxWidth: .infinity) }
+                .environment(\.rowHovered, hovered)
+        }
+        .listStyle(.sidebar).scrollContentBackground(.hidden).background(NativeRowHighlight.off)
+        .frame(width: Size.sidebarWidth, height: 80)
+        .background(Palette.sidebar)
         let host = NSHostingView(rootView: row)
         host.appearance = NSAppearance(named: .darkAqua)
-        host.frame = NSRect(origin: .zero, size: host.fittingSize)
+        host.frame = NSRect(origin: .zero, size: NSSize(width: Size.sidebarWidth, height: 80))
         let window = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
         window.contentView = host
         RunLoop.main.run(until: Date().addingTimeInterval(0.05)); host.layoutSubtreeIfNeeded()

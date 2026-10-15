@@ -39,17 +39,19 @@ const int kLayoutTabPositionRight = 3;
     // Shellforge: lay out everything as in a window narrower by the sidebar, then move it right
     // of the sidebar. One place, so no branch below needs to know the sidebar exists.
     const CGFloat sidebar = MIN(inputs.leftPanelWidth, inputs.contentViewWidth);
+    // Shellforge: a floating panel stands off the terminal by its inset too, as it does off the
+    // window's edges, so the terminal starts that far past the panel.
+    const CGFloat inset = inputs.leftPanelInset;
+    const CGFloat column = MIN(sidebar + inset, inputs.contentViewWidth);
     iTermLayoutInputs rest = inputs;
-    rest.contentViewWidth -= sidebar;
+    rest.contentViewWidth -= column;
     rest.leftPanelWidth = 0;
     iTermLayoutOutputs outputs = [self calculateLayoutIgnoringLeftPanelWithInputs:rest];
-    outputs.tabViewFrame = CGRectOffset(outputs.tabViewFrame, sidebar, 0);
-    outputs.statusBarFrame = CGRectOffset(outputs.statusBarFrame, sidebar, 0);
-    outputs.toolbeltFrame = CGRectOffset(outputs.toolbeltFrame, sidebar, 0);
-    outputs.tabBarFrame = CGRectOffset(outputs.tabBarFrame, sidebar, 0);
-    // Shellforge: the panel stands off the window's edges by the inset; the column it sits in, and
-    // so everything right of it, is unchanged.
-    const CGFloat inset = inputs.leftPanelInset;
+    outputs.tabViewFrame = CGRectOffset(outputs.tabViewFrame, column, 0);
+    outputs.statusBarFrame = CGRectOffset(outputs.statusBarFrame, column, 0);
+    outputs.toolbeltFrame = CGRectOffset(outputs.toolbeltFrame, column, 0);
+    outputs.tabBarFrame = CGRectOffset(outputs.tabBarFrame, column, 0);
+    // Shellforge: the panel stands off the window's edges by the inset.
     outputs.leftPanelFrame = CGRectMake(inset, inset, MAX(0, sidebar - inset), MAX(0, inputs.contentViewHeight - 2 * inset));
     return outputs;
 }
