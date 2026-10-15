@@ -349,10 +349,10 @@ public final class SidebarModel: ObservableObject {
                 // whose first line is "command not found" is worse than a refusal.
                 guard launcher.locate(agent.command) != nil else { throw AgentNotInstalled(agent: agent.name) }
                 // Continued in a worktree that exists, or one made for it.
-            let task = draft.useExisting
-                ? try ExistingWorktrees.adopt(draft: draft, in: project, taken: taken, launcher: launcher)
-                : try TaskWorktrees.create(draft: draft, in: project, launcher: launcher,
-                                           cancellation: cancellation, progress: report)
+                let task = draft.useExisting
+                    ? try ExistingWorktrees.adopt(draft: draft, in: project, taken: taken, launcher: launcher)
+                    : try TaskWorktrees.create(draft: draft, in: project, launcher: launcher,
+                                               cancellation: cancellation, progress: report)
                 let command = try AgentCommand.build(agent: agent, model: draft.model, reasoning: draft.reasoning,
                                                      prompt: AgentCommand.composePrompt(userText: draft.promptText, ticket: draft.ticket,
                                                                                         appendTicket: draft.appendTicket),
@@ -365,6 +365,14 @@ public final class SidebarModel: ObservableObject {
                     throw CreationCancelled()
                 }
                 return (task, command)
+            }
+            // Or as the work came back here: still nothing is saved.
+            if cancellation?.isCancelled == true {
+                if !draft.useExisting {
+                    let (path, branch) = (made.0.worktreePath, made.0.branch)
+                    await BackgroundWork.run { TaskWorktrees.undo(worktree: path, branch: branch, project: project, launcher: launcher) }
+                }
+                throw CreationCancelled()
             }
             try document.update { workspace in
                 // Another window may have made a task of the same worktree while git ran.
