@@ -23,6 +23,10 @@ sidebar inside every terminal window:
 
 Everything iTerm2 does still works as it does in iTerm2.
 
+Shellforge follows iTerm2: we merge upstream iTerm2 into Shellforge whenever it is needed for a
+security fix or a new feature, so a fix in iTerm2 reaches Shellforge too. Shellforge's own code is
+kept apart in `Shellforge/` so these merges stay small.
+
 ## Get it
 
 Download the latest `Shellforge-<version>.dmg` from
