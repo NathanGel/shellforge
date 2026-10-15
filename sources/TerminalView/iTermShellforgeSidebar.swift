@@ -688,8 +688,9 @@ extension iTermShellforgeSidebar {
     /// Tells the floating `sidebar` where the window's buttons sit inside it, so its header shares
     /// their row; nil while they are not inside it — hidden in a compact window or full screen, or
     /// not over the sidebar at all.
-    @objc static func updateWindowControls(in sidebar: NSView, toggleFrame: NSRect) {
-        ShellforgeSidebar.setWindowControls(windowControls(in: sidebar, toggleFrame: toggleFrame), on: sidebar)
+    /// `stacked` in full screen, where the toggle has a row of its own above the header.
+    @objc static func updateWindowControls(in sidebar: NSView, toggleFrame: NSRect, stacked: Bool) {
+        ShellforgeSidebar.setWindowControls(windowControls(in: sidebar, toggleFrame: toggleFrame, stacked: stacked), on: sidebar)
     }
 
     // MARK: The sidebar's toggle
@@ -711,24 +712,27 @@ extension iTermShellforgeSidebar {
 
     @objc static var toggleSize: NSSize { NSSize(width: 28, height: 22) }
 
-    /// The slim column a closed sidebar leaves in full screen, holding only the toggle: with no
-    /// window buttons there, it is the toggle's place.
-    @objc static var railWidth: CGFloat { 48 }
-
     /// The header row's centre below the panel's top where no window buttons share it.
     @objc static var fullScreenHeaderMidY: CGFloat { Space.base + Size.menuRow / 2 }
 
     /// The toggle's frame in a root view of `rootHeight` (origin bottom-left): a gap past the zoom
-    /// button and centred on it while the window shows its buttons; otherwise centred in the rail,
-    /// on the header's row.
+    /// button and centred on it while the window shows its buttons; otherwise — full screen — on a
+    /// row of its own at the panel's top, its glyph in line with the rows' leading edge.
     @objc static func toggleFrame(zoomButton: NSRect, hasWindowButtons: Bool, rootHeight: CGFloat) -> NSRect {
         let size = toggleSize
         if hasWindowButtons {
             return NSRect(x: zoomButton.maxX + Space.gap, y: zoomButton.midY - size.height / 2, width: size.width, height: size.height)
         }
         let midY = rootHeight - floatingInset - fullScreenHeaderMidY
-        return NSRect(x: railWidth / 2 - size.width / 2, y: midY - size.height / 2, width: size.width, height: size.height)
+        return NSRect(x: floatingInset + ShellforgeSidebar.listInset + Space.base - toggleGlyphInset,
+                      y: midY - size.height / 2, width: size.width, height: size.height)
     }
+
+    /// How far the toggle's glyph sits inside its frame.
+    static var toggleGlyphInset: CGFloat { 6 }
+
+    /// The strip at the screen's left edge that reveals a closed sidebar in full screen.
+    @objc static var revealEdgeWidth: CGFloat { 4 }
 
     /// What the sidebar last heard, for host tests: the zoom button's right edge and the buttons'
     /// centre from the sidebar's top.
@@ -738,12 +742,12 @@ extension iTermShellforgeSidebar {
 
     /// Where the toggle — and the window buttons before it — sit in the sidebar, so the header starts
     /// after it on its row; nil where the toggle is not over the sidebar.
-    private static func windowControls(in sidebar: NSView, toggleFrame: NSRect) -> SidebarWindowControls? {
+    private static func windowControls(in sidebar: NSView, toggleFrame: NSRect, stacked: Bool) -> SidebarWindowControls? {
         guard floats, !sidebar.isHidden, let root = sidebar.superview else { return nil }
         let frame = root.convert(toggleFrame, to: sidebar)
         let midY = sidebar.isFlipped ? frame.midY : sidebar.bounds.height - frame.midY
         guard frame.minX >= 0, midY > 0, frame.maxX < sidebar.bounds.width else { return nil }
-        return SidebarWindowControls(buttonsMaxX: frame.maxX, buttonsMidY: midY)
+        return SidebarWindowControls(buttonsMaxX: frame.maxX, buttonsMidY: midY, stacked: stacked)
     }
 
     /// The drag handle's frame for a sidebar of `frame`.
@@ -775,4 +779,85 @@ extension iTermShellforgeSidebar {
     @objc static func startsHidden() -> Bool { layout.hidden }
 
     @objc static func setStartsHidden(_ hidden: Bool) { layout.hidden = hidden }
+}
+
+/// A closed sidebar in full screen comes back while the pointer wants it: the screen's left edge
+/// reveals it over the terminal, and it goes again a moment after the pointer leaves it — unless the
+/// pointer has come back, or a menu from it is open. Its toggle pins it open.
+@objc(iTermShellforgeSidebarReveal)
+final class ShellforgeSidebarReveal: NSObject {
+    @objc private(set) var revealed = false
+    /// Called whenever `revealed` changes.
+    @objc var onChange: (() -> Void)?
+    /// Asked when the delay is up: whether the panel should go now (the pointer is still away, no
+    /// menu is open).
+    @objc var shouldConceal: () -> Bool = { true }
+    private let schedule: (TimeInterval, @escaping () -> Void) -> Void
+    private var generation = 0
+
+    static let concealDelay: TimeInterval = 0.3
+
+    @objc override convenience init() {
+        self.init(schedule: { delay, work in
+            let timer = Timer(timeInterval: delay, repeats: false) { _ in work() }
+            RunLoop.main.add(timer, forMode: .common)
+        })
+    }
+
+    init(schedule: @escaping (TimeInterval, @escaping () -> Void) -> Void) {
+        self.schedule = schedule
+    }
+
+    /// The pointer reached the screen's left edge, or came back over the panel.
+    @objc func pointerEntered() {
+        generation += 1
+        guard !revealed else { return }
+        revealed = true
+        onChange?()
+    }
+
+    /// The pointer left the panel: it goes after the delay, if it is still unwanted then.
+    @objc func pointerExited() {
+        guard revealed else { return }
+        generation += 1
+        let mine = generation
+        schedule(Self.concealDelay) { [weak self] in
+            guard let self, self.revealed, self.generation == mine else { return }
+            if self.shouldConceal() {
+                self.revealed = false
+                self.onChange?()
+            } else {
+                self.pointerExited()
+            }
+        }
+    }
+
+    /// Back to closed and unrevealed: the sidebar opened for good, or full screen ended.
+    @objc func reset() {
+        generation += 1
+        guard revealed else { return }
+        revealed = false
+        onChange?()
+    }
+}
+
+/// An invisible view whose tracking area tells the reveal where the pointer is: the screen's left
+/// edge while the sidebar is away, the panel and that edge while it is shown. It takes no clicks.
+@objc(iTermShellforgeRevealTracker)
+final class ShellforgeRevealTracker: NSView {
+    @objc weak var reveal: ShellforgeSidebarReveal?
+    private var area: NSTrackingArea?
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let area { removeTrackingArea(area) }
+        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self)
+        addTrackingArea(area)
+        self.area = area
+    }
+
+    override func mouseEntered(with event: NSEvent) { reveal?.pointerEntered() }
+    override func mouseExited(with event: NSEvent) { reveal?.pointerExited() }
 }

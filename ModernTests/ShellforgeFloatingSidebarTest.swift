@@ -320,17 +320,38 @@ final class ShellforgeFloatingSidebarTest: XCTestCase {
         XCTAssertEqual(controls.buttonsMidY, panel.maxY - toggle.midY, accuracy: 0.5)
     }
 
-    /// Without window buttons — full screen — the toggle sits at the top of a slim rail, centred, at
-    /// the height the header's row has there; the rail is the column left of the terminal.
-    func testWithoutWindowButtonsTheToggleSitsOnTheRail() {
-        let rail = iTermShellforgeSidebar.railWidth
+    /// Without window buttons — full screen — the toggle has a row of its own at the panel's top, its
+    /// glyph in line with the rows' leading edge; nothing is left of the terminal while closed.
+    func testWithoutWindowButtonsTheToggleTopsThePanel() {
         let frame = iTermShellforgeSidebar.toggleFrame(zoomButton: .zero, hasWindowButtons: false, rootHeight: 500)
-        XCTAssertEqual(frame.midX, rail / 2, accuracy: 0.5)
+        XCTAssertGreaterThan(frame.minX, iTermShellforgeSidebar.floatingInset, "inside the panel")
         XCTAssertEqual(500 - frame.midY, iTermShellforgeSidebar.floatingInset + iTermShellforgeSidebar.fullScreenHeaderMidY, accuracy: 0.5)
-        var inputs = iTermLayoutInputs()
-        inputs.contentViewWidth = 800; inputs.contentViewHeight = 500
-        inputs.leftPanelWidth = rail; inputs.leftPanelInset = 0
-        XCTAssertEqual(iTermLayoutCalculator.calculateLayout(with: inputs).tabViewFrame.minX, rail)
+    }
+
+    /// The reveal: the edge shows the sidebar; leaving it hides it after the delay — unless the
+    /// pointer came back, or it is still wanted then; reset puts it away at once.
+    func testTheRevealShowsAndHides() {
+        var pending: [() -> Void] = []
+        let reveal = ShellforgeSidebarReveal(schedule: { _, work in pending.append(work) })
+        var changes = 0
+        reveal.onChange = { changes += 1 }
+        reveal.pointerEntered()
+        XCTAssertTrue(reveal.revealed)
+        reveal.pointerExited()
+        reveal.pointerEntered()              // back before the delay is up
+        pending.removeFirst()()
+        XCTAssertTrue(reveal.revealed, "the pointer came back")
+        reveal.shouldConceal = { false }     // a menu is open
+        reveal.pointerExited()
+        pending.removeFirst()()
+        XCTAssertTrue(reveal.revealed, "still wanted")
+        reveal.shouldConceal = { true }
+        pending.removeFirst()()              // it asked again after another delay
+        XCTAssertFalse(reveal.revealed)
+        reveal.pointerEntered()
+        reveal.reset()
+        XCTAssertFalse(reveal.revealed)
+        XCTAssertEqual(changes, 4)
     }
 
     func testAHiddenSidebarLeavesNoGap() throws {

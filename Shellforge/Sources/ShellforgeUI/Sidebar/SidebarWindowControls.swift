@@ -10,9 +10,14 @@ public struct SidebarWindowControls: Equatable, Sendable {
     /// The buttons' vertical centre, from the sidebar's top.
     public var buttonsMidY: CGFloat
 
-    public init(buttonsMaxX: CGFloat, buttonsMidY: CGFloat) {
+    /// Full screen: no window buttons share the row, so the toggle has a row of its own and the
+    /// header sits below it, at the rows' own leading edge.
+    public var stacked: Bool
+
+    public init(buttonsMaxX: CGFloat, buttonsMidY: CGFloat, stacked: Bool = false) {
         self.buttonsMaxX = buttonsMaxX
         self.buttonsMidY = buttonsMidY
+        self.stacked = stacked
     }
 
     /// Where the header's title starts: a gap past the zoom button.
