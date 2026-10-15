@@ -53,6 +53,10 @@
 // and, unless the tab has a colour of its own (`forStrip`), under the title strip. nil where the
 // sidebar does not float.
 - (NSColor *)rootTerminalViewShellforgeSurfaceColorForStrip:(BOOL)forStrip;
+// Shellforge: whether this window floats its sidebar (its own type, or the one it entered full
+// screen from), and whether it is in full screen, native or traditional.
+- (BOOL)rootTerminalViewShellforgeWindowFloats;
+- (BOOL)rootTerminalViewShellforgeInFullScreen;
 - (BOOL)rootTerminalViewWindowNumberLabelShouldBeVisible;
 - (BOOL)rootTerminalViewShouldDrawWindowTitleInPlaceOfTabBar;
 
