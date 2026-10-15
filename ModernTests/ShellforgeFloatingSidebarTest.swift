@@ -78,6 +78,63 @@ final class ShellforgeFloatingSidebarTest: XCTestCase {
         XCTAssertEqual(handle.maxX, panel.maxX + inset, accuracy: 0.5)
     }
 
+    private func sameColor(_ a: NSColor?, _ b: NSColor?) -> Bool {
+        guard let a = a?.usingColorSpace(.sRGB), let b = b?.usingColorSpace(.sRGB) else { return false }
+        return abs(a.redComponent - b.redComponent) + abs(a.greenComponent - b.greenComponent) + abs(a.blueComponent - b.blueComponent) < 0.01
+    }
+
+    /// One surface: the terminal's background runs behind the panel and under the title strip, so
+    /// the panel floats over the terminal rather than in a frame of the window's colour.
+    func testThePanelAndTheStripSitOnTheTerminalsColour() throws {
+        try XCTSkipUnless(iTermShellforgeSidebar.floats)
+        root.updateTitleAndBorderViews()
+        root.layoutSubtreeIfNeeded()
+        let session = try XCTUnwrap(fixture.terminal.currentSession())
+        let background = try XCTUnwrap(session.processedBackgroundColor)
+        let panel = root.shellforgeSidebarFrame
+        let solid = root.subviews.compactMap { $0 as? iTermLayerBackedSolidColorView }.filter { !$0.isHidden }
+        let column = try XCTUnwrap(solid.first { $0.identifier == iTermRootTerminalView.shellforgeColumnBackgroundIdentifier },
+                                   "a view behind the panel")
+        XCTAssertEqual(column.frame.minX, 0)
+        XCTAssertEqual(column.frame.maxX, panel.maxX + iTermShellforgeSidebar.floatingInset, accuracy: 0.5)
+        XCTAssertTrue(sameColor(column.color, background), "column \(String(describing: column.color)), terminal \(background)")
+        let strip = try XCTUnwrap(solid.first { $0.frame.maxY >= root.bounds.height - 0.5 && $0.frame.minX > panel.maxX }, "the title strip")
+        XCTAssertTrue(sameColor(strip.color, background), "strip \(String(describing: strip.color)), terminal \(background)")
+    }
+
+    /// The surface follows the terminal's background when it changes — the colour match, a profile.
+    func testTheSurfaceFollowsABackgroundChange() throws {
+        try XCTSkipUnless(iTermShellforgeSidebar.floats)
+        iTermShellforgeTerminalMatch.setOn(false)
+        defer { iTermShellforgeTerminalMatch.setOn(false) }
+        root.layoutSubtreeIfNeeded()
+        let session = try XCTUnwrap(fixture.terminal.currentSession())
+        iTermShellforgeTerminalMatch.setOn(true)
+        // In the app the text view reports the change once the screen's state reaches it, which a
+        // test window with no running terminal never does: report it as the tab then does.
+        let tab = try XCTUnwrap(fixture.terminal.currentTab())
+        fixture.terminal.tabSessionDidChangeBackgroundColor(tab)
+        let column = try XCTUnwrap(root.subviews.compactMap { $0 as? iTermLayerBackedSolidColorView }
+            .first { $0.identifier == iTermRootTerminalView.shellforgeColumnBackgroundIdentifier })
+        XCTAssertTrue(sameColor(column.color, session.processedBackgroundColor),
+                      "column \(String(describing: column.color)), terminal \(String(describing: session.processedBackgroundColor))")
+    }
+
+    /// The colour match borrows Minimal's colours but must not make the window compact: a compact
+    /// window has no title bar of its own, so the floating panel, its buttons and strip never apply.
+    func testTheColourMatchKeepsAWindowNormal() throws {
+        try XCTSkipUnless(iTermShellforgeSidebar.floats)
+        let saved = iTermUserDefaults.userDefaults().object(forKey: kPreferenceKeyTabStyle)
+        defer { iTermUserDefaults.userDefaults().set(saved, forKey: kPreferenceKeyTabStyle); iTermShellforgeTerminalMatch.setOn(false) }
+        iTermUserDefaults.userDefaults().set(Int(iTermPreferencesTabStyle.TAB_STYLE_AUTOMATIC.rawValue), forKey: kPreferenceKeyTabStyle)
+        iTermShellforgeTerminalMatch.setOn(true)
+        XCTAssertEqual(iTermThemedWindowType(.WINDOW_TYPE_NORMAL), .WINDOW_TYPE_NORMAL)
+        XCTAssertEqual(iTermThemedWindowType(.WINDOW_TYPE_MAXIMIZED), .WINDOW_TYPE_MAXIMIZED)
+        // Minimal of the user's own choosing stays iTerm2's compact window.
+        iTermUserDefaults.userDefaults().set(Int(iTermPreferencesTabStyle.TAB_STYLE_MINIMAL.rawValue), forKey: kPreferenceKeyTabStyle)
+        XCTAssertEqual(iTermThemedWindowType(.WINDOW_TYPE_NORMAL), .WINDOW_TYPE_COMPACT)
+    }
+
     func testAHiddenSidebarLeavesNoGap() throws {
         try XCTSkipUnless(iTermShellforgeSidebar.floats)
         root.toggleShellforgeSidebar()
@@ -100,8 +157,10 @@ final class ShellforgeFloatingSidebarTest: XCTestCase {
         try XCTSkipUnless(iTermShellforgeSidebar.floats)
         root.layoutSubtreeIfNeeded()
         let sidebar = root.shellforgeSidebarFrame
+        // M12g: the one view meant to be there is the terminal's own colour behind the panel.
         let covering = root.subviews.filter {
             !$0.isHidden && $0 is iTermLayerBackedSolidColorView && $0.frame.minX < sidebar.maxX && $0.frame.maxY > sidebar.maxY - 20 && $0.frame.width > 0
+                && $0.identifier != iTermRootTerminalView.shellforgeColumnBackgroundIdentifier
         }
         XCTAssertEqual(covering.map { NSStringFromRect($0.frame) }, [])
     }

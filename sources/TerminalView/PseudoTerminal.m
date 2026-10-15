@@ -13179,6 +13179,16 @@ static BOOL iTermApproximatelyEqualRects(NSRect lhs, NSRect rhs, double epsilon)
     return NO;
 }
 
+- (NSColor *)rootTerminalViewShellforgeSurfaceColorForStrip:(BOOL)forStrip {
+    if (![iTermShellforgeSidebar floatsWindowOfType:self.windowType]) {
+        return nil;
+    }
+    if (forStrip && self.currentSession.tabColor) {
+        return nil;
+    }
+    return self.currentSession.processedBackgroundColor;
+}
+
 - (NSColor *)rootTerminalViewTabBarBackgroundColorIgnoringTabColor:(BOOL)ignoreTabColor {
     // This is for the fake title bar and for the status bar background color.
     return [[iTermTheme sharedInstance] tabBarBackgroundColorForTabColor:ignoreTabColor ? nil : self.currentSession.tabColor
@@ -16159,6 +16169,10 @@ typedef NS_ENUM(NSUInteger, iTermBroadcastCommand) {
     }
     [self updateToolbeltAppearance];
     [self updateForTransparency:self.ptyWindow];
+    // Shellforge: the floating sidebar's surface is the terminal's background.
+    if ([iTermShellforgeSidebar floatsWindowOfType:self.windowType]) {
+        [_contentView updateTitleAndBorderViews];
+    }
 }
 
 - (void)tab:(PTYTab *)tab didChangeToState:(PTYTabState)newState {

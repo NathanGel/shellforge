@@ -215,6 +215,8 @@ typedef struct {
     iTermWindowSizeView *_windowSizeView;
 
     iTermLayerBackedSolidColorView *_titleBackgroundView;
+    // Shellforge: the terminal's colour behind a floating sidebar.
+    iTermLayerBackedSolidColorView *_shellforgeColumnBackground;
     NSVisualEffectView *_titleBackgroundVEV;
 
     iTermWindowBorderView *_windowBorderView;
@@ -1045,7 +1047,9 @@ typedef struct {
             _titleBackgroundView = [[iTermLayerBackedSolidColorView alloc] initWithFrame:self.frameForTitleBackgroundView];
             _titleBackgroundView.autoresizingMask = NSViewWidthSizable | NSViewMinYMargin;
         }
-        _titleBackgroundView.color = [_delegate rootTerminalViewTabBarBackgroundColorIgnoringTabColor:NO];
+        // Shellforge: beside a floating sidebar the strip is the terminal's own colour.
+        _titleBackgroundView.color = [_delegate rootTerminalViewShellforgeSurfaceColorForStrip:YES] ?:
+            [_delegate rootTerminalViewTabBarBackgroundColorIgnoringTabColor:NO];
         _titleBackgroundView.frame = self.frameForTitleBackgroundView;
         if (_titleBackgroundView.superview != self) {
             [self insertSubview:_titleBackgroundView atIndex:1];
@@ -1084,6 +1088,28 @@ typedef struct {
 
     [self updateBorderViews];
     [self updateTextColors];
+    [self updateShellforgeColumnBackground];
+}
+
+// Shellforge: the terminal's colour behind a floating sidebar, so the panel floats over the same
+// surface as the terminal rather than in a frame of the window's colour (often see-through).
+- (void)updateShellforgeColumnBackground {
+    const CGFloat column = self.shellforgeColumnWidth;
+    NSColor *color = column > 0 ? [_delegate rootTerminalViewShellforgeSurfaceColorForStrip:NO] : nil;
+    if (!color) {
+        _shellforgeColumnBackground.hidden = YES;
+        return;
+    }
+    if (!_shellforgeColumnBackground) {
+        _shellforgeColumnBackground = [[iTermLayerBackedSolidColorView alloc] initWithFrame:NSZeroRect color:color];
+        _shellforgeColumnBackground.identifier = iTermRootTerminalView.shellforgeColumnBackgroundIdentifier;
+    }
+    if (_shellforgeColumnBackground.superview != self) {
+        [self addSubview:_shellforgeColumnBackground positioned:NSWindowBelow relativeTo:nil];
+    }
+    _shellforgeColumnBackground.color = color;
+    _shellforgeColumnBackground.frame = NSMakeRect(0, 0, column, NSHeight(self.bounds));
+    _shellforgeColumnBackground.hidden = NO;
 }
 
 // A plain #rrggbb value carries no alpha and is drawn at 75% opacity for
@@ -1601,6 +1627,10 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
         return NO;
     }
     return [self tabBarShouldBeVisibleEvenWhenOnLoan];
+}
+
++ (NSUserInterfaceItemIdentifier)shellforgeColumnBackgroundIdentifier {
+    return @"ShellforgeColumnBackground";
 }
 
 - (NSRect)shellforgeSidebarFrame {
@@ -2225,6 +2255,7 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
     _shellforgeSidebar.hidden = _shellforgeSidebarHidden;
     [self updateShellforgeSidebarDragHandle];
     [self updateShellforgeShowSidebarButton];
+    [self updateShellforgeColumnBackground];
     const CGFloat notchHeight = [self notchInset];
     _notchMask.hidden = (notchHeight == 0);
     _notchMask.frame = NSMakeRect(0, NSHeight(self.bounds) - notchHeight, NSWidth(self.bounds), notchHeight);

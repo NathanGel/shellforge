@@ -117,11 +117,22 @@ iTermWindowType iTermUnthemedWindowType(iTermWindowType windowType) {
 }
 
 // NOTE: If you change this also update iTermUnthemedWindowType
+// Shellforge: the theme that decides whether a window is compact. The terminal match borrows
+// Minimal's colours, but a compact window has no title bar of its own, so beside a floating sidebar
+// it would lose the panel's buttons and title strip: the window takes the user's own theme instead.
+static iTermPreferencesTabStyle iTermWindowTypeTabStyle(void) {
+    if ([iTermShellforgeTerminalMatch overridesTheme] && [iTermShellforgeSidebar floats]) {
+        NSNumber *saved = [[iTermUserDefaults userDefaults] objectForKey:kPreferenceKeyTabStyle];
+        return saved ? (iTermPreferencesTabStyle)saved.intValue : TAB_STYLE_AUTOMATIC;
+    }
+    return (iTermPreferencesTabStyle)[iTermPreferences intForKey:kPreferenceKeyTabStyle];
+}
+
 iTermWindowType iTermThemedWindowType(iTermWindowType windowType) {
     switch (windowType) {
         case WINDOW_TYPE_COMPACT:
         case WINDOW_TYPE_NORMAL:
-            switch ((iTermPreferencesTabStyle)[iTermPreferences intForKey:kPreferenceKeyTabStyle]) {
+            switch (iTermWindowTypeTabStyle()) {
                 case TAB_STYLE_COMPACT:
                 case TAB_STYLE_MINIMAL:
                     return WINDOW_TYPE_COMPACT;
@@ -138,7 +149,7 @@ iTermWindowType iTermThemedWindowType(iTermWindowType windowType) {
 
         case WINDOW_TYPE_COMPACT_MAXIMIZED:
         case WINDOW_TYPE_MAXIMIZED:
-            switch ((iTermPreferencesTabStyle)[iTermPreferences intForKey:kPreferenceKeyTabStyle]) {
+            switch (iTermWindowTypeTabStyle()) {
                 case TAB_STYLE_COMPACT:
                 case TAB_STYLE_MINIMAL:
                     return WINDOW_TYPE_COMPACT_MAXIMIZED;
@@ -155,7 +166,7 @@ iTermWindowType iTermThemedWindowType(iTermWindowType windowType) {
 
         case WINDOW_TYPE_COMPACT_CENTERED:
         case WINDOW_TYPE_CENTERED:
-            switch ((iTermPreferencesTabStyle)[iTermPreferences intForKey:kPreferenceKeyTabStyle]) {
+            switch (iTermWindowTypeTabStyle()) {
                 case TAB_STYLE_COMPACT:
                 case TAB_STYLE_MINIMAL:
                     return WINDOW_TYPE_COMPACT_CENTERED;
