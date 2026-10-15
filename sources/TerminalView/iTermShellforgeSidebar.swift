@@ -848,17 +848,18 @@ final class ShellforgeSidebarReveal: NSObject {
 @objc(iTermShellforgeRevealTracker)
 final class ShellforgeRevealTracker: NSView {
     @objc weak var reveal: ShellforgeSidebarReveal?
-    private var area: NSTrackingArea?
+
+    /// Its tracking area from the start, following its visible rect as it grows and shrinks: AppKit
+    /// does not always ask a view that starts hidden and of no size for its tracking areas later.
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                       owner: self))
+    }
+
+    required init?(coder: NSCoder) { it_fatalError("init(coder:) has not been implemented") }
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let area { removeTrackingArea(area) }
-        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self)
-        addTrackingArea(area)
-        self.area = area
-    }
 
     override func mouseEntered(with event: NSEvent) { reveal?.pointerEntered() }
     override func mouseExited(with event: NSEvent) { reveal?.pointerExited() }

@@ -362,6 +362,34 @@ final class ShellforgeFloatingSidebarTest: XCTestCase {
         XCTAssertEqual(changes, 4)
     }
 
+    /// The edge strip watches the pointer from the moment it is in a window: it starts hidden and of
+    /// no size, and AppKit does not always ask a view for its tracking areas after that.
+    func testTheRevealStripWatchesThePointer() throws {
+        let tracker = ShellforgeRevealTracker(frame: .zero)
+        tracker.isHidden = true
+        root.addSubview(tracker)
+        defer { tracker.removeFromSuperview() }
+        tracker.frame = NSRect(x: 0, y: 0, width: 4, height: 300)
+        tracker.isHidden = false
+        root.layoutSubtreeIfNeeded()
+        XCTAssertFalse(tracker.trackingAreas.isEmpty, "a tracking area to hear the pointer arrive")
+        XCTAssertTrue(tracker.trackingAreas.allSatisfy { $0.options.contains(.inVisibleRect) })
+    }
+
+    /// A window made narrow while the sidebar was hidden — or opened so, the sidebar hidden last
+    /// time — widens to the sidebar's minimum when it comes back, rather than jumping it.
+    func testReopeningInANarrowWindowWidensItFirst() throws {
+        root.toggleShellforgeSidebar()          // hidden
+        root.layoutSubtreeIfNeeded()
+        var frame = fixture.window.frame
+        frame.size.width = 420
+        fixture.window.setFrame(frame, display: false)
+        root.toggleShellforgeSidebar()          // back
+        root.layoutSubtreeIfNeeded()
+        XCTAssertGreaterThanOrEqual(fixture.window.frame.width, root.shellforgeMinimumWindowWidth() - 0.5)
+        XCTAssertGreaterThan(root.shellforgeSidebarWidth, 0, "the sidebar is shown, not stepped aside")
+    }
+
     func testAHiddenSidebarLeavesNoGap() throws {
         try XCTSkipUnless(iTermShellforgeSidebar.floats)
         root.toggleShellforgeSidebar()

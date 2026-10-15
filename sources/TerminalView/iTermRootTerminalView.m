@@ -1714,8 +1714,34 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
             [self.window makeFirstResponder:session.textview];
         }
     }
+    if (!_shellforgeSidebarHidden) {
+        [self shellforgeWidenWindowForSidebarIfNeeded];
+    }
     [self layoutSubviews];
     [_delegate rootTerminalViewDidResizeContentArea];
+}
+
+// Shellforge: a window left narrower than the sidebar's minimum beside the terminal — narrowed while
+// it was hidden, or opened so with it hidden last time — widens to that minimum as the sidebar comes
+// back, to the left, so the terminal stays where it was; otherwise the sidebar would step aside and
+// jump in at the next resize. Not in full screen, which has the screen's width.
+- (void)shellforgeWidenWindowForSidebarIfNeeded {
+    NSWindow *window = self.window;
+    if (!window || (window.styleMask & NSWindowStyleMaskFullScreen)) {
+        return;
+    }
+    const CGFloat minimum = [self shellforgeMinimumWindowWidth];
+    NSRect frame = window.frame;
+    if (NSWidth(frame) >= minimum) {
+        return;
+    }
+    frame.origin.x -= minimum - NSWidth(frame);
+    frame.size.width = minimum;
+    const NSRect screen = window.screen.visibleFrame;
+    if (!NSIsEmptyRect(screen)) {
+        frame.origin.x = MAX(NSMinX(screen), MIN(frame.origin.x, NSMaxX(screen) - minimum));
+    }
+    [window setFrame:frame display:YES];
 }
 
 // Shellforge: a handle across the sidebar's right edge, clear of its list's scroller.
