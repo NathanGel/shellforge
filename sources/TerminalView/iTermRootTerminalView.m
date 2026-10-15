@@ -1633,6 +1633,10 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
     return @"ShellforgeColumnBackground";
 }
 
+- (NSView *)shellforgeSidebarView {
+    return _shellforgeSidebar;
+}
+
 - (NSRect)shellforgeSidebarFrame {
     return _shellforgeSidebar.frame;
 }
@@ -2256,6 +2260,9 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
     [self updateShellforgeSidebarDragHandle];
     [self updateShellforgeShowSidebarButton];
     [self updateShellforgeColumnBackground];
+    if (_shellforgeSidebar) {
+        [iTermShellforgeSidebar updateWindowControlsIn:_shellforgeSidebar];
+    }
     const CGFloat notchHeight = [self notchInset];
     _notchMask.hidden = (notchHeight == 0);
     _notchMask.frame = NSMakeRect(0, NSHeight(self.bounds) - notchHeight, NSWidth(self.bounds), notchHeight);

@@ -165,6 +165,33 @@ final class ShellforgeFloatingSidebarTest: XCTestCase {
         XCTAssertEqual(root.bounds.height - title.midY, close.midY, accuracy: 2, "the title sits on the buttons' row")
     }
 
+    /// The sidebar hears where the window's buttons sit in it, so its header shares their row.
+    func testTheSidebarKnowsWhereTheButtonsSit() throws {
+        try XCTSkipUnless(iTermShellforgeSidebar.floats)
+        root.layoutSubviews()
+        let sidebar = try XCTUnwrap(root.shellforgeSidebarView)
+        let controls = try XCTUnwrap(iTermShellforgeSidebar.reportedWindowControls(of: sidebar), "the buttons are inside the panel")
+        let zoom = try buttonFrame(.zoomButton), close = try buttonFrame(.closeButton), panel = root.shellforgeSidebarFrame
+        XCTAssertEqual(controls.buttonsMaxX, zoom.maxX - panel.minX, accuracy: 0.5)
+        XCTAssertEqual(controls.buttonsMidY, close.midY - (root.bounds.height - panel.maxY), accuracy: 0.5)
+    }
+
+    /// Glass in light mode over a dark terminal turns murky with dark text on it: behind the panel
+    /// the terminal's colour stands only when its lightness agrees with the window's.
+    func testADarkTerminalInALightWindowKeepsTheWindowColourBehindThePanel() throws {
+        try XCTSkipUnless(iTermShellforgeSidebar.floats)
+        let session = try XCTUnwrap(fixture.terminal.currentSession())
+        let saved = fixture.window.appearance
+        defer { fixture.window.appearance = saved }
+        let dark = try XCTUnwrap(session.processedBackgroundColor).isDark
+        fixture.window.appearance = NSAppearance(named: dark ? .aqua : .darkAqua)
+        root.updateTitleAndBorderViews()
+        let column = try XCTUnwrap(root.subviews.compactMap { $0 as? iTermLayerBackedSolidColorView }
+            .first { $0.identifier == iTermRootTerminalView.shellforgeColumnBackgroundIdentifier })
+        XCTAssertFalse(column.isHidden == false && sameColor(column.color, session.processedBackgroundColor),
+                       "the terminal's colour behind the panel in a window of the other lightness")
+    }
+
     func testAHiddenSidebarLeavesNoGap() throws {
         try XCTSkipUnless(iTermShellforgeSidebar.floats)
         root.toggleShellforgeSidebar()

@@ -116,6 +116,7 @@ extern const NSInteger iTermRootTerminalViewWindowNumberLabelWidth;
 @property(nonatomic, readonly) BOOL hasShellforgeSidebar;
 // Shellforge: the sidebar's width, or 0 without one; part of the window's decorations.
 @property(nonatomic, readonly) CGFloat shellforgeSidebarWidth;
+@property(nonatomic, readonly) NSView *shellforgeSidebarView;
 // Shellforge: ⌃⌘S hides the sidebar in this window.
 @property(nonatomic, readonly) BOOL shellforgeSidebarHidden;
 // Shellforge: the sidebar's frame, for tests.

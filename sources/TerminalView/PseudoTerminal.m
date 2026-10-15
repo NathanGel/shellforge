@@ -13186,7 +13186,13 @@ static BOOL iTermApproximatelyEqualRects(NSRect lhs, NSRect rhs, double epsilon)
     if (forStrip && self.currentSession.tabColor) {
         return nil;
     }
-    return self.currentSession.processedBackgroundColor;
+    NSColor *background = self.currentSession.processedBackgroundColor;
+    // Behind the panel the terminal's colour stands only when its lightness agrees with the
+    // window's: light glass over a dark terminal turns murky, with dark text on it.
+    if (!forStrip && background && background.isDark != self.window.effectiveAppearance.it_isDark) {
+        return [NSColor windowBackgroundColor];
+    }
+    return background;
 }
 
 - (NSColor *)rootTerminalViewTabBarBackgroundColorIgnoringTabColor:(BOOL)ignoreTabColor {
