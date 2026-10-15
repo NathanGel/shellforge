@@ -103,25 +103,24 @@ final class ShellforgeFloatingSidebarTest: XCTestCase {
     }
 
     /// The surface follows the terminal's background when it changes — the colour match, a profile.
+    /// A background change reaches the surface through the window's own hook — the colour match,
+    /// a profile edit, an escape sequence — not only through the next layout: a stale colour is
+    /// replaced by the hook alone.
     func testTheSurfaceFollowsABackgroundChange() throws {
         try XCTSkipUnless(iTermShellforgeSidebar.floats)
-        iTermShellforgeTerminalMatch.setOn(false)
-        defer { iTermShellforgeTerminalMatch.setOn(false) }
         root.layoutSubtreeIfNeeded()
         let session = try XCTUnwrap(fixture.terminal.currentSession())
-        iTermShellforgeTerminalMatch.setOn(true)
+        let column = try XCTUnwrap(root.subviews.compactMap { $0 as? iTermLayerBackedSolidColorView }
+            .first { $0.identifier == iTermRootTerminalView.shellforgeColumnBackgroundIdentifier })
+        column.color = .systemRed
         // In the app the text view reports the change once the screen's state reaches it, which a
         // test window with no running terminal never does: report it as the tab then does.
         let tab = try XCTUnwrap(fixture.terminal.currentTab())
         fixture.terminal.tabSessionDidChangeBackgroundColor(tab)
-        let column = try XCTUnwrap(root.subviews.compactMap { $0 as? iTermLayerBackedSolidColorView }
-            .first { $0.identifier == iTermRootTerminalView.shellforgeColumnBackgroundIdentifier })
         XCTAssertTrue(sameColor(column.color, session.processedBackgroundColor),
                       "column \(String(describing: column.color)), terminal \(String(describing: session.processedBackgroundColor))")
     }
 
-    /// The colour match borrows Minimal's colours but must not make the window compact: a compact
-    /// window has no title bar of its own, so the floating panel, its buttons and strip never apply.
     func testTheColourMatchKeepsAWindowNormal() throws {
         try XCTSkipUnless(iTermShellforgeSidebar.floats)
         let saved = iTermUserDefaults.userDefaults().object(forKey: kPreferenceKeyTabStyle)
@@ -212,19 +211,21 @@ final class ShellforgeFloatingSidebarTest: XCTestCase {
         XCTAssertNotEqual(iTermWindowCornerRadiusDetector.cacheKey(for: window), bare)
     }
 
-    /// The sidebar draws its panel with the window's radius as the window has it now.
+    /// The sidebar draws its panel with the window's radius as measured: a radius in the detector's
+    /// cache for this window reaches the panel, less the inset.
     func testTheSidebarHearsThePanelRadius() throws {
         try XCTSkipUnless(iTermShellforgeSidebar.floats)
+        let saved = iTermUserDefaults.windowCornerRadiusCache
+        defer { iTermUserDefaults.windowCornerRadiusCache = saved }
+        var cache = saved ?? [:]
+        cache[iTermWindowCornerRadiusDetector.cacheKey(for: fixture.window)] = 27
+        iTermUserDefaults.windowCornerRadiusCache = cache
         root.updateTitleAndBorderViews()
         let sidebar = try XCTUnwrap(root.shellforgeSidebarView)
-        let window = iTermWindowCornerRadiusDetector.cachedCornerRadius(for: fixture.window)?.doubleValue
-            ?? iTermWindowCornerRadiusDetector.fallbackCornerRadius
         XCTAssertEqual(iTermShellforgeSidebar.reportedPanelCornerRadius(of: sidebar),
-                       iTermShellforgeSidebar.panelCornerRadius(forWindowRadius: window))
+                       27 - iTermShellforgeSidebar.floatingInset)
     }
 
-    /// Fitting the window to its tabs keeps every column: the window adds back the whole column
-    /// left of the terminal — the panel and its gap — or each new or closed tab shrinks it again.
     func testFittingTheWindowToItsTabsKeepsTheColumns() throws {
         try XCTSkipUnless(iTermShellforgeSidebar.floats)
         let session = try XCTUnwrap(fixture.terminal.currentSession())
