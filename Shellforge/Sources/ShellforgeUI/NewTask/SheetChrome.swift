@@ -9,17 +9,20 @@ struct SheetLayout<Navigation: View, Content: View, Footer: View>: View {
     let title: String
     let height: CGFloat?
     let onBackgroundTap: (() -> Void)?
+    /// While a create runs nothing in the sheet can be changed.
+    let locked: Bool
     let navigation: Navigation
     let content: Content
     let footer: Footer
 
-    init(title: String, height: CGFloat?, onBackgroundTap: (() -> Void)? = nil,
+    init(title: String, height: CGFloat?, onBackgroundTap: (() -> Void)? = nil, locked: Bool = false,
          @ViewBuilder navigation: () -> Navigation,
          @ViewBuilder content: () -> Content,
          @ViewBuilder footer: () -> Footer) {
         self.title = title
         self.height = height
         self.onBackgroundTap = onBackgroundTap
+        self.locked = locked
         self.navigation = navigation()
         self.content = content()
         self.footer = footer()
@@ -66,7 +69,7 @@ struct SheetLayout<Navigation: View, Content: View, Footer: View>: View {
     }
 
     private var paddedContent: some View {
-        content.frame(maxWidth: .infinity, alignment: .topLeading).padding(Space.margin)
+        content.frame(maxWidth: .infinity, alignment: .topLeading).padding(Space.margin).disabled(locked)
     }
 }
 
@@ -164,10 +167,23 @@ struct CreationFooter: View {
     let missingAgentNote: String?
     let createLabel: String
     let creating: Bool
+    var progress: CreationStep? = nil
+    var cancelling = false
     let canAdvance: Bool
     let closeList: () -> Bool
     let back: () -> Void
     let advance: () -> Void
+
+    /// What the footer says while a create runs.
+    static func progressText(_ step: CreationStep?, cancelling: Bool) -> String {
+        if cancelling { return "Cancelling…" }
+        switch step {
+        case nil: return "Creating…"
+        case .fetching(let base): return "Fetching origin/\(base)…"
+        case .creatingWorktree(runsHook: false): return "Creating the worktree…"
+        case .creatingWorktree(runsHook: true): return "Running the repository’s checkout hook…"
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.gap) {
@@ -178,8 +194,19 @@ struct CreationFooter: View {
             if step == 3, let note = missingAgentNote {
                 Text(note).font(Typography.caption).foregroundStyle(Palette.amber)
             }
-            SheetFooter(secondary: step == 1 ? "Cancel" : "Back", primary: step == 3 ? createLabel : "Continue",
-                        canCancel: !creating, canSubmit: canAdvance, closeList: closeList, cancel: back, submit: advance)
+            // While a create runs its Cancel stays live — the way out of one stuck in a checkout hook —
+            // and the footer says what it is doing.
+            SheetFooter(secondary: step == 1 || creating ? "Cancel" : "Back", primary: step == 3 ? createLabel : "Continue",
+                        canCancel: !cancelling, canSubmit: canAdvance, closeList: closeList, cancel: back, submit: advance) {
+                if creating {
+                    HStack(spacing: Space.base) {
+                        ProgressView().controlSize(.small)
+                        Text(Self.progressText(progress, cancelling: cancelling))
+                            .font(Typography.caption).foregroundStyle(Palette.muted)
+                            .lineLimit(1).truncationMode(.tail)
+                    }
+                }
+            }
         }
     }
 }

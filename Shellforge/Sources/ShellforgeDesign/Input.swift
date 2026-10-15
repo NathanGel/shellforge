@@ -101,6 +101,12 @@ private struct InputField: NSViewRepresentable {
         if field.stringValue != text { field.stringValue = text }
         if field.placeholderString != placeholder { field.placeholderString = placeholder }
         if field.font != font { field.font = font }
+        // A disabled form — a sheet while it creates — takes no typing here either.
+        let enabled = context.environment.isEnabled
+        if field.isEditable != enabled { field.isEditable = enabled; field.isEnabled = enabled }
+        if !enabled, let editor = field.currentEditor(), field.window?.firstResponder === editor {
+            field.window?.makeFirstResponder(nil)
+        }
     }
 
     @MainActor

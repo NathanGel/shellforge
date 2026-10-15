@@ -28,13 +28,23 @@ import ShellforgeDesign
         #expect(ground.brightnessComponent > 0.7, "a light window's sheet draws light: \(ground)")
     }
 
-    /// ⎋ and Back are one move: a step back, or the sheet closed from the first step — never while
-    /// a create runs.
+    /// ⎋ and Back are one move: a step back, or the sheet closed from the first step — and while a
+    /// create runs, the create cancelled: the way out of one stuck in a checkout hook.
     @Test func escapeGoesBackThenCancels() {
         #expect(NewTaskSheet.back(from: 3, creating: false) == .step(2))
         #expect(NewTaskSheet.back(from: 2, creating: false) == .step(1))
         #expect(NewTaskSheet.back(from: 1, creating: false) == .dismiss)
-        #expect(NewTaskSheet.back(from: 3, creating: true) == .stay)
+        #expect(NewTaskSheet.back(from: 3, creating: true) == .cancelCreate)
+    }
+
+    /// While creating, the footer says the step — and its Cancel, live, cancels.
+    @Test func theFooterSaysWhatACreateIsDoing() {
+        #expect(CreationFooter.progressText(nil, cancelling: false) == "Creating…")
+        #expect(CreationFooter.progressText(.fetching(base: "main"), cancelling: false) == "Fetching origin/main…")
+        #expect(CreationFooter.progressText(.creatingWorktree(runsHook: false), cancelling: false) == "Creating the worktree…")
+        #expect(CreationFooter.progressText(.creatingWorktree(runsHook: true), cancelling: false)
+                == "Running the repository’s checkout hook…")
+        #expect(CreationFooter.progressText(.fetching(base: "main"), cancelling: true) == "Cancelling…")
     }
 
     @Test func theDestinationNamesTheWorktreeAndBranch() {
@@ -56,4 +66,41 @@ import ShellforgeDesign
         #expect(NewTaskSheet.footerNote(agents: AgentPresets.all, available: [])
                 == "Claude Code, Codex, Grok Build and PI aren’t installed. Install them in Settings › Agents.")
     }
+
+    /// Once Create is pressed nothing in the sheet takes typing: the prompt and every field are
+    /// locked until the create ends — the draft is already on its way.
+    @Test func whileCreatingNothingTakesTyping() async throws {
+        let opus = AgentModel(id: "opus", label: "Opus", detail: nil, efforts: ["low", "high"], defaultEffort: "high")
+        let model = NewTaskModel(project: Project(name: "demo", path: "/tmp/demo"), agents: AgentPresets.all, available: ["claude"],
+                                 draft: TaskDraft(baseBranch: "main", agentId: "claude", model: "", reasoning: nil), rememberedModels: [:],
+                                 catalogue: { _ in [opus] }, branches: { ["main"] }, submit: { _ in
+                                     while CreationContext.cancellation?.isCancelled == false { try await Task.sleep(for: .milliseconds(5)) }
+                                     throw CreationCancelled() },
+                                 home: TestScratch.root.appendingPathComponent("lock-home-\(UUID().uuidString)"))
+        model.draft.setTitle("Login")
+        await model.loadCatalogue()
+        for step in [1, 3] {
+            let host = NSHostingView(rootView: NewTaskSheet(model: model, dismiss: {}).seeded(step: step))
+            host.frame = NSRect(x: 0, y: 0, width: Sheet.width, height: Sheet.height)
+            let window = NSWindow(contentRect: host.frame, styleMask: [], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.contentView = host
+            host.layoutSubtreeIfNeeded()
+            async let created = model.create()
+            #expect(await eventually(describing: "the editors to lock on step \(step)") {
+                host.layoutSubtreeIfNeeded()
+                let fields = descendants(of: NSTextField.self, in: host).filter { $0.isEditable || !$0.isEnabled }
+                let texts = descendants(of: NSTextView.self, in: host)
+                return !fields.isEmpty || !texts.isEmpty ? (fields.allSatisfy { !$0.isEditable } && texts.allSatisfy { !$0.isEditable }) : false
+            })
+            model.cancelCreate()
+            _ = await created
+            window.close()
+        }
+    }
+
+    private func descendants<T: NSView>(of type: T.Type, in view: NSView) -> [T] {
+        view.subviews.compactMap { $0 as? T } + view.subviews.flatMap { descendants(of: type, in: $0) }
+    }
 }
+

@@ -15,15 +15,15 @@ import Testing
     static let ported = ["Palette", "Metrics", "Surface", "InterfaceScale", "Logos", "IconSource", "Badge", "Hairline",
                          "SidebarHeading", "SymbolMark", "FormField", "Input", "Select", "SegmentedControl", "Kbd", "SearchField"]
     /// Ported files that differ from AiTerm's on purpose (ledgered).
-    static let changed: Set = ["FormField", "Input", "SegmentedControl", "Palette", "IconSource", "SidebarHeading", "Metrics", "Surface", "Badge"]
+    static let changed: Set = ["FormField", "Input", "SearchField", "SegmentedControl", "Palette", "IconSource", "SidebarHeading", "Metrics", "Surface", "Badge"]
     /// SHA-256 of each ported file, normalised, as reviewed.
     static let baseline: [String: String] = [
         "Badge": "8d82c1df4269c88794a80451715afc2a1dd54b5c8f5fa5fec6036c0c0075ff78",
         "FormField": "d2450a5864c2a2acb674de92b35abcf2e6d081ff5cb2c8daf67dc2872fbbf46f",
         "Hairline": "ab5976604f277a70104f15faa8d6d8effaa90519135e36862a2d24d48231e4f0",
-        "Input": "efe2209ee6317b2f79eb518517aa611c250e29d164861d3d23bc8c872cad4cce",
+        "Input": "b853c294ffeabc682fe7c1f58bb3a19820c4ad82e0cd4af69598bc989fc0af55",
         "Kbd": "353eb6097c664e69e70ca5eeae00f6dd16fbd75c6731b9e15fa5a3fb13509609",
-        "SearchField": "be937c4cb1723ca16f8b44691b96edd587f447a5139e6b478efc0b6b03db8c13",
+        "SearchField": "6366d5af9d16e8c66a3570c2c3d58e275bcb0153ea0801913285ac2d948f6fbd",
         "SegmentedControl": "2c2d22dc1bc22cb14ce260f2792f6ff6c9f668922176dccfba1847b7c5b4ab4a",
         "Select": "1dd66bc87b8fdd973eb9dc19cdbf9ba6273a329a17b6895bd3ee0e96544621dd",
         "IconSource": "1c4233822c68d94be0a1d95aefdf0c27242b2a14b31839c4a5ef13c59be093df",

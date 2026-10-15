@@ -35,11 +35,13 @@ extension SidebarModel {
         guard let project = document.workspace.projects.first(where: { $0.id == projectId }) else { throw ProjectGone() }
         guard let agent = agents.first(where: { $0.id == draft.agentId }) else { return }
         let launcher = self.launcher
+        let cancellation = CreationContext.cancellation, report = CreationContext.report
         // Held for Remove Project from the start of git's work until the task is saved.
         let made = try await whileCreating(in: projectId) { () async throws -> (TaskItem, String) in
             let made = try await BackgroundWork.run { () throws -> (TaskItem, String) in
                 guard launcher.locate(agent.command) != nil else { throw AgentNotInstalled(agent: agent.name) }
-                let review = try ReviewWorktrees.create(draft: draft, in: project, launcher: launcher)
+                let review = try ReviewWorktrees.create(draft: draft, in: project, launcher: launcher,
+                                                        cancellation: cancellation, progress: report)
                 let command = try AgentCommand.build(agent: agent, model: draft.model, reasoning: draft.reasoning,
                                                      prompt: draft.promptText.isEmpty ? nil : draft.promptText,
                                                      worktreePath: review.worktreePath, launcher: launcher)

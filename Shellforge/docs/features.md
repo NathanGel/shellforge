@@ -101,6 +101,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
   - Its branch is `<type>/<key>-<slug>`.
   - A long first prompt goes to `.shellforge/first-prompt.md` in the worktree.
   - If creating the worktree fails, nothing is saved and the sheet keeps what you typed.
+  - While it creates, the sheet is locked and says what it is doing — fetching the base, making the worktree, or running the repository's own checkout hook (a pre-commit `uv sync` can take a while). Cancel, or ⎋, stops it: the command and everything it started end, the half-made worktree and branch are removed, and nothing is saved.
 - **The New Review sheet** has three steps: Branch, Agent and Prompt.
   - An optional merge request (GitLab `!n`) or pull request (GitHub `#n`), plus the review name and the branch.
   - The worktree is `.worktrees/review-<slug>`, locked in git.

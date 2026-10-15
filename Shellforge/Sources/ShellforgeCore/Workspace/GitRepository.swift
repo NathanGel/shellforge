@@ -12,11 +12,18 @@ public protocol GitCommands: Sendable {
 /// git as the login shell finds it.
 public struct LauncherGit: GitCommands {
     let launcher: CommandLauncher
-    public init(launcher: CommandLauncher) { self.launcher = launcher }
+    /// A create's Cancel, which ends the running command and what it started.
+    let cancellation: CreationCancellation?
+    public init(launcher: CommandLauncher, cancellation: CreationCancellation? = nil) {
+        self.launcher = launcher
+        self.cancellation = cancellation
+    }
 
     public func git(_ args: [String], in directory: String, remote: Bool, timeout: TimeInterval?) throws -> ChildOutput {
-        try launcher.run("git", ["-C", directory] + args, extra: remote ? ["GIT_TERMINAL_PROMPT": "0"] : [:],
-                         timeout: timeout ?? (remote ? 30 : 60))
+        let out = try launcher.run("git", ["-C", directory] + args, extra: remote ? ["GIT_TERMINAL_PROMPT": "0"] : [:],
+                                   timeout: timeout ?? (remote ? 30 : 60), cancellation: cancellation)
+        if cancellation?.isCancelled == true { throw CreationCancelled() }
+        return out
     }
 }
 

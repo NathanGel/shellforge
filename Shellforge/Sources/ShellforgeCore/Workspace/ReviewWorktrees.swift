@@ -199,8 +199,23 @@ extension GitRepository {
 
 /// A review's task: AiTerm's `TaskCreator.createReview`.
 public enum ReviewWorktrees {
-    public static func create(draft: ReviewDraft, in project: Project, launcher: CommandLauncher) throws -> TaskItem {
-        try create(draft: draft, in: project, git: LauncherGit(launcher: launcher), launcher: launcher)
+    /// `cancellation` stops it as it stops a task's create, taking back the half-made worktree; the
+    /// branch stays, as a review's branch may have been there before. `progress` hears its step.
+    public static func create(draft: ReviewDraft, in project: Project, launcher: CommandLauncher,
+                              cancellation: CreationCancellation? = nil,
+                              progress: (@Sendable (CreationStep) -> Void)? = nil) throws -> TaskItem {
+        if cancellation?.isCancelled == true { throw CreationCancelled() }
+        progress?(.creatingWorktree(runsHook: TaskWorktrees.hasCheckoutHook(project: project, launcher: launcher)))
+        let slug = BranchNaming.unused(BranchNaming.reviewSlug(branch: draft.branch), in: project.path)
+        do {
+            return try create(draft: draft, in: project, git: LauncherGit(launcher: launcher, cancellation: cancellation), launcher: launcher)
+        } catch let cancelled as CreationCancelled {
+            let path = "\(project.path)/.worktrees/\(slug)"
+            _ = try? launcher.run("git", ["-C", project.path, "worktree", "remove", "--force", path])
+            if FileManager.default.fileExists(atPath: path) { try? FileManager.default.removeItem(atPath: path) }
+            _ = try? launcher.run("git", ["-C", project.path, "worktree", "prune"])
+            throw cancelled
+        }
     }
 
     static func create(draft: ReviewDraft, in project: Project, git: any GitCommands, launcher: CommandLauncher) throws -> TaskItem {

@@ -333,6 +333,8 @@ public final class SidebarModel: ObservableObject {
         guard let project = document.workspace.projects.first(where: { $0.id == projectId }) else { throw ProjectGone() }
         guard let agent = agents.first(where: { $0.id == draft.agentId }) else { return }
         let launcher = self.launcher, taken = document.workspace.tasks.map(\.worktreePath)
+        // The sheet's Cancel and its step line, read here: they do not follow the work to its queue.
+        let cancellation = CreationContext.cancellation, report = CreationContext.report
         // One Create per existing worktree, in every window, from before anything is written there.
         let reserved = draft.useExisting ? draft.existing.map { ExistingWorktrees.resolved($0.path) } : nil
         if let reserved, let picked = draft.existing {
@@ -349,11 +351,19 @@ public final class SidebarModel: ObservableObject {
                 // Continued in a worktree that exists, or one made for it.
             let task = draft.useExisting
                 ? try ExistingWorktrees.adopt(draft: draft, in: project, taken: taken, launcher: launcher)
-                : try TaskWorktrees.create(draft: draft, in: project, launcher: launcher)
+                : try TaskWorktrees.create(draft: draft, in: project, launcher: launcher,
+                                           cancellation: cancellation, progress: report)
                 let command = try AgentCommand.build(agent: agent, model: draft.model, reasoning: draft.reasoning,
                                                      prompt: AgentCommand.composePrompt(userText: draft.promptText, ticket: draft.ticket,
                                                                                         appendTicket: draft.appendTicket),
                                                      worktreePath: task.worktreePath, launcher: launcher)
+                // Cancelled after the worktree was made: take back what this create made.
+                if cancellation?.isCancelled == true {
+                    if !draft.useExisting {
+                        TaskWorktrees.undo(worktree: task.worktreePath, branch: task.branch, project: project, launcher: launcher)
+                    }
+                    throw CreationCancelled()
+                }
                 return (task, command)
             }
             try document.update { workspace in

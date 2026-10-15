@@ -30,7 +30,7 @@ struct NewTaskSheet: View {
     var body: some View {
         // A click past the ticket list closes it, as AiTerm's CreationSheet closes its pickers.
         SheetLayout(title: "New task in \(model.project.name)", height: Sheet.height,
-                    onBackgroundTap: { model.ticketsOpen = false }) {
+                    onBackgroundTap: { model.ticketsOpen = false }, locked: model.creating) {
             StepBar(step: step, names: ["Task", "Agent", "Prompt"])
         } content: {
             VStack(alignment: .leading, spacing: Space.block) {
@@ -62,6 +62,7 @@ struct NewTaskSheet: View {
             CreationFooter(step: step, error: model.error,
                            missingAgentNote: Self.footerNote(agents: model.agents, available: model.availableAgents),
                            createLabel: "Create Task", creating: model.creating,
+                           progress: model.progress, cancelling: model.cancelling,
                            canAdvance: model.canAdvance(step: step),
                            closeList: {
                                if step == 1, model.ticketsOpen { model.ticketsOpen = false; return true }
@@ -207,12 +208,12 @@ struct NewTaskSheet: View {
         leave(step: step, completions: model.completions)
     }
 
-    enum BackMove: Equatable { case step(Int), dismiss, stay }
+    enum BackMove: Equatable { case step(Int), dismiss, cancelCreate }
 
-    /// ⎋ and Back are one move: a step back, or the sheet closed from the first step — never while
-    /// a create runs.
+    /// ⎋ and Back are one move: a step back, or the sheet closed from the first step — and while a
+    /// create runs, the create cancelled.
     static func back(from step: Int, creating: Bool) -> BackMove {
-        guard !creating else { return .stay }
+        guard !creating else { return .cancelCreate }
         return step == 1 ? .dismiss : .step(step - 1)
     }
 
@@ -221,7 +222,7 @@ struct NewTaskSheet: View {
         case .step(let previous): Self.leave(step: step, model: model); step = previous
         // A turn later, as AiTerm's `afterThisEvent`: the panel is not closed under the event.
         case .dismiss: Task { @MainActor in dismiss() }
-        case .stay: break
+        case .cancelCreate: model.cancelCreate()
         }
     }
 
@@ -234,7 +235,8 @@ struct NewTaskSheet: View {
     }
 
     /// Already past the button's event by the time it dismisses: the create is awaited first.
-    private func create() { Task { @MainActor in if await model.create() { dismiss() } } }
+    /// A cancelled create closes the sheet too: there is nothing to correct.
+    private func create() { Task { @MainActor in if await model.create() || model.cancelled { dismiss() } } }
 }
 
 #if DEBUG

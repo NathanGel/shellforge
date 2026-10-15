@@ -109,6 +109,10 @@ struct PromptEditor: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         context.coordinator.parent = self
         guard let textView = scroll.documentView as? NSTextView else { return }
+        // A disabled form — the sheet while it creates — takes no typing here either.
+        let enabled = context.environment.isEnabled
+        if textView.isEditable != enabled { textView.isEditable = enabled }
+        if !enabled, textView.window?.firstResponder === textView { textView.window?.makeFirstResponder(nil) }
         if textView.string != text {
             let selected = textView.selectedRange()
             textView.string = text

@@ -87,7 +87,8 @@ public final class CommandLauncher: @unchecked Sendable {
 
     /// Runs `command` with the login environment, `extra` set over it, and waits for it to finish.
     public func run(_ command: String, _ arguments: [String], directory: String? = nil,
-                    extra: [String: String] = [:], timeout: TimeInterval = 120) throws -> ChildOutput {
+                    extra: [String: String] = [:], timeout: TimeInterval = 120,
+                    cancellation: CreationCancellation? = nil) throws -> ChildOutput {
         var current = environment
         var executable = Self.locate(command, in: current.variables["PATH"] ?? "")
         if executable == nil {
@@ -99,7 +100,7 @@ public final class CommandLauncher: @unchecked Sendable {
             throw CommandNotFound(name: command, searchedPath: current.variables["PATH"] ?? "", source: current.source)
         }
         return try ChildProcess.run(executable, arguments, environment: current.variables.merging(extra) { $1 },
-                                    directory: directory, timeout: timeout)
+                                    directory: directory, timeout: timeout, cancellation: cancellation)
     }
 
     /// An executable regular file: `isExecutableFile` alone is also true of a folder.

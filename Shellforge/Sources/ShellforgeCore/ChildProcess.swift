@@ -13,9 +13,11 @@ public struct ChildOutput: Sendable, Equatable {
 /// `CommandLauncher`, which gives the child the login environment; a source test keeps it that way.
 enum ChildProcess {
     /// Runs `executable` with exactly `environment`, stdin closed, and waits up to `timeout` seconds.
-    /// A child that outlives it is sent SIGTERM, then SIGKILL a second later.
+    /// A child that outlives it — or that `cancellation` stops — is sent SIGTERM with everything it
+    /// started, then SIGKILL a second later.
     static func run(_ executable: String, _ arguments: [String], environment: [String: String],
-                    directory: String? = nil, timeout: TimeInterval) throws -> ChildOutput {
+                    directory: String? = nil, timeout: TimeInterval,
+                    cancellation: CreationCancellation? = nil) throws -> ChildOutput {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
@@ -30,15 +32,14 @@ enum ChildProcess {
         let finished = DispatchSemaphore(value: 0)
         process.terminationHandler = { _ in finished.signal() }
         try process.run()
+        if let cancellation, !cancellation.begin(process) { terminateTree(process) }
+        defer { cancellation?.end() }
 
         var timedOut = false
         if finished.wait(timeout: .now() + timeout) == .timedOut {
             timedOut = true
-            process.terminate()
-            if finished.wait(timeout: .now() + 1) == .timedOut {
-                kill(process.processIdentifier, SIGKILL)
-                finished.wait()
-            }
+            terminateTree(process)
+            finished.wait()
         }
         // A grandchild that kept the pipes open (a shell's background job) must not hold us up.
         return ChildOutput(status: process.terminationStatus, stdout: out.text(waiting: 1),
@@ -47,6 +48,36 @@ enum ChildProcess {
 }
 
 extension ChildProcess {
+    /// Stops `process` and every process it started — a git hook and the `uv sync` it ran — which
+    /// would otherwise outlive it: SIGTERM now, SIGKILL to any still there a second later.
+    static func terminateTree(_ process: Process) {
+        let pid = process.processIdentifier
+        guard pid > 0 else { return }
+        let all = [pid] + descendants(of: pid)
+        for each in all { kill(each, SIGTERM) }
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1) {
+            for each in all where kill(each, 0) == 0 { kill(each, SIGKILL) }
+        }
+    }
+
+    /// Every process below `pid`, children first.
+    static func descendants(of pid: pid_t) -> [pid_t] {
+        var found: [pid_t] = []
+        var pending = [pid]
+        while let parent = pending.popLast() {
+            let estimate = proc_listchildpids(parent, nil, 0)
+            guard estimate > 0 else { continue }
+            var buffer = [pid_t](repeating: 0, count: Int(estimate) + 16)
+            let count = buffer.withUnsafeMutableBytes { bytes in
+                proc_listchildpids(parent, bytes.baseAddress, Int32(bytes.count))
+            }
+            let children = buffer.prefix(max(0, Int(count))).filter { $0 > 0 }
+            found += children
+            pending += children
+        }
+        return found
+    }
+
     /// Starts `executable` and returns at once: a child that outlives the call, as the daemon does.
     /// Its standard output and error go to `output` (nowhere when nil), stdin is closed, and
     /// `onExit` is called with it and its exit status when it ends.
