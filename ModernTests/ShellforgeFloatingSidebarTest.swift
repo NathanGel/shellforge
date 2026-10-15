@@ -192,6 +192,33 @@ final class ShellforgeFloatingSidebarTest: XCTestCase {
                        "the terminal's colour behind the panel in a window of the other lightness")
     }
 
+    /// The panel's corners are concentric with the window's: its radius less the inset, never below 0.
+    func testThePanelCornerFollowsTheWindowsRadius() {
+        XCTAssertEqual(iTermShellforgeSidebar.panelCornerRadius(forWindowRadius: 26), 26 - iTermShellforgeSidebar.floatingInset)
+        XCTAssertEqual(iTermShellforgeSidebar.panelCornerRadius(forWindowRadius: 4), 0)
+    }
+
+    /// A toolbar rounds a macOS 26 window's corners further, so a radius measured without one must
+    /// not stand for a window with one.
+    func testTheMeasuredRadiusIsKeptPerToolbar() {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 100), styleMask: [.titled], backing: .buffered, defer: true)
+        window.isReleasedWhenClosed = false
+        let bare = iTermWindowCornerRadiusDetector.cacheKey(for: window)
+        window.toolbar = NSToolbar(identifier: "test")
+        XCTAssertNotEqual(iTermWindowCornerRadiusDetector.cacheKey(for: window), bare)
+    }
+
+    /// The sidebar draws its panel with the window's radius as the window has it now.
+    func testTheSidebarHearsThePanelRadius() throws {
+        try XCTSkipUnless(iTermShellforgeSidebar.floats)
+        root.updateTitleAndBorderViews()
+        let sidebar = try XCTUnwrap(root.shellforgeSidebarView)
+        let window = iTermWindowCornerRadiusDetector.cachedCornerRadius(for: fixture.window)?.doubleValue
+            ?? iTermWindowCornerRadiusDetector.fallbackCornerRadius
+        XCTAssertEqual(iTermShellforgeSidebar.reportedPanelCornerRadius(of: sidebar),
+                       iTermShellforgeSidebar.panelCornerRadius(forWindowRadius: window))
+    }
+
     func testAHiddenSidebarLeavesNoGap() throws {
         try XCTSkipUnless(iTermShellforgeSidebar.floats)
         root.toggleShellforgeSidebar()

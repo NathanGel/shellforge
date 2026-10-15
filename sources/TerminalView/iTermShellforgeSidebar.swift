@@ -647,7 +647,20 @@ extension iTermShellforgeSidebar {
     @objc static var floatingInset: CGFloat { Space.base }
 
     /// The panel's corners, concentric with the window's.
-    static var panelCornerRadius: CGFloat { max(0, iTermWindowCornerRadiusDetector.fallbackCornerRadius - floatingInset) }
+    static var panelCornerRadius: CGFloat { panelCornerRadius(forWindowRadius: iTermWindowCornerRadiusDetector.fallbackCornerRadius) }
+
+    /// The panel's corner radius in a window whose own is `windowRadius`: concentric with it.
+    static func panelCornerRadius(forWindowRadius windowRadius: CGFloat) -> CGFloat { max(0, windowRadius - floatingInset) }
+
+    /// Tells the floating `sidebar` its window's corner radius as now measured, so the panel's
+    /// corners stay concentric with the window's — a toolbar rounds them further on macOS 26.
+    @objc static func updatePanelCornerRadius(in sidebar: NSView, windowRadius: CGFloat) {
+        guard floats else { return }
+        ShellforgeSidebar.setPanelCornerRadius(panelCornerRadius(forWindowRadius: windowRadius), on: sidebar)
+    }
+
+    /// What the sidebar last heard as its panel's radius, for host tests.
+    static func reportedPanelCornerRadius(of sidebar: NSView) -> CGFloat? { ShellforgeSidebar.panelCornerRadius(of: sidebar) }
 
     /// The width a window of `windowWidth` gives a sidebar that prefers `preferred`, with a
     /// toolbelt of `toolbeltWidth` showing on the right.

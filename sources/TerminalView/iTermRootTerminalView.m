@@ -1200,6 +1200,10 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
     }
 
     _windowBorderView.hidden = NO;
+    // Shellforge: the floating panel's corners follow the window's, as measured.
+    if (_shellforgeSidebar) {
+        [iTermShellforgeSidebar updatePanelCornerRadiusIn:_shellforgeSidebar windowRadius:[self resolvedWindowBorderCornerRadius]];
+    }
     // The border view's autoresizing does not reliably track the root view (it
     // can be left at a stale size from an earlier window size), which would
     // stroke the heavy border as an inner rectangle inset from the real window

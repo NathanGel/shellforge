@@ -280,7 +280,9 @@ class iTermWindowCornerRadiusDetector: NSObject {
         let mask = window.styleMask.rawValue
         let titleVis = window.titleVisibility == .hidden ? 0 : 1
         let scale = window.backingScaleFactor
-        return "mask_\(mask)_tv_\(titleVis)_os_\(version.majorVersion)_\(version.minorVersion)_scale_\(scale)"
+        // Shellforge: a toolbar rounds a macOS 26 window's corners further.
+        let toolbar = window.toolbar == nil ? 0 : 1
+        return "mask_\(mask)_tv_\(titleVis)_tb_\(toolbar)_os_\(version.majorVersion)_\(version.minorVersion)_scale_\(scale)"
     }
 
     // MARK: - Private

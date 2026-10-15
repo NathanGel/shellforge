@@ -25,8 +25,9 @@ public enum ShellforgeSidebar {
                                 showBackpack: @escaping @MainActor (@escaping @MainActor () -> Void) -> Void = { _ in },
                                 hideSidebar: @escaping @MainActor () -> Void = {}) -> NSView {
         let chrome = SidebarChrome()
+        chrome.panelCornerRadius = panelCornerRadius
         let sidebar = SidebarView(model: model, chooseFolder: chooseFolder, hooks: hooks, machine: machine,
-                                  backpack: backpack, terminalMatch: terminalMatch, panelCornerRadius: panelCornerRadius,
+                                  backpack: backpack, terminalMatch: terminalMatch,
                                   chrome: chrome, showBackpack: showBackpack, hideSidebar: hideSidebar)
         let host = SidebarHostingView(rootView: ZoomedSidebar(zoom: zoom, sidebar: sidebar))
         host.chrome = chrome
@@ -40,6 +41,19 @@ public enum ShellforgeSidebar {
     public static func setWindowControls(_ controls: SidebarWindowControls?, on view: NSView) {
         guard let host = view as? SidebarHostingView<ZoomedSidebar>, host.chrome?.windowControls != controls else { return }
         host.chrome?.windowControls = controls
+    }
+
+    /// The floating panel's corner radius in the sidebar `view`; it stays square where it was made
+    /// without one (the sidebar does not float).
+    public static func setPanelCornerRadius(_ radius: CGFloat, on view: NSView) {
+        guard let host = view as? SidebarHostingView<ZoomedSidebar>, let chrome = host.chrome,
+              chrome.panelCornerRadius != nil, chrome.panelCornerRadius != radius else { return }
+        chrome.panelCornerRadius = radius
+    }
+
+    /// What `setPanelCornerRadius` last set on `view`.
+    public static func panelCornerRadius(of view: NSView) -> CGFloat? {
+        (view as? SidebarHostingView<ZoomedSidebar>)?.chrome?.panelCornerRadius
     }
 
     /// What `setWindowControls` last set on `view`.
@@ -164,7 +178,6 @@ struct SidebarView: View {
     let machine: MachineMonitor
     let backpack: BackpackController
     let terminalMatch: TerminalMatchSettings
-    let panelCornerRadius: CGFloat?
     @ObservedObject var chrome: SidebarChrome
     let showBackpack: @MainActor (@escaping @MainActor () -> Void) -> Void
     let hideSidebar: @MainActor () -> Void
@@ -191,9 +204,9 @@ struct SidebarView: View {
         }
         // The header places itself on the buttons' row, so the title bar's safe area is not wanted.
         .ignoresSafeArea(.container, edges: chrome.windowControls == nil ? [] : .top)
-        .overlay(alignment: .trailing) { if panelCornerRadius == nil { SidebarEdge() } }
+        .overlay(alignment: .trailing) { if chrome.panelCornerRadius == nil { SidebarEdge() } }
         .frame(minWidth: scale(Size.sidebarMinWidth), maxHeight: .infinity, alignment: .top)
-        .background { SidebarGround(cornerRadius: panelCornerRadius) }
+        .background { SidebarGround(cornerRadius: chrome.panelCornerRadius) }
         .surface(.sidebar)
         .tint(Palette.accent)
         .background(WindowReader(anchor: anchor))

@@ -25,4 +25,7 @@ public struct SidebarWindowControls: Equatable, Sendable {
 /// while the window's buttons are not inside the sidebar (full screen, a compact window, macOS 15).
 @MainActor final class SidebarChrome: ObservableObject {
     @Published var windowControls: SidebarWindowControls?
+    /// The floating panel's corner radius, concentric with the window's as measured; nil where the
+    /// sidebar does not float.
+    @Published var panelCornerRadius: CGFloat?
 }
