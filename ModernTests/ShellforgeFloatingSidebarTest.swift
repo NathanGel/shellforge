@@ -249,6 +249,21 @@ final class ShellforgeFloatingSidebarTest: XCTestCase {
         XCTAssertTrue(column?.isHidden ?? true, "transparency \(session.textview?.transparencyAlpha ?? 1)")
     }
 
+    /// The header shares the toolbar's band, but a click there is the sidebar's: the window's title
+    /// bar must not take it for a drag or let it fall through to nothing.
+    func testAClickOnTheHeaderReachesTheSidebar() throws {
+        try XCTSkipUnless(iTermShellforgeSidebar.floats)
+        root.layoutSubviews()
+        let sidebar = try XCTUnwrap(root.shellforgeSidebarView)
+        let controls = try XCTUnwrap(iTermShellforgeSidebar.reportedWindowControls(of: sidebar))
+        let frameView = try XCTUnwrap(fixture.window.contentView?.superview)
+        let panel = root.shellforgeSidebarFrame
+        // On the header's row, among its trailing buttons, in window coordinates.
+        let point = NSPoint(x: panel.maxX - 40, y: panel.maxY - controls.buttonsMidY)
+        let hit = try XCTUnwrap(frameView.hitTest(frameView.convert(point, from: root)))
+        XCTAssertTrue(hit === sidebar || hit.isDescendant(of: sidebar), "the click lands on \(hit)")
+    }
+
     func testAHiddenSidebarLeavesNoGap() throws {
         try XCTSkipUnless(iTermShellforgeSidebar.floats)
         root.toggleShellforgeSidebar()

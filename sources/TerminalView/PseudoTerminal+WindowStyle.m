@@ -832,6 +832,8 @@ iTermWindowType iTermWindowTypeNormalized(iTermWindowType windowType) {
                                                             object:self.swipeIdentifier];
     }
     togglingLionFullScreen_ = YES;
+    // Shellforge: the toolbar's band goes before the animation, not after it.
+    [self shellforgeUpdateTitlebarBand];
     [self didChangeAnyFullScreen];
     [self updateUseMetalInAllTabs];
     [self updateForTransparency:self.ptyWindow];
@@ -915,6 +917,8 @@ iTermWindowType iTermWindowTypeNormalized(iTermWindowType windowType) {
         RLog(@"Giving up after three retries: %@", self);
         togglingLionFullScreen_ = NO;
         _fullScreenRetryCount = 0;
+        // Shellforge: still a window, so its toolbar's band comes back.
+        [self shellforgeUpdateTitlebarBand];
         [self.contentView didChangeCompactness];
         [self.contentView layoutSubviews];
         [self fulfillFullScreenPromise];
