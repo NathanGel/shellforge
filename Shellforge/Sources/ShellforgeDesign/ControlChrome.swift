@@ -35,7 +35,7 @@ public extension View {
     }
 
     /// The box a group of controls is drawn in: the surface fill inside the one hairline, at the
-    /// group radius — a Settings card, each of the Interface tab's groups, a segmented track.
+    /// group radius — a `SettingsGroup`, a segmented track.
     func groupChrome() -> some View {
         background(RoundedRectangle(cornerRadius: Radius.group).fill(Palette.surface))
             .overlay(RoundedRectangle(cornerRadius: Radius.group).strokeBorder(Palette.border, lineWidth: 1))

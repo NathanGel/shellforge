@@ -179,7 +179,7 @@ Every name here is a type under `app/Sources/`. Nothing aspirational.
 `InterfaceScale`, `IconSource`, and the view modifiers in `ControlChrome.swift`: `focusRing`,
 `fieldChrome` (a single-line field: padding, height and `fieldBox`), `fieldBox` (the field's fill,
 hairline and focus ring alone, for the prompt editor), `menuChrome` (the panel a dropdown hangs in), `menuRowHighlight` (a dropdown row on
-the accent, declaring `.surface(.accent)`) and `groupChrome` (a Settings card's or a segmented
+the accent, declaring `.surface(.accent)`) and `groupChrome` (a `SettingsGroup`'s or a segmented
 track's box).
 `Logos` (the bundled SVG data and its image cache) and `LogoGlyph` are internal to this module.
 `TypeStyle` is the type `Typography`'s members are declared as and the `View.font(_:)` overload
@@ -346,13 +346,13 @@ measured against the native grouped form's: darker in light, lighter in dark), i
 `SettingsSwitch`.
 `MacSettingsCard` is a harness card's anatomy for the Mac: `macbook` in a `.paper` `SymbolMark`, the
 chips “Lid sleep” and “Network discovery”, one action named by its state — Allow… while something is
-missing, Remove once both are granted — and, below its rule, `NumberedSteps` for what is missing or one
+missing, Remove once both are granted — and, under its header, `NumberedSteps` for what is missing or one
 line of `HelpText` when nothing is. A missing permission does not move the tab Settings opens on.
 `NumberedSteps` is also the iTerm2 card's mending steps and the Backpack sheet's phone steps.
 
 `SettingsGroup(title:help:rows:)` is a group that connects and tests nothing — Sidebar size,
-Sidebar badges, each keyboard group: the card's box and rule without its mark, status line or
-actions. A heading over one line of `HelpText`, a `Hairline`, then the rows, one heading gap
+Sidebar badges, each keyboard group: a box of its own (`groupChrome`) and a rule, without a row's
+mark, status line or actions. A heading over one line of `HelpText`, a `Hairline`, then the rows, one heading gap
 (`Space.gap`) either side of the rule and between rows; rows split themselves with a `Hairline`.
 The terminal-background row is not one: it has no heading of its own, only a swatch, a title and
 a switch, in the same `groupChrome` box.
