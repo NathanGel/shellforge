@@ -1671,7 +1671,7 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
 - (CGFloat)shellforgeColumnWidth {
     const CGFloat sidebar = self.shellforgeSidebarWidth;
     if (sidebar <= 0) {
-        return 0;
+        return self.shellforgeRailWidth;
     }
     return sidebar + ([iTermShellforgeSidebar floats] ? [iTermShellforgeSidebar floatingInset] : 0);
 }
@@ -1789,6 +1789,12 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
             ![self shellforgeWindowShowsButtons]);
 }
 
+// Shellforge: the slim bar a closed sidebar leaves in full screen, in the terminal's colour, holding
+// the toggle: something to see and click. 0 otherwise.
+- (CGFloat)shellforgeRailWidth {
+    return [self shellforgeRevealApplies] ? [iTermShellforgeSidebar railWidth] : 0;
+}
+
 - (BOOL)shellforgeSidebarRevealed {
     return [self shellforgeRevealApplies] && _shellforgeReveal.revealed;
 }
@@ -1866,9 +1872,7 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
     }
     _shellforgeToggle.toolTip = [iTermShellforgeSidebar toggleTooltipWithHidden:_shellforgeSidebarHidden];
     _shellforgeToggle.frame = self.shellforgeToggleFrame;
-    // In full screen it lives on the panel: away with it while the sidebar is closed and unrevealed.
-    _shellforgeToggle.hidden = (![self shellforgeWindowShowsButtons] && _shellforgeSidebarHidden &&
-                                ![self shellforgeSidebarRevealed]);
+    _shellforgeToggle.hidden = NO;
 }
 
 - (void)updateShellforgeSidebarDragHandle {
@@ -2020,8 +2024,9 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
     inputs.leftTabBarWidth = _leftTabBarWidth;
 
     // Shellforge sidebar
+    // Shellforge: a closed sidebar in full screen leaves its slim bar.
     const CGFloat shellforgeSidebar = self.shellforgeSidebarWidth;
-    inputs.leftPanelWidth = shellforgeSidebar;
+    inputs.leftPanelWidth = shellforgeSidebar > 0 ? shellforgeSidebar : self.shellforgeRailWidth;
     // Shellforge: the floating panel stands off the window's edges.
     inputs.leftPanelInset = (shellforgeSidebar > 0 && [iTermShellforgeSidebar floats]) ? [iTermShellforgeSidebar floatingInset] : 0;
 

@@ -328,16 +328,22 @@ final class ShellforgeFloatingSidebarTest: XCTestCase {
         XCTAssertEqual(controls.buttonsMidY, panel.maxY - toggle.midY, accuracy: 0.5)
     }
 
-    /// Without window buttons — full screen — the toggle has a row of its own at the panel's top, its
-    /// glyph in line with the rows' leading edge; nothing is left of the terminal while closed.
-    func testWithoutWindowButtonsTheToggleTopsThePanel() {
+    /// Without window buttons — full screen — the toggle has the same place open or closed: centred
+    /// over the slim bar a closed sidebar leaves, which is also the top of the open panel; the bar is
+    /// the column left of the terminal.
+    func testInFullScreenTheToggleKeepsItsPlaceOverTheBar() {
+        let rail = iTermShellforgeSidebar.railWidth
+        XCTAssertLessThanOrEqual(rail, 56, "a slim bar")
         let frame = iTermShellforgeSidebar.toggleFrame(zoomButton: .zero, hasWindowButtons: false, rootHeight: 500)
-        XCTAssertGreaterThan(frame.minX, iTermShellforgeSidebar.floatingInset, "inside the panel")
+        XCTAssertEqual(frame.midX, rail / 2, accuracy: 0.5)
+        XCTAssertGreaterThan(frame.minX, iTermShellforgeSidebar.floatingInset, "inside the open panel too")
         XCTAssertEqual(500 - frame.midY, iTermShellforgeSidebar.floatingInset + iTermShellforgeSidebar.fullScreenHeaderMidY, accuracy: 0.5)
+        var inputs = iTermLayoutInputs()
+        inputs.contentViewWidth = 800; inputs.contentViewHeight = 500
+        inputs.leftPanelWidth = rail; inputs.leftPanelInset = 0
+        XCTAssertEqual(iTermLayoutCalculator.calculateLayout(with: inputs).tabViewFrame.minX, rail)
     }
 
-    /// The reveal: the edge shows the sidebar; leaving it hides it after the delay — unless the
-    /// pointer came back, or it is still wanted then; reset puts it away at once.
     func testTheRevealShowsAndHides() {
         var pending: [() -> Void] = []
         let reveal = ShellforgeSidebarReveal(schedule: { _, work in pending.append(work) })

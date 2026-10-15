@@ -719,16 +719,20 @@ extension iTermShellforgeSidebar {
 
     /// The toggle's frame in a root view of `rootHeight` (origin bottom-left): a gap past the zoom
     /// button and centred on it while the window shows its buttons; otherwise — full screen — on a
-    /// row of its own at the panel's top, its glyph in line with the rows' leading edge.
+    /// row of its own at the panel's top, centred over the slim bar a closed sidebar leaves there, so
+    /// it stays put open or closed.
     @objc static func toggleFrame(zoomButton: NSRect, hasWindowButtons: Bool, rootHeight: CGFloat) -> NSRect {
         let size = toggleSize
         if hasWindowButtons {
             return NSRect(x: zoomButton.maxX + Space.gap, y: zoomButton.midY - size.height / 2, width: size.width, height: size.height)
         }
         let midY = rootHeight - floatingInset - fullScreenHeaderMidY
-        return NSRect(x: floatingInset + ShellforgeSidebar.listInset + Space.base - toggleGlyphInset,
-                      y: midY - size.height / 2, width: size.width, height: size.height)
+        return NSRect(x: railWidth / 2 - size.width / 2, y: midY - size.height / 2, width: size.width, height: size.height)
     }
+
+    /// The slim bar, in the terminal's colour, a closed sidebar leaves in full screen: the toggle's
+    /// place, so there is something to see and click.
+    @objc static var railWidth: CGFloat { 52 }
 
     /// How far the toggle's glyph sits inside its frame.
     static var toggleGlyphInset: CGFloat { 6 }
