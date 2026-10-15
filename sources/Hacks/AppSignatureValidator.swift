@@ -88,7 +88,7 @@ class AppSignatureValidator: NSObject {
         } else if team != "H7V7XYVQ7D" {
             String(localized: "AppSignature.CorruptWrongTeam", defaultValue: "A required file appears to be missing or corrupted and iTerm2’s code signature did not match that of the official distribution.\n\nYou should download a fresh copy of the app and reinstall it.", comment: "Shown when the app's code signature does not match the official distribution")
         } else {
-            String(localized: "AppSignature.CorruptButValidSignature", defaultValue: "A required file appears to be missing or corrupted, yet against all odds the code signature for iTerm2 is valid. Please file a bug at https://iterm2.com/bugs", comment: "Shown when a required file is corrupt but the signature is valid")
+            String(localized: "AppSignature.CorruptButValidSignature", defaultValue: "A required file appears to be missing or corrupted, yet against all odds the code signature for iTerm2 is valid. Please file a bug at https://github.com/NathanGel/shellforge/issues/new/choose", comment: "Shown when a required file is corrupt but the signature is valid")
         }
     }
 }

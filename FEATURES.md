@@ -20,6 +20,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 - [VoiceOver](#voiceover)
 - [The helper (shellforged)](#the-helper-shellforged)
 - [Check for Updates…](#check-for-updates)
+- [Reporting a bug](#reporting-a-bug)
 
 ## The sidebar
 
@@ -317,3 +318,9 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
   - A copy run from Downloads or a disk image is asked to move to Applications first.
   - Drafts and prereleases are never offered, and nor is a version older than the one running.
 - The menu item is disabled while a check or an update is under way.
+
+## Reporting a bug
+
+- **Shellforge › About Shellforge › Report a bug** opens Shellforge's bug form on GitHub with the version and macOS filled in. [CONTRIBUTING.md](CONTRIBUTING.md) says how requests are handled.
+- **After a crash**, the next launch offers to report it. **Copy and Report…** copies the report — the crash log, your settings, and your name and email in its message — and opens the bug form, where you paste it. Nothing is sent by itself; GitHub issues are public, so delete what you do not want to share. **Discard** forgets that crash.
+- Error messages that ask you to report a bug, and the AI usage item's **Report a Bug**, lead to the same form.

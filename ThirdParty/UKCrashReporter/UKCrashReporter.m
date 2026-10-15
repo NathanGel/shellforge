@@ -11,6 +11,7 @@
 // -----------------------------------------------------------------------------
 
 #import "UKCrashReporter.h"
+#import "iTerm2SharedARC-Swift.h"
 #import "UKSystemInfo.h"
 
 @interface UKCrashReporterWindow: NSWindow
@@ -316,57 +317,24 @@ NSString*    gCrashLogString = nil;
 
 -(IBAction)    sendCrashReport: (id)sender
 {
-    NSString            *boundary = @"0xKhTmLbOuNdArY";
+    // Shellforge: the report is never uploaded. It goes on the clipboard and Shellforge's bug
+    // form opens, so the person sees it — their name, email, settings and the crash log — and
+    // pastes only what they choose into a public issue. iTerm2 posted it to iterm2.com.
     NSMutableString*    crashReportString = [NSMutableString string];
     [crashReportString appendString: [informationField string]];
     [crashReportString appendString: @"\n==========\n"];
     [crashReportString appendString: [crashLogField string]];
-    [crashReportString replaceOccurrencesOfString: boundary withString: @"USED_TO_BE_KHTMLBOUNDARY" options: 0 range: NSMakeRange(0, [crashReportString length])];
-    NSData*                crashReport = [crashReportString dataUsingEncoding: NSUTF8StringEncoding];
-    
-    // Prepare a request:
-    // Localization unneeded: this is a service endpoint, not user-visible text.
-    NSURL *url = [NSURL URLWithString: @"https://iterm2.com/crashreportform.php"];
-    NSMutableURLRequest *postRequest = [NSMutableURLRequest requestWithURL: url];
-    NSString            *contentType = [NSString stringWithFormat:@"multipart/form-data; boundary=%@",boundary];
-    NSString            *agent = @"UKCrashReporter";
+    NSPasteboard *pasteboard = [NSPasteboard generalPasteboard];
+    [pasteboard clearContents];
+    [pasteboard setString:crashReportString forType:NSPasteboardTypeString];
+    [[NSWorkspace sharedWorkspace] openURL:[iTermShellforgeBugReport formURLWithTitle:(feedbackMode ? nil : @"Shellforge crashed") details:nil]];
 
-    // Add form trappings to crashReport:
-    NSData*            header = [[NSString stringWithFormat:@"--%@\r\nContent-Disposition: form-data; name=\"crashlog\"\r\n\r\n", boundary] dataUsingEncoding:NSUTF8StringEncoding];
-    NSMutableData*    formData = [[header mutableCopy] autorelease];
-    [formData appendData: crashReport];
-    [formData appendData:[[NSString stringWithFormat:@"\r\n--%@--\r\n",boundary] dataUsingEncoding:NSUTF8StringEncoding]];
-    
-    // setting the headers:
-    [postRequest setHTTPMethod: @"POST"];
-    [postRequest setValue: url.host forHTTPHeaderField: @"Host"];
-    [postRequest setValue: contentType forHTTPHeaderField: @"Content-Type"];
-    [postRequest setValue: agent forHTTPHeaderField: @"User-Agent"];
-    NSString *contentLength = [NSString stringWithFormat:@"%lu", (unsigned long)[formData length]];
-    [postRequest setValue: contentLength forHTTPHeaderField: @"Content-Length"];
-    [postRequest setHTTPBody: formData];
-    
-    // Go into progress mode and kick off the HTTP post:
-    [progressIndicator startAnimation: self];
-    [sendButton setEnabled: NO];
-    [remindButton setEnabled: NO];
-    [discardButton setEnabled: NO];
-
-    _dataTask = [[NSURLSession sharedSession] dataTaskWithRequest:postRequest completionHandler:^(NSData * _Nullable data, NSURLResponse * _Nullable response, NSError * _Nullable error) {
-        if (error) {
-            [self performSelectorOnMainThread: @selector(showFinishedMessage:) withObject: error waitUntilDone: NO];
-            return;
-        }
-        // Now that we successfully sent this crash, don't report it again:
-        if (!feedbackMode) {
-            [[NSUserDefaults standardUserDefaults] setFloat: [[NSDate date] timeIntervalSince1970] forKey:@"UKCrashReporterLastCrashReportDate"];
-            [[NSUserDefaults standardUserDefaults] synchronize];
-        }
-
-        [self performSelectorOnMainThread: @selector(showFinishedMessage:) withObject: nil waitUntilDone: NO];
-    }];
-    [_dataTask retain];
-    [_dataTask resume];
+    // Handled, as a send was: this crash is not offered again.
+    if (!feedbackMode) {
+        [[NSUserDefaults standardUserDefaults] setFloat: [[NSDate date] timeIntervalSince1970] forKey:@"UKCrashReporterLastCrashReportDate"];
+        [[NSUserDefaults standardUserDefaults] synchronize];
+    }
+    [self showFinishedMessage: nil];
 }
 
 

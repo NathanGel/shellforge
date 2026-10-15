@@ -190,18 +190,6 @@ class WorkgroupUsageToolbarItem: SessionToolbarGenericView {
 
     // iTerm2's convention for flagging an error in the UI.
     private static let errorPrefix = "🐞 "
-    // New-issue page for reportable usage errors. GitLab pre-fills the
-    // form from issue[title]/issue[description] query params, so the link
-    // itself carries the report and the user usually needn't paste.
-    private static let bugReportBaseURL =
-        "https://gitlab.com/gnachman/iterm2/-/work_items/new"
-    // Dedicated issue template (AI Usage, in iTerm2's own GitLab project).
-    // Selecting it keeps the project's default template (and its unrelated
-    // boilerplate) out of the report.
-    private static let bugReportTemplate = "AI Usage"
-    // Cap the URL-borne description; the full report always goes to the
-    // clipboard as a fallback for anything a long URL would truncate.
-    private static let maxURLDescription = 2000
 
     // Layout metrics.
     private static let labelWidth: CGFloat = 26
@@ -562,18 +550,11 @@ class WorkgroupUsageToolbarItem: SessionToolbarGenericView {
         warning.cancelLabel = cancel
         warning.warningType = .kiTermWarningTypePersistent
 
-        let url = Self.bugReportURL(title: summary, body: report)
         let handler: (iTermWarningSelection, iTermWarning) -> Void = { selection, _ in
             if selection == .kiTermWarningSelection0 {
-                // Clipboard first as the reliable fallback: URL length
-                // limits (and prefill support) can truncate what the link
-                // carries, but the clipboard always has the whole report.
-                let pboard = NSPasteboard.general
-                pboard.clearContents()
-                pboard.setString(report, forType: .string)
-                if let url {
-                    NSWorkspace.shared.open(url)
-                }
+                // Shellforge's bug form, the report's start in it and the whole report on the
+                // clipboard: a link's length cuts what it can carry.
+                iTermShellforgeBugReport.open(title: summary, report: report)
             }
         }
         warning.window = container.window
@@ -587,15 +568,14 @@ class WorkgroupUsageToolbarItem: SessionToolbarGenericView {
             .infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
         let custom = command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? "no (bundled script)" : "yes"
-        // Markdown mirroring the AI Usage issue template, so the report
-        // reads cleanly whether it lands in the template or replaces it.
+        // Markdown, so the report reads cleanly in the bug form or pasted below it.
         var lines = ["## What happened",
                      "",
                      summary,
                      "",
                      "## Environment",
                      "",
-                     "- iTerm2 version: \(version)",
+                     "- Shellforge version: \(version)",
                      "- Provider: \(provider.displayName)",
                      "- Custom command: \(custom)"]
         if let diagnostic = lastDiagnostic, !diagnostic.isEmpty {
@@ -607,29 +587,6 @@ class WorkgroupUsageToolbarItem: SessionToolbarGenericView {
             lines.append("```")
         }
         return lines.joined(separator: "\n")
-    }
-
-    // Build the GitLab new-issue URL with the report pre-filled via the
-    // issue[title]/issue[description] query params. Returns the bare page
-    // URL if composition somehow fails, so the button still does something
-    // useful (open the tracker) with the report on the clipboard.
-    private static func bugReportURL(title: String, body: String) -> URL? {
-        let trimmed = body.count > maxURLDescription
-            ? String(body.prefix(maxURLDescription))
-                + "\n\n"
-                + String(localized: "WorkgroupUsage.ReportTruncated",
-                         defaultValue: "…(truncated; full report copied to your clipboard)",
-                         comment: "Appended to a pre-filled bug report body when it was shortened to fit the URL")
-            : body
-        guard var components = URLComponents(string: bugReportBaseURL) else {
-            return URL(string: bugReportBaseURL)
-        }
-        components.queryItems = [
-            URLQueryItem(name: "issuable_template", value: bugReportTemplate),
-            URLQueryItem(name: "issue[title]", value: title),
-            URLQueryItem(name: "issue[description]", value: trimmed),
-        ]
-        return components.url ?? URL(string: bugReportBaseURL)
     }
 
     private func rebuildRows(count: Int) {

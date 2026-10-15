@@ -510,7 +510,7 @@
                 // The user declined the download; do not report a failure.
                 return;
             }
-            [iTermWarning showWarningWithTitle:[NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"DependencyEditor.UpgradeErrorMessage", nil, [NSBundle mainBundle], @"Please file a bug report at https://iterm2.com/bugs. The following error occurred while upgrading a dependency: %@", @"Error message when upgrading a dependency fails; %@ is the error"), errorStatus.localizedDescription]
+            [iTermWarning showWarningWithTitle:[NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"DependencyEditor.UpgradeErrorMessage", nil, [NSBundle mainBundle], @"Please file a bug report at https://github.com/NathanGel/shellforge/issues/new/choose. The following error occurred while upgrading a dependency: %@", @"Error message when upgrading a dependency fails; %@ is the error"), errorStatus.localizedDescription]
                                        actions:@[ iTermLocalizedOK() ]
                                      accessory:nil
                                     identifier:nil

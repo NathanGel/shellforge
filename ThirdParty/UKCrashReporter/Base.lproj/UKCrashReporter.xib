@@ -35,9 +35,7 @@
                         <autoresizingMask key="autoresizingMask" flexibleMinY="YES"/>
                         <textFieldCell key="cell" sendsActionOnEndEditing="YES" id="84">
                             <font key="font" metaFont="system"/>
-                            <string key="title">It appears that {APPNAME} crashed the last time it was used. Do you want to send a crash log to the developers?
-
-Crash logs from Apple are not sent to other developers, so this is the only way the developers of {APPNAME} can find out about and fix this crash.</string>
+                            <string key="title">It appears that {APPNAME} crashed the last time it was used. Do you want to report it?</string>
                             <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                             <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
                         </textFieldCell>
@@ -349,7 +347,7 @@ My E-Mail address is {EMAIL}, in case you want to get back to me.
                                             <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
                                             <textFieldCell key="cell" sendsActionOnEndEditing="YES" id="85">
                                                 <font key="font" metaFont="message" size="11"/>
-                                                <string key="title">You can delete any information you do not want transmitted, but this will make it more difficult to detect the bug. By default, the crash log as well as what Mac you are using and your settings are transmitted.</string>
+                                                <string key="title">Copy and Report… copies everything below and opens Shellforge’s bug form on GitHub, where you paste it. Nothing is sent by itself. GitHub issues are public: delete anything you do not want to share, such as your name, email address or settings.</string>
                                                 <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                                                 <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
                                             </textFieldCell>
@@ -362,7 +360,7 @@ My E-Mail address is {EMAIL}, in case you want to get back to me.
                     <button imageHugsTitle="YES" verticalHuggingPriority="750" fixedFrame="YES" translatesAutoresizingMaskIntoConstraints="NO" id="23">
                         <rect key="frame" x="489" y="12" width="89" height="32"/>
                         <autoresizingMask key="autoresizingMask" flexibleMinX="YES" flexibleMaxY="YES"/>
-                        <buttonCell key="cell" type="push" title="Send" bezelStyle="rounded" alignment="center" borderStyle="border" imageScaling="proportionallyDown" inset="2" id="86">
+                        <buttonCell key="cell" type="push" title="Copy and Report…" bezelStyle="rounded" alignment="center" borderStyle="border" imageScaling="proportionallyDown" inset="2" id="86">
                             <behavior key="behavior" pushIn="YES" lightByBackground="YES" lightByGray="YES"/>
                             <font key="font" metaFont="system"/>
                             <string key="keyEquivalent" base64-UTF8="YES">
