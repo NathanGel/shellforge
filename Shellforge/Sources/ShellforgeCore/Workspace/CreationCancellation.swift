@@ -7,17 +7,31 @@ public final class CreationCancellation: @unchecked Sendable {
     private let lock = NSLock()
     private var cancelled = false
     private var running: Process?
+    /// What the cancel stopped, for the run to see off before anything is cleaned up.
+    private var stopped: [pid_t] = []
 
     public init() {}
 
     public var isCancelled: Bool { lock.withLock { cancelled } }
 
+    /// Asks the running command and what it started to stop, and returns at once: the run waits
+    /// for them to be gone, off the main thread.
     public func cancel() {
         let process: Process? = lock.withLock {
             cancelled = true
             return running
         }
-        if let process { ChildProcess.terminateTree(process) }
+        guard let process, process.isRunning else { return }
+        let pids = ChildProcess.terminateTree(process)
+        lock.withLock { stopped += pids }
+    }
+
+    /// The processes the cancel stopped, taken once.
+    func takeStopped() -> [pid_t] {
+        lock.withLock {
+            defer { stopped = [] }
+            return stopped
+        }
     }
 
     /// Holds `process` while it runs, so a cancel reaches it; false when already cancelled.

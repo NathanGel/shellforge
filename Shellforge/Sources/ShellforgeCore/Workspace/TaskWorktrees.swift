@@ -96,10 +96,14 @@ public enum TaskWorktrees {
         }
         try checkCancelled()
         progress?(.creatingWorktree(runsHook: hasCheckoutHook(project: project, launcher: launcher)))
+        // What was there before this create: a cancel takes back only what it made.
+        let branchWasThere = (try? launcher.run("git", ["-C", project.path, "show-ref", "--verify", "--quiet",
+                                                         "refs/heads/\(draft.branch)"]))?.status == 0
+        let pathWasThere = FileManager.default.fileExists(atPath: path)
         do {
             _ = try git(["worktree", "add", "-q", "-b", draft.branch, path, start])
         } catch let cancelled as CreationCancelled {
-            undo(worktree: path, branch: draft.branch, project: project, launcher: launcher)
+            undo(worktree: pathWasThere ? nil : path, branch: branchWasThere ? nil : draft.branch, project: project, launcher: launcher)
             throw cancelled
         }
         return TaskItem(projectId: project.id, title: draft.title, branch: draft.branch, worktreePath: path,
@@ -117,13 +121,16 @@ public enum TaskWorktrees {
         return FileManager.default.isExecutableFile(atPath: hook)
     }
 
-    /// Takes back a stopped create's worktree and the branch made for it, whatever state they were
-    /// left in. The branch was new, with no commits of its own, so nothing of the user's goes.
-    public static func undo(worktree path: String, branch: String, project: Project, launcher: CommandLauncher) {
-        _ = try? launcher.run("git", ["-C", project.path, "worktree", "remove", "--force", path])
-        if FileManager.default.fileExists(atPath: path) { try? FileManager.default.removeItem(atPath: path) }
-        _ = try? launcher.run("git", ["-C", project.path, "worktree", "prune"])
-        _ = try? launcher.run("git", ["-C", project.path, "branch", "-D", branch])
+    /// Takes back what a stopped create made — its worktree, whatever state it was left in (locked
+    /// too), and its branch — and nothing else: pass nil for anything that was there before it. A
+    /// branch it made was new, with no commits of its own, so nothing of the user's goes.
+    public static func undo(worktree path: String?, branch: String?, project: Project, launcher: CommandLauncher) {
+        if let path {
+            _ = try? launcher.run("git", ["-C", project.path, "worktree", "remove", "--force", "--force", path])
+            if FileManager.default.fileExists(atPath: path) { try? FileManager.default.removeItem(atPath: path) }
+            _ = try? launcher.run("git", ["-C", project.path, "worktree", "prune"])
+        }
+        if let branch { _ = try? launcher.run("git", ["-C", project.path, "branch", "-D", branch]) }
     }
 
     /// Adds `pattern` to the repository's `info/exclude` once, so the worktrees never show as untracked.

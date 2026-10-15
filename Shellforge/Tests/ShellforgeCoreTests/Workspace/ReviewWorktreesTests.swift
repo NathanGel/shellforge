@@ -414,6 +414,34 @@ struct RacingGit: GitCommands {
     private static let mergeRequest = MergeRequest(iid: 4, title: "Add gift card", sourceBranch: "feat/mr-branch", targetBranch: "develop",
                                                    author: "Sam", state: "opened", draft: false, url: "https://gitlab/x/-/merge_requests/4")
 
+    /// A cancelled review leaves no worktree behind — not even a locked one — so the branch can be
+    /// reviewed again; the branch itself, which was there before, stays.
+    @Test func aCancelledReviewLeavesTheBranchFreeToReviewAgain() async throws {
+        let repo = try plainRepo()
+        try run(["branch", "feat/mr-branch"], in: repo)
+        let marker = repo + "/../review-hook-started"
+        let hook = repo + "/.git/hooks/post-checkout"
+        try "#!/bin/sh\ntouch '\(marker)'\nexec /bin/sleep 60\n".write(toFile: hook, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: hook)
+        var draft = ReviewDraft(mr: nil, agentId: "claude", model: "opus", reasoning: nil)
+        draft.apply(mr: Self.mergeRequest)
+        let project = Project(name: "repo", path: repo), launcher = self.launcher
+        let cancellation = CreationCancellation()
+        let creating = Task.detached {
+            try ReviewWorktrees.create(draft: draft, in: project, launcher: launcher, cancellation: cancellation)
+        }
+        #expect(await eventually(describing: "the hook to start") { FileManager.default.fileExists(atPath: marker) })
+        cancellation.cancel()
+        await #expect(throws: CreationCancelled.self) { try await creating.value }
+        try FileManager.default.removeItem(atPath: hook)
+        #expect(!FileManager.default.fileExists(atPath: repo + "/.worktrees/review-mr-branch"))
+        #expect(!(try run(["worktree", "list", "--porcelain"], in: repo)).contains("review-mr-branch"), "no worktree entry, locked or not")
+        #expect(!(try run(["rev-parse", "--verify", "--quiet", "refs/heads/feat/mr-branch"], in: repo)).isEmpty, "the branch stays")
+        // And it can be reviewed again.
+        let again = try ReviewWorktrees.create(draft: draft, in: project, launcher: launcher)
+        #expect(again.worktreePath == repo + "/.worktrees/review-mr-branch")
+    }
+
     @Test func aReviewIsStampedAsOneAndCarriesItsMergeRequest() throws {
         let repo = try plainRepo()
         try run(["branch", "feat/mr-branch"], in: repo)

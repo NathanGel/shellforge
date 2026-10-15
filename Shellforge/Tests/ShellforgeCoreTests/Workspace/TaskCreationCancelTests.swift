@@ -62,4 +62,45 @@ import Testing
         }
         #expect(!FileManager.default.fileExists(atPath: "\(repo.path)/.worktrees"))
     }
+
+    /// A cancel landing just as the worktree is added never takes a branch the user already had —
+    /// one named as the draft's — nor its commits.
+    @Test func cancellingNeverDeletesABranchThatWasThereBefore() throws {
+        let repo = try GitRepoFixture()
+        let draft = draft()
+        _ = try repo.git("branch", draft.branch)
+        let before = try repo.git("rev-parse", draft.branch)
+        let cancellation = CreationCancellation()
+        // Cancelled at the very moment the add is about to run.
+        #expect(throws: CreationCancelled.self) {
+            try TaskWorktrees.create(draft: draft, in: repo.project, launcher: repo.launcher, cancellation: cancellation,
+                                     progress: { if case .creatingWorktree = $0 { cancellation.cancel() } })
+        }
+        #expect(try repo.git("rev-parse", draft.branch) == before, "the user's branch stays, untouched")
+    }
+
+    /// A hook child that shrugs off SIGTERM — a `uv sync` slow to die — is gone before the create
+    /// cleans up, so the cleanup is complete: no worktree, no branch.
+    @Test func aStubbornHookChildIsStoppedBeforeTheCleanUp() async throws {
+        let repo = try GitRepoFixture()
+        let marker = "\(repo.path)/../stubborn-started", childPid = "\(repo.path)/../stubborn-child"
+        let hook = "\(repo.path)/.git/hooks/post-checkout"
+        try "#!/bin/sh\n( trap '' TERM; exec /bin/sleep 60 ) &\necho $! > '\(childPid)'\ntouch '\(marker)'\nwait\n"
+            .write(toFile: hook, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: hook)
+        let cancellation = CreationCancellation()
+        let draft = draft()
+        let project = repo.project, launcher = repo.launcher
+        let creating = Task.detached {
+            try TaskWorktrees.create(draft: draft, in: project, launcher: launcher, cancellation: cancellation)
+        }
+        #expect(await waitFor(marker), "the hook ran")
+        cancellation.cancel()
+        await #expect(throws: CreationCancelled.self) { try await creating.value }
+        let pid = try #require(Int32(String(contentsOfFile: childPid, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
+        #expect(kill(pid, 0) != 0, "gone by the time the create returned")
+        #expect(!FileManager.default.fileExists(atPath: "\(repo.path)/.worktrees/\(draft.worktreeSlug)"))
+        #expect((try? repo.git("rev-parse", "--verify", "--quiet", "refs/heads/\(draft.branch)")) == nil)
+    }
 }
+
