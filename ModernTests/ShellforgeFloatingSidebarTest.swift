@@ -198,8 +198,16 @@ final class ShellforgeFloatingSidebarTest: XCTestCase {
 
     /// The panel's corners are concentric with the window's: its radius less the inset, never below 0.
     func testThePanelCornerFollowsTheWindowsRadius() {
-        XCTAssertEqual(iTermShellforgeSidebar.panelCornerRadius(forWindowRadius: 26), 26 - iTermShellforgeSidebar.floatingInset)
-        XCTAssertEqual(iTermShellforgeSidebar.panelCornerRadius(forWindowRadius: 4), 0)
+        XCTAssertEqual(iTermShellforgeSidebar.panelCornerRadius(forWindowRadius: 30), 30 - iTermShellforgeSidebar.floatingInset)
+    }
+
+    /// A measured radius below a plain window's is a mismeasure — a toolbar window is never less
+    /// round — and the panel never goes square: 8.5 pt was measured once, and the panel lost its
+    /// corners.
+    func testThePanelNeverGoesSquare() {
+        let floor = iTermShellforgeSidebar.panelCornerRadius(forWindowRadius: iTermWindowCornerRadiusDetector.fallbackCornerRadius)
+        XCTAssertEqual(iTermShellforgeSidebar.panelCornerRadius(forWindowRadius: 8.5), floor)
+        XCTAssertGreaterThanOrEqual(floor, 8)
     }
 
     /// A toolbar rounds a macOS 26 window's corners further, so a radius measured without one must

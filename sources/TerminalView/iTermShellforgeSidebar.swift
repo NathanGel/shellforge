@@ -658,9 +658,11 @@ extension iTermShellforgeSidebar {
     /// The panel's corner radius in a window whose own is `windowRadius`: concentric with it.
     /// A square window — full screen — has no corner to follow: the panel keeps the rounding it has
     /// in a window.
+    /// A measurement below a plain window's radius is a mismeasure — a toolbar window is never less
+    /// round — and the panel never goes square: at least the rounding it had at an 8 pt inset.
     static func panelCornerRadius(forWindowRadius windowRadius: CGFloat) -> CGFloat {
-        let radius = windowRadius > 0 ? windowRadius : iTermWindowCornerRadiusDetector.fallbackCornerRadius
-        return max(0, radius - floatingInset)
+        let radius = max(windowRadius, iTermWindowCornerRadiusDetector.fallbackCornerRadius)
+        return max(Radius.group, radius - floatingInset)
     }
 
     /// Tells the floating `sidebar` its window's corner radius as now measured, so the panel's
