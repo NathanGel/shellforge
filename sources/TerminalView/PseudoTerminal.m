@@ -13258,6 +13258,11 @@ static BOOL iTermApproximatelyEqualRects(NSRect lhs, NSRect rhs, double epsilon)
 }
 
 - (CGFloat)_desiredTabBarHeight {
+    // Shellforge: beside a floating sidebar the title strip is the toolbar's band, so the title sits
+    // on the window buttons' row.
+    if ([iTermShellforgeSidebar floatsWindowOfType:self.windowType] && [self rootTerminalViewShouldDrawWindowTitleInPlaceOfTabBar]) {
+        return [iTermShellforgeSidebar titlebarBandHeight];
+    }
     if ([self shouldHaveTallTabBar]) {
         return [iTermAdvancedSettingsModel compactMinimalTabBarHeight];
     }

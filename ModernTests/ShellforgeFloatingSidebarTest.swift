@@ -135,6 +135,36 @@ final class ShellforgeFloatingSidebarTest: XCTestCase {
         XCTAssertEqual(iTermThemedWindowType(.WINDOW_TYPE_NORMAL), .WINDOW_TYPE_COMPACT)
     }
 
+    /// The window's buttons, in the root view's coordinates (origin top-left, as the eye reads them).
+    private func buttonFrame(_ type: NSWindow.ButtonType) throws -> NSRect {
+        let button = try XCTUnwrap(fixture.window.standardWindowButton(type))
+        let frame = button.convert(button.bounds, to: nil)
+        return NSRect(x: frame.minX, y: fixture.window.frame.height - frame.maxY, width: frame.width, height: frame.height)
+    }
+
+    /// Finder's inset: the buttons sit as far in from the panel's left edge as from its top, well
+    /// clear of its corner, rather than at the title bar's own spot a point inside it.
+    func testTheWindowButtonsSitEvenlyInsideThePanel() throws {
+        try XCTSkipUnless(iTermShellforgeSidebar.floats)
+        root.layoutSubtreeIfNeeded()
+        let close = try buttonFrame(.closeButton), panel = root.shellforgeSidebarFrame
+        let fromLeft = close.minX - panel.minX, fromTop = close.minY - (root.bounds.height - panel.maxY)
+        XCTAssertGreaterThanOrEqual(fromTop, 8, "clear of the panel's top")
+        XCTAssertEqual(fromLeft, fromTop, accuracy: 1.5)
+    }
+
+    /// The strip is the buttons' band, and the window's title is centred on the buttons' row.
+    func testTheStripIsTheButtonsBand() throws {
+        try XCTSkipUnless(iTermShellforgeSidebar.floats)
+        root.updateTitleAndBorderViews()
+        root.layoutSubtreeIfNeeded()
+        let close = try buttonFrame(.closeButton)
+        let terminalTop = root.bounds.height - (try terminalFrame().maxY)
+        XCTAssertEqual(terminalTop, close.midY * 2, accuracy: 1, "the terminal starts below a band centred on the buttons")
+        let title = root.shellforgeWindowTitleFrame
+        XCTAssertEqual(root.bounds.height - title.midY, close.midY, accuracy: 2, "the title sits on the buttons' row")
+    }
+
     func testAHiddenSidebarLeavesNoGap() throws {
         try XCTSkipUnless(iTermShellforgeSidebar.floats)
         root.toggleShellforgeSidebar()

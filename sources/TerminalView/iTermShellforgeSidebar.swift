@@ -639,6 +639,10 @@ extension iTermShellforgeSidebar {
         floats && (type == .WINDOW_TYPE_NORMAL || type == .WINDOW_TYPE_MAXIMIZED || type == .WINDOW_TYPE_CENTERED)
     }
 
+    /// The band an empty unified toolbar gives a window's title bar on macOS 26, which the window
+    /// buttons are centred in: the title strip beside a floating sidebar is as tall.
+    @objc static var titlebarBandHeight: CGFloat { 52 }
+
     /// How far the floating panel stands off the window's edges.
     @objc static var floatingInset: CGFloat { Space.base }
 

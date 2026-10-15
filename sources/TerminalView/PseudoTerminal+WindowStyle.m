@@ -205,6 +205,7 @@ iTermWindowType iTermWindowTypeNormalized(iTermWindowType windowType) {
     }
 
     [self updateVariables];
+    [self shellforgeUpdateTitlebarBand];
     return myWindow;
 }
 
@@ -1167,6 +1168,27 @@ BOOL iTermWindowTypeIsCompact(iTermWindowType windowType) {
     // Ensure it remains correct for the current window type.
     if (@available(macOS 26, *)) {
         self.window.titleVisibility = [PseudoTerminal shouldHideWindowTitleForWindowType:self.windowType] ? NSWindowTitleHidden : NSWindowTitleVisible;
+    }
+    [self shellforgeUpdateTitlebarBand];
+}
+
+// Shellforge: a floating sidebar's window carries an empty unified toolbar, as Finder's does: the
+// title bar grows to the toolbar's band and macOS sets the window buttons in it, as far in from the
+// panel's left edge as from its top. Placing the buttons by hand is undone by the next resize.
+- (void)shellforgeUpdateTitlebarBand {
+    NSToolbarIdentifier const identifier = @"ShellforgeTitlebarBand";
+    const BOOL wants = [iTermShellforgeSidebar floatsWindowOfType:self.windowType] &&
+        !self.anyFullScreen && !togglingLionFullScreen_;
+    const BOOL has = [self.window.toolbar.identifier isEqualToString:identifier];
+    if (wants && !has) {
+        NSToolbar *toolbar = [[NSToolbar alloc] initWithIdentifier:identifier];
+        toolbar.allowsUserCustomization = NO;
+        toolbar.displayMode = NSToolbarDisplayModeIconOnly;
+        self.window.toolbar = toolbar;
+        self.window.toolbarStyle = NSWindowToolbarStyleUnified;
+        self.window.titlebarSeparatorStyle = NSTitlebarSeparatorStyleNone;
+    } else if (!wants && has) {
+        self.window.toolbar = nil;
     }
 }
 
