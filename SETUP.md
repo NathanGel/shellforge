@@ -38,7 +38,7 @@ again: `xattr -dr com.apple.quarantine /Applications/Shellforge.app`
   inside a git repository.
 - **Right-click a project** for New Task, New Review, New Terminal, Jira Projects…, Tunnels…, SSH
   Host…, Pull <default branch>, the moves, and Remove Project….
-- `Shellforge/docs/features.md` lists every feature.
+- [FEATURES.md](FEATURES.md) lists every feature.
 
 ## 4. Connect Jira, GitLab and GitHub
 

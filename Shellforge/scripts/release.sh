@@ -25,6 +25,10 @@ origin="$(git remote get-url origin)"
 git fetch --quiet --tags origin master
 [[ "$(git rev-parse master)" == "$(git rev-parse origin/master)" ]] || die "master is not the same as origin/master"
 git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null && die "v$VERSION already exists"
+# The release notes are the version's CHANGELOG.md section, dated: read before anything is built.
+NOTES="$ROOT/build/Shellforge-$VERSION-notes.md"
+mkdir -p "$ROOT/build"
+"$ROOT/Shellforge/scripts/changelog-notes.sh" "$VERSION" > "$NOTES" || die "CHANGELOG.md is not ready for $VERSION"
 gh auth status --hostname github.com >/dev/null 2>&1 || die "gh is not logged in to github.com (gh auth login)"
 # Shellforge's versions are its GitHub releases: the repository also holds iTerm2's own tags
 # (v3.7.4, v20261013-nightly), which are no Shellforge version.
@@ -47,6 +51,6 @@ git tag -a "v$VERSION" -m "Shellforge $VERSION"
 git push --quiet origin "v$VERSION"
 # A draft first, so the release goes public only with its image attached: updaters never see a
 # draft, and a run that stops here is finished by hand (Shellforge/docs/releasing.md).
-gh release create "v$VERSION" "$DMG" --repo "$REPO" --draft --verify-tag --title "Shellforge $VERSION" --generate-notes
+gh release create "v$VERSION" "$DMG" --repo "$REPO" --draft --verify-tag --title "Shellforge $VERSION" --notes-file "$NOTES"
 gh release edit "v$VERSION" --repo "$REPO" --draft=false >/dev/null
 print "released Shellforge $VERSION (build $BUILD): https://github.com/$REPO/releases/tag/v$VERSION"

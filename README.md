@@ -18,6 +18,8 @@ sidebar inside every terminal window:
   beside its agent.
 - **Usage** of each agent's plan in the footer, and **Backpack Mode** for a Mac that keeps working
   with its lid closed.
+- **At home on macOS 26:** a floating glass sidebar that follows light and dark, and an optional
+  switch to match the terminal's colours to Shellforge.
 
 Everything iTerm2 does still works as it does in iTerm2.
 
@@ -25,7 +27,7 @@ Everything iTerm2 does still works as it does in iTerm2.
 
 Download the latest `Shellforge-<version>.dmg` from
 [Releases](https://github.com/NathanGel/shellforge/releases/latest). The
-[setup guide](Shellforge/docs/setup.md) covers installing, connecting Jira, GitLab and GitHub,
+[setup guide](SETUP.md) covers installing, connecting Jira, GitLab and GitHub,
 agent hooks, and moving over from AiTerm. Shellforge updates itself from **Shellforge › Check for
 Updates…**.
 
@@ -33,8 +35,12 @@ Apple silicon, macOS 13 or newer, Python 3.11 or newer.
 
 ## Docs
 
-- [Setup guide](Shellforge/docs/setup.md)
-- [Every feature](Shellforge/docs/features.md) and [the keyboard](Shellforge/docs/keyboard.md)
+- [SETUP.md](SETUP.md): installing, connecting Jira, GitLab and GitHub, agent hooks, coming from
+  AiTerm
+- [FEATURES.md](FEATURES.md): every feature and how to reach it, and
+  [the keyboard](Shellforge/docs/keyboard.md)
+- [CHANGELOG.md](CHANGELOG.md): what changed in each version
+- [CONTRIBUTING.md](CONTRIBUTING.md): asking for a change
 - [The code](Shellforge/README.md): Shellforge's own code lives in `Shellforge/`, apart from iTerm2's
 - [Changes to iTerm2's own files](Shellforge/docs/upstream-hook-points.md)
 - [Releasing](Shellforge/docs/releasing.md)
@@ -44,6 +50,12 @@ Apple silicon, macOS 13 or newer, Python 3.11 or newer.
     Shellforge/scripts/make-app.sh      # → build/Shellforge.app
 
 Xcode 27 and swiftly's Swift 6.4. Tests: `Shellforge/scripts/swift.sh test --package-path Shellforge`.
+
+## Contributing
+
+Shellforge takes **change requests, not pull requests**: open a
+[change request or bug report](https://github.com/NathanGel/shellforge/issues/new/choose) on
+GitHub. Pull requests are closed without review. [CONTRIBUTING.md](CONTRIBUTING.md) has the details.
 
 ## Credits and license
 

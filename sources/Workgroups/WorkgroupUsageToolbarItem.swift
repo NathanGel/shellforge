@@ -195,7 +195,7 @@ class WorkgroupUsageToolbarItem: SessionToolbarGenericView {
     // itself carries the report and the user usually needn't paste.
     private static let bugReportBaseURL =
         "https://gitlab.com/gnachman/iterm2/-/work_items/new"
-    // Dedicated issue template (.gitlab/issue_templates/AI Usage.md).
+    // Dedicated issue template (AI Usage, in iTerm2's own GitLab project).
     // Selecting it keeps the project's default template (and its unrelated
     // boilerplate) out of the report.
     private static let bugReportTemplate = "AI Usage"

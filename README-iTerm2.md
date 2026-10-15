@@ -1,3 +1,6 @@
+> This is iTerm2's own readme, kept here as credit for the project Shellforge is built on.
+> Shellforge's readme is [README.md](README.md).
+
 <div align="center">
 
 # iTerm2
@@ -162,16 +165,9 @@ If you prefer building from Xcode instead of the command line:
 
 ### Contributing
 
-We welcome contributions! Please read our [contribution guide](https://gitlab.com/gnachman/iterm2/-/wikis/How-to-Contribute) before submitting pull requests.
-
----
-
-## Bug Reports & Issues
-
-- **File bugs:** [iterm2.com/bugs](https://iterm2.com/bugs)
-- **Issue tracker:** [GitLab Issues](https://gitlab.com/gnachman/iterm2/issues)
-
-> **Note:** We use GitLab for issues because it provides better support for attachments.
+This repository is Shellforge, a fork of iTerm2, and takes change requests rather than pull
+requests: see [CONTRIBUTING.md](CONTRIBUTING.md). Problems that also happen in stock iTerm2 belong
+with [the iTerm2 project](https://iterm2.com).
 
 ---
 

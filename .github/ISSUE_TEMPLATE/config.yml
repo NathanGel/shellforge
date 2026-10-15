@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: How to contribute
+    url: https://github.com/NathanGel/shellforge/blob/master/CONTRIBUTING.md
+    about: Shellforge takes change requests, not pull requests.
