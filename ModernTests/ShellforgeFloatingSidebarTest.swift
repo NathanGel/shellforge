@@ -190,6 +190,10 @@ final class ShellforgeFloatingSidebarTest: XCTestCase {
             .first { $0.identifier == iTermRootTerminalView.shellforgeColumnBackgroundIdentifier })
         XCTAssertFalse(column.isHidden == false && sameColor(column.color, session.processedBackgroundColor),
                        "the terminal's colour behind the panel in a window of the other lightness")
+        // The strip too: its title is inked for the window's lightness, not the terminal's.
+        let strip = try XCTUnwrap(root.subviews.compactMap { $0 as? iTermLayerBackedSolidColorView }
+            .first { !$0.isHidden && $0.frame.maxY >= root.bounds.height - 0.5 && $0.frame.minX > root.shellforgeSidebarFrame.maxX })
+        XCTAssertFalse(sameColor(strip.color, session.processedBackgroundColor), "the strip in a window of the other lightness")
     }
 
     /// The panel's corners are concentric with the window's: its radius less the inset, never below 0.
@@ -231,6 +235,18 @@ final class ShellforgeFloatingSidebarTest: XCTestCase {
             root.layoutSubtreeIfNeeded()
         }
         XCTAssertEqual(session.screen.width(), columns)
+    }
+
+    /// A see-through terminal keeps iTerm2's own see-through window: a solid block of its colour
+    /// behind the panel would be the opposite of one surface.
+    func testASeeThroughTerminalGetsNoSolidColumn() throws {
+        try XCTSkipUnless(iTermShellforgeSidebar.floats)
+        let session = try XCTUnwrap(fixture.terminal.currentSession())
+        session.setSessionSpecificProfileValues([KEY_TRANSPARENCY: 0.4])
+        root.updateTitleAndBorderViews()
+        let column = root.subviews.compactMap { $0 as? iTermLayerBackedSolidColorView }
+            .first { $0.identifier == iTermRootTerminalView.shellforgeColumnBackgroundIdentifier }
+        XCTAssertTrue(column?.isHidden ?? true, "transparency \(session.textview?.transparencyAlpha ?? 1)")
     }
 
     func testAHiddenSidebarLeavesNoGap() throws {

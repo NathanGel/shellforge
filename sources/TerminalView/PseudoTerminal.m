@@ -13186,11 +13186,15 @@ static BOOL iTermApproximatelyEqualRects(NSRect lhs, NSRect rhs, double epsilon)
     if (forStrip && self.currentSession.tabColor) {
         return nil;
     }
+    // A see-through terminal keeps iTerm2's own see-through window and strip.
+    if (self.currentSession.textview.transparencyAlpha < 1) {
+        return nil;
+    }
     NSColor *background = self.currentSession.processedBackgroundColor;
-    // Behind the panel the terminal's colour stands only when its lightness agrees with the
-    // window's: light glass over a dark terminal turns murky, with dark text on it.
-    if (!forStrip && background && background.isDark != self.window.effectiveAppearance.it_isDark) {
-        return [NSColor windowBackgroundColor];
+    // The terminal's colour stands only when its lightness agrees with the window's: light glass
+    // over a dark terminal turns murky, and the strip's title is inked for the window's lightness.
+    if (background && background.isDark != self.window.effectiveAppearance.it_isDark) {
+        return forStrip ? nil : [NSColor windowBackgroundColor];
     }
     return background;
 }
