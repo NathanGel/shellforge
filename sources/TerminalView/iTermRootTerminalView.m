@@ -1727,10 +1727,13 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
 // jump in at the next resize. Not in full screen, which has the screen's width.
 - (void)shellforgeWidenWindowForSidebarIfNeeded {
     NSWindow *window = self.window;
-    if (!window || (window.styleMask & NSWindowStyleMaskFullScreen)) {
+    // Only a floating window, resized freely: an edge-anchored or hotkey window keeps its place.
+    if (!window || ![_delegate rootTerminalViewShellforgeWindowFloats] || [_delegate rootTerminalViewShellforgeInFullScreen]) {
         return;
     }
-    const CGFloat minimum = [self shellforgeMinimumWindowWidth];
+    const NSRect visible = window.screen.visibleFrame;
+    const CGFloat minimum = NSIsEmptyRect(visible) ? [self shellforgeMinimumWindowWidth]
+                                                   : MIN([self shellforgeMinimumWindowWidth], NSWidth(visible));
     NSRect frame = window.frame;
     if (NSWidth(frame) >= minimum) {
         return;
@@ -1756,7 +1759,8 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
     }
     // Through iTerm2's titlebar-accessory nanny, which keeps it across style and window changes and
     // skips a window with no title bar.
-    const BOOL wanted = ![iTermShellforgeSidebar floats] && _shellforgeSidebarHidden && (window.styleMask & NSWindowStyleMaskTitled);
+    const BOOL wanted = ![_delegate rootTerminalViewShellforgeWindowFloats] && _shellforgeSidebarHidden &&
+        (window.styleMask & NSWindowStyleMaskTitled);
     if (wanted && !_shellforgeShowSidebarAccessory) {
         NSImage *image = [NSImage imageWithSystemSymbolName:@"sidebar.left" accessibilityDescription:@"Show Sidebar"];
         NSButton *button = [NSButton buttonWithImage:image target:self action:@selector(toggleShellforgeSidebar)];
@@ -1785,8 +1789,8 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
 // Shellforge: whether a closed sidebar comes back at the screen's left edge: full screen, where
 // there are no window buttons to put its toggle beside.
 - (BOOL)shellforgeRevealApplies {
-    return (_shellforgeSidebar && _shellforgeSidebarHidden && [iTermShellforgeSidebar floats] && self.window &&
-            ![self shellforgeWindowShowsButtons]);
+    return (_shellforgeSidebar && _shellforgeSidebarHidden && self.window &&
+            [_delegate rootTerminalViewShellforgeWindowFloats] && [_delegate rootTerminalViewShellforgeInFullScreen]);
 }
 
 // Shellforge: the slim bar a closed sidebar leaves in full screen, in the terminal's colour, holding
@@ -1860,7 +1864,9 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
 // Shellforge: the sidebar's one toggle, above everything in the root view, in the same place open
 // or closed: just after the window buttons, or in full screen at the top of the panel or the rail.
 - (void)updateShellforgeToggle {
-    if (!_shellforgeSidebar || !self.window || ![iTermShellforgeSidebar floats]) {
+    // Only a floating window has the window's own toggle: a compact one draws its buttons where it
+    // would sit, and keeps the header's toggle and the title bar's Show Sidebar button instead.
+    if (!_shellforgeSidebar || !self.window || ![_delegate rootTerminalViewShellforgeWindowFloats]) {
         _shellforgeToggle.hidden = YES;
         return;
     }
@@ -2399,7 +2405,9 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
     [self updateShellforgeShowSidebarButton];
     [self updateShellforgeToggle];
     [self updateShellforgeColumnBackground];
-    if (_shellforgeSidebar) {
+    if (_shellforgeSidebar && ![_delegate rootTerminalViewShellforgeWindowFloats]) {
+        [iTermShellforgeSidebar clearWindowControlsIn:_shellforgeSidebar];
+    } else if (_shellforgeSidebar) {
         [iTermShellforgeSidebar updateWindowControlsIn:_shellforgeSidebar
                                            toggleFrame:self.shellforgeToggleFrame
                                                stacked:![self shellforgeWindowShowsButtons]];

@@ -11,7 +11,7 @@ import Testing
     }
 
     @Test func theSettingIsASwitchNotACheckbox() {
-        let host = NSHostingView(rootView: TerminalMatchCard(settings: TerminalMatchSettings(defaults: ScratchDefaults.make())))
+        let host = NSHostingView(rootView: TerminalMatchCard(isOn: .constant(false)))
         host.frame.size = NSSize(width: 500, height: host.fittingSize.height)
         let window = NSWindow(contentRect: host.frame, styleMask: [], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false

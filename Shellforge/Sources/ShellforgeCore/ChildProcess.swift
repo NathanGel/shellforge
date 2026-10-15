@@ -14,7 +14,7 @@ public struct ChildOutput: Sendable, Equatable {
 enum ChildProcess {
     /// Runs `executable` with exactly `environment`, stdin closed, and waits up to `timeout` seconds.
     /// A child that outlives it — or that `cancellation` stops — is sent SIGTERM with everything it
-    /// started, then SIGKILL a second later.
+    /// started, then SIGKILL a second later if it is still there.
     static func run(_ executable: String, _ arguments: [String], environment: [String: String],
                     directory: String? = nil, timeout: TimeInterval,
                     cancellation: CreationCancellation? = nil) throws -> ChildOutput {
@@ -30,18 +30,38 @@ enum ChildProcess {
 
         let out = PipeReader(stdout.fileHandleForReading), err = PipeReader(stderr.fileHandleForReading)
         let finished = DispatchSemaphore(value: 0)
-        process.terminationHandler = { _ in finished.signal() }
+        let exited = Locked(false)
+        process.terminationHandler = { _ in
+            exited.withLock { $0 = true }
+            finished.signal()
+        }
         // A create already cancelled starts nothing more.
         if cancellation?.isCancelled == true { throw CreationCancelled() }
         try process.run()
         var stopped: [pid_t] = []
-        if let cancellation, !cancellation.begin(process) { stopped = terminateTree(process) }
+        if let cancellation, !cancellation.begin(process, wake: { finished.signal() }) { stopped = terminateTree(process) }
 
+        // Until it exits: past its deadline, or cancelled, it is asked to stop (SIGTERM, with what it
+        // started); a second later, still there, it is killed (SIGKILL) — a child that ignores the
+        // first must not hold the run for ever.
         var timedOut = false
-        if finished.wait(timeout: .now() + timeout) == .timedOut {
-            timedOut = true
-            stopped += terminateTree(process)
-            finished.wait()
+        var asked = !stopped.isEmpty
+        var limit: DispatchTime = asked ? .now() + 1 : .now() + timeout
+        while !exited.withLock({ $0 }) {
+            let waited = finished.wait(timeout: limit)
+            if exited.withLock({ $0 }) { break }
+            let cancelled = cancellation?.isCancelled == true
+            if !asked, waited == .timedOut || cancelled {
+                if !cancelled {
+                    timedOut = true
+                    stopped += terminateTree(process)
+                }
+                asked = true
+                limit = .now() + 1
+            } else if asked, waited == .timedOut {
+                signal([process.processIdentifier] + stopped + (cancellation?.peekStopped() ?? []), SIGKILL)
+                limit = .now() + 1
+            }
         }
         cancellation?.end()
         // What was stopped is gone before the caller goes on — to clean up a worktree a hook was
@@ -59,18 +79,28 @@ extension ChildProcess {
     /// one already handed to launchd, is not reached.
     @discardableResult
     static func terminateTree(_ process: Process) -> [pid_t] {
+        let all = tree(of: process)
+        signal(all, SIGTERM)
+        return all
+    }
+
+    /// `process` and every process below it.
+    static func tree(of process: Process) -> [pid_t] {
         let pid = process.processIdentifier
         guard pid > 0 else { return [] }
-        let all = [pid] + descendants(of: pid)
-        for each in all { kill(each, SIGTERM) }
-        return all
+        return [pid] + descendants(of: pid)
+    }
+
+    /// Sends `signal` to each of `pids` still there.
+    static func signal(_ pids: [pid_t], _ signal: Int32) {
+        for each in pids where kill(each, 0) == 0 { kill(each, signal) }
     }
 
     /// Waits up to a second for `pids` to end, SIGKILLs any that would not, and waits for those.
     static func reap(_ pids: [pid_t]) {
         guard !pids.isEmpty else { return }
         if waitGone(pids, timeout: 1) { return }
-        for each in pids where kill(each, 0) == 0 { kill(each, SIGKILL) }
+        signal(pids, SIGKILL)
         _ = waitGone(pids, timeout: 1)
     }
 

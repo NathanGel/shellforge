@@ -47,6 +47,16 @@ import ShellforgeDesign
         #expect(CreationFooter.progressText(.fetching(base: "main"), cancelling: true) == "Cancelling…")
     }
 
+    /// While a create runs, ⎋ is Cancel even when a completion popup was left open: the popup's
+    /// list is never asked, so one ⎋ always reaches the way out.
+    @Test func escapeCancelsACreateEvenWithAListOpen() {
+        var asked = false
+        let open = { asked = true; return true }
+        #expect(!CreationFooter.listCloser(creating: true, open)())
+        #expect(!asked)
+        #expect(CreationFooter.listCloser(creating: false, open)())
+    }
+
     @Test func theDestinationNamesTheWorktreeAndBranch() {
         let project = Project(name: "demo", path: "/tmp/demo")
         #expect(Destination.worktree(project: project, slug: "login-2", branch: "feat/login").text

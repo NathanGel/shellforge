@@ -6,9 +6,28 @@ import ShellforgeCore
 import ShellforgeDesign
 import Testing
 @testable import ShellforgeUI
+@testable import ShellforgeTestSupport
 
 @MainActor
 @Suite struct PromptEditorTests {
+    /// Disabling the editor gives up the keyboard after SwiftUI's update, not inside it: giving it
+    /// up reports the focus change, which writes the sheet's state.
+    @Test func aDisabledEditorGivesUpTheKeyboardAfterTheUpdate() async {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 100), styleMask: [.titled],
+                              backing: .buffered, defer: true)
+        let textView = PromptTextView()
+        window.contentView?.addSubview(textView)
+        window.makeFirstResponder(textView)
+        var reported: [Bool] = []
+        textView.onFocusChange = { reported.append($0) }
+
+        PromptEditor.giveUpKeyboard(textView)
+        #expect(window.firstResponder === textView, "not during the update")
+        #expect(reported.isEmpty)
+        await eventually { window.firstResponder !== textView }
+        #expect(reported == [false])
+    }
+
     @Test func longPromptScrollsToTheInsertionPoint() throws {
         let text = TextBox()
         let completions = PromptCompletions()

@@ -12,6 +12,8 @@ struct SettingsPanel: View {
     let terminalMatch: TerminalMatchSettings
     let close: @MainActor () -> Void
     @State private var failure: String?
+    /// This sheet's own switch, from what is saved when it opens.
+    @State private var matchDraft = false
 
     var body: some View {
         SheetLayout(title: "Settings", height: Sheet.settingsHeight) {
@@ -22,7 +24,7 @@ struct SettingsPanel: View {
                     MacSettingsCard(backpack: backpack)
                     if let environment { SettingsRowDivider(); EnvironmentCard(model: environment) }
                     SettingsRowDivider()
-                    TerminalMatchCard(settings: terminalMatch)
+                    TerminalMatchCard(isOn: $matchDraft)
                 }
                 SettingsSection("Services") {
                     JiraCard(connection: integrations.jira)
@@ -39,13 +41,13 @@ struct SettingsPanel: View {
         }
         .task { integrations.testConfigured() }
         .task { await backpack.refreshSetup() }
-        .onAppear { terminalMatch.beginEditing() }
+        .onAppear { matchDraft = terminalMatch.isOn }
     }
 
     private func save() {
         failure = integrations.save()
         guard failure == nil else { return }
-        terminalMatch.save()
+        terminalMatch.save(matchDraft)
         Task { @MainActor in close() }
     }
 }

@@ -101,7 +101,14 @@ public enum TaskWorktrees {
                                                          "refs/heads/\(draft.branch)"]))?.status == 0
         let pathWasThere = FileManager.default.fileExists(atPath: path)
         do {
-            _ = try git(["worktree", "add", "-q", "-b", draft.branch, path, start])
+            // As long as a review's add: the repository's checkout hook runs inside it, and a first
+            // `uv sync` or `npm install` can take minutes.
+            let out = try launcher.run("git", ["-C", project.path, "worktree", "add", "-q", "-b", draft.branch, path, start],
+                                       timeout: 300, cancellation: cancellation)
+            try checkCancelled()
+            guard out.status == 0 else {
+                throw GitFailure(command: "git worktree add -q -b \(draft.branch) \(path) \(start)", message: out.stderr)
+            }
         } catch let cancelled as CreationCancelled {
             undo(worktree: pathWasThere ? nil : path, branch: branchWasThere ? nil : draft.branch, project: project, launcher: launcher)
             throw cancelled

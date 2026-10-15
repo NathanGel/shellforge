@@ -45,7 +45,18 @@ extension SidebarModel {
                 let command = try AgentCommand.build(agent: agent, model: draft.model, reasoning: draft.reasoning,
                                                      prompt: draft.promptText.isEmpty ? nil : draft.promptText,
                                                      worktreePath: review.worktreePath, launcher: launcher)
+                // Cancelled after the worktree was made: take it back; the branch stays, as in create.
+                if cancellation?.isCancelled == true {
+                    TaskWorktrees.undo(worktree: review.worktreePath, branch: nil, project: project, launcher: launcher)
+                    throw CreationCancelled()
+                }
                 return (review, command)
+            }
+            // Or as the work came back here: still nothing is saved.
+            if cancellation?.isCancelled == true {
+                let path = made.0.worktreePath
+                await BackgroundWork.run { TaskWorktrees.undo(worktree: path, branch: nil, project: project, launcher: launcher) }
+                throw CreationCancelled()
             }
             try document.update { workspace in
                 workspace.tasks.append(made.0)

@@ -13179,6 +13179,14 @@ static BOOL iTermApproximatelyEqualRects(NSRect lhs, NSRect rhs, double epsilon)
     return NO;
 }
 
+- (BOOL)rootTerminalViewShellforgeWindowFloats {
+    return [iTermShellforgeSidebar floatsWindowOfType:self.windowType savedType:self.savedWindowType];
+}
+
+- (BOOL)rootTerminalViewShellforgeInFullScreen {
+    return self.anyFullScreen;
+}
+
 - (NSColor *)rootTerminalViewShellforgeSurfaceColorForStrip:(BOOL)forStrip {
     // Lion full screen from a floating window still floats its sidebar.
     if (![iTermShellforgeSidebar floatsWindowOfType:self.windowType savedType:self.savedWindowType]) {

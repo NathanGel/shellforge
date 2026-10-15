@@ -67,4 +67,32 @@ import Testing
         while !exited.withLock({ $0 }), Date() < deadline { try await Task.sleep(nanoseconds: 10_000_000) }
         #expect(exited.withLock { $0 })
     }
+
+    /// A child that ignores SIGTERM — a CLI's graceful shutdown, a `trap '' TERM` — is killed a moment
+    /// after its deadline: the run returns rather than waiting for it for ever.
+    @Test func aChildThatIgnoresTermIsKilledAfterItsDeadline() async {
+        let returned = Locked(false)
+        Thread.detachNewThread {
+            let out = try? ChildProcess.run("/bin/sh", ["-c", "trap '' TERM; /bin/sleep 30"], environment: [:], timeout: 0.5)
+            #expect(out?.timedOut == true)
+            returned.withLock { $0 = true }
+        }
+        #expect(await eventually(describing: "the run to return") { returned.withLock { $0 } })
+    }
+
+    /// Cancelled, a child that ignores SIGTERM is killed too, and the run returns.
+    @Test func aCancelledChildThatIgnoresTermIsKilled() async {
+        let returned = Locked(false)
+        let cancellation = CreationCancellation()
+        let marker = TestScratch.root.appendingPathComponent("stubborn-\(UUID().uuidString)").path
+        Thread.detachNewThread {
+            _ = try? ChildProcess.run("/bin/sh", ["-c", "trap '' TERM; touch '\(marker)'; /bin/sleep 30"], environment: [:],
+                                      timeout: 120, cancellation: cancellation)
+            returned.withLock { $0 = true }
+        }
+        #expect(await eventually(describing: "the child to start") { FileManager.default.fileExists(atPath: marker) })
+        cancellation.cancel()
+        #expect(await eventually(describing: "the run to return") { returned.withLock { $0 } })
+    }
 }
+

@@ -555,4 +555,34 @@ extension SidebarModel {
         model.select(task: task)
         #expect(host.opened.count == 2 && host.opened.last?.command == nil)
     }
+
+    /// Cancel pressed after git made the review's worktree, while its command is still being put
+    /// together, saves nothing and takes the worktree back: the sheet said it was cancelled.
+    @Test func aReviewCancelledAfterItsWorktreeSavesNothing() async throws {
+        let (model, host, document, project) = try await modelWithProject()
+        let repo = try #require(document.workspace.projects.first).path
+        _ = try model.launcher.run("git", ["-C", repo, "branch", "feature"])
+        // A git that holds at the command's one call — the prompt written beside it — until let go.
+        let root = (repo as NSString).deletingLastPathComponent
+        try """
+        #!/bin/sh
+        case "$*" in *review-feature*--git-common-dir*) touch "\(root)/held"; while [ ! -f "\(root)/go" ]; do sleep 0.02; done;; esac
+        exec /usr/bin/git "$@"
+        """.write(toFile: "\(root)/bin/git", atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: "\(root)/bin/git")
+        var draft = ReviewDraft(mr: nil, agentId: "claude", model: "opus", reasoning: nil)
+        draft.setTitle("Review feature")
+        draft.setBranch("feature")
+        draft.promptText = "look\tclosely"   // a tab: written to a file, not typed
+        let cancellation = CreationCancellation()
+        let creating = Task { @MainActor in
+            try await CreationContext.$cancellation.withValue(cancellation) { try await model.newReview(draft: draft, in: project) }
+        }
+        #expect(await eventually { FileManager.default.fileExists(atPath: "\(root)/held") })
+        cancellation.cancel()
+        FileManager.default.createFile(atPath: "\(root)/go", contents: nil)
+        await #expect(throws: CreationCancelled.self) { try await creating.value }
+        #expect(document.workspace.tasks.isEmpty && host.opened.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: "\(repo)/.worktrees/review-feature"))
+    }
 }

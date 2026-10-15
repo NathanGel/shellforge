@@ -12,8 +12,10 @@ import XCTest
 @MainActor
 final class ShellforgeTerminalMatchTest: XCTestCase {
     private var fixture: TerminalWindowTestFixture!
+    private var savedDefaults: ShellforgeDefaultsSnapshot!
 
     override func setUp() async throws {
+        savedDefaults = ShellforgeDefaultsSnapshot()
         iTermShellforgeTerminalMatch.setOn(false)
         fixture = TerminalWindowTestFixture()
     }
@@ -21,6 +23,7 @@ final class ShellforgeTerminalMatchTest: XCTestCase {
     override func tearDown() async throws {
         iTermShellforgeTerminalMatch.setOn(false)
         fixture.close()
+        savedDefaults.restore()
     }
 
     /// Within 2/255 per channel: the colour map may hold a colour in its own space.

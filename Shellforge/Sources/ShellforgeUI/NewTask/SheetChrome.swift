@@ -185,6 +185,12 @@ struct CreationFooter: View {
         }
     }
 
+    /// What ⎋ closes first: while a create runs, nothing — the fields are locked, so a popup left
+    /// open must not swallow the ⎋ that cancels.
+    static func listCloser(creating: Bool, _ closeList: @escaping () -> Bool) -> () -> Bool {
+        creating ? { false } : closeList
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: Space.gap) {
             if let error {
@@ -197,7 +203,8 @@ struct CreationFooter: View {
             // While a create runs its Cancel stays live — the way out of one stuck in a checkout hook —
             // and the footer says what it is doing.
             SheetFooter(secondary: step == 1 || creating ? "Cancel" : "Back", primary: step == 3 ? createLabel : "Continue",
-                        canCancel: !cancelling, canSubmit: canAdvance, closeList: closeList, cancel: back, submit: advance) {
+                        canCancel: !cancelling, canSubmit: canAdvance,
+                        closeList: Self.listCloser(creating: creating, closeList), cancel: back, submit: advance) {
                 if creating {
                     HStack(spacing: Space.base) {
                         ProgressView().controlSize(.small)

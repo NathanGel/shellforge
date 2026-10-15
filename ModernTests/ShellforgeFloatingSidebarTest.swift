@@ -12,8 +12,10 @@ import XCTest
 final class ShellforgeFloatingSidebarTest: XCTestCase {
     private var fixture: TerminalWindowTestFixture!
     private var root: iTermRootTerminalView!
+    private var savedDefaults: ShellforgeDefaultsSnapshot!
 
     override func setUp() async throws {
+        savedDefaults = ShellforgeDefaultsSnapshot()
         fixture = TerminalWindowTestFixture()
         root = try XCTUnwrap(fixture.terminal.contentView)
         if root.shellforgeSidebarHidden { root.toggleShellforgeSidebar() }
@@ -22,6 +24,7 @@ final class ShellforgeFloatingSidebarTest: XCTestCase {
 
     override func tearDown() async throws {
         fixture.close()
+        savedDefaults.restore()
     }
 
     func testFloatingIsMacOS26AndLater() {
@@ -281,6 +284,10 @@ final class ShellforgeFloatingSidebarTest: XCTestCase {
         XCTAssertTrue(iTermShellforgeSidebar.floatsWindow(ofType: .WINDOW_TYPE_LION_FULL_SCREEN, savedType: .WINDOW_TYPE_NORMAL))
         XCTAssertTrue(iTermShellforgeSidebar.floatsWindow(ofType: .WINDOW_TYPE_NORMAL, savedType: .WINDOW_TYPE_NORMAL))
         XCTAssertFalse(iTermShellforgeSidebar.floatsWindow(ofType: .WINDOW_TYPE_LION_FULL_SCREEN, savedType: .WINDOW_TYPE_ACCESSORY))
+        XCTAssertTrue(iTermShellforgeSidebar.floatsWindow(ofType: .WINDOW_TYPE_TRADITIONAL_FULL_SCREEN, savedType: .WINDOW_TYPE_NORMAL),
+                      "traditional full screen from a floating window floats too")
+        XCTAssertFalse(iTermShellforgeSidebar.floatsWindow(ofType: .WINDOW_TYPE_COMPACT, savedType: .WINDOW_TYPE_COMPACT),
+                       "a compact window keeps iTerm2's own buttons and title bar")
     }
 
     /// A square window — full screen — keeps a rounded panel: the panel is rounded for itself there.
@@ -394,6 +401,41 @@ final class ShellforgeFloatingSidebarTest: XCTestCase {
         root.layoutSubtreeIfNeeded()
         XCTAssertGreaterThanOrEqual(fixture.window.frame.width, root.shellforgeMinimumWindowWidth() - 0.5)
         XCTAssertGreaterThan(root.shellforgeSidebarWidth, 0, "the sidebar is shown, not stepped aside")
+    }
+
+    /// The toolbar's band belongs to a floating window outside full screen — including one whose
+    /// type still reads Lion full screen as it leaves it, entered from a normal window; otherwise the
+    /// window came back from full screen without its band.
+    func testTheTitlebarBandFollowsTheWindowOutOfFullScreen() throws {
+        try XCTSkipUnless(iTermShellforgeSidebar.floats)
+        XCTAssertTrue(iTermShellforgeSidebar.wantsTitlebarBand(windowType: .WINDOW_TYPE_LION_FULL_SCREEN,
+                                                               savedType: .WINDOW_TYPE_NORMAL, fullScreen: false))
+        XCTAssertFalse(iTermShellforgeSidebar.wantsTitlebarBand(windowType: .WINDOW_TYPE_LION_FULL_SCREEN,
+                                                                savedType: .WINDOW_TYPE_NORMAL, fullScreen: true))
+        XCTAssertTrue(iTermShellforgeSidebar.wantsTitlebarBand(windowType: .WINDOW_TYPE_NORMAL,
+                                                               savedType: .WINDOW_TYPE_NORMAL, fullScreen: false))
+        XCTAssertFalse(iTermShellforgeSidebar.wantsTitlebarBand(windowType: .WINDOW_TYPE_ACCESSORY,
+                                                                savedType: .WINDOW_TYPE_ACCESSORY, fullScreen: false))
+    }
+
+    /// A compact window (the Compact or Minimal theme of the user's own choosing) draws iTerm2's own
+    /// window buttons where the floating toggle would sit: it gets no window toggle, so a click on
+    /// close closes, and the header keeps its own.
+    func testACompactWindowKeepsItsButtonsClear() throws {
+        try XCTSkipUnless(iTermShellforgeSidebar.floats)
+        let saved = iTermUserDefaults.userDefaults().object(forKey: kPreferenceKeyTabStyle)
+        iTermUserDefaults.userDefaults().set(Int(iTermPreferencesTabStyle.TAB_STYLE_MINIMAL.rawValue), forKey: kPreferenceKeyTabStyle)
+        defer { iTermUserDefaults.userDefaults().set(saved, forKey: kPreferenceKeyTabStyle) }
+        let compact = TerminalWindowTestFixture(windowType: .WINDOW_TYPE_COMPACT)
+        defer { compact.close() }
+        let root = try XCTUnwrap(compact.terminal.contentView)
+        if root.shellforgeSidebarHidden { root.toggleShellforgeSidebar() }
+        root.layoutSubviews()
+        XCTAssertEqual(compact.terminal.windowType(), .WINDOW_TYPE_COMPACT)
+        let toggles = root.subviews.compactMap { $0 as? NSButton }.filter { !$0.isHidden && $0.toolTip?.contains("Sidebar") == true }
+        XCTAssertEqual(toggles, [], "no floating toggle over the window's own buttons")
+        let sidebar = try XCTUnwrap(root.shellforgeSidebarView)
+        XCTAssertNil(iTermShellforgeSidebar.reportedWindowControls(of: sidebar), "the header keeps its own toggle")
     }
 
     func testAHiddenSidebarLeavesNoGap() throws {

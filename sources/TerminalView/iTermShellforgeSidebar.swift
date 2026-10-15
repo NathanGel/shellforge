@@ -646,7 +646,13 @@ extension iTermShellforgeSidebar {
     /// Whether a window of `type`, entered from `savedType`, floats its sidebar: as `floatsWindow(ofType:)`,
     /// and a Lion full-screen window entered from one that floats.
     @objc static func floatsWindow(ofType type: iTermWindowType, savedType: iTermWindowType) -> Bool {
-        floatsWindow(ofType: type) || (type == .WINDOW_TYPE_LION_FULL_SCREEN && floatsWindow(ofType: savedType))
+        floatsWindow(ofType: type) ||
+            ((type == .WINDOW_TYPE_LION_FULL_SCREEN || type == .WINDOW_TYPE_TRADITIONAL_FULL_SCREEN) && floatsWindow(ofType: savedType))
+    }
+
+    /// Whether a window carries the toolbar's band: a floating one, outside full screen.
+    @objc static func wantsTitlebarBand(windowType: iTermWindowType, savedType: iTermWindowType, fullScreen: Bool) -> Bool {
+        floatsWindow(ofType: windowType, savedType: savedType) && !fullScreen
     }
 
     /// How far the floating panel stands off the window's edges.
@@ -690,6 +696,12 @@ extension iTermShellforgeSidebar {
     /// Tells the floating `sidebar` where the window's buttons sit inside it, so its header shares
     /// their row; nil while they are not inside it — hidden in a compact window or full screen, or
     /// not over the sidebar at all.
+    /// The window's buttons are its own again — a window that does not float, a compact one say —
+    /// so the header keeps its own toggle.
+    @objc static func clearWindowControls(in sidebar: NSView) {
+        ShellforgeSidebar.setWindowControls(nil, on: sidebar)
+    }
+
     /// `stacked` in full screen, where the toggle has a row of its own above the header.
     @objc static func updateWindowControls(in sidebar: NSView, toggleFrame: NSRect, stacked: Bool) {
         ShellforgeSidebar.setWindowControls(windowControls(in: sidebar, toggleFrame: toggleFrame, stacked: stacked), on: sidebar)

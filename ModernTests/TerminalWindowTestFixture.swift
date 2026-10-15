@@ -25,12 +25,12 @@ final class TerminalWindowTestFixture {
         return MouseEventSynthesizer(window: window)
     }
 
-    /// Opens a window with one tab holding one session.
-    init() {
+    /// Opens a window of `windowType` with one tab holding one session.
+    init(windowType: iTermWindowType = .WINDOW_TYPE_NORMAL) {
         guard let profile = ProfileModel.sharedInstance().defaultBookmark(),
               let terminal = PseudoTerminal(smartLayout: false,
-                                            windowType: .WINDOW_TYPE_NORMAL,
-                                            savedWindowType: .WINDOW_TYPE_NORMAL,
+                                            windowType: windowType,
+                                            savedWindowType: windowType,
                                             percentage: iTermPercentage(width: 0, height: 0),
                                             screen: -1,
                                             profile: profile) else {
