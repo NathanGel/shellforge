@@ -1,6 +1,25 @@
 # Shellforge features
 
-Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in every terminal window. This page lists everything Shellforge adds to iTerm2, and how to reach each thing. iTerm2's own features are unchanged. Keyboard detail is in [keyboard.md](keyboard.md).
+Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in every terminal window. This page lists everything Shellforge adds to iTerm2, and how to reach each thing. iTerm2's own features are unchanged. Every shortcut is in [the keyboard table](Shellforge/docs/keyboard.md); what changed in each version is in [CHANGELOG.md](CHANGELOG.md).
+
+## Contents
+
+- [The sidebar](#the-sidebar)
+- [Projects](#projects)
+- [Dividers](#dividers)
+- [Tasks and reviews](#tasks-and-reviews)
+- [Tabs and panes](#tabs-and-panes)
+- [Terminals](#terminals)
+- [Footer](#footer)
+- [Dock badge](#dock-badge)
+- [Backpack Mode](#backpack-mode)
+- [Tunnels](#tunnels)
+- [Environment](#environment)
+- [Settings and connections](#settings-and-connections)
+- [Keyboard](#keyboard)
+- [VoiceOver](#voiceover)
+- [The helper (shellforged)](#the-helper-shellforged)
+- [Check for Updates…](#check-for-updates)
 
 ## The sidebar
 

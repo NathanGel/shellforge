@@ -32,7 +32,7 @@ calls `uv` fails; through `CommandLauncher` it runs.
 The sidebar at the left edge of every terminal window: projects → tasks → tabs, the footer, and
 the sheets and Settings they open. The window code reaches it through
 `sources/TerminalView/iTermShellforgeSidebar.swift`. Everything it does, and how to reach it, is
-in [docs/features.md](docs/features.md).
+in [FEATURES.md](../FEATURES.md).
 
 ## shellforged
 

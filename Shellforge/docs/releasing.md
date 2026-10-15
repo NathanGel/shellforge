@@ -27,15 +27,22 @@ marked as development builds: they never offer or install an update.
 
 ## Making a release
 
-From a clean `master` that matches `origin/master`:
+First, the changelog. `CHANGELOG.md` keeps the next version's section as `## <version> — unreleased`
+while work lands. To release it, replace `unreleased` with today's date (`## 0.4.0 — 2026-10-15`),
+commit and push. That section, without its heading, becomes the GitHub release notes; check it with
+`Shellforge/scripts/changelog-notes.sh <version>`. Then, from a clean `master` that matches
+`origin/master`:
 
     Shellforge/scripts/release.sh 0.1.0
 
 It:
-1. checks the branch, the tag, `gh` and the certificate;
+1. checks the branch, the tag, the version's dated `CHANGELOG.md` section, `gh` and the certificate;
 2. builds with `make-app.sh` (iTerm2's Deployment configuration, Apple silicon), stamps the version and build number, and signs with the certificate;
 3. wraps the app in `build/Shellforge-<version>.dmg` with `make-dmg.sh`, and checks it;
-4. pushes the tag and publishes the GitHub release with the DMG attached, as a draft first, so updaters never see a release without its image.
+4. pushes the tag and publishes the GitHub release with the DMG attached and the changelog section as its notes, as a draft first, so updaters never see a release without its image.
+
+After a release, start the next version's section at the top of `CHANGELOG.md` as
+`## <next version> — unreleased`.
 
 Running Shellforge sees the new version under **Check for Updates…**.
 
@@ -43,7 +50,7 @@ Running Shellforge sees the new version under **Check for Updates…**.
 
 - **The tag was pushed but there is no release.** Finish it by hand:
   1. Check whether it exists: `gh release view v<version> --repo NathanGel/shellforge`.
-  2. If it doesn't, create it: `gh release create v<version> build/Shellforge-<version>.dmg --repo NathanGel/shellforge --draft --verify-tag --title "Shellforge <version>" --generate-notes`.
+  2. If it doesn't, create it: `gh release create v<version> build/Shellforge-<version>.dmg --repo NathanGel/shellforge --draft --verify-tag --title "Shellforge <version>" --notes-file build/Shellforge-<version>-notes.md`.
   3. If the image is missing, upload it: `gh release upload v<version> build/Shellforge-<version>.dmg --repo NathanGel/shellforge`.
   4. Publish it: `gh release edit v<version> --repo NathanGel/shellforge --draft=false`.
 - **The `git push` failed.** The tag exists only locally, and a re-run refuses with "v… already exists".

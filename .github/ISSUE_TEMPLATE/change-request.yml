@@ -1,0 +1,28 @@
+name: Change request
+description: Something Shellforge should do, or do differently.
+title: "[Change] "
+labels: ["change request"]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: What are you trying to get done?
+      description: The task or workflow, and what gets in the way today.
+    validations:
+      required: true
+  - type: textarea
+    id: change
+    attributes:
+      label: What would you change?
+      description: How Shellforge would behave instead. Mockups and links to a branch are welcome.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What do you do now instead?
+  - type: input
+    id: version
+    attributes:
+      label: Shellforge version
+      description: Shellforge › About Shellforge
