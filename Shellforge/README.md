@@ -10,7 +10,7 @@ makes to iTerm2's own files is listed in [docs/upstream-hook-points.md](docs/ups
 
 ## ShellforgeCore
 
-**Every command finds its tools** (PRD requirements E1 to E7). An app opened from the Dock gets
+**Every command finds its tools.** An app opened from the Dock gets
 launchd's `PATH`, `/usr/bin:/bin:/usr/sbin:/sbin`, and none of what `~/.zprofile` and `~/.zshrc`
 add. So a git hook calling `uv` from Homebrew fails with "uv: command not found", while the same
 command works in a terminal tab.

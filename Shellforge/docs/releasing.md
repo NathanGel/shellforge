@@ -1,6 +1,6 @@
 # Releasing Shellforge
 
-Ported from AiTerm's `docs/releasing.md`.
+Adapted from AiTerm's release process.
 
 ## Versions
 
@@ -33,7 +33,7 @@ commit and push. That section, without its heading, becomes the GitHub release n
 `Shellforge/scripts/changelog-notes.sh <version>`. Then, from a clean `master` that matches
 `origin/master`:
 
-    Shellforge/scripts/release.sh 0.1.0
+    Shellforge/scripts/release.sh <version>
 
 It:
 1. checks the branch, the tag, the version's dated `CHANGELOG.md` section, `gh` and the certificate;
@@ -60,4 +60,4 @@ Running Shellforge sees the new version under **Check for Updates…**.
 ## Development builds
 
 - `Shellforge/scripts/make-app.sh` alone builds `build/Shellforge.app`, marked as a development build.
-- Day-to-day work uses the Development configuration from Xcode or `xcodebuild`: see the repository's `CLAUDE.md`.
+- Day-to-day work uses iTerm2's Development configuration: `tools/build.sh` builds it, and `make run` builds and runs it.

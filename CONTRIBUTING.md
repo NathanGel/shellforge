@@ -16,9 +16,9 @@ What ships is listed in [CHANGELOG.md](CHANGELOG.md).
 
 ## Pull requests
 
-Pull requests are not handled: they are closed without review, whatever they contain. If you have
-written a change, describe it in a change request instead; a link to your branch is welcome as
-background.
+Shellforge does not accept pull requests, so they are closed without review. If you have written
+a change, describe it in a change request instead; a link to your branch is welcome as
+background. Thank you for understanding.
 
 ## Problems in iTerm2 itself
 

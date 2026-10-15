@@ -30,7 +30,7 @@ this list short; new behaviour belongs in the Shellforge package.
 | `sources/AppKit/iTermApplicationDelegate.m` | `checkForUpdatesFromMenu:` and the old-nightly prompt run `iTermShellforgeUpdates`; the menu item is disabled while busy; the delegate is Sparkle's and answers `updaterMayCheckForUpdates:` NO; `finishPreviousUpdate` at launch | Sparkle never checks or offers iTerm2's builds |
 | `sources/TerminalView/iTermShellforgeUpdates.swift` (new) | `@objc` bridge to `ShellforgeUI`'s `UpdateController` | Objective-C cannot import the Swift package |
 
-## M0: verified on 9 October 2026
+## First verification: 9 October 2026
 
 Built with Xcode 27.0 (`make paranoid-deps` without the `sfsymbolenum` step, whose output is
 committed and which needs the SF Symbols app; then `make Development`).

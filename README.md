@@ -4,6 +4,10 @@
 
 ### iTerm2 with a sidebar for projects, tasks and coding agents
 
+[![Latest release](https://img.shields.io/github/v/release/NathanGel/shellforge)](https://github.com/NathanGel/shellforge/releases/latest)
+[![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue)](Shellforge/LICENSE)
+![macOS 13+ on Apple silicon](https://img.shields.io/badge/macOS-13%2B%20%C2%B7%20Apple%20silicon-lightgrey)
+
 </div>
 
 Shellforge is a fork of [iTerm2](https://iterm2.com) that puts [AiTerm](https://github.com/dhondtlaurens/aiterm)'s
@@ -35,7 +39,7 @@ Download the latest `Shellforge-<version>.dmg` from
 agent hooks, and moving over from AiTerm. Shellforge updates itself from **Shellforge › Check for
 Updates…**.
 
-Apple silicon, macOS 13 or newer, Python 3.11 or newer.
+**Requirements:** a Mac with Apple silicon on macOS 13 or newer, and Python 3.11 or newer.
 
 ## Docs
 

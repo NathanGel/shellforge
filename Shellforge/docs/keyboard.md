@@ -1,7 +1,7 @@
 # Keyboard
 
 Shellforge's keys leave every iTerm2 key alone: they are all ⌃⌘ and a letter or bracket that
-iTerm2's own main menu does not use (decided 12 October 2026, option A of PRD W9). iTerm2 keeps
+iTerm2's own main menu does not use. iTerm2 keeps
 ⌘N (New Window), ⌘T (New Tab), ⌘R (Clear Buffer), ⌘F (Find), ⌃⌘F (Full Screen) and the ⌃⌘
 arrows (move a split's divider). `ShellforgeHostTest.testShellforgesControlCommandKeysAreTheirsAlone`
 checks in the running app that each key below is in the main menu once.
