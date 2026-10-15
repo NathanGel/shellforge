@@ -171,7 +171,8 @@ final class ShellforgeFloatingSidebarTest: XCTestCase {
         let sidebar = try XCTUnwrap(root.shellforgeSidebarView)
         let controls = try XCTUnwrap(iTermShellforgeSidebar.reportedWindowControls(of: sidebar), "the buttons are inside the panel")
         let zoom = try buttonFrame(.zoomButton), close = try buttonFrame(.closeButton), panel = root.shellforgeSidebarFrame
-        XCTAssertEqual(controls.buttonsMaxX, zoom.maxX - panel.minX, accuracy: 0.5)
+        // The window buttons, then the toggle, come before the header's title.
+        XCTAssertGreaterThan(controls.buttonsMaxX, zoom.maxX - panel.minX)
         XCTAssertEqual(controls.buttonsMidY, close.midY - (root.bounds.height - panel.maxY), accuracy: 0.5)
     }
 
@@ -286,6 +287,52 @@ final class ShellforgeFloatingSidebarTest: XCTestCase {
         XCTAssertEqual(iTermShellforgeSidebar.floatingInset, 10)
     }
 
+    /// The sidebar's one toggle: just after the window buttons, on their row — as Finder's.
+    func testTheToggleSitsJustAfterTheWindowButtons() throws {
+        try XCTSkipUnless(iTermShellforgeSidebar.floats)
+        root.layoutSubviews()
+        let toggle = root.shellforgeToggleFrame
+        let zoom = try XCTUnwrap(fixture.window.standardWindowButton(.zoomButton))
+        let zoomFrame = zoom.convert(zoom.bounds, to: root)
+        XCTAssertEqual(toggle.minX, zoomFrame.maxX + 12, accuracy: 0.5)
+        XCTAssertEqual(toggle.midY, zoomFrame.midY, accuracy: 0.5)
+    }
+
+    /// Open or closed, the toggle stays where it is.
+    func testTheToggleStaysPutWhenTheSidebarHides() throws {
+        try XCTSkipUnless(iTermShellforgeSidebar.floats)
+        root.layoutSubviews()
+        let open = root.shellforgeToggleFrame
+        root.toggleShellforgeSidebar()
+        defer { root.toggleShellforgeSidebar() }
+        root.layoutSubviews()
+        XCTAssertEqual(root.shellforgeToggleFrame, open)
+    }
+
+    /// The header starts after the toggle, on its row.
+    func testTheHeaderStartsAfterTheToggle() throws {
+        try XCTSkipUnless(iTermShellforgeSidebar.floats)
+        root.layoutSubviews()
+        let sidebar = try XCTUnwrap(root.shellforgeSidebarView)
+        let controls = try XCTUnwrap(iTermShellforgeSidebar.reportedWindowControls(of: sidebar))
+        let toggle = root.shellforgeToggleFrame, panel = root.shellforgeSidebarFrame
+        XCTAssertEqual(controls.buttonsMaxX, toggle.maxX - panel.minX, accuracy: 0.5)
+        XCTAssertEqual(controls.buttonsMidY, panel.maxY - toggle.midY, accuracy: 0.5)
+    }
+
+    /// Without window buttons — full screen — the toggle sits at the top of a slim rail, centred, at
+    /// the height the header's row has there; the rail is the column left of the terminal.
+    func testWithoutWindowButtonsTheToggleSitsOnTheRail() {
+        let rail = iTermShellforgeSidebar.railWidth
+        let frame = iTermShellforgeSidebar.toggleFrame(zoomButton: .zero, hasWindowButtons: false, rootHeight: 500)
+        XCTAssertEqual(frame.midX, rail / 2, accuracy: 0.5)
+        XCTAssertEqual(500 - frame.midY, iTermShellforgeSidebar.floatingInset + iTermShellforgeSidebar.fullScreenHeaderMidY, accuracy: 0.5)
+        var inputs = iTermLayoutInputs()
+        inputs.contentViewWidth = 800; inputs.contentViewHeight = 500
+        inputs.leftPanelWidth = rail; inputs.leftPanelInset = 0
+        XCTAssertEqual(iTermLayoutCalculator.calculateLayout(with: inputs).tabViewFrame.minX, rail)
+    }
+
     func testAHiddenSidebarLeavesNoGap() throws {
         try XCTSkipUnless(iTermShellforgeSidebar.floats)
         root.toggleShellforgeSidebar()
@@ -343,10 +390,7 @@ final class ShellforgeFloatingSidebarTest: XCTestCase {
         root.toggleShellforgeSidebar()
         defer { root.toggleShellforgeSidebar() }
         root.layoutSubtreeIfNeeded()
-        let zoom = try XCTUnwrap(fixture.window.standardWindowButton(.zoomButton))
-        try XCTSkipIf(zoom.isHidden, "a compact window draws its own buttons")
-        let buttons = zoom.convert(zoom.bounds, to: root)
-        XCTAssertGreaterThanOrEqual(root.shellforgeWindowTitleFrame.minX, buttons.maxX)
+        XCTAssertGreaterThanOrEqual(root.shellforgeWindowTitleFrame.minX, root.shellforgeToggleFrame.maxX)
     }
 
     func testTheDragHandleNeverMovesTheWindow() {

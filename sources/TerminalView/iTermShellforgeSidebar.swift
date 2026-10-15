@@ -688,8 +688,46 @@ extension iTermShellforgeSidebar {
     /// Tells the floating `sidebar` where the window's buttons sit inside it, so its header shares
     /// their row; nil while they are not inside it — hidden in a compact window or full screen, or
     /// not over the sidebar at all.
-    @objc static func updateWindowControls(in sidebar: NSView) {
-        ShellforgeSidebar.setWindowControls(windowControls(in: sidebar), on: sidebar)
+    @objc static func updateWindowControls(in sidebar: NSView, toggleFrame: NSRect) {
+        ShellforgeSidebar.setWindowControls(windowControls(in: sidebar, toggleFrame: toggleFrame), on: sidebar)
+    }
+
+    // MARK: The sidebar's toggle
+
+    /// The sidebar's one toggle, owned by the window rather than the sidebar so it stays where it is
+    /// whether the sidebar is open or closed: just after the window buttons, as Finder's; in full
+    /// screen, at the top of the panel or of the rail left when it is closed.
+    @objc static func makeToggleButton(target: AnyObject, action: Selector) -> NSButton {
+        let image = NSImage(systemSymbolName: SFSymbol.sidebarLeft.rawValue, accessibilityDescription: "Toggle Sidebar")
+        let button = NSButton(image: image ?? NSImage(), target: target, action: action)
+        button.isBordered = false
+        button.imageScaling = .scaleNone
+        button.setAccessibilityLabel("Toggle Sidebar")
+        return button
+    }
+
+    /// The toggle's tooltip for a sidebar `hidden` or not.
+    @objc static func toggleTooltip(hidden: Bool) -> String { hidden ? "Show Sidebar (⌃⌘S)" : "Hide Sidebar (⌃⌘S)" }
+
+    @objc static var toggleSize: NSSize { NSSize(width: 28, height: 22) }
+
+    /// The slim column a closed sidebar leaves in full screen, holding only the toggle: with no
+    /// window buttons there, it is the toggle's place.
+    @objc static var railWidth: CGFloat { 48 }
+
+    /// The header row's centre below the panel's top where no window buttons share it.
+    @objc static var fullScreenHeaderMidY: CGFloat { Space.base + Size.menuRow / 2 }
+
+    /// The toggle's frame in a root view of `rootHeight` (origin bottom-left): a gap past the zoom
+    /// button and centred on it while the window shows its buttons; otherwise centred in the rail,
+    /// on the header's row.
+    @objc static func toggleFrame(zoomButton: NSRect, hasWindowButtons: Bool, rootHeight: CGFloat) -> NSRect {
+        let size = toggleSize
+        if hasWindowButtons {
+            return NSRect(x: zoomButton.maxX + Space.gap, y: zoomButton.midY - size.height / 2, width: size.width, height: size.height)
+        }
+        let midY = rootHeight - floatingInset - fullScreenHeaderMidY
+        return NSRect(x: railWidth / 2 - size.width / 2, y: midY - size.height / 2, width: size.width, height: size.height)
     }
 
     /// What the sidebar last heard, for host tests: the zoom button's right edge and the buttons'
@@ -698,10 +736,11 @@ extension iTermShellforgeSidebar {
         ShellforgeSidebar.windowControls(of: sidebar).map { ($0.buttonsMaxX, $0.buttonsMidY) }
     }
 
-    private static func windowControls(in sidebar: NSView) -> SidebarWindowControls? {
-        guard floats, !sidebar.isHidden, let window = sidebar.window, !window.styleMask.contains(.fullScreen),
-              let zoom = window.standardWindowButton(.zoomButton), !zoom.isHidden, zoom.superview != nil else { return nil }
-        let frame = zoom.convert(zoom.bounds, to: sidebar)
+    /// Where the toggle — and the window buttons before it — sit in the sidebar, so the header starts
+    /// after it on its row; nil where the toggle is not over the sidebar.
+    private static func windowControls(in sidebar: NSView, toggleFrame: NSRect) -> SidebarWindowControls? {
+        guard floats, !sidebar.isHidden, let root = sidebar.superview else { return nil }
+        let frame = root.convert(toggleFrame, to: sidebar)
         let midY = sidebar.isFlipped ? frame.midY : sidebar.bounds.height - frame.midY
         guard frame.minX >= 0, midY > 0, frame.maxX < sidebar.bounds.width else { return nil }
         return SidebarWindowControls(buttonsMaxX: frame.maxX, buttonsMidY: midY)

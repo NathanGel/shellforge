@@ -44,14 +44,17 @@ struct SidebarHeader: View {
                 Button("Add Project…", action: addProject)
                 Button("Add Divider…", action: addDivider).disabled(!canAddDivider)
             }
-            // Last, at the sidebar's edge: the side it folds away to.
-            Button(action: hideSidebar) {
-                Image(systemName: "sidebar.left").font(Typography.label).foregroundStyle(surface.secondaryInk)
+            // Last, at the sidebar's edge: the side it folds away to — unless the window holds the
+            // toggle, at the start of this row, where it stays when the sidebar is closed.
+            if windowControls == nil {
+                Button(action: hideSidebar) {
+                    Image(systemName: "sidebar.left").font(Typography.label).foregroundStyle(surface.secondaryInk)
+                }
+                .buttonStyle(.plain)
+                .frame(width: SidebarRowLayout.trailingSlot(scale), height: SidebarRowLayout.trailingSlot(scale))
+                .help("Hide Sidebar (⌃⌘S)")
+                .accessibilityLabel("Hide Sidebar")
             }
-            .buttonStyle(.plain)
-            .frame(width: SidebarRowLayout.trailingSlot(scale), height: SidebarRowLayout.trailingSlot(scale))
-            .help("Hide Sidebar (⌃⌘S)")
-            .accessibilityLabel("Hide Sidebar")
         }
         .frame(height: scale(Size.menuRow))
         .modifier(HeaderPlacement(windowControls: windowControls, scale: scale))
