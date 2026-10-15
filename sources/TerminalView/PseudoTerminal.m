@@ -13180,7 +13180,8 @@ static BOOL iTermApproximatelyEqualRects(NSRect lhs, NSRect rhs, double epsilon)
 }
 
 - (NSColor *)rootTerminalViewShellforgeSurfaceColorForStrip:(BOOL)forStrip {
-    if (![iTermShellforgeSidebar floatsWindowOfType:self.windowType]) {
+    // Lion full screen from a floating window still floats its sidebar.
+    if (![iTermShellforgeSidebar floatsWindowOfType:self.windowType savedType:self.savedWindowType]) {
         return nil;
     }
     if (forStrip && self.currentSession.tabColor) {
@@ -16189,7 +16190,7 @@ typedef NS_ENUM(NSUInteger, iTermBroadcastCommand) {
     [self updateToolbeltAppearance];
     [self updateForTransparency:self.ptyWindow];
     // Shellforge: the floating sidebar's surface is the terminal's background.
-    if ([iTermShellforgeSidebar floatsWindowOfType:self.windowType]) {
+    if ([iTermShellforgeSidebar floatsWindowOfType:self.windowType savedType:self.savedWindowType]) {
         [_contentView updateTitleAndBorderViews];
     }
 }

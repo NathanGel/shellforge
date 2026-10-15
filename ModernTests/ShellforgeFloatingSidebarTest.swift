@@ -265,6 +265,27 @@ final class ShellforgeFloatingSidebarTest: XCTestCase {
         XCTAssertTrue(hit === sidebar || hit.isDescendant(of: sidebar), "the click lands on \(hit)")
     }
 
+    /// A floating window in Lion full screen still floats its sidebar: the surface behind the panel
+    /// must not fall back to the window's grey there.
+    func testAFullScreenWindowFromAFloatingOneStillFloats() throws {
+        try XCTSkipUnless(iTermShellforgeSidebar.floats)
+        XCTAssertTrue(iTermShellforgeSidebar.floatsWindow(ofType: .WINDOW_TYPE_LION_FULL_SCREEN, savedType: .WINDOW_TYPE_NORMAL))
+        XCTAssertTrue(iTermShellforgeSidebar.floatsWindow(ofType: .WINDOW_TYPE_NORMAL, savedType: .WINDOW_TYPE_NORMAL))
+        XCTAssertFalse(iTermShellforgeSidebar.floatsWindow(ofType: .WINDOW_TYPE_LION_FULL_SCREEN, savedType: .WINDOW_TYPE_ACCESSORY))
+    }
+
+    /// A square window — full screen — keeps a rounded panel: the panel is rounded for itself there.
+    func testASquareWindowKeepsARoundedPanel() {
+        XCTAssertEqual(iTermShellforgeSidebar.panelCornerRadius(forWindowRadius: 0),
+                       iTermShellforgeSidebar.panelCornerRadius(forWindowRadius: iTermWindowCornerRadiusDetector.fallbackCornerRadius))
+        XCTAssertGreaterThan(iTermShellforgeSidebar.panelCornerRadius(forWindowRadius: 0), 0)
+    }
+
+    /// The panel stands a little further off the window's edges than a hairline gap: 10 pt.
+    func testThePanelsInsetIsTenPoints() {
+        XCTAssertEqual(iTermShellforgeSidebar.floatingInset, 10)
+    }
+
     func testAHiddenSidebarLeavesNoGap() throws {
         try XCTSkipUnless(iTermShellforgeSidebar.floats)
         root.toggleShellforgeSidebar()

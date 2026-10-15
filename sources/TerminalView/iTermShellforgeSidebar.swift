@@ -643,14 +643,25 @@ extension iTermShellforgeSidebar {
     /// buttons are centred in: the title strip beside a floating sidebar is as tall.
     @objc static var titlebarBandHeight: CGFloat { 52 }
 
+    /// Whether a window of `type`, entered from `savedType`, floats its sidebar: as `floatsWindow(ofType:)`,
+    /// and a Lion full-screen window entered from one that floats.
+    @objc static func floatsWindow(ofType type: iTermWindowType, savedType: iTermWindowType) -> Bool {
+        floatsWindow(ofType: type) || (type == .WINDOW_TYPE_LION_FULL_SCREEN && floatsWindow(ofType: savedType))
+    }
+
     /// How far the floating panel stands off the window's edges.
-    @objc static var floatingInset: CGFloat { Space.base }
+    @objc static var floatingInset: CGFloat { Space.inset }
 
     /// The panel's corners, concentric with the window's.
     static var panelCornerRadius: CGFloat { panelCornerRadius(forWindowRadius: iTermWindowCornerRadiusDetector.fallbackCornerRadius) }
 
     /// The panel's corner radius in a window whose own is `windowRadius`: concentric with it.
-    static func panelCornerRadius(forWindowRadius windowRadius: CGFloat) -> CGFloat { max(0, windowRadius - floatingInset) }
+    /// A square window — full screen — has no corner to follow: the panel keeps the rounding it has
+    /// in a window.
+    static func panelCornerRadius(forWindowRadius windowRadius: CGFloat) -> CGFloat {
+        let radius = windowRadius > 0 ? windowRadius : iTermWindowCornerRadiusDetector.fallbackCornerRadius
+        return max(0, radius - floatingInset)
+    }
 
     /// Tells the floating `sidebar` its window's corner radius as now measured, so the panel's
     /// corners stay concentric with the window's — a toolbar rounds them further on macOS 26.
