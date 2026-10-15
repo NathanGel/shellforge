@@ -58,6 +58,8 @@ public enum Radius {
 /// Heights, widths and diameters: the sidebar's own widths, every control and row height, and the
 /// marks drawn inside them.
 public enum Size {
+    /// The edge of a Settings section's box: one device pixel at 2×, as the native grouped box draws it.
+    public static let groupEdge: CGFloat = 0.5
     /// The width the sidebar opens at when there is no saved frame. It is sized to a task row rather
     /// than to the footer: at 360 a row carrying a Jira key, a diff and a `+n` squeezes its branch
     /// to `feat/f…t-side`; here the branch keeps its type, the ticket's prefix and its tail, and a

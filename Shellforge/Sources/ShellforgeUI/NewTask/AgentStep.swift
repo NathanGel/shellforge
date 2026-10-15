@@ -46,7 +46,9 @@ struct AgentStep<Kind: CreationKind>: View {
                 FormField("Model") {
                     if model.models.isEmpty {
                         HelpText(Self.modelPlaceholder(agentId: model.draft.agentId, catalogueLoaded: model.catalogueLoaded,
-                                                       failure: model.catalogueFailure)).fieldChrome()
+                                                       failure: model.catalogueFailure))
+                            // A note where the dropdown will be, not an empty field: it only keeps the row's height.
+                            .frame(maxWidth: .infinity, minHeight: Size.control, alignment: .leading)
                     } else {
                         Select(values: modelChoices, selection: Binding(get: { selectedModel ?? unselectedModel }, set: { model.setModel($0.id) }),
                                label: { $0.label }, detail: { $0.detail })

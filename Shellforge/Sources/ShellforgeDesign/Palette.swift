@@ -34,6 +34,8 @@ public enum Palette {
     /// A Settings section's box, as macOS's grouped form fills one: a veil that sets it off the sheet
     /// — darker in light, lighter in dark.
     public static let groupFill = adaptive(light: NSColor(white: 0, alpha: 0.017), dark: NSColor(white: 1, alpha: 0.014))
+    /// The edge of a Settings section's box: the native grouped box's one-pixel line.
+    public static let groupEdge = adaptive(light: NSColor(white: 0, alpha: 0.076), dark: NSColor(white: 1, alpha: 0.135))
     /// A text field's ground, as macOS 26's own bezeled fields draw it: white in light; in dark a
     /// veil of white that lifts the field off whatever it sits on. The system text background is a
     /// dark well below the sheet there, which no native field draws.

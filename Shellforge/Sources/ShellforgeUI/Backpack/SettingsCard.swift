@@ -87,7 +87,7 @@ extension SettingsCard where Chips == EmptyView, Actions == EmptyView {
 }
 
 /// A Settings group that connects and tests nothing — Sidebar size, Sidebar badges, each keyboard
-/// group: a `SettingsCard`'s box and rule without its mark, status line or actions. A heading over
+/// group: a box of its own (`groupChrome`) and a rule, without a row's mark, status line or actions. A heading over
 /// one line of `HelpText`, a `Hairline`, then the rows, one heading gap (`Space.gap`) either side of
 /// the rule and between the rows, so every group in Settings starts its rows at the same depth.
 /// The rows draw their own `Hairline` between them where they want one.
@@ -161,7 +161,7 @@ struct IntegrationMark: View {
     }
 }
 
-/// Numbered steps below a card's rule, or on a sheet: a `Typography.mono` number in
+/// Numbered steps under a Settings row's header, or on a sheet: a `Typography.mono` number in
 /// `Palette.muted` beside a `Typography.caption` step, `Space.snug` apart. The iTerm2 card's mending
 /// steps, the Mac card's missing permissions and the Backpack sheet's phone steps.
 struct NumberedSteps: View {
@@ -189,15 +189,16 @@ struct NumberedSteps: View {
 }
 
 /// The rule between two rows of a Settings section, as a grouped form draws it: inset past the
-/// row's mark, so the marks run down the box's edge unbroken.
+/// row's mark, so the marks run down the box's edge unbroken, and short of the box's far edge.
 struct SettingsRowDivider: View {
     var body: some View {
         Hairline().padding(.leading, Space.block + SettingsCard<EmptyView, EmptyView, EmptyView, EmptyView>.markSize + Space.inset)
+            .padding(.trailing, Space.block)
     }
 }
 
 /// A Settings section as macOS's grouped form draws one — Core, Services: a heading in
-/// `Typography.bodyEmphasis` lined up with the rows' marks, then one filled box holding the rows,
+/// `Typography.bodyEmphasis` lined up with the rows' marks, then one filled box, edged as the native one, holding the rows,
 /// a `SettingsRowDivider` between each two.
 struct SettingsSection<Content: View>: View {
     let title: String
@@ -215,6 +216,8 @@ struct SettingsSection<Content: View>: View {
             VStack(alignment: .leading, spacing: 0) { content }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(RoundedRectangle(cornerRadius: Radius.group, style: .continuous).fill(Palette.groupFill))
+                .overlay(RoundedRectangle(cornerRadius: Radius.group, style: .continuous)
+                    .strokeBorder(Palette.groupEdge, lineWidth: Size.groupEdge))
         }
     }
 }
