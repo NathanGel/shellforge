@@ -962,6 +962,8 @@ iTermWindowType iTermWindowTypeNormalized(iTermWindowType windowType) {
     const iTermWindowType desiredWindowType = self.savedWindowType;
     [self updateWindowForWindowType:desiredWindowType];
     self.windowType = desiredWindowType;
+    // Shellforge: the window is itself again: its toolbar's band comes back.
+    [self shellforgeUpdateTitlebarBand];
     [self didChangeAnyFullScreen];
 
     [self updateTabBarControlIsTitlebarAccessory];
@@ -1181,8 +1183,9 @@ BOOL iTermWindowTypeIsCompact(iTermWindowType windowType) {
 // panel's left edge as from its top. Placing the buttons by hand is undone by the next resize.
 - (void)shellforgeUpdateTitlebarBand {
     NSToolbarIdentifier const identifier = @"ShellforgeTitlebarBand";
-    const BOOL wants = [iTermShellforgeSidebar floatsWindowOfType:self.windowType] &&
-        !self.anyFullScreen && !togglingLionFullScreen_;
+    const BOOL wants = [iTermShellforgeSidebar wantsTitlebarBandWithWindowType:self.windowType
+                                                                     savedType:self.savedWindowType
+                                                                    fullScreen:self.anyFullScreen || togglingLionFullScreen_];
     const BOOL has = [self.window.toolbar.identifier isEqualToString:identifier];
     if (wants && !has) {
         NSToolbar *toolbar = [[NSToolbar alloc] initWithIdentifier:identifier];

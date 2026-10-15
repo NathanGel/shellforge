@@ -649,6 +649,11 @@ extension iTermShellforgeSidebar {
         floatsWindow(ofType: type) || (type == .WINDOW_TYPE_LION_FULL_SCREEN && floatsWindow(ofType: savedType))
     }
 
+    /// Whether a window carries the toolbar's band: a floating one, outside full screen.
+    @objc static func wantsTitlebarBand(windowType: iTermWindowType, savedType: iTermWindowType, fullScreen: Bool) -> Bool {
+        floatsWindow(ofType: windowType, savedType: savedType) && !fullScreen
+    }
+
     /// How far the floating panel stands off the window's edges.
     @objc static var floatingInset: CGFloat { Space.inset }
 

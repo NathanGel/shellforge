@@ -396,6 +396,21 @@ final class ShellforgeFloatingSidebarTest: XCTestCase {
         XCTAssertGreaterThan(root.shellforgeSidebarWidth, 0, "the sidebar is shown, not stepped aside")
     }
 
+    /// The toolbar's band belongs to a floating window outside full screen — including one whose
+    /// type still reads Lion full screen as it leaves it, entered from a normal window; otherwise the
+    /// window came back from full screen without its band.
+    func testTheTitlebarBandFollowsTheWindowOutOfFullScreen() throws {
+        try XCTSkipUnless(iTermShellforgeSidebar.floats)
+        XCTAssertTrue(iTermShellforgeSidebar.wantsTitlebarBand(windowType: .WINDOW_TYPE_LION_FULL_SCREEN,
+                                                               savedType: .WINDOW_TYPE_NORMAL, fullScreen: false))
+        XCTAssertFalse(iTermShellforgeSidebar.wantsTitlebarBand(windowType: .WINDOW_TYPE_LION_FULL_SCREEN,
+                                                                savedType: .WINDOW_TYPE_NORMAL, fullScreen: true))
+        XCTAssertTrue(iTermShellforgeSidebar.wantsTitlebarBand(windowType: .WINDOW_TYPE_NORMAL,
+                                                               savedType: .WINDOW_TYPE_NORMAL, fullScreen: false))
+        XCTAssertFalse(iTermShellforgeSidebar.wantsTitlebarBand(windowType: .WINDOW_TYPE_ACCESSORY,
+                                                                savedType: .WINDOW_TYPE_ACCESSORY, fullScreen: false))
+    }
+
     func testAHiddenSidebarLeavesNoGap() throws {
         try XCTSkipUnless(iTermShellforgeSidebar.floats)
         root.toggleShellforgeSidebar()
