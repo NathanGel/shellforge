@@ -15,8 +15,10 @@ final class ShellforgeSidebarZoomTest: XCTestCase {
     private var fixture: TerminalWindowTestFixture!
     private var root: iTermRootTerminalView!
     private var wasHidden = false
+    private var savedDefaults: ShellforgeDefaultsSnapshot!
 
     override func setUp() async throws {
+        savedDefaults = ShellforgeDefaultsSnapshot()
         fixture = TerminalWindowTestFixture()
         root = try XCTUnwrap(fixture.terminal.contentView)
         try XCTSkipUnless(root.hasShellforgeSidebar, "this window has no sidebar")
@@ -30,6 +32,7 @@ final class ShellforgeSidebarZoomTest: XCTestCase {
         iTermShellforgeSidebar.resetTextScale()
         if wasHidden { root.toggleShellforgeSidebar() }
         fixture.close()
+        savedDefaults.restore()
     }
 
     /// A click in the window at `point`, mouse-up queued first so no tracking loop waits on it.

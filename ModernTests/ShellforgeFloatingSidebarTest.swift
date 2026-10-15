@@ -12,8 +12,10 @@ import XCTest
 final class ShellforgeFloatingSidebarTest: XCTestCase {
     private var fixture: TerminalWindowTestFixture!
     private var root: iTermRootTerminalView!
+    private var savedDefaults: ShellforgeDefaultsSnapshot!
 
     override func setUp() async throws {
+        savedDefaults = ShellforgeDefaultsSnapshot()
         fixture = TerminalWindowTestFixture()
         root = try XCTUnwrap(fixture.terminal.contentView)
         if root.shellforgeSidebarHidden { root.toggleShellforgeSidebar() }
@@ -22,6 +24,7 @@ final class ShellforgeFloatingSidebarTest: XCTestCase {
 
     override func tearDown() async throws {
         fixture.close()
+        savedDefaults.restore()
     }
 
     func testFloatingIsMacOS26AndLater() {
