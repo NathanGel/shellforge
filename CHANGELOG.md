@@ -33,6 +33,8 @@ it and refuses to release a version that has none.
 
 ### Fixed
 
+- **The app's process is called Shellforge**, not iTerm2, in Activity Monitor, `ps` and crash logs;
+  so a crash of stock iTerm2 is never offered as Shellforge's.
 - **Bug reports go to Shellforge**, not iTerm2: About › Report a bug, error messages and the AI usage
   report open Shellforge's GitHub bug form. After a crash, **Copy and Report…** copies the report and
   opens that form; crash reports are no longer posted to iterm2.com.

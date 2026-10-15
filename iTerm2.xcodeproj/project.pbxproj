@@ -21234,7 +21234,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_OBJC_BRIDGING_HEADER = "$(SRCROOT)/PerformanceTests/PerformanceTests-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/iTerm2.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/iTerm2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/iTerm2.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Shellforge";
 				USER_HEADER_SEARCH_PATHS = (
 					"$(SRCROOT)/sources",
 					"$(SRCROOT)/ThirdParty",
@@ -21267,7 +21267,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_OBJC_BRIDGING_HEADER = "$(SRCROOT)/PerformanceTests/PerformanceTests-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/iTerm2.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/iTerm2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/iTerm2.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Shellforge";
 				USER_HEADER_SEARCH_PATHS = (
 					"$(SRCROOT)/sources",
 					"$(SRCROOT)/ThirdParty",
@@ -21405,6 +21405,7 @@
 					"$(BUILT_PRODUCTS_DIR)/libit2core.a",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = io.github.nathangel.shellforge;
+				EXECUTABLE_NAME = Shellforge;
 				PRODUCT_NAME = iTerm2;
 				PROVISIONING_PROFILE_SPECIFIER = "iTerm2 Dev ID Keychain";
 				SDKROOT = macosx;
@@ -22493,6 +22494,7 @@
 					"$(BUILT_PRODUCTS_DIR)/libit2core.a",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = io.github.nathangel.shellforge;
+				EXECUTABLE_NAME = Shellforge;
 				PRODUCT_NAME = iTerm2;
 				PROVISIONING_PROFILE_SPECIFIER = "iTerm2 Dev ID Keychain";
 				SDKROOT = macosx;
@@ -24358,7 +24360,7 @@
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/iTerm2.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/iTerm2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/iTerm2.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Shellforge";
 				USER_HEADER_SEARCH_PATHS = (
 					"$(SRCROOT)/ThirdParty",
 					"$(PROJECT_DIR)/ThirdParty/adblock-rust/include",
@@ -24445,7 +24447,7 @@
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/iTerm2.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/iTerm2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/iTerm2.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Shellforge";
 				USER_HEADER_SEARCH_PATHS = (
 					"$(SRCROOT)/ThirdParty",
 					"$(PROJECT_DIR)/ThirdParty/adblock-rust/include",
@@ -24532,7 +24534,7 @@
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/iTerm2.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/iTerm2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/iTerm2.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Shellforge";
 				USER_HEADER_SEARCH_PATHS = (
 					"$(SRCROOT)/ThirdParty",
 					"$(PROJECT_DIR)/ThirdParty/adblock-rust/include",
@@ -24619,7 +24621,7 @@
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/iTerm2.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/iTerm2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/iTerm2.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Shellforge";
 				USER_HEADER_SEARCH_PATHS = (
 					"$(SRCROOT)/ThirdParty",
 					"$(PROJECT_DIR)/ThirdParty/adblock-rust/include",
@@ -24916,6 +24918,7 @@
 					"$(BUILT_PRODUCTS_DIR)/libit2core.a",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = io.github.nathangel.shellforge;
+				EXECUTABLE_NAME = Shellforge;
 				PRODUCT_NAME = iTerm2;
 				SDKROOT = macosx;
 				SECTORDER_FLAGS = "";
@@ -25012,6 +25015,7 @@
 					"$(BUILT_PRODUCTS_DIR)/libit2core.a",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = io.github.nathangel.shellforge;
+				EXECUTABLE_NAME = Shellforge;
 				PRODUCT_NAME = iTerm2;
 				PROVISIONING_PROFILE_SPECIFIER = "iTerm2 Dev ID Keychain";
 				SDKROOT = macosx;
@@ -25216,7 +25220,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_OBJC_BRIDGING_HEADER = "$(SRCROOT)/PerformanceTests/PerformanceTests-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/iTerm2.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/iTerm2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/iTerm2.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Shellforge";
 				USER_HEADER_SEARCH_PATHS = (
 					"$(SRCROOT)/sources",
 					"$(SRCROOT)/ThirdParty",
@@ -25249,7 +25253,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_OBJC_BRIDGING_HEADER = "$(SRCROOT)/PerformanceTests/PerformanceTests-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/iTerm2.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/iTerm2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/iTerm2.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Shellforge";
 				USER_HEADER_SEARCH_PATHS = (
 					"$(SRCROOT)/sources",
 					"$(SRCROOT)/ThirdParty",

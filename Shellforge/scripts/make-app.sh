@@ -21,8 +21,9 @@ die() { print -u2 "make-app: $*"; exit 1; }
 
 mkdir -p "$OUT"
 cd "$ROOT"
-# A fresh clone has neither: the Makefile's own first step, and git's.
-[[ -f plists/iTerm2.plist ]] || cp plists/dev-iTerm2.plist plists/iTerm2.plist
+# Fresh from the template, as the Makefile's Development build does: an old local copy names the
+# executable iTerm2, and an Info.plist naming an executable the bundle lacks will not launch.
+cp plists/dev-iTerm2.plist plists/iTerm2.plist
 if git submodule status | grep -q '^-'; then
     die "submodules are not checked out: git submodule update --init --recursive"
 fi
@@ -38,6 +39,8 @@ tail -1 "$LOG"
 
 rm -rf "$APP"
 ditto "$DERIVED/Build/Products/Deployment/iTerm2.app" "$APP"
+[[ -x "$APP/Contents/MacOS/Shellforge" && "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Contents/Info.plist")" == Shellforge ]] \
+    || die "the app's executable is not Contents/MacOS/Shellforge"
 # Bytecode caches are this machine's, not the source's.
 find "$APP/Contents/Resources/daemon" -name __pycache__ -type d -prune -exec rm -rf {} +
 PLIST="$APP/Contents/Info.plist"

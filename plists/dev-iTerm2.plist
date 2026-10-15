@@ -230,7 +230,7 @@
                 </dict>
         </array>
         <key>CFBundleExecutable</key>
-        <string>iTerm2</string>
+        <string>$(EXECUTABLE_NAME)</string>
         <key>CFBundleGetInfoString</key>
         <string>unknown</string>
         <key>CFBundleHelpBookFolder</key>
