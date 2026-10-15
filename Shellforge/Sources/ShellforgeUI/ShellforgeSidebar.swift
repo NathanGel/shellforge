@@ -206,7 +206,9 @@ struct SidebarView: View {
         // The header places itself on the buttons' row, so the title bar's safe area is not wanted.
         .ignoresSafeArea(.container, edges: chrome.windowControls == nil ? [] : .top)
         .overlay(alignment: .trailing) { if chrome.panelCornerRadius == nil { SidebarEdge() } }
-        .frame(minWidth: scale(Size.sidebarMinWidth), maxHeight: .infinity, alignment: .top)
+        // As wide as its panel and no wider: the window keeps the sidebar to its narrowest, and a
+        // minimum here — scaled with the zoom — spilled the content past a narrower panel's edges.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background { SidebarGround(cornerRadius: chrome.panelCornerRadius) }
         .surface(.sidebar)
         .tint(Palette.accent)

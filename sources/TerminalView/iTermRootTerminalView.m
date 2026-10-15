@@ -178,6 +178,8 @@ typedef struct {
     iTermDragHandleView *_shellforgeSidebarDragHandle;
     // Shellforge: while the sidebar is hidden, the title bar's button that brings it back.
     NSTitlebarAccessoryViewController *_shellforgeShowSidebarAccessory;
+    // Shellforge: the sidebar's one toggle, the window's, so it stays put open or closed.
+    NSButton *_shellforgeToggle;
     BOOL _tabViewFrameReduced;
     BOOL _haveShownToolbelt;
     iTermStoplightHotbox *_stoplightHotbox;
@@ -790,15 +792,11 @@ typedef struct {
     // Shellforge: beside the sidebar the strip starts at the sidebar's column, and the window
     // buttons, inside the panel, are not in its way.
     const CGFloat sidebarColumn = self.shellforgeColumnWidth;
-    // Shellforge: without the sidebar, a floating window's title clears macOS's window buttons and
-    // the Show Sidebar button beside them — the Tahoe tab-bar insets do not count them.
+    // Shellforge: without the sidebar, a floating window's title clears the window buttons and the
+    // sidebar's toggle after them — the Tahoe tab-bar insets do not count them.
     CGFloat shellforgeButtonsInset = 0;
-    if (sidebarColumn == 0 && [iTermShellforgeSidebar floats]) {
-        NSButton *zoom = [self.window standardWindowButton:NSWindowZoomButton];
-        if (zoom && !zoom.isHidden) {
-            shellforgeButtonsInset = NSMaxX([zoom convertRect:zoom.bounds toView:self]) +
-                NSWidth(_shellforgeShowSidebarAccessory.view.frame) + iTermRootTerminalViewWindowNumberLabelMargin;
-        }
+    if (sidebarColumn == 0 && [iTermShellforgeSidebar floats] && _shellforgeToggle) {
+        shellforgeButtonsInset = NSMaxX(self.shellforgeToggleFrame) + iTermRootTerminalViewWindowNumberLabelMargin;
     }
     const CGFloat mostGenerousInset = sidebarColumn > 0 ? iTermRootTerminalViewWindowNumberLabelMargin : MAX(MAX(MAX(insets.left, insets.right), iTermRootTerminalViewWindowNumberLabelMargin), shellforgeButtonsInset);
     const CGFloat containerWidth = NSWidth(self.frame) - sidebarColumn - ([self shouldShowToolbelt] ? NSWidth(_toolbelt.frame) : 0);
@@ -1670,7 +1668,7 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
 - (CGFloat)shellforgeColumnWidth {
     const CGFloat sidebar = self.shellforgeSidebarWidth;
     if (sidebar <= 0) {
-        return 0;
+        return self.shellforgeRailWidth;
     }
     return sidebar + ([iTermShellforgeSidebar floats] ? [iTermShellforgeSidebar floatingInset] : 0);
 }
@@ -1716,8 +1714,8 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
 }
 
 // Shellforge: a handle across the sidebar's right edge, clear of its list's scroller.
-// Shellforge: the title bar's Show Sidebar button, beside the window buttons, while the sidebar is
-// hidden. Added while hidden and removed when shown: a hidden accessory still holds its room, and
+// Shellforge: before macOS 26 (the sidebar does not float, and has no toggle of the window's), the
+// title bar's Show Sidebar button, beside the window buttons, while the sidebar is hidden. Added while hidden and removed when shown: a hidden accessory still holds its room, and
 // the window's title would stay pushed aside. A window with no title bar (full screen) has ⌃⌘S and
 // View › Show Sidebar.
 - (void)updateShellforgeShowSidebarButton {
@@ -1727,7 +1725,7 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
     }
     // Through iTerm2's titlebar-accessory nanny, which keeps it across style and window changes and
     // skips a window with no title bar.
-    const BOOL wanted = _shellforgeSidebarHidden && (window.styleMask & NSWindowStyleMaskTitled);
+    const BOOL wanted = ![iTermShellforgeSidebar floats] && _shellforgeSidebarHidden && (window.styleMask & NSWindowStyleMaskTitled);
     if (wanted && !_shellforgeShowSidebarAccessory) {
         NSImage *image = [NSImage imageWithSystemSymbolName:@"sidebar.left" accessibilityDescription:@"Show Sidebar"];
         NSButton *button = [NSButton buttonWithImage:image target:self action:@selector(toggleShellforgeSidebar)];
@@ -1743,6 +1741,49 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
     if (_shellforgeShowSidebarAccessory) {
         [(PseudoTerminal *)_delegate shellforgeShowTitlebarAccessory:_shellforgeShowSidebarAccessory shown:wanted];
     }
+}
+
+// Shellforge: whether the window shows its own buttons, which the toggle follows.
+- (BOOL)shellforgeWindowShowsButtons {
+    NSWindow *window = self.window;
+    NSButton *zoom = [window standardWindowButton:NSWindowZoomButton];
+    return (zoom != nil && !zoom.isHidden && zoom.superview != nil &&
+            (window.styleMask & NSWindowStyleMaskTitled) && !(window.styleMask & NSWindowStyleMaskFullScreen));
+}
+
+// Shellforge: the rail a closed floating sidebar leaves where the window has no buttons (full screen):
+// the toggle needs a place of its own there. 0 otherwise.
+- (CGFloat)shellforgeRailWidth {
+    if (!_shellforgeSidebar || !_shellforgeSidebarHidden || ![iTermShellforgeSidebar floats] || !self.window ||
+        [self shellforgeWindowShowsButtons]) {
+        return 0;
+    }
+    return [iTermShellforgeSidebar railWidth];
+}
+
+- (NSRect)shellforgeToggleFrame {
+    NSButton *zoom = [self.window standardWindowButton:NSWindowZoomButton];
+    const BOOL hasButtons = [self shellforgeWindowShowsButtons];
+    const NSRect zoomFrame = hasButtons ? [zoom convertRect:zoom.bounds toView:self] : NSZeroRect;
+    return [iTermShellforgeSidebar toggleFrameWithZoomButton:zoomFrame hasWindowButtons:hasButtons rootHeight:NSHeight(self.bounds)];
+}
+
+// Shellforge: the sidebar's one toggle, above everything in the root view, in the same place open
+// or closed: just after the window buttons, or in full screen at the top of the panel or the rail.
+- (void)updateShellforgeToggle {
+    if (!_shellforgeSidebar || !self.window || ![iTermShellforgeSidebar floats]) {
+        _shellforgeToggle.hidden = YES;
+        return;
+    }
+    if (!_shellforgeToggle) {
+        _shellforgeToggle = [iTermShellforgeSidebar makeToggleButtonWithTarget:self action:@selector(toggleShellforgeSidebar)];
+    }
+    if (_shellforgeToggle.superview != self || self.subviews.lastObject != _shellforgeToggle) {
+        [self addSubview:_shellforgeToggle positioned:NSWindowAbove relativeTo:nil];
+    }
+    _shellforgeToggle.toolTip = [iTermShellforgeSidebar toggleTooltipWithHidden:_shellforgeSidebarHidden];
+    _shellforgeToggle.frame = self.shellforgeToggleFrame;
+    _shellforgeToggle.hidden = NO;
 }
 
 - (void)updateShellforgeSidebarDragHandle {
@@ -1894,9 +1935,11 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
     inputs.leftTabBarWidth = _leftTabBarWidth;
 
     // Shellforge sidebar
-    inputs.leftPanelWidth = self.shellforgeSidebarWidth;
+    // Shellforge: a closed sidebar in full screen leaves its rail, the toggle's place.
+    const CGFloat shellforgeSidebar = self.shellforgeSidebarWidth;
+    inputs.leftPanelWidth = shellforgeSidebar > 0 ? shellforgeSidebar : self.shellforgeRailWidth;
     // Shellforge: the floating panel stands off the window's edges.
-    inputs.leftPanelInset = [iTermShellforgeSidebar floats] ? [iTermShellforgeSidebar floatingInset] : 0;
+    inputs.leftPanelInset = (shellforgeSidebar > 0 && [iTermShellforgeSidebar floats]) ? [iTermShellforgeSidebar floatingInset] : 0;
 
     // Toolbelt
     inputs.toolbeltWidth = floor(self.toolbeltWidth);
@@ -2263,9 +2306,10 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
     _shellforgeSidebar.hidden = _shellforgeSidebarHidden;
     [self updateShellforgeSidebarDragHandle];
     [self updateShellforgeShowSidebarButton];
+    [self updateShellforgeToggle];
     [self updateShellforgeColumnBackground];
     if (_shellforgeSidebar) {
-        [iTermShellforgeSidebar updateWindowControlsIn:_shellforgeSidebar];
+        [iTermShellforgeSidebar updateWindowControlsIn:_shellforgeSidebar toggleFrame:self.shellforgeToggleFrame];
     }
     const CGFloat notchHeight = [self notchInset];
     _notchMask.hidden = (notchHeight == 0);
