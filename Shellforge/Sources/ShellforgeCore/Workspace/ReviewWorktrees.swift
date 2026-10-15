@@ -199,16 +199,34 @@ extension GitRepository {
 
 /// A review's task: AiTerm's `TaskCreator.createReview`.
 public enum ReviewWorktrees {
-    public static func create(draft: ReviewDraft, in project: Project, launcher: CommandLauncher) throws -> TaskItem {
-        try create(draft: draft, in: project, git: LauncherGit(launcher: launcher), launcher: launcher)
+    /// `cancellation` stops it as it stops a task's create, taking back the half-made worktree; the
+    /// branch stays, as a review's branch may have been there before. `progress` hears its step.
+    public static func create(draft: ReviewDraft, in project: Project, launcher: CommandLauncher,
+                              cancellation: CreationCancellation? = nil,
+                              progress: (@Sendable (CreationStep) -> Void)? = nil) throws -> TaskItem {
+        if cancellation?.isCancelled == true { throw CreationCancelled() }
+        progress?(.creatingWorktree(runsHook: TaskWorktrees.hasCheckoutHook(project: project, launcher: launcher)))
+        // One slug for the create and its undo; and an undo takes back only a worktree this made.
+        let slug = BranchNaming.unused(BranchNaming.reviewSlug(branch: draft.branch), in: project.path)
+        let path = "\(project.path)/.worktrees/\(slug)"
+        let pathWasThere = FileManager.default.fileExists(atPath: path)
+        do {
+            return try create(draft: draft, in: project, slug: slug,
+                              git: LauncherGit(launcher: launcher, cancellation: cancellation), launcher: launcher)
+        } catch let cancelled as CreationCancelled {
+            // The worktree is added locked: a double force takes it, and the branch stays.
+            TaskWorktrees.undo(worktree: pathWasThere ? nil : path, branch: nil, project: project, launcher: launcher)
+            throw cancelled
+        }
     }
 
-    static func create(draft: ReviewDraft, in project: Project, git: any GitCommands, launcher: CommandLauncher) throws -> TaskItem {
+    static func create(draft: ReviewDraft, in project: Project, slug: String? = nil, git: any GitCommands,
+                       launcher: CommandLauncher) throws -> TaskItem {
         guard !draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw TaskWorktrees.Refusal.emptyTitle }
         guard !draft.model.isEmpty else { throw TaskWorktrees.Refusal.emptyModel }
         guard !draft.branch.trimmingCharacters(in: .whitespaces).isEmpty,
               BranchNaming.isValid(draft.branch, launcher: launcher) else { throw TaskWorktrees.Refusal.invalidBranch(draft.branch) }
-        let slug = BranchNaming.unused(BranchNaming.reviewSlug(branch: draft.branch), in: project.path)
+        let slug = slug ?? BranchNaming.unused(BranchNaming.reviewSlug(branch: draft.branch), in: project.path)
         let path = try GitRepository(project.path, git: git).addReviewWorktree(slug: slug, branch: draft.branch)
         return TaskItem(projectId: project.id, title: draft.title, branch: draft.branch, worktreePath: path,
                         baseBranch: draft.mr?.targetBranch ?? "", agent: draft.agentId, model: draft.model,

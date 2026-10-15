@@ -23,7 +23,7 @@ struct NewReviewSheet: View {
     var body: some View {
         // A click past the lists closes them, as AiTerm's CreationSheet closes its pickers.
         SheetLayout(title: "New review in \(model.project.name)", height: Sheet.height,
-                    onBackgroundTap: { Self.closeLists(model) }) {
+                    onBackgroundTap: { Self.closeLists(model) }, locked: model.creating) {
             StepBar(step: step, names: ["Branch", "Agent", "Prompt"])
         } content: {
             VStack(alignment: .leading, spacing: Space.block) {
@@ -46,6 +46,7 @@ struct NewReviewSheet: View {
             CreationFooter(step: step, error: model.error,
                            missingAgentNote: NewTaskSheet.footerNote(agents: model.agents, available: model.availableAgents),
                            createLabel: "Create Review", creating: model.creating,
+                           progress: model.progress, cancelling: model.cancelling,
                            canAdvance: Self.canAdvance(step: step, model: model),
                            closeList: { Self.closeList(step: step, model: model) },
                            back: back, advance: advance)
@@ -183,7 +184,7 @@ struct NewReviewSheet: View {
         case .step(let previous): Self.leave(step: step, model: model); step = previous
         // A turn later: the panel is not closed under the event.
         case .dismiss: Task { @MainActor in dismiss() }
-        case .stay: break
+        case .cancelCreate: model.cancelCreate()
         }
     }
 
@@ -193,7 +194,8 @@ struct NewReviewSheet: View {
         step += 1
     }
 
-    private func create() { Task { @MainActor in if await model.create() { dismiss() } } }
+    /// A cancelled create closes the sheet too: there is nothing to correct.
+    private func create() { Task { @MainActor in if await model.create() || model.cancelled { dismiss() } } }
 }
 
 #if DEBUG

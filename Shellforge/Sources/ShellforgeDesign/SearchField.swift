@@ -36,6 +36,14 @@ public struct SearchField: NSViewRepresentable {
         context.coordinator.parent = self
         if field.stringValue != text { field.stringValue = text }
         if field.placeholderString != placeholder { field.placeholderString = placeholder }
+        // A disabled form — a sheet while it creates — takes no typing here, nor keeps the focus.
+        let enabled = context.environment.isEnabled
+        if field.isEditable != enabled { field.isEditable = enabled }
+        guard enabled else {
+            field.wantsFocus = false
+            if let editor = field.currentEditor(), field.window?.firstResponder === editor { field.window?.makeFirstResponder(nil) }
+            return
+        }
         field.wantsFocus = focused
         field.focusIfNeeded()
     }

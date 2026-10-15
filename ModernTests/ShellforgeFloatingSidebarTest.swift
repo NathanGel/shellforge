@@ -198,8 +198,16 @@ final class ShellforgeFloatingSidebarTest: XCTestCase {
 
     /// The panel's corners are concentric with the window's: its radius less the inset, never below 0.
     func testThePanelCornerFollowsTheWindowsRadius() {
-        XCTAssertEqual(iTermShellforgeSidebar.panelCornerRadius(forWindowRadius: 26), 26 - iTermShellforgeSidebar.floatingInset)
-        XCTAssertEqual(iTermShellforgeSidebar.panelCornerRadius(forWindowRadius: 4), 0)
+        XCTAssertEqual(iTermShellforgeSidebar.panelCornerRadius(forWindowRadius: 30), 30 - iTermShellforgeSidebar.floatingInset)
+    }
+
+    /// A measured radius below a plain window's is a mismeasure — a toolbar window is never less
+    /// round — and the panel never goes square: 8.5 pt was measured once, and the panel lost its
+    /// corners.
+    func testThePanelNeverGoesSquare() {
+        let floor = iTermShellforgeSidebar.panelCornerRadius(forWindowRadius: iTermWindowCornerRadiusDetector.fallbackCornerRadius)
+        XCTAssertEqual(iTermShellforgeSidebar.panelCornerRadius(forWindowRadius: 8.5), floor)
+        XCTAssertGreaterThanOrEqual(floor, 8)
     }
 
     /// A toolbar rounds a macOS 26 window's corners further, so a radius measured without one must
@@ -320,17 +328,72 @@ final class ShellforgeFloatingSidebarTest: XCTestCase {
         XCTAssertEqual(controls.buttonsMidY, panel.maxY - toggle.midY, accuracy: 0.5)
     }
 
-    /// Without window buttons — full screen — the toggle sits at the top of a slim rail, centred, at
-    /// the height the header's row has there; the rail is the column left of the terminal.
-    func testWithoutWindowButtonsTheToggleSitsOnTheRail() {
+    /// Without window buttons — full screen — the toggle has the same place open or closed: centred
+    /// over the slim bar a closed sidebar leaves, which is also the top of the open panel; the bar is
+    /// the column left of the terminal.
+    func testInFullScreenTheToggleKeepsItsPlaceOverTheBar() {
         let rail = iTermShellforgeSidebar.railWidth
+        XCTAssertLessThanOrEqual(rail, 56, "a slim bar")
         let frame = iTermShellforgeSidebar.toggleFrame(zoomButton: .zero, hasWindowButtons: false, rootHeight: 500)
         XCTAssertEqual(frame.midX, rail / 2, accuracy: 0.5)
+        XCTAssertGreaterThan(frame.minX, iTermShellforgeSidebar.floatingInset, "inside the open panel too")
         XCTAssertEqual(500 - frame.midY, iTermShellforgeSidebar.floatingInset + iTermShellforgeSidebar.fullScreenHeaderMidY, accuracy: 0.5)
         var inputs = iTermLayoutInputs()
         inputs.contentViewWidth = 800; inputs.contentViewHeight = 500
         inputs.leftPanelWidth = rail; inputs.leftPanelInset = 0
         XCTAssertEqual(iTermLayoutCalculator.calculateLayout(with: inputs).tabViewFrame.minX, rail)
+    }
+
+    func testTheRevealShowsAndHides() {
+        var pending: [() -> Void] = []
+        let reveal = ShellforgeSidebarReveal(schedule: { _, work in pending.append(work) })
+        var changes = 0
+        reveal.onChange = { changes += 1 }
+        reveal.pointerEntered()
+        XCTAssertTrue(reveal.revealed)
+        reveal.pointerExited()
+        reveal.pointerEntered()              // back before the delay is up
+        pending.removeFirst()()
+        XCTAssertTrue(reveal.revealed, "the pointer came back")
+        reveal.shouldConceal = { false }     // a menu is open
+        reveal.pointerExited()
+        pending.removeFirst()()
+        XCTAssertTrue(reveal.revealed, "still wanted")
+        reveal.shouldConceal = { true }
+        pending.removeFirst()()              // it asked again after another delay
+        XCTAssertFalse(reveal.revealed)
+        reveal.pointerEntered()
+        reveal.reset()
+        XCTAssertFalse(reveal.revealed)
+        XCTAssertEqual(changes, 4)
+    }
+
+    /// The edge strip watches the pointer from the moment it is in a window: it starts hidden and of
+    /// no size, and AppKit does not always ask a view for its tracking areas after that.
+    func testTheRevealStripWatchesThePointer() throws {
+        let tracker = ShellforgeRevealTracker(frame: .zero)
+        tracker.isHidden = true
+        root.addSubview(tracker)
+        defer { tracker.removeFromSuperview() }
+        tracker.frame = NSRect(x: 0, y: 0, width: 4, height: 300)
+        tracker.isHidden = false
+        root.layoutSubtreeIfNeeded()
+        XCTAssertFalse(tracker.trackingAreas.isEmpty, "a tracking area to hear the pointer arrive")
+        XCTAssertTrue(tracker.trackingAreas.allSatisfy { $0.options.contains(.inVisibleRect) })
+    }
+
+    /// A window made narrow while the sidebar was hidden — or opened so, the sidebar hidden last
+    /// time — widens to the sidebar's minimum when it comes back, rather than jumping it.
+    func testReopeningInANarrowWindowWidensItFirst() throws {
+        root.toggleShellforgeSidebar()          // hidden
+        root.layoutSubtreeIfNeeded()
+        var frame = fixture.window.frame
+        frame.size.width = 420
+        fixture.window.setFrame(frame, display: false)
+        root.toggleShellforgeSidebar()          // back
+        root.layoutSubtreeIfNeeded()
+        XCTAssertGreaterThanOrEqual(fixture.window.frame.width, root.shellforgeMinimumWindowWidth() - 0.5)
+        XCTAssertGreaterThan(root.shellforgeSidebarWidth, 0, "the sidebar is shown, not stepped aside")
     }
 
     func testAHiddenSidebarLeavesNoGap() throws {

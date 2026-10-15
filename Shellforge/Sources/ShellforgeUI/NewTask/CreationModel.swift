@@ -76,6 +76,14 @@ public typealias NewTaskModel = CreationModel<TaskCreation>
 /// A creation sheet's state: the draft, the chosen agent's models, the project's branches, the
 /// search field, and the one create call. AiTerm's `CreationModel` on an `ObservableObject` (macOS 13
 /// has no `@Observable`).
+/// What a create's work hears from the sheet that started it: its Cancel, and where to say what it
+/// is doing. Task-locals, so the submit closure keeps its shape; read them on the main actor before
+/// handing the work to a background queue, which they do not follow.
+public enum CreationContext {
+    @TaskLocal public static var cancellation: CreationCancellation?
+    @TaskLocal public static var report: (@Sendable (CreationStep) -> Void)?
+}
+
 @MainActor
 public final class CreationModel<Kind: CreationKind>: ObservableObject, Identifiable {
     public nonisolated let id = UUID()
@@ -90,7 +98,14 @@ public final class CreationModel<Kind: CreationKind>: ObservableObject, Identifi
     /// Why the chosen agent has no models to offer, when its list could not be read.
     @Published public private(set) var catalogueFailure: String?
     @Published public private(set) var creating = false
+    /// What the running create is doing, as its work says; nil before it says.
+    @Published public private(set) var progress: CreationStep?
+    /// Cancel was pressed while it ran: it is stopping and undoing what it made.
+    @Published public private(set) var cancelling = false
+    /// The last create was cancelled — not failed: the sheet closes, saying nothing.
+    @Published public private(set) var cancelled = false
     @Published public private(set) var error: CreationFailure?
+    private var cancellation: CreationCancellation?
     /// The search field — a ticket's, a merge request's: what is typed, what the last search found,
     /// and why it found nothing.
     @Published public var query = ""
@@ -225,13 +240,35 @@ public final class CreationModel<Kind: CreationKind>: ObservableObject, Identifi
 
     /// False means nothing was created and the same draft can be corrected — notably when git
     /// refuses the branch.
+    /// A cancelled create also returns false, with `cancelled` set and no error.
     public func create() async -> Bool {
         guard !creating, agentIsReady else { return false }
-        creating = true; error = nil
-        defer { creating = false }
-        do { try await submit(draft); return true }
-        catch { self.error = CreationFailure(error) }
+        let cancellation = CreationCancellation()
+        creating = true; error = nil; progress = nil; cancelling = false; cancelled = false
+        self.cancellation = cancellation
+        defer { creating = false; progress = nil; cancelling = false; self.cancellation = nil }
+        // The work runs off the main actor; its steps come back to it, and only while it runs.
+        let report: @Sendable (CreationStep) -> Void = { step in
+            Task { @MainActor [weak self] in if self?.creating == true { self?.progress = step } }
+        }
+        do {
+            try await CreationContext.$cancellation.withValue(cancellation) {
+                try await CreationContext.$report.withValue(report) { try await submit(draft) }
+            }
+            return true
+        } catch is CreationCancelled {
+            cancelled = true
+        } catch {
+            self.error = CreationFailure(error)
+        }
         return false
+    }
+
+    /// Stops the running create: the work ends what it runs and undoes what it made.
+    public func cancelCreate() {
+        guard creating, !cancelling else { return }
+        cancelling = true
+        cancellation?.cancel()
     }
 
     // -- the search field (AiTerm's CreationModel search) --------------------------------------

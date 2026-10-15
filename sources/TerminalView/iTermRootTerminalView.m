@@ -180,6 +180,9 @@ typedef struct {
     NSTitlebarAccessoryViewController *_shellforgeShowSidebarAccessory;
     // Shellforge: the sidebar's one toggle, the window's, so it stays put open or closed.
     NSButton *_shellforgeToggle;
+    // Shellforge: a closed sidebar in full screen, shown while the pointer wants it.
+    iTermShellforgeSidebarReveal *_shellforgeReveal;
+    iTermShellforgeRevealTracker *_shellforgeRevealTracker;
     BOOL _tabViewFrameReduced;
     BOOL _haveShownToolbelt;
     iTermStoplightHotbox *_stoplightHotbox;
@@ -1699,6 +1702,8 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
     }
     _shellforgeSidebarHidden = !_shellforgeSidebarHidden;
     [iTermShellforgeSidebar setStartsHidden:_shellforgeSidebarHidden];
+    // Pinned open (or closed) for good: a reveal no longer holds it.
+    [_shellforgeReveal reset];
     // Typing into a hidden sidebar would go nowhere visible: the current session takes the keys.
     NSResponder *responder = self.window.firstResponder;
     if (_shellforgeSidebarHidden &&
@@ -1709,8 +1714,34 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
             [self.window makeFirstResponder:session.textview];
         }
     }
+    if (!_shellforgeSidebarHidden) {
+        [self shellforgeWidenWindowForSidebarIfNeeded];
+    }
     [self layoutSubviews];
     [_delegate rootTerminalViewDidResizeContentArea];
+}
+
+// Shellforge: a window left narrower than the sidebar's minimum beside the terminal — narrowed while
+// it was hidden, or opened so with it hidden last time — widens to that minimum as the sidebar comes
+// back, to the left, so the terminal stays where it was; otherwise the sidebar would step aside and
+// jump in at the next resize. Not in full screen, which has the screen's width.
+- (void)shellforgeWidenWindowForSidebarIfNeeded {
+    NSWindow *window = self.window;
+    if (!window || (window.styleMask & NSWindowStyleMaskFullScreen)) {
+        return;
+    }
+    const CGFloat minimum = [self shellforgeMinimumWindowWidth];
+    NSRect frame = window.frame;
+    if (NSWidth(frame) >= minimum) {
+        return;
+    }
+    frame.origin.x -= minimum - NSWidth(frame);
+    frame.size.width = minimum;
+    const NSRect screen = window.screen.visibleFrame;
+    if (!NSIsEmptyRect(screen)) {
+        frame.origin.x = MAX(NSMinX(screen), MIN(frame.origin.x, NSMaxX(screen) - minimum));
+    }
+    [window setFrame:frame display:YES];
 }
 
 // Shellforge: a handle across the sidebar's right edge, clear of its list's scroller.
@@ -1751,14 +1782,72 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
             (window.styleMask & NSWindowStyleMaskTitled) && !(window.styleMask & NSWindowStyleMaskFullScreen));
 }
 
-// Shellforge: the rail a closed floating sidebar leaves where the window has no buttons (full screen):
-// the toggle needs a place of its own there. 0 otherwise.
+// Shellforge: whether a closed sidebar comes back at the screen's left edge: full screen, where
+// there are no window buttons to put its toggle beside.
+- (BOOL)shellforgeRevealApplies {
+    return (_shellforgeSidebar && _shellforgeSidebarHidden && [iTermShellforgeSidebar floats] && self.window &&
+            ![self shellforgeWindowShowsButtons]);
+}
+
+// Shellforge: the slim bar a closed sidebar leaves in full screen, in the terminal's colour, holding
+// the toggle: something to see and click. 0 otherwise.
 - (CGFloat)shellforgeRailWidth {
-    if (!_shellforgeSidebar || !_shellforgeSidebarHidden || ![iTermShellforgeSidebar floats] || !self.window ||
-        [self shellforgeWindowShowsButtons]) {
-        return 0;
+    return [self shellforgeRevealApplies] ? [iTermShellforgeSidebar railWidth] : 0;
+}
+
+- (BOOL)shellforgeSidebarRevealed {
+    return [self shellforgeRevealApplies] && _shellforgeReveal.revealed;
+}
+
+// Shellforge: the panel a revealed sidebar shows, over the terminal, which keeps its width.
+- (NSRect)shellforgeRevealedPanelFrame {
+    const CGFloat inset = [iTermShellforgeSidebar floatingInset];
+    const CGFloat width = [iTermShellforgeSidebar widthForPreferred:_shellforgeSidebarPreferredWidth
+                                                         windowWidth:NSWidth(self.bounds)
+                                                       toolbeltWidth:0];
+    if (width <= inset) {
+        return NSZeroRect;
     }
-    return [iTermShellforgeSidebar railWidth];
+    return NSMakeRect(inset, inset, width - inset, MAX(0, NSHeight(self.bounds) - 2 * inset));
+}
+
+// Shellforge: the tracker over the screen's left edge — and the panel while it shows — that tells
+// the reveal where the pointer is.
+- (void)updateShellforgeRevealTracker {
+    if (![self shellforgeRevealApplies]) {
+        _shellforgeRevealTracker.hidden = YES;
+        [_shellforgeReveal reset];
+        return;
+    }
+    if (!_shellforgeReveal) {
+        _shellforgeReveal = [[iTermShellforgeSidebarReveal alloc] init];
+        __weak __typeof(self) weakSelf = self;
+        _shellforgeReveal.onChange = ^{
+            [weakSelf layoutSubviews];
+        };
+        _shellforgeReveal.shouldConceal = ^BOOL{
+            __strong __typeof(weakSelf) strongSelf = weakSelf;
+            if (!strongSelf) {
+                return YES;
+            }
+            // Not while a menu from the panel is open, nor while the pointer is back over it.
+            if ([[[NSRunLoop currentRunLoop] currentMode] isEqualToString:NSEventTrackingRunLoopMode]) {
+                return NO;
+            }
+            const NSPoint point = [strongSelf convertPoint:[strongSelf.window mouseLocationOutsideOfEventStream] fromView:nil];
+            return !NSPointInRect(point, strongSelf->_shellforgeRevealTracker.frame);
+        };
+    }
+    if (!_shellforgeRevealTracker) {
+        _shellforgeRevealTracker = [[iTermShellforgeRevealTracker alloc] initWithFrame:NSZeroRect];
+        _shellforgeRevealTracker.reveal = _shellforgeReveal;
+    }
+    if (_shellforgeRevealTracker.superview != self) {
+        [self addSubview:_shellforgeRevealTracker positioned:NSWindowAbove relativeTo:nil];
+    }
+    const NSRect edge = NSMakeRect(0, 0, [iTermShellforgeSidebar revealEdgeWidth], NSHeight(self.bounds));
+    _shellforgeRevealTracker.frame = _shellforgeReveal.revealed ? NSUnionRect(edge, [self shellforgeRevealedPanelFrame]) : edge;
+    _shellforgeRevealTracker.hidden = NO;
 }
 
 - (NSRect)shellforgeToggleFrame {
@@ -1935,7 +2024,7 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
     inputs.leftTabBarWidth = _leftTabBarWidth;
 
     // Shellforge sidebar
-    // Shellforge: a closed sidebar in full screen leaves its rail, the toggle's place.
+    // Shellforge: a closed sidebar in full screen leaves its slim bar.
     const CGFloat shellforgeSidebar = self.shellforgeSidebarWidth;
     inputs.leftPanelWidth = shellforgeSidebar > 0 ? shellforgeSidebar : self.shellforgeRailWidth;
     // Shellforge: the floating panel stands off the window's edges.
@@ -2301,15 +2390,19 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
     } else {
         [self layoutSubviewsWithVisibleTabBarForWindow:thisWindow inlineToolbelt:showToolbeltInline];
     }
-    _shellforgeSidebar.frame =
+    [self updateShellforgeRevealTracker];
+    const BOOL shellforgeRevealed = [self shellforgeSidebarRevealed];
+    _shellforgeSidebar.frame = shellforgeRevealed ? [self shellforgeRevealedPanelFrame] :
         [iTermLayoutCalculator calculateLayoutWithInputs:[self layoutInputsForWindow:thisWindow]].leftPanelFrame;
-    _shellforgeSidebar.hidden = _shellforgeSidebarHidden;
+    _shellforgeSidebar.hidden = _shellforgeSidebarHidden && !shellforgeRevealed;
     [self updateShellforgeSidebarDragHandle];
     [self updateShellforgeShowSidebarButton];
     [self updateShellforgeToggle];
     [self updateShellforgeColumnBackground];
     if (_shellforgeSidebar) {
-        [iTermShellforgeSidebar updateWindowControlsIn:_shellforgeSidebar toggleFrame:self.shellforgeToggleFrame];
+        [iTermShellforgeSidebar updateWindowControlsIn:_shellforgeSidebar
+                                           toggleFrame:self.shellforgeToggleFrame
+                                               stacked:![self shellforgeWindowShowsButtons]];
     }
     const CGFloat notchHeight = [self notchInset];
     _notchMask.hidden = (notchHeight == 0);

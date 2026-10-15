@@ -69,7 +69,14 @@ private struct HeaderPlacement: ViewModifier {
     let scale: InterfaceScale
 
     func body(content: Content) -> some View {
-        if let windowControls {
+        if let windowControls, windowControls.stacked {
+            // Below the toggle's own row, at the rows' leading edge.
+            content
+                .padding(.leading, SidebarRowLayout.listInset + scale(Space.base))
+                .padding(.trailing, SidebarRowLayout.trailingInset(scale) + SidebarRowLayout.listInset)
+                .padding(.top, windowControls.bandHeight)
+                .padding(.bottom, scale(Space.tight))
+        } else if let windowControls {
             content
                 .padding(.leading, windowControls.headerLeading)
                 .padding(.trailing, SidebarRowLayout.trailingInset(scale) + SidebarRowLayout.listInset)

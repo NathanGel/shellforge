@@ -51,6 +51,41 @@ import Testing
         #expect(submitted.value == 1 && results.filter { $0 }.count == 1)
     }
 
+    /// A create stuck in the repository's checkout hook has a way out: Cancel reaches the work, which
+    /// stops and undoes itself; the sheet shows no failure for it.
+    @Test func cancellingACreateStopsTheWorkAndShowsNoFailure() async {
+        let sheet = model(submit: { _ in
+            let cancellation = CreationContext.cancellation
+            #expect(cancellation != nil, "the work can hear a cancel")
+            while cancellation?.isCancelled == false { try await Task.sleep(for: .milliseconds(5)) }
+            throw CreationCancelled()
+        })
+        sheet.draft.setTitle("Login")
+        await sheet.loadCatalogue()
+        async let created = sheet.create()
+        #expect(await eventually(describing: "the create to start") { sheet.creating })
+        sheet.cancelCreate()
+        #expect(sheet.cancelling)
+        #expect(await created == false)
+        #expect(sheet.cancelled && sheet.error == nil && !sheet.creating)
+    }
+
+    /// While it runs the sheet says what it is doing.
+    @Test func aCreateReportsItsStep() async {
+        let sheet = model(submit: { _ in
+            CreationContext.report?(.creatingWorktree(runsHook: true))
+            while CreationContext.cancellation?.isCancelled == false { try await Task.sleep(for: .milliseconds(5)) }
+            throw CreationCancelled()
+        })
+        sheet.draft.setTitle("Login")
+        await sheet.loadCatalogue()
+        async let created = sheet.create()
+        #expect(await eventually(describing: "the step to show") { sheet.progress == .creatingWorktree(runsHook: true) })
+        sheet.cancelCreate()
+        _ = await created
+        #expect(sheet.progress == nil)
+    }
+
     @Test func anInvalidBranchKeepsTheSheetOpenWithTheReason() async {
         let sheet = model(submit: { throw TaskWorktrees.Refusal.invalidBranch($0.branch) })
         sheet.draft.setTitle("Login")

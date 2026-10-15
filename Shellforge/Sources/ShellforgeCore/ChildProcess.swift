@@ -13,9 +13,11 @@ public struct ChildOutput: Sendable, Equatable {
 /// `CommandLauncher`, which gives the child the login environment; a source test keeps it that way.
 enum ChildProcess {
     /// Runs `executable` with exactly `environment`, stdin closed, and waits up to `timeout` seconds.
-    /// A child that outlives it is sent SIGTERM, then SIGKILL a second later.
+    /// A child that outlives it — or that `cancellation` stops — is sent SIGTERM with everything it
+    /// started, then SIGKILL a second later.
     static func run(_ executable: String, _ arguments: [String], environment: [String: String],
-                    directory: String? = nil, timeout: TimeInterval) throws -> ChildOutput {
+                    directory: String? = nil, timeout: TimeInterval,
+                    cancellation: CreationCancellation? = nil) throws -> ChildOutput {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
@@ -29,17 +31,22 @@ enum ChildProcess {
         let out = PipeReader(stdout.fileHandleForReading), err = PipeReader(stderr.fileHandleForReading)
         let finished = DispatchSemaphore(value: 0)
         process.terminationHandler = { _ in finished.signal() }
+        // A create already cancelled starts nothing more.
+        if cancellation?.isCancelled == true { throw CreationCancelled() }
         try process.run()
+        var stopped: [pid_t] = []
+        if let cancellation, !cancellation.begin(process) { stopped = terminateTree(process) }
 
         var timedOut = false
         if finished.wait(timeout: .now() + timeout) == .timedOut {
             timedOut = true
-            process.terminate()
-            if finished.wait(timeout: .now() + 1) == .timedOut {
-                kill(process.processIdentifier, SIGKILL)
-                finished.wait()
-            }
+            stopped += terminateTree(process)
+            finished.wait()
         }
+        cancellation?.end()
+        // What was stopped is gone before the caller goes on — to clean up a worktree a hook was
+        // still writing into, say.
+        reap(stopped + (cancellation?.takeStopped() ?? []))
         // A grandchild that kept the pipes open (a shell's background job) must not hold us up.
         return ChildOutput(status: process.terminationStatus, stdout: out.text(waiting: 1),
                            stderr: err.text(waiting: 1), timedOut: timedOut)
@@ -47,6 +54,63 @@ enum ChildProcess {
 }
 
 extension ChildProcess {
+    /// Asks `process` and every process it started — a git hook and the `uv sync` it ran — to stop
+    /// (SIGTERM), and returns who was asked, for `reap`. Enumerated once: a process forked after, or
+    /// one already handed to launchd, is not reached.
+    @discardableResult
+    static func terminateTree(_ process: Process) -> [pid_t] {
+        let pid = process.processIdentifier
+        guard pid > 0 else { return [] }
+        let all = [pid] + descendants(of: pid)
+        for each in all { kill(each, SIGTERM) }
+        return all
+    }
+
+    /// Waits up to a second for `pids` to end, SIGKILLs any that would not, and waits for those.
+    static func reap(_ pids: [pid_t]) {
+        guard !pids.isEmpty else { return }
+        if waitGone(pids, timeout: 1) { return }
+        for each in pids where kill(each, 0) == 0 { kill(each, SIGKILL) }
+        _ = waitGone(pids, timeout: 1)
+    }
+
+    /// Whether every one of `pids` has ended within `timeout`, told by the kernel as each exits.
+    private static func waitGone(_ pids: [pid_t], timeout: TimeInterval) -> Bool {
+        let group = DispatchGroup()
+        var sources: [DispatchSourceProcess] = []
+        for pid in pids where kill(pid, 0) == 0 {
+            group.enter()
+            let source = DispatchSource.makeProcessSource(identifier: pid, eventMask: .exit, queue: .global(qos: .utility))
+            source.setEventHandler { source.cancel() }
+            source.setCancelHandler { group.leave() }
+            source.resume()
+            // Gone between the check and the watch: nothing would ever tell.
+            if kill(pid, 0) != 0 { source.cancel() }
+            sources.append(source)
+        }
+        let gone = group.wait(timeout: .now() + timeout) == .success
+        sources.forEach { $0.cancel() }
+        return gone
+    }
+
+    /// Every process below `pid`, children first.
+    static func descendants(of pid: pid_t) -> [pid_t] {
+        var found: [pid_t] = []
+        var pending = [pid]
+        while let parent = pending.popLast() {
+            let estimate = proc_listchildpids(parent, nil, 0)
+            guard estimate > 0 else { continue }
+            var buffer = [pid_t](repeating: 0, count: Int(estimate) + 16)
+            let count = buffer.withUnsafeMutableBytes { bytes in
+                proc_listchildpids(parent, bytes.baseAddress, Int32(bytes.count))
+            }
+            let children = buffer.prefix(max(0, Int(count))).filter { $0 > 0 }
+            found += children
+            pending += children
+        }
+        return found
+    }
+
     /// Starts `executable` and returns at once: a child that outlives the call, as the daemon does.
     /// Its standard output and error go to `output` (nowhere when nil), stdin is closed, and
     /// `onExit` is called with it and its exit status when it ends.

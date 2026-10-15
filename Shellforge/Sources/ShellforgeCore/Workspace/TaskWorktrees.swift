@@ -58,12 +58,21 @@ public enum TaskWorktrees {
     }
 
     /// AiTerm's `TaskCreator.create`: `<project>/.worktrees/<unused slug>` on the draft's branch from its base.
-    public static func create(draft: TaskDraft, in project: Project, launcher: CommandLauncher) throws -> TaskItem {
+    ///
+    /// `cancellation` stops it — between steps, or by ending the step's command and what it started,
+    /// the repository's checkout hook included — and undoes the worktree and branch it made;
+    /// `progress` hears each step as it starts.
+    public static func create(draft: TaskDraft, in project: Project, launcher: CommandLauncher,
+                              cancellation: CreationCancellation? = nil,
+                              progress: (@Sendable (CreationStep) -> Void)? = nil) throws -> TaskItem {
         guard !draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw Refusal.emptyTitle }
         guard !draft.model.isEmpty else { throw Refusal.emptyModel }
+        func checkCancelled() throws { if cancellation?.isCancelled == true { throw CreationCancelled() } }
+        try checkCancelled()
         guard BranchNaming.isValid(draft.branch, launcher: launcher) else { throw Refusal.invalidBranch(draft.branch) }
         func git(_ args: [String]) throws -> String {
-            let out = try launcher.run("git", ["-C", project.path] + args)
+            let out = try launcher.run("git", ["-C", project.path] + args, cancellation: cancellation)
+            try checkCancelled()
             guard out.status == 0 else { throw GitFailure(command: "git " + args.joined(separator: " "), message: out.stderr) }
             return out.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         }
@@ -75,17 +84,53 @@ public enum TaskWorktrees {
         // <base>` updates the tracking ref only when `remote.origin.fetch` covers it.
         var start = draft.baseBranch
         if (try? git(["remote", "get-url", "origin"])) != nil {
+            try checkCancelled()
+            progress?(.fetching(base: draft.baseBranch))
             _ = try? launcher.run("git", ["-C", project.path, "fetch", "--quiet", "origin",
                                           "+refs/heads/\(draft.baseBranch):refs/remotes/origin/\(draft.baseBranch)"],
-                                  extra: ["GIT_TERMINAL_PROMPT": "0"], timeout: 30)
+                                  extra: ["GIT_TERMINAL_PROMPT": "0"], timeout: 30, cancellation: cancellation)
+            try checkCancelled()
             if (try? git(["rev-parse", "--verify", "--quiet", "refs/remotes/origin/\(draft.baseBranch)^{commit}"])) != nil {
                 start = "origin/\(draft.baseBranch)"
             }
         }
-        _ = try git(["worktree", "add", "-q", "-b", draft.branch, path, start])
+        try checkCancelled()
+        progress?(.creatingWorktree(runsHook: hasCheckoutHook(project: project, launcher: launcher)))
+        // What was there before this create: a cancel takes back only what it made.
+        let branchWasThere = (try? launcher.run("git", ["-C", project.path, "show-ref", "--verify", "--quiet",
+                                                         "refs/heads/\(draft.branch)"]))?.status == 0
+        let pathWasThere = FileManager.default.fileExists(atPath: path)
+        do {
+            _ = try git(["worktree", "add", "-q", "-b", draft.branch, path, start])
+        } catch let cancelled as CreationCancelled {
+            undo(worktree: pathWasThere ? nil : path, branch: branchWasThere ? nil : draft.branch, project: project, launcher: launcher)
+            throw cancelled
+        }
         return TaskItem(projectId: project.id, title: draft.title, branch: draft.branch, worktreePath: path,
                         baseBranch: draft.baseBranch, agent: draft.agentId, model: draft.model, reasoning: draft.reasoning,
                     jira: draft.ticket.map { JiraRef(key: $0.key, summary: $0.summary, url: $0.url) })
+    }
+
+    /// Whether the repository runs a post-checkout hook of its own — a pre-commit `uv sync`, say — which
+    /// `worktree add` waits for.
+    public static func hasCheckoutHook(project: Project, launcher: CommandLauncher) -> Bool {
+        guard let out = try? launcher.run("git", ["-C", project.path, "rev-parse", "--git-path", "hooks/post-checkout"]),
+              out.status == 0 else { return false }
+        let relative = out.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hook = relative.hasPrefix("/") ? relative : "\(project.path)/\(relative)"
+        return FileManager.default.isExecutableFile(atPath: hook)
+    }
+
+    /// Takes back what a stopped create made — its worktree, whatever state it was left in (locked
+    /// too), and its branch — and nothing else: pass nil for anything that was there before it. A
+    /// branch it made was new, with no commits of its own, so nothing of the user's goes.
+    public static func undo(worktree path: String?, branch: String?, project: Project, launcher: CommandLauncher) {
+        if let path {
+            _ = try? launcher.run("git", ["-C", project.path, "worktree", "remove", "--force", "--force", path])
+            if FileManager.default.fileExists(atPath: path) { try? FileManager.default.removeItem(atPath: path) }
+            _ = try? launcher.run("git", ["-C", project.path, "worktree", "prune"])
+        }
+        if let branch { _ = try? launcher.run("git", ["-C", project.path, "branch", "-D", branch]) }
     }
 
     /// Adds `pattern` to the repository's `info/exclude` once, so the worktrees never show as untracked.

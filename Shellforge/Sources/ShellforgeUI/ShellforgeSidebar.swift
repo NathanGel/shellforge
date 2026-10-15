@@ -61,6 +61,9 @@ public enum ShellforgeSidebar {
         (view as? SidebarHostingView<ZoomedSidebar>)?.chrome?.windowControls
     }
 
+    /// How far the sidebar's list insets its rows: what lines the host's toggle up with them.
+    public static var listInset: CGFloat { SidebarRowLayout.listInset }
+
     /// Whether `view` is a sidebar `makeView` made, or inside one.
     public static func contains(_ view: NSView?) -> Bool {
         guard let view else { return false }
