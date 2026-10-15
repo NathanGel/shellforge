@@ -659,6 +659,10 @@ extension iTermShellforgeSidebar {
 
     /// The drag handle's frame for a sidebar of `frame`.
     @objc static func dragHandleFrame(forSidebar frame: NSRect) -> NSRect {
+        if floats {
+            // The gap between the floating panel and the terminal, so it covers neither.
+            return NSRect(x: frame.maxX, y: frame.minY, width: floatingInset, height: frame.height)
+        }
         let handle = SidebarLayoutSettings.dragHandle(edge: frame.maxX, margin: CGFloat(iTermPreferences.sideMargins()))
         return NSRect(x: handle.x, y: frame.minY, width: handle.width, height: frame.height)
     }

@@ -787,7 +787,7 @@ typedef struct {
     // This mirrors what NSWindow's title does.
     // Shellforge: beside the sidebar the strip starts at the sidebar's column, and the window
     // buttons, inside the panel, are not in its way.
-    const CGFloat sidebarColumn = self.shellforgeSidebarWidth;
+    const CGFloat sidebarColumn = self.shellforgeColumnWidth;
     // Shellforge: without the sidebar, a floating window's title clears macOS's window buttons and
     // the Show Sidebar button beside them — the Tahoe tab-bar insets do not count them.
     CGFloat shellforgeButtonsInset = 0;
@@ -1012,7 +1012,7 @@ typedef struct {
     const CGFloat height = [_delegate rootTerminalViewHeightOfTabBar:self];
     // Shellforge: the title strip's background starts at the sidebar's column, so it does not show
     // through the floating panel.
-    const CGFloat sidebarColumn = self.shellforgeSidebarWidth;
+    const CGFloat sidebarColumn = self.shellforgeColumnWidth;
     return NSMakeRect(sidebarColumn,
                       self.frame.size.height - height,
                       MAX(0, self.frame.size.width - sidebarColumn),
@@ -1625,6 +1625,16 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
     return [iTermShellforgeSidebar widthForPreferred:_shellforgeSidebarPreferredWidth
                                          windowWidth:NSWidth(self.bounds)
                                        toolbeltWidth:toolbeltWidth];
+}
+
+// Shellforge: how far right of the window's edge the terminal's column starts: the sidebar and,
+// when it floats, the gap it keeps from the terminal. 0 while the sidebar is hidden.
+- (CGFloat)shellforgeColumnWidth {
+    const CGFloat sidebar = self.shellforgeSidebarWidth;
+    if (sidebar <= 0) {
+        return 0;
+    }
+    return sidebar + ([iTermShellforgeSidebar floats] ? [iTermShellforgeSidebar floatingInset] : 0);
 }
 
 // Shellforge: the narrowest the window may be dragged while the sidebar shows; 0 when hidden.

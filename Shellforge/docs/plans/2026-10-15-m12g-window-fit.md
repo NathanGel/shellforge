@@ -41,3 +41,4 @@ Moving a button by hand is undone by the next resize, so the native toolbar is t
 - [ ] **6. Footer card and shell row** — package tests: a shell task with no readings draws no row; the card's content lines up with the rows'.
 - [ ] **7. Branch field** — render the Task step, find the outline's cause, fix with a test.
 - [ ] **8.** All tests, build, host classes, upstream-hook-points.md and features.md, commit.
+- [ ] **9. Backpack Location** — test: a “While in use” Location answer counts as granted, as “Always” does (`LiveLocation.swift:48-50` accepted only `authorizedAlways`).

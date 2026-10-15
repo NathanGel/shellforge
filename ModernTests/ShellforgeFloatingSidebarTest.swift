@@ -67,6 +67,17 @@ final class ShellforgeFloatingSidebarTest: XCTestCase {
         XCTAssertGreaterThanOrEqual(terminal.minX, root.shellforgeSidebarFrame.maxX)
     }
 
+    /// The panel stands off the terminal as it stands off the window's edges, and the drag handle
+    /// lies in that gap rather than over the glass or the text.
+    func testThePanelStandsOffTheTerminalByItsInset() throws {
+        try XCTSkipUnless(iTermShellforgeSidebar.floats)
+        let panel = root.shellforgeSidebarFrame, inset = iTermShellforgeSidebar.floatingInset
+        XCTAssertEqual(try terminalFrame().minX, panel.maxX + inset, accuracy: 0.5)
+        let handle = iTermShellforgeSidebar.dragHandleFrame(forSidebar: panel)
+        XCTAssertEqual(handle.minX, panel.maxX, accuracy: 0.5)
+        XCTAssertEqual(handle.maxX, panel.maxX + inset, accuracy: 0.5)
+    }
+
     func testAHiddenSidebarLeavesNoGap() throws {
         try XCTSkipUnless(iTermShellforgeSidebar.floats)
         root.toggleShellforgeSidebar()
