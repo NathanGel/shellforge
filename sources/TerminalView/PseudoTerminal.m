@@ -13775,6 +13775,10 @@ static BOOL iTermApproximatelyEqualRects(NSRect lhs, NSRect rhs, double epsilon)
     // Shellforge: the sidebar takes width from the window like a left tab bar does, so fitting the
     // window to its tabs must add it back, or every new or closed tab shrinks the window by it.
     decorationSize.width += _contentView.shellforgeSidebarPreferredWidth;
+    // A floating panel also keeps its inset from the terminal.
+    if (_contentView.shellforgeSidebarPreferredWidth > 0 && [iTermShellforgeSidebar floats]) {
+        decorationSize.width += [iTermShellforgeSidebar floatingInset];
+    }
 
     if (!_contentView.tabBarControl.flashing &&
         [self tabBarShouldBeVisibleWithAdditionalTabs:tabViewItemsBeingAdded]) {

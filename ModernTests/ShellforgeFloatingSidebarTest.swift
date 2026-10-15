@@ -219,6 +219,20 @@ final class ShellforgeFloatingSidebarTest: XCTestCase {
                        iTermShellforgeSidebar.panelCornerRadius(forWindowRadius: window))
     }
 
+    /// Fitting the window to its tabs keeps every column: the window adds back the whole column
+    /// left of the terminal — the panel and its gap — or each new or closed tab shrinks it again.
+    func testFittingTheWindowToItsTabsKeepsTheColumns() throws {
+        try XCTSkipUnless(iTermShellforgeSidebar.floats)
+        let session = try XCTUnwrap(fixture.terminal.currentSession())
+        root.layoutSubtreeIfNeeded()
+        let columns = session.screen.width()
+        for _ in 0..<2 {
+            fixture.terminal.fitWindow(toTabsExcludingTmuxTabs: false)
+            root.layoutSubtreeIfNeeded()
+        }
+        XCTAssertEqual(session.screen.width(), columns)
+    }
+
     func testAHiddenSidebarLeavesNoGap() throws {
         try XCTSkipUnless(iTermShellforgeSidebar.floats)
         root.toggleShellforgeSidebar()
