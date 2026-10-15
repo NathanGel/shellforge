@@ -112,11 +112,20 @@ struct PromptEditor: NSViewRepresentable {
         // A disabled form — the sheet while it creates — takes no typing here either.
         let enabled = context.environment.isEnabled
         if textView.isEditable != enabled { textView.isEditable = enabled }
-        if !enabled, textView.window?.firstResponder === textView { textView.window?.makeFirstResponder(nil) }
+        if !enabled, textView.window?.firstResponder === textView { Self.giveUpKeyboard(textView) }
         if textView.string != text {
             let selected = textView.selectedRange()
             textView.string = text
             textView.setSelectedRange(NSRange(location: min(selected.location, (text as NSString).length), length: 0))
+        }
+    }
+
+    /// A disabled editor gives up the keyboard — on the next turn, not inside SwiftUI's update:
+    /// giving it up reports the focus change, which writes the sheet's state.
+    static func giveUpKeyboard(_ textView: NSTextView) {
+        DispatchQueue.main.async { [weak textView] in
+            guard let textView, textView.window?.firstResponder === textView else { return }
+            textView.window?.makeFirstResponder(nil)
         }
     }
 
