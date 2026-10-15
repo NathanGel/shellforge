@@ -323,7 +323,7 @@ void iTermExec(const char *argpath,
                 break;
             case EINVAL:
             case EFAULT:
-                iTermSignalSafeWrite(errorFd, "This appears to be a bug in iTerm2. Please report it at https://iterm2.com/bugs.");
+                iTermSignalSafeWrite(errorFd, "This appears to be a bug in Shellforge. Please report it at https://github.com/NathanGel/shellforge/issues/new/choose.");
                 break;
             case EIO:
                 iTermSignalSafeWrite(errorFd, "An I/O error occurred while reading from the file system.");
@@ -351,7 +351,7 @@ void iTermExec(const char *argpath,
                 iTermSignalSafeWrite(errorFd, "The new process file is a pure procedure (shared text) file that is currently open for writing or reading by some process.");
                 break;
             default:
-                iTermSignalSafeWrite(errorFd, "This error code is unexpected. Please report the value of Errno at https://iterm2.com/bugs.");
+                iTermSignalSafeWrite(errorFd, "This error code is unexpected. Please report the value of Errno at https://github.com/NathanGel/shellforge/issues/new/choose.");
         }
     }
     iTermSignalSafeWrite(errorFd, "\e]1337;ExecFailed\e\\");

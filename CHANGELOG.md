@@ -33,6 +33,9 @@ it and refuses to release a version that has none.
 
 ### Fixed
 
+- **Bug reports go to Shellforge**, not iTerm2: About › Report a bug, error messages and the AI usage
+  report open Shellforge's GitHub bug form. After a crash, **Copy and Report…** copies the report and
+  opens that form; crash reports are no longer posted to iterm2.com.
 - Reopening a hidden sidebar no longer makes the sidebar jump; a floating window widens to fit it,
   within its screen.
 - Cancelling a review after its worktree was made saves nothing and removes the worktree.

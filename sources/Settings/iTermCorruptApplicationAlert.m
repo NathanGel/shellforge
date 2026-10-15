@@ -16,7 +16,7 @@ void iTermShowCorruptApplicationAlert(NSString * _Nullable settingKey) {
     } else if (![team isEqualToString:@"H7V7XYVQ7D"]) {
         message = NSLocalizedStringWithDefaultValue(@"CorruptApplication.SignatureMismatch", nil, [NSBundle mainBundle], @"A required file appears to be missing or corrupted and iTerm2’s code signature did not match that of the official distribution. You should download a fresh copy of the app and reinstall it.", @"Alert shown when a required resource is missing and the code signature does not match the official distribution");
     } else {
-        message = NSLocalizedStringWithDefaultValue(@"CorruptApplication.SignatureValidUnexpected", nil, [NSBundle mainBundle], @"A required file appears to be missing or corrupted, yet against all odds the code signature for iTerm2 is valid. Please file a bug at https://iterm2.com/bugs", @"Alert shown when a required resource is missing but the code signature is unexpectedly valid");
+        message = NSLocalizedStringWithDefaultValue(@"CorruptApplication.SignatureValidUnexpected", nil, [NSBundle mainBundle], @"A required file appears to be missing or corrupted, yet against all odds the code signature for iTerm2 is valid. Please file a bug at https://github.com/NathanGel/shellforge/issues/new/choose", @"Alert shown when a required resource is missing but the code signature is unexpectedly valid");
     }
     NSString *informativeText;
     if (settingKey) {

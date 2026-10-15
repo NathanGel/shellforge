@@ -33511,37 +33511,37 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Eine erforderliche Datei scheint zu fehlen oder beschädigt zu sein, dennoch ist die Code-Signatur von iTerm2 entgegen aller Erwartung gültig. Bitte melden Sie einen Fehler unter https://iterm2.com/bugs"
+            "value" : "Eine erforderliche Datei scheint zu fehlen oder beschädigt zu sein, dennoch ist die Code-Signatur von iTerm2 entgegen aller Erwartung gültig. Bitte melden Sie einen Fehler unter https://github.com/NathanGel/shellforge/issues/new/choose"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "A required file appears to be missing or corrupted, yet against all odds the code signature for iTerm2 is valid. Please file a bug at https://iterm2.com/bugs"
+            "value" : "A required file appears to be missing or corrupted, yet against all odds the code signature for iTerm2 is valid. Please file a bug at https://github.com/NathanGel/shellforge/issues/new/choose"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "必要なファイルが見つからないか破損しているようですが、意外なことにiTerm2のコード署名は有効です。https://iterm2.com/bugs にバグを報告してください。"
+            "value" : "必要なファイルが見つからないか破損しているようですが、意外なことにiTerm2のコード署名は有効です。https://github.com/NathanGel/shellforge/issues/new/choose にバグを報告してください。"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Um arquivo necessário parece estar ausente ou corrompido, mas contra todas as probabilidades a assinatura de código do iTerm2 é válida. Registre um bug em https://iterm2.com/bugs"
+            "value" : "Um arquivo necessário parece estar ausente ou corrompido, mas contra todas as probabilidades a assinatura de código do iTerm2 é válida. Registre um bug em https://github.com/NathanGel/shellforge/issues/new/choose"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Похоже, отсутствует или повреждён необходимый файл, но, вопреки всему, подпись кода iTerm2 действительна. Пожалуйста, сообщите об ошибке на https://iterm2.com/bugs"
+            "value" : "Похоже, отсутствует или повреждён необходимый файл, но, вопреки всему, подпись кода iTerm2 действительна. Пожалуйста, сообщите об ошибке на https://github.com/NathanGel/shellforge/issues/new/choose"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "某个必需文件似乎缺失或已损坏，但万幸 iTerm2 的代码签名仍然有效。请在 https://iterm2.com/bugs 报告问题"
+            "value" : "某个必需文件似乎缺失或已损坏，但万幸 iTerm2 的代码签名仍然有效。请在 https://github.com/NathanGel/shellforge/issues/new/choose 报告问题"
           }
         }
       }
@@ -69333,37 +69333,37 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Eine erforderliche Datei scheint zu fehlen oder beschädigt zu sein, doch wider Erwarten ist die Codesignatur von iTerm2 gültig. Bitte melden Sie einen Fehler unter https://iterm2.com/bugs"
+            "value" : "Eine erforderliche Datei scheint zu fehlen oder beschädigt zu sein, doch wider Erwarten ist die Codesignatur von iTerm2 gültig. Bitte melden Sie einen Fehler unter https://github.com/NathanGel/shellforge/issues/new/choose"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "A required file appears to be missing or corrupted, yet against all odds the code signature for iTerm2 is valid. Please file a bug at https://iterm2.com/bugs"
+            "value" : "A required file appears to be missing or corrupted, yet against all odds the code signature for iTerm2 is valid. Please file a bug at https://github.com/NathanGel/shellforge/issues/new/choose"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "必要なファイルが見つからないか破損しているようですが、意外なことにiTerm2のコード署名は有効です。https://iterm2.com/bugs でバグを報告してください"
+            "value" : "必要なファイルが見つからないか破損しているようですが、意外なことにiTerm2のコード署名は有効です。https://github.com/NathanGel/shellforge/issues/new/choose でバグを報告してください"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Um arquivo necessário parece estar ausente ou corrompido, mas contra todas as probabilidades a assinatura de código do iTerm2 é válida. Registre um bug em https://iterm2.com/bugs"
+            "value" : "Um arquivo necessário parece estar ausente ou corrompido, mas contra todas as probabilidades a assinatura de código do iTerm2 é válida. Registre um bug em https://github.com/NathanGel/shellforge/issues/new/choose"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Похоже, что необходимый файл отсутствует или повреждён, однако вопреки всему цифровая подпись кода iTerm2 действительна. Пожалуйста, сообщите об ошибке на странице https://iterm2.com/bugs"
+            "value" : "Похоже, что необходимый файл отсутствует или повреждён, однако вопреки всему цифровая подпись кода iTerm2 действительна. Пожалуйста, сообщите об ошибке на странице https://github.com/NathanGel/shellforge/issues/new/choose"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "似乎缺少或损坏了必需的文件，但出乎意料的是 iTerm2 的代码签名是有效的。请向 https://iterm2.com/bugs 提交错误报告。"
+            "value" : "似乎缺少或损坏了必需的文件，但出乎意料的是 iTerm2 的代码签名是有效的。请向 https://github.com/NathanGel/shellforge/issues/new/choose 提交错误报告。"
           }
         }
       }
@@ -71265,37 +71265,37 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Bitte melden Sie einen Fehler unter https://iterm2.com/bugs. Beim Aktualisieren einer Abhängigkeit ist folgender Fehler aufgetreten: %@"
+            "value" : "Bitte melden Sie einen Fehler unter https://github.com/NathanGel/shellforge/issues/new/choose. Beim Aktualisieren einer Abhängigkeit ist folgender Fehler aufgetreten: %@"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Please file a bug report at https://iterm2.com/bugs. The following error occurred while upgrading a dependency: %@"
+            "value" : "Please file a bug report at https://github.com/NathanGel/shellforge/issues/new/choose. The following error occurred while upgrading a dependency: %@"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "https://iterm2.com/bugs でバグを報告してください。依存関係のアップグレード中に次のエラーが発生しました: %@"
+            "value" : "https://github.com/NathanGel/shellforge/issues/new/choose でバグを報告してください。依存関係のアップグレード中に次のエラーが発生しました: %@"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Envie um relatório de erro em https://iterm2.com/bugs. O seguinte erro ocorreu ao atualizar uma dependência: %@"
+            "value" : "Envie um relatório de erro em https://github.com/NathanGel/shellforge/issues/new/choose. O seguinte erro ocorreu ao atualizar uma dependência: %@"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Пожалуйста, сообщите об ошибке на странице https://iterm2.com/bugs. При обновлении зависимости произошла следующая ошибка: %@"
+            "value" : "Пожалуйста, сообщите об ошибке на странице https://github.com/NathanGel/shellforge/issues/new/choose. При обновлении зависимости произошла следующая ошибка: %@"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "请访问 https://iterm2.com/bugs 提交错误报告。升级依赖项时发生了以下错误：%@"
+            "value" : "请访问 https://github.com/NathanGel/shellforge/issues/new/choose 提交错误报告。升级依赖项时发生了以下错误：%@"
           }
         }
       }
@@ -87701,37 +87701,37 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ein Fehler ist aufgetreten: %@. Bitte melden Sie dies unter https://iterm2.com/bugs"
+            "value" : "Ein Fehler ist aufgetreten: %@. Bitte melden Sie dies unter https://github.com/NathanGel/shellforge/issues/new/choose"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "A bug was encountered: %@. Please report this at https://iterm2.com/bugs"
+            "value" : "A bug was encountered: %@. Please report this at https://github.com/NathanGel/shellforge/issues/new/choose"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "バグが発生しました: %@。https://iterm2.com/bugs から報告してください"
+            "value" : "バグが発生しました: %@。https://github.com/NathanGel/shellforge/issues/new/choose から報告してください"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Um bug foi encontrado: %@. Reporte isto em https://iterm2.com/bugs"
+            "value" : "Um bug foi encontrado: %@. Reporte isto em https://github.com/NathanGel/shellforge/issues/new/choose"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Обнаружена ошибка: %@. Пожалуйста, сообщите об этом на https://iterm2.com/bugs"
+            "value" : "Обнаружена ошибка: %@. Пожалуйста, сообщите об этом на https://github.com/NathanGel/shellforge/issues/new/choose"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "遇到一个错误：%@. 请于 https://iterm2.com/bugs 报告此问题。"
+            "value" : "遇到一个错误：%@. 请于 https://github.com/NathanGel/shellforge/issues/new/choose 报告此问题。"
           }
         }
       }
