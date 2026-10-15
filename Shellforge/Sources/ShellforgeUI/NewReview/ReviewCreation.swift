@@ -48,6 +48,7 @@ extension CreationModel where Kind == ReviewCreation {
     /// misconfigured sheet look merely empty, and every real call passes `searcher(gitLab:gitHub:remote:)`.
     public convenience init(project: Project, agents: [AgentDefinition], available: Set<String>, draft: ReviewDraft,
                             rememberedModels: [String: String],
+                            modelDefaults: [String: ModelPreference] = [:],
                             catalogue: @escaping @Sendable (AgentDefinition) throws -> [AgentModel],
                             branches: @escaping @Sendable () -> [String],
                             codeHost: CodeHost,
@@ -55,7 +56,7 @@ extension CreationModel where Kind == ReviewCreation {
                             submit: @escaping @MainActor (ReviewDraft) async throws -> Void,
                             home: URL) {
         self.init(kind: ReviewCreation(codeHost: codeHost), project: project, agents: agents, available: available, draft: draft,
-                  rememberedModels: rememberedModels, catalogue: catalogue, branches: branches, submit: submit,
+                  rememberedModels: rememberedModels, modelDefaults: modelDefaults, catalogue: catalogue, branches: branches, submit: submit,
                   search: searchMergeRequests, home: home)
     }
 

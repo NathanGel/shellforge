@@ -32,7 +32,10 @@ import SwiftUI
                                                         testGitLab: { _ in "x" }, testGitHub: { _ in "x" })
             let backpack = BackpackController(ports: .inert, settings: BackpackSettings(defaults: nil), toast: { _ in })
             let host = NSHostingView(rootView: SettingsPanel(backpack: backpack, integrations: integrations, environment: nil,
-                                                             terminalMatch: settings, close: {}))
+                                                             terminalMatch: settings,
+                                                             agentDefaults: AgentDefaultsSettingsModel(agents: [], catalogue: { _ in [] }, remembered: [:],
+                                                                                                       defaults: ScratchDefaults.make()),
+                                                             close: {}))
             host.frame = NSRect(x: 0, y: 0, width: 600, height: 900)
             host.layoutSubtreeIfNeeded()
             return host

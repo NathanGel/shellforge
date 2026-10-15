@@ -125,6 +125,8 @@ public final class CreationModel<Kind: CreationKind>: ObservableObject, Identifi
     public let availableAgents: Set<String>
 
     private let rememberedModels: [String: String]
+    /// Settings › Agents' defaults, by agent id; they come before `rememberedModels`.
+    private let modelDefaults: [String: ModelPreference]
     private let catalogue: @Sendable (AgentDefinition) throws -> [AgentModel]
     private let listBranches: @Sendable () -> [String]
     private let submit: @MainActor (Kind.Draft) async throws -> Void
@@ -137,6 +139,7 @@ public final class CreationModel<Kind: CreationKind>: ObservableObject, Identifi
 
     public init(kind: Kind, project: Project, agents: [AgentDefinition], available: Set<String>, draft: Kind.Draft,
                 rememberedModels: [String: String],
+                modelDefaults: [String: ModelPreference] = [:],
                 catalogue: @escaping @Sendable (AgentDefinition) throws -> [AgentModel],
                 branches: @escaping @Sendable () -> [String],
                 submit: @escaping @MainActor (Kind.Draft) async throws -> Void,
@@ -151,6 +154,7 @@ public final class CreationModel<Kind: CreationKind>: ObservableObject, Identifi
         self.draft = draft
         self.opened = draft
         self.rememberedModels = rememberedModels
+        self.modelDefaults = modelDefaults
         self.catalogue = catalogue
         self.listBranches = branches
         self.submit = submit
@@ -210,7 +214,7 @@ public final class CreationModel<Kind: CreationKind>: ObservableObject, Identifi
     /// picked, or from an older read, is dropped.
     public func loadCatalogue() async {
         catalogueGeneration += 1
-        let generation = catalogueGeneration, agent = self.agent, remembered = rememberedModels[agent.id], read = catalogue
+        let generation = catalogueGeneration, agent = self.agent, remembered = rememberedModels[agent.id], saved = modelDefaults[agent.id], read = catalogue
         let home = self.home, path = project.path
         let result = await BackgroundWork.run { () -> (models: [AgentModel], failure: String?, completions: [AgentCompletion]) in
             let skills = SkillCatalog.discover(agentId: agent.id, projectPath: path, home: home)
@@ -223,7 +227,7 @@ public final class CreationModel<Kind: CreationKind>: ObservableObject, Identifi
         completions.all = result.completions
         completions.close()
         if resetModel || !models.contains(where: { $0.id == draft.model }) {
-            let preference = ModelPreference.resolve(catalog: models, remembered: remembered)
+            let preference = ModelPreference.resolve(catalog: models, remembered: remembered, saved: saved)
             draft.model = preference.model
             draft.reasoning = preference.reasoning
             resetModel = false
@@ -314,7 +318,7 @@ public final class CreationModel<Kind: CreationKind>: ObservableObject, Identifi
         guard let last = missing.last else { return nil }
         let names = missing.count == 1 ? last : missing.dropLast().joined(separator: ", ") + " and " + last
         return names + (missing.count == 1 ? " isn’t installed. Install it" : " aren’t installed. Install them")
-            + " in Settings › Agents."
+            + ", then click Reload in Settings › Core › Environment."
     }
 }
 
@@ -322,6 +326,7 @@ extension CreationModel where Kind == TaskCreation {
     /// New Task's model, its search being Jira's.
     public convenience init(project: Project, agents: [AgentDefinition], available: Set<String>, draft: TaskDraft,
                             rememberedModels: [String: String],
+                            modelDefaults: [String: ModelPreference] = [:],
                             catalogue: @escaping @Sendable (AgentDefinition) throws -> [AgentModel],
                             branches: @escaping @Sendable () -> [String],
                             submit: @escaping @MainActor (TaskDraft) async throws -> Void,
@@ -329,7 +334,7 @@ extension CreationModel where Kind == TaskCreation {
                             sshHost: String? = nil,
                             existingWorktrees: @escaping @Sendable () -> [ExistingWorktree] = { [] }, home: URL) {
         self.init(kind: TaskCreation(sshHost: sshHost, listExisting: existingWorktrees), project: project, agents: agents, available: available, draft: draft, rememberedModels: rememberedModels,
-                  catalogue: catalogue, branches: branches, submit: submit, search: searchIssues, home: home)
+                  modelDefaults: modelDefaults, catalogue: catalogue, branches: branches, submit: submit, search: searchIssues, home: home)
     }
 
     /// New worktree or Existing worktree: the first listed is picked when none is.

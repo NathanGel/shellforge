@@ -309,8 +309,10 @@ struct SidebarView: View {
         let integrations = IntegrationSettingsModel(jira: model.jiraSettings(), gitLab: model.gitLabSettings(),
                                                     gitHub: model.gitHubSettings())
         let environment = model.environmentModel()
+        let agentDefaults = model.agentDefaultsModel()
         sheet.present(over: anchor.window) { dismiss in
-            SettingsPanel(backpack: backpack, integrations: integrations, environment: environment, terminalMatch: terminalMatch, close: dismiss)
+            SettingsPanel(backpack: backpack, integrations: integrations, environment: environment, terminalMatch: terminalMatch,
+                          agentDefaults: agentDefaults, close: dismiss)
         }
     }
 

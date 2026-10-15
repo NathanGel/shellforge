@@ -48,7 +48,7 @@ extension TerminalHost {
 /// The draft's agent's CLI was not on the login shell's `PATH` when Create ran.
 public struct AgentNotInstalled: Error, Equatable, LocalizedError {
     public let agent: String
-    public var errorDescription: String? { "\(agent) isn’t installed. Install it in Settings › Agents." }
+    public var errorDescription: String? { "\(agent) isn’t installed. Install it, then click Reload in Settings › Core › Environment." }
 }
 
 /// A create submitted after its project was removed, in another window.
@@ -143,6 +143,8 @@ public final class SidebarModel: ObservableObject {
     let jiraSettings: @Sendable () -> JiraConfig?
     let gitLabSettings: @Sendable () -> GitLabConfig?
     let gitHubSettings: @Sendable () -> GitHubConfig?
+    /// Read Settings › Agents' saved defaults, by agent id; read as each sheet opens.
+    let modelDefaults: @Sendable () -> [String: ModelPreference]
     private var subscription: AnyCancellable?
     let feed: SessionFeed?
     private var feedSubscriptions: [AnyCancellable] = []
@@ -168,12 +170,14 @@ public final class SidebarModel: ObservableObject {
                 jiraSettings: @escaping @Sendable () -> JiraConfig? = { JiraSettings.load() },
                 gitLabSettings: @escaping @Sendable () -> GitLabConfig? = { GitLabSettings.load() },
                 gitHubSettings: @escaping @Sendable () -> GitHubConfig? = { GitHubSettings.load() },
+                modelDefaults: (@Sendable () -> [String: ModelPreference])? = nil,
                 sshConfig: SSHConfigSource = .none) {
         self.host = host
         self.sshConfig = sshConfig
         self.jiraSettings = jiraSettings
         self.gitLabSettings = gitLabSettings
         self.gitHubSettings = gitHubSettings
+        self.modelDefaults = modelDefaults ?? { [ids = agents.map(\.id)] in ModelSettings.loadAll(for: ids) }
         removalBoard = RemovalBoard.shared(for: document)
         self.document = document
         self.launcher = launcher
@@ -314,7 +318,7 @@ public final class SidebarModel: ObservableObject {
         draft.openSSH = draft.paneHost != nil && document.workspace.lastOpenSSHByProject[projectId] ?? true
         let path = project.path
         return NewTaskModel(project: project, agents: agents, available: available, draft: draft,
-                            rememberedModels: document.workspace.lastModelByAgent, catalogue: catalogue,
+                            rememberedModels: document.workspace.lastModelByAgent, modelDefaults: modelDefaults(), catalogue: catalogue,
                             branches: { Repository.branches(of: path, launcher: launcher) },
                             submit: { [weak self] draft in try await self?.newTask(draft: draft, in: projectId) },
                             // Read once, as the sheet opens: a Keychain read is too slow for every keystroke.

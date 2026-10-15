@@ -55,7 +55,7 @@ class InstanceLock: NSObject {
         }
         let message: String
         // Shellforge: the app is named Shellforge, and its own default suite, Shellforge, is not named.
-        if let suiteName = iTermUserDefaults.customSuiteName(), suiteName != "Shellforge" {
+        if let suiteName = iTermUserDefaults.userVisibleSuiteName() {
             message = String(format: String(localized: "Shellforge.InstanceLock.SuiteMessage",
                                             defaultValue: "Another copy of Shellforge (process ID %1$d) is already running with the settings suite “%2$@”. If two copies use the same settings at once, they can overwrite each other’s preferences and saved windows.",
                                             comment: "Shown at launch when another instance uses the same -suite. %1$d is a process ID; %2$@ is the suite name."),

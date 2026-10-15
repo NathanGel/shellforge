@@ -83,4 +83,30 @@ import Testing
         #expect(ModelPreference.resolve(catalog: [a, b], remembered: "gone") == ModelPreference(model: "a", reasoning: "high"))
         #expect(ModelPreference.resolve(catalog: [], remembered: "a") == ModelPreference(model: "", reasoning: nil))
     }
+
+    @Test func aSavedDefaultWinsOverTheRememberedModel() {
+        let a = AgentModel(id: "a", label: "A", detail: nil, efforts: ["low", "high"], defaultEffort: "high")
+        let b = AgentModel(id: "b", label: "B", detail: nil, efforts: ["low", "high"], defaultEffort: "high")
+        let saved = ModelPreference(model: "b", reasoning: "low")
+        #expect(ModelPreference.resolve(catalog: [a, b], remembered: "a", saved: saved) == saved)
+        // A saved level the model no longer offers falls back to the model's own default.
+        #expect(ModelPreference.resolve(catalog: [a, b], remembered: "a", saved: ModelPreference(model: "b", reasoning: "max"))
+                == ModelPreference(model: "b", reasoning: "high"))
+    }
+
+    @Test func aSavedModelThatIsGoneStartsNothing() {
+        let a = AgentModel(id: "a", label: "A", detail: nil, efforts: [], defaultEffort: nil)
+        let saved = ModelPreference(model: "gone", reasoning: "high")
+        #expect(ModelPreference.resolution(catalog: [a], remembered: "a", saved: saved) == .missing(saved))
+        #expect(ModelPreference.resolve(catalog: [a], remembered: "a", saved: saved) == ModelPreference(model: "", reasoning: nil))
+    }
+
+    @Test func settingsDefaultsAreSavedPerAgent() {
+        let defaults = ScratchDefaults.make()
+        #expect(ModelSettings.load(for: "claude", defaults: defaults) == nil)
+        ModelSettings.save(ModelPreference(model: "opus", reasoning: "low"), for: "claude", defaults: defaults)
+        #expect(ModelSettings.load(for: "claude", defaults: defaults) == ModelPreference(model: "opus", reasoning: "low"))
+        #expect(ModelSettings.loadAll(for: ["claude", "codex"], defaults: defaults)
+                == ["claude": ModelPreference(model: "opus", reasoning: "low")])
+    }
 }

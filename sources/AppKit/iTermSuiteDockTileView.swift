@@ -17,7 +17,7 @@ class iTermSuiteDockTileView: NSView {
         guard iTermAdvancedSettingsModel.showSuiteNameInDockIcon() else {
             return
         }
-        guard let suiteName = iTermUserDefaults.customSuiteName(), !suiteName.isEmpty else {
+        guard let suiteName = iTermUserDefaults.userVisibleSuiteName(), !suiteName.isEmpty else {
             return
         }
         let tile = NSApp.dockTile

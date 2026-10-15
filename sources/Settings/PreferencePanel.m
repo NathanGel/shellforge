@@ -618,7 +618,7 @@ static iTermPreferencesSearchEngine *gSearchEngine;
     } else {
         [_toolbar setVisible:YES];
         [self resizeWindowForTabViewItem:_globalTabViewItem animated:NO];
-        NSString *suiteName = [iTermUserDefaults customSuiteName];
+        NSString *suiteName = [iTermUserDefaults userVisibleSuiteName];
         if (suiteName.length > 0) {
             self.window.title = [NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"PreferencePanel.SettingsWindowTitleWithSuite", nil, [NSBundle mainBundle], @"Settings: %@", @"Settings window title including the settings suite name"), suiteName];
         } else {

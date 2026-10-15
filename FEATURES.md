@@ -107,7 +107,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
     - the task name;
     - for a new worktree: type (feat, fix or chore), new branch and base branch. A picked ticket fills in the name, type and branch.
     - for an existing worktree: which one, newest commit first, from the project's worktrees that are on a branch and not a task yet (made by Shellforge, AiTerm, an agent or by hand). The task is named after its branch unless you type a name. Nothing in git changes: the task continues on that branch as it is.
-  - **Agent:** agent, model and reasoning.
+  - **Agent:** agent, model and reasoning. The model and reasoning start at the agent's default from Settings › Agents, else the model last used with that agent and that model's own reasoning level.
   - **Prompt:** an optional first prompt. "/" lists the agent's commands and skills.
   - **Options:** "Include Jira ticket details", and "Open ssh <host> beside the agent".
   - **Keys:** ⌘↩ is the main button. ⎋ closes an open list first, then goes back a step.
@@ -246,6 +246,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 
 - **Opening Settings.** Click the sidebar's gear, or right-click the Mac row › Mac Settings….
   - **Core:** the Mac card (Backpack setup) and the Environment card.
+  - **Agents:** one row per installed agent, with its **Default model** and **Default reasoning**.
   - **Services:** Jira (site, email, API token), GitLab (host, token) and GitHub (token).
 - **Connections.**
   - Tokens are kept only in the Keychain, and URLs must be https.
@@ -254,7 +255,11 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 - **Agent hooks (the bolt)** have one row per agent, with its state and one button: Install, Repair or Reinstall. ⌘↩ or ⎋ closes the sheet.
   - Files change only when you click, and each is backed up once as `.shellforge-backup`.
   - The files are `~/.claude/settings.json`, `~/.codex/config.toml`, `~/.grok/config.toml` and `~/.pi/agent/extensions/shellforge-status.ts`.
-- **Settings looks like System Settings:** Core and Services are each one grouped box, one row per setting or service.
+- **Default model and reasoning.** Settings › Agents sets what New Task and New Review start each agent with; you can still change it per task.
+  - Until you pick one, a row shows what the sheets would use now: the model last used with that agent, else the first in its list, at that model's own reasoning level.
+  - Only a row you change is saved, on Save. A saved default stays when you start a task with something else.
+  - If a saved model is no longer offered, the row says so and the sheets ask you to choose a current model instead of quietly starting another.
+- **Settings looks like System Settings:** Core, Agents and Services are each one grouped box, one row per setting or service.
 - **Terminal.** Settings › Core › Match the terminal to Shellforge, a switch, off by default, takes effect on Save.
   - Every terminal, including tabs opened later, uses Shellforge's colours: a background one step off the sidebar (darker in dark mode, lighter in light mode), the sidebar's text and selection colours, the macOS accent colour for the cursor, and macOS's system colours for the 16 terminal colours, each readable on the background.
   - iTerm2 uses its Minimal theme, so the title bar and window edges match. Settings › Appearance's Theme is greyed out while it is on.

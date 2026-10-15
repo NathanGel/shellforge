@@ -35,7 +35,7 @@ import Testing
         await sheet.loadCatalogue()
         #expect(!sheet.agentIsReady && !sheet.canAdvance(step: 2))
         #expect(NewTaskModel.missingAgentNote(agents: AgentPresets.all, available: ["codex"])
-                == "Claude Code, Grok Build and PI aren’t installed. Install them in Settings › Agents.")
+                == "Claude Code, Grok Build and PI aren’t installed. Install them, then click Reload in Settings › Core › Environment.")
         #expect(await sheet.create() == false)
     }
 

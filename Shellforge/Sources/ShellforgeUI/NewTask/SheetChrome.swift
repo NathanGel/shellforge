@@ -272,7 +272,7 @@ struct AgentSegmented: View {
                        isSelectable: { id in agents.first { $0.id == id }.map { Self.isSelectable($0, available: available) } ?? false },
                        help: { id in
                            guard let agent = agents.first(where: { $0.id == id }), !Self.isSelectable(agent, available: available) else { return nil }
-                           return "\(agent.name) isn’t installed. Install it in Settings › Agents."
+                           return "\(agent.name) isn’t installed. Install it, then click Reload in Settings › Core › Environment."
                        }) { id, on in
             HStack(spacing: Space.snug) {
                 VendorMark(agent: SessionAgent(rawValue: id) ?? .shell, size: Size.vendorMark)

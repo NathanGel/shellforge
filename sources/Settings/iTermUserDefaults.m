@@ -68,6 +68,10 @@ static NSString *const iTermUserDefaultsKeyHaveShownMacOS13RequirementNotice = @
     return gCustomSuiteName;
 }
 
++ (NSString *)userVisibleSuiteName {
+    return [gCustomSuiteName isEqualToString:@"Shellforge"] ? nil : gCustomSuiteName;
+}
+
 static NSArray *iTermUserDefaultsGetTypedArray(NSUserDefaults *userDefaults, Class objectClass, NSString *key) {
     return [[NSArray castFrom:[userDefaults objectForKey:key]] mapWithBlock:^id(id anObject) {
         return [objectClass castFrom:anObject];

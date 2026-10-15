@@ -7,6 +7,21 @@ a patch fixes, a minor adds features, a major changes a saved setup.
 Each version's section is also its GitHub release notes: `Shellforge/scripts/release.sh` publishes
 it and refuses to release a version that has none.
 
+## 0.5.0 — unreleased
+
+### New
+
+- **A default model and reasoning level for each agent** (Settings › Agents). New Task and New Review
+  start with it, and you can still change it for a single task. As in AiTerm.
+
+### Fixed
+
+- **The Dock icon no longer has green “Shellforge” text** over it. iTerm2 labels a test copy that runs
+  with a settings suite, and Shellforge always uses its own suite. For the same reason the Settings
+  window was titled “Settings: Shellforge”; it is now just “Settings”.
+- An agent that isn’t installed now says how to fix it: install it, then click Reload in
+  Settings › Core › Environment. It used to point to a Settings page that doesn’t install agents.
+
 ## 0.4.0 — 2026-10-15
 
 ### New

@@ -74,7 +74,7 @@ import ShellforgeDesign
     @Test func theFooterWarnsOnlyWhenNoAgentIsInstalled() {
         #expect(NewTaskSheet.footerNote(agents: AgentPresets.all, available: ["claude"]) == nil)
         #expect(NewTaskSheet.footerNote(agents: AgentPresets.all, available: [])
-                == "Claude Code, Codex, Grok Build and PI aren’t installed. Install them in Settings › Agents.")
+                == "Claude Code, Codex, Grok Build and PI aren’t installed. Install them, then click Reload in Settings › Core › Environment.")
     }
 
     /// Once Create is pressed nothing in the sheet takes typing: the prompt and every field are

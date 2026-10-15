@@ -21,7 +21,7 @@ extension SidebarModel {
         let agentId = last.flatMap { available.contains($0) ? $0 : nil } ?? agents.first { available.contains($0.id) }?.id ?? agents[0].id
         return ReviewCreationModel(project: project, agents: agents, available: available,
                                    draft: ReviewDraft(mr: nil, agentId: agentId, model: "", reasoning: nil),
-                                   rememberedModels: document.workspace.lastModelByAgent, catalogue: catalogue,
+                                   rememberedModels: document.workspace.lastModelByAgent, modelDefaults: modelDefaults(), catalogue: catalogue,
                                    branches: { Repository.branches(of: path, launcher: launcher) },
                                    codeHost: MergeRequestSearch.host(for: read.0),
                                    searchMergeRequests: ReviewCreationModel.searcher(gitLab: read.1, gitHub: read.2, remote: read.0),

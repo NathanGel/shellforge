@@ -20,6 +20,10 @@ extern NSString *const iTermShowSessionStatusInTabSubtitleDidChange;
 // Returns the custom suite name if one was set via setCustomSuiteName:, otherwise nil.
 + (nullable NSString *)customSuiteName;
 
+// Shellforge: the custom suite name, or nil when it is Shellforge's own default suite, which
+// main.m sets on every launch and which should never be shown to the user.
++ (nullable NSString *)userVisibleSuiteName;
+
 // Returns the custom suite if set, otherwise standardUserDefaults.
 + (NSUserDefaults *)userDefaults;
 
