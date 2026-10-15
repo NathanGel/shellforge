@@ -111,11 +111,12 @@ struct SidebarFooterHost: View {
                                                         hotspot: backpack.network, wifi: backpack.currentNetwork),
                           toggleMac: toggleMac, openMacSettings: openMacSettings)
         }
-        // The footer on a rounded card, inside its own frame, so the footer's geometry is unchanged.
+        // The footer on a rounded card, inside its own frame, so the footer's geometry is unchanged;
+        // its edges in line with the rows' pills, at the list's inset.
         .background {
             RoundedRectangle(cornerRadius: scale(Radius.group), style: .continuous)
                 .fill(Palette.footerCard)
-                .padding(.horizontal, scale(Space.base))
+                .padding(.horizontal, SidebarRowLayout.listInset)
                 .padding(.bottom, scale(Space.base))
         }
     }

@@ -86,7 +86,7 @@ struct SidebarFooterGeometryTests {
         let font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
         let label = ("ctx " as NSString).size(withAttributes: [.font: font]).width
         let text = (" 84%" as NSString).size(withAttributes: [.font: font]).width
-        let expected = Space.inset + Space.base + Size.vendorMark + Space.inset + label + Size.statusMark + text
+        let expected = SidebarRowLayout.listInset + Space.base + Size.vendorMark + Space.inset + label + Size.statusMark + text
         // Below the SYSTEM heading, above the rule: the context row alone.
         let top = Int(Space.tight + Size.menuRow)
         let right = try paintedWidth(host, band: top..<(top + Int(Size.menuRow)))
@@ -103,7 +103,7 @@ struct SidebarFooterGeometryTests {
         let text = ("wk  84%" as NSString).size(withAttributes: [.font: font]).width
         // The row also carries the vendor mark and the footer's leading edge: the list's inset
         // plus a row's `Space.base`.
-        let leading = Space.inset + Space.base + Size.vendorMark + Space.inset
+        let leading = SidebarRowLayout.listInset + Space.base + Size.vendorMark + Space.inset
         let ring = try paintedWidth(rows, width: 600) - leading - text
         #expect(abs(ring - Size.statusMark) < 2,
                 "the segment leaves \(ring) pt for its ring; a ring is \(Size.statusMark) pt")
@@ -174,7 +174,7 @@ struct SidebarFooterGeometryTests {
     @Test func theCountsFollowTheContextInItsRun() throws {
         let host = host([], task: UsageTaskRow(agent: .claude, context: context, tokens: counts), width: 600)
         let text = laidOut(["ctx ", " 84%", " · ", "in ", "936k", " · ", "out ", "5.6k"])
-        let expected = Space.inset + Space.base + Size.vendorMark + Space.inset + text + Size.statusMark
+        let expected = SidebarRowLayout.listInset + Space.base + Size.vendorMark + Space.inset + text + Size.statusMark
         let top = Int(Space.tight + Size.menuRow)
         let right = try paintedWidth(host, band: top..<(top + Int(Size.menuRow)))
         #expect(abs(right - expected) < 2, "the row's ink ends at \(right) pt; ctx and the counts end at \(expected) pt")
@@ -185,7 +185,7 @@ struct SidebarFooterGeometryTests {
     @Test func theCountsStandAloneBeforeAContext() throws {
         let host = host([], task: UsageTaskRow(agent: .grok, context: nil, tokens: counts), width: 600)
         let text = laidOut(["in ", "936k", " · ", "out ", "5.6k"])
-        let expected = Space.inset + Space.base + Size.vendorMark + Space.inset + text
+        let expected = SidebarRowLayout.listInset + Space.base + Size.vendorMark + Space.inset + text
         let top = Int(Space.tight + Size.menuRow)
         let right = try paintedWidth(host, band: top..<(top + Int(Size.menuRow)))
         #expect(abs(right - expected) < 2, "the row's ink ends at \(right) pt; the counts alone end at \(expected) pt")
@@ -213,6 +213,14 @@ extension SidebarFooterGeometryTests {
     /// The footer stretches to its container and its text leaves are not separate `NSView`s, so
     /// only the pixels say how wide the row's ink runs. Rasterise it over a backdrop far wider than
     /// the sidebar and find the rightmost painted column.
+    /// A plain shell has nothing to report — no context, no counts — so it draws no row: its mark
+    /// alone on a line read as a stray glyph under the System heading.
+    @Test func aShellWithNothingToReportDrawsNoRow() {
+        let none = host([], task: nil).fittingSize.height
+        let shell = host([], task: UsageTaskRow(agent: .shell, context: nil)).fittingSize.height
+        #expect(shell == none)
+    }
+
     private func paintedWidth(_ rows: [UsageVendorRow], width: CGFloat, scale: InterfaceScale = .standard) throws -> CGFloat {
         // Two 1 pt rules run the footer's full width: the top one, and the one between SYSTEM and
         // USAGE. The band below the second holds the USAGE heading, which is narrower than any row,

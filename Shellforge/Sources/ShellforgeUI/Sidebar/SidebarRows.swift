@@ -69,7 +69,7 @@ private struct HeaderPlacement: ViewModifier {
         if let windowControls {
             content
                 .padding(.leading, windowControls.headerLeading)
-                .padding(.trailing, SidebarRowLayout.trailingInset(scale) + Space.block)
+                .padding(.trailing, SidebarRowLayout.trailingInset(scale) + SidebarRowLayout.listInset)
                 .frame(height: windowControls.bandHeight)
         } else {
             content

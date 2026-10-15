@@ -21,6 +21,11 @@ enum SidebarRowLayout {
     }
     /// The project row's own leading disclosure chevron width.
     static func chevronWidth(_ scale: InterfaceScale) -> CGFloat { scale(Size.chevron) }
+    /// How far a sidebar `List` insets its rows from its edges — the system's, unscaled: 16 pt on
+    /// macOS 26 (measured, `SidebarListInsetTests`), 10 before.
+    static var listInset: CGFloat {
+        ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 26 ? Space.block : Space.inset
+    }
 }
 
 /// The add glyph, drawn identically wherever it appears. `.borderlessButton` hands the label to

@@ -51,7 +51,8 @@ struct SidebarFooter: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             group(Self.systemHeading) {
-                if let task {
+                // A plain shell with nothing to report draws no row: its mark alone read as a stray glyph.
+                if let task, task.agent != .shell || task.context != nil || task.tokens != nil {
                     telemetryRow(mark: vendorMark(task.agent)) {
                         if task.context != nil || task.tokens != nil {
                             // One zero-spacing run, as a vendor row's windows are: the row's own
@@ -70,7 +71,7 @@ struct SidebarFooter: View {
                 backpackLine
             }
             // Inside the footer card, not past its edges.
-            Hairline().padding(.horizontal, scale(Space.base) + scale(Space.inset))
+            Hairline().padding(.horizontal, edge)
             group("Usage") {
                 ForEach(rows, id: \.vendor) { row in
                     telemetryRow(mark: vendorMark(row.vendor)) {
@@ -134,9 +135,9 @@ struct SidebarFooter: View {
     /// Amber, like the iTerm2 banner's warning, for a feed that is broken; a quiet one's note recedes.
     static func noteInk(_ row: UsageVendorRow) -> Color { row.warning ? Palette.amber : Palette.muted }
 
-    /// The footer sits below the `List`, not in it, so it adds the list's own inset — the
-    /// `Space.inset` the snapshot harness stands in for it with — to the rows' `Space.base`.
-    private var edge: CGFloat { scale(Space.inset) + scale(Space.base) }
+    /// The footer sits below the `List`, not in it, so it adds the list's own inset to the rows'
+    /// `Space.base`: its content lines up with the rows'.
+    private var edge: CGFloat { SidebarRowLayout.listInset + scale(Space.base) }
 
     /// A heading in the `PROJECTS` header's treatment, then its rows, in the footer's own padding.
     private func group(_ title: String, @ViewBuilder rows: () -> some View) -> some View {
