@@ -268,7 +268,10 @@ class WorkgroupUsageToolbarItem: SessionToolbarGenericView {
         let barX = Self.hInset + Self.labelWidth + Self.hGap
         let barW = max(0, width - barX - Self.hGap - Self.percentWidth - Self.hInset)
         for row in rows {
-            let labelH = row.label.fittingSize.height
+            // Clamp text heights to the row slot so labels from adjacent rows
+            // never overlap when the toolbar is too short to give each row its
+            // natural text height (e.g. three bars in a 22pt toolbar).
+            let labelH = min(row.label.fittingSize.height, rowHeight)
             row.label.frame = NSRect(x: Self.hInset,
                                      y: y + (rowHeight - labelH) / 2.0,
                                      width: Self.labelWidth,
@@ -277,7 +280,7 @@ class WorkgroupUsageToolbarItem: SessionToolbarGenericView {
                                    y: y + (rowHeight - Self.barHeight) / 2.0,
                                    width: barW,
                                    height: Self.barHeight)
-            let pctH = row.percent.fittingSize.height
+            let pctH = min(row.percent.fittingSize.height, rowHeight)
             row.percent.frame = NSRect(x: width - Self.percentWidth - Self.hInset,
                                        y: y + (rowHeight - pctH) / 2.0,
                                        width: Self.percentWidth,
