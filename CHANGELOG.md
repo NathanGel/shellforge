@@ -9,6 +9,14 @@ it and refuses to release a version that has none.
 
 ## 0.5.1 — unreleased
 
+### Fixed
+
+- **Claude usage percentages no longer flicker** in the toolbar. With three bars (Session, Week, and
+  the per-model weekly limit) the labels were placed using their natural text height, which is taller
+  than each row when all three fit in a standard toolbar. The overlapping NSTextFields created the
+  appearance of values jumping between 17%, 38%, and ~63%. Each label is now clamped to its row's
+  height so nothing spills into an adjacent row.
+
 ## 0.5.0 — 2026-10-15
 
 ### New
