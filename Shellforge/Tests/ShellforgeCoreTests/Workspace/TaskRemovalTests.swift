@@ -26,7 +26,7 @@ import Testing
         let task = TaskItem(projectId: project.id, title: "hand", branch: "feat/hand", worktreePath: outside, baseBranch: "main")
         #expect(!TaskRemoval.ownsWorktree(of: task, in: project))
         #expect(TaskRemoval.ownsWorktree(of: TaskItem(projectId: project.id, title: "t", branch: "b", worktreePath: repo.path + "/.worktrees/t", baseBranch: "main"), in: project))
-        _ = try TaskRemoval.remove(task: task, project: project, deleteBranch: true, force: true, launcher: repo.launcher)
+        _ = try TaskRemoval.remove(task: task, project: project, deleteBranch: true, force: true, sharedWithAnotherTask: false, launcher: repo.launcher)
         #expect(FileManager.default.fileExists(atPath: outside))
         #expect(try branchExists(repo, "feat/hand"))
     }
@@ -35,7 +35,7 @@ import Testing
         let repo = try GitRepoFixture()
         let task = try task(repo)
         try repo.git(["commit", "-q", "--allow-empty", "-m", "work"], in: task.worktreePath)
-        let result = try TaskRemoval.remove(task: task, project: repo.project, deleteBranch: true, force: true, launcher: repo.launcher)
+        let result = try TaskRemoval.remove(task: task, project: repo.project, deleteBranch: true, force: true, sharedWithAnotherTask: false, launcher: repo.launcher)
         // The one refusal Shellforge can put in its own words: commits the base lacks.
         #expect(result.branchRefusal == .notMerged(base: "main"))
         #expect(!FileManager.default.fileExists(atPath: task.worktreePath))
@@ -44,7 +44,7 @@ import Testing
         try TaskRemoval.deleteUnmergedBranch(of: task, in: repo.project, launcher: repo.launcher)
         #expect(try !branchExists(repo, task.branch))
         // Removing again is a finished retry, not an error.
-        #expect(try TaskRemoval.remove(task: task, project: repo.project, deleteBranch: true, force: false,
+        #expect(try TaskRemoval.remove(task: task, project: repo.project, deleteBranch: true, force: false, sharedWithAnotherTask: false,
                                        launcher: repo.launcher).branchRefusal == nil)
     }
 
@@ -56,7 +56,7 @@ import Testing
         let file = task.worktreePath + "/important.txt"
         try "work in progress".write(toFile: file, atomically: true, encoding: .utf8)
         #expect(throws: GitFailure.self) {
-            _ = try TaskRemoval.remove(task: task, project: repo.project, deleteBranch: false, force: false, launcher: repo.launcher)
+            _ = try TaskRemoval.remove(task: task, project: repo.project, deleteBranch: false, force: false, sharedWithAnotherTask: false, launcher: repo.launcher)
         }
         #expect(try String(contentsOfFile: file, encoding: .utf8) == "work in progress")
         #expect(try repo.git("worktree", "list", "--porcelain").contains("locked mine"))
@@ -70,7 +70,7 @@ import Testing
         try repo.git("worktree", "remove", task.worktreePath)
         try FileManager.default.createDirectory(atPath: task.worktreePath + "/app/node_modules/.cache", withIntermediateDirectories: true)
 
-        let result = try TaskRemoval.remove(task: task, project: repo.project, deleteBranch: true, force: false, launcher: repo.launcher)
+        let result = try TaskRemoval.remove(task: task, project: repo.project, deleteBranch: true, force: false, sharedWithAnotherTask: false, launcher: repo.launcher)
 
         #expect(result.branchRefusal == nil)
         #expect(!FileManager.default.fileExists(atPath: task.worktreePath))
@@ -83,7 +83,7 @@ import Testing
         let task = try task(repo)
         try FileManager.default.removeItem(atPath: task.worktreePath)
 
-        let result = try TaskRemoval.remove(task: task, project: repo.project, deleteBranch: false, force: false, launcher: repo.launcher)
+        let result = try TaskRemoval.remove(task: task, project: repo.project, deleteBranch: false, force: false, sharedWithAnotherTask: false, launcher: repo.launcher)
 
         #expect(result.branchRefusal == nil)
         #expect(!(try repo.git("worktree", "list", "--porcelain")).contains(".worktrees/"))
@@ -99,7 +99,7 @@ import Testing
         try repo.git("checkout", "-q", "-b", "feat/elsewhere", "main~1")
         try repo.git("commit", "-q", "--allow-empty", "-m", "elsewhere")
 
-        let result = try TaskRemoval.remove(task: task, project: repo.project, deleteBranch: true, force: false, launcher: repo.launcher)
+        let result = try TaskRemoval.remove(task: task, project: repo.project, deleteBranch: true, force: false, sharedWithAnotherTask: false, launcher: repo.launcher)
 
         #expect(result.branchRefusal == nil)
         #expect(try !branchExists(repo, task.branch))
@@ -113,7 +113,7 @@ import Testing
         try repo.git("checkout", "-q", "-b", "feat/elsewhere")
         try repo.git("commit", "-q", "--allow-empty", "-m", "elsewhere")
 
-        let result = try TaskRemoval.remove(task: task, project: repo.project, deleteBranch: true, force: true, launcher: repo.launcher)
+        let result = try TaskRemoval.remove(task: task, project: repo.project, deleteBranch: true, force: true, sharedWithAnotherTask: false, launcher: repo.launcher)
 
         #expect(result.branchRefusal == .notMerged(base: "main"))
         #expect(try branchExists(repo, task.branch))
@@ -145,7 +145,7 @@ import Testing
         let flaky = CommandLauncher { ResolvedEnvironment(variables: env, source: .loginShell("/bin/sh")) }
 
         #expect(throws: (any Error).self) {
-            _ = try TaskRemoval.remove(task: task, project: repo.project, deleteBranch: false, force: false, launcher: flaky)
+            _ = try TaskRemoval.remove(task: task, project: repo.project, deleteBranch: false, force: false, sharedWithAnotherTask: false, launcher: flaky)
         }
         #expect(try String(contentsOfFile: file, encoding: .utf8) == "work in progress")
     }
@@ -161,9 +161,29 @@ import Testing
         try "the new task's".write(toFile: file, atomically: true, encoding: .utf8)
 
         #expect(throws: (any Error).self) {
-            _ = try TaskRemoval.remove(task: old, project: repo.project, deleteBranch: false, force: true, launcher: repo.launcher)
+            _ = try TaskRemoval.remove(task: old, project: repo.project, deleteBranch: false, force: true, sharedWithAnotherTask: true, launcher: repo.launcher)
         }
         #expect(FileManager.default.fileExists(atPath: file))
+    }
+
+    /// An agent that ran `git switch -c` in its worktree: the worktree is still the task's, and goes.
+    /// Refused, the row stayed "Not removed" for good. The agent's branch — its commits — stays,
+    /// and so does the task's when it holds work; only a branch with nothing to lose is deleted.
+    @Test func aWorktreeItsAgentSwitchedToAnotherBranchIsStillRemoved() throws {
+        let repo = try GitRepoFixture()
+        let task = try task(repo)
+        try repo.git(["switch", "-q", "-c", "claude/feature-x"], in: task.worktreePath)
+        try repo.git(["commit", "-q", "--allow-empty", "-m", "agent's work"], in: task.worktreePath)
+
+        let result = try TaskRemoval.remove(task: task, project: repo.project, deleteBranch: true, force: false,
+                                            sharedWithAnotherTask: false, launcher: repo.launcher)
+
+        #expect(result.switchedBranch == "claude/feature-x")
+        #expect(result.branchRefusal == nil)
+        #expect(!FileManager.default.fileExists(atPath: task.worktreePath))
+        #expect(!(try repo.git("worktree", "list", "--porcelain")).contains(".worktrees/"))
+        #expect(try branchExists(repo, "claude/feature-x"))
+        #expect(try !branchExists(repo, task.branch))
     }
 
     /// A damaged row naming its own base, or an option, as its branch never deletes it.
@@ -176,7 +196,7 @@ import Testing
         for branch in ["main", "-D"] {
             var damaged = made
             damaged.branch = branch
-            let result = try TaskRemoval.remove(task: damaged, project: repo.project, deleteBranch: true, force: false, launcher: repo.launcher)
+            let result = try TaskRemoval.remove(task: damaged, project: repo.project, deleteBranch: true, force: false, sharedWithAnotherTask: false, launcher: repo.launcher)
             #expect(result.branchRefusal != nil, "\(branch)")
         }
         #expect(try branchExists(repo, "main"))
@@ -198,7 +218,7 @@ import Testing
 
         // Not Shellforge's worktree, through the link: the task is only forgotten, nothing is deleted.
         #expect(!TaskRemoval.ownsWorktree(of: stray, in: repo.project))
-        _ = try TaskRemoval.remove(task: stray, project: repo.project, deleteBranch: false, force: true, launcher: repo.launcher)
+        _ = try TaskRemoval.remove(task: stray, project: repo.project, deleteBranch: false, force: true, sharedWithAnotherTask: false, launcher: repo.launcher)
         #expect(FileManager.default.fileExists(atPath: elsewhere + "/keep"))
     }
 
@@ -210,7 +230,7 @@ import Testing
         try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
         let stray = TaskItem(projectId: repo.project.id, title: "Notes", branch: "notes", worktreePath: folder, baseBranch: "main")
 
-        _ = try TaskRemoval.remove(task: stray, project: repo.project, deleteBranch: false, force: true, launcher: repo.launcher)
+        _ = try TaskRemoval.remove(task: stray, project: repo.project, deleteBranch: false, force: true, sharedWithAnotherTask: false, launcher: repo.launcher)
         #expect(FileManager.default.fileExists(atPath: folder))
     }
 
@@ -251,7 +271,7 @@ import Testing
     /// origin there is nothing to judge by, so it stays.
     @Test func removingAReviewWithoutOriginKeepsItsBranch() throws {
         let (repo, review) = try review(withOrigin: false)
-        let result = try TaskRemoval.remove(task: review, project: repo.project, deleteBranch: true, force: true, launcher: repo.launcher)
+        let result = try TaskRemoval.remove(task: review, project: repo.project, deleteBranch: true, force: true, sharedWithAnotherTask: false, launcher: repo.launcher)
         #expect(try branchExists(repo, "feat/mr-branch"))
         #expect(!FileManager.default.fileExists(atPath: review.worktreePath))
         #expect(result.branchRefusal == nil && result.keptBranch == nil)
@@ -260,13 +280,13 @@ import Testing
     /// Pushed, the local copy is deleted; unpushed fixes keep it, and the removal says so.
     @Test func removingAReviewReleasesItsBranchOnlyWhenPushed() throws {
         let (pushed, clean) = try review(withOrigin: true)
-        let released = try TaskRemoval.remove(task: clean, project: pushed.project, deleteBranch: false, force: false, launcher: pushed.launcher)
+        let released = try TaskRemoval.remove(task: clean, project: pushed.project, deleteBranch: false, force: false, sharedWithAnotherTask: false, launcher: pushed.launcher)
         #expect(try !branchExists(pushed, "feat/mr-branch"))
         #expect(released.branchRefusal == nil && released.keptBranch == nil)
 
         let (unpushed, fixed) = try review(withOrigin: true)
         try unpushed.git(["commit", "-q", "--allow-empty", "-m", "fix"], in: fixed.worktreePath)
-        let kept = try TaskRemoval.remove(task: fixed, project: unpushed.project, deleteBranch: true, force: false, launcher: unpushed.launcher)
+        let kept = try TaskRemoval.remove(task: fixed, project: unpushed.project, deleteBranch: true, force: false, sharedWithAnotherTask: false, launcher: unpushed.launcher)
         #expect(try branchExists(unpushed, "feat/mr-branch"))
         #expect(kept.branchRefusal == nil)
         #expect(kept.keptBranch == .unpushed(commits: 1))
@@ -277,7 +297,7 @@ import Testing
         let (repo, review) = try review(withOrigin: false)
         try "scratch".write(toFile: review.worktreePath + "/untracked.txt", atomically: true, encoding: .utf8)
         #expect(throws: (any Error).self) {
-            _ = try TaskRemoval.remove(task: review, project: repo.project, deleteBranch: false, force: false, launcher: repo.launcher)
+            _ = try TaskRemoval.remove(task: review, project: repo.project, deleteBranch: false, force: false, sharedWithAnotherTask: false, launcher: repo.launcher)
         }
         #expect(try GitRepository(repo.path, launcher: repo.launcher).worktrees().first { $0.path.hasSuffix("review-mr-branch") }?.lockReason
                 == GitRepository.reviewLockReason)

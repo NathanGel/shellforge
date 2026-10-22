@@ -72,8 +72,13 @@ extension SidebarModel {
                 return false
             }
             let forced = force, deleteBranch = answer.checked
+            // Another row at the same path — one left by a worktree deleted outside Shellforge — owns
+            // the checkout there when it is on another branch; else the branch is the agent's switch.
+            let path = ExistingWorktrees.resolved(task.worktreePath)
+            let shared = document.workspace.tasks.contains { $0.id != id && ExistingWorktrees.resolved($0.worktreePath) == path }
             let result = try await BackgroundWork.run {
-                try TaskRemoval.remove(task: task, project: project, deleteBranch: deleteBranch, force: forced, launcher: launcher)
+                try TaskRemoval.remove(task: task, project: project, deleteBranch: deleteBranch, force: forced,
+                                       sharedWithAnotherTask: shared, launcher: launcher)
             }
             await settleBranch(of: task, in: project, after: result)
             try document.update { $0.tasks.removeAll { $0.id == id } }
@@ -89,6 +94,10 @@ extension SidebarModel {
     /// The worktree is gone: a branch git kept is asked about now, or said why it stayed. The task
     /// goes either way.
     private func settleBranch(of task: TaskItem, in project: Project, after result: TaskRemoval.Removed) async {
+        // Its agent switched the worktree to a branch of its own: that one, with the work, stays.
+        if let switched = result.switchedBranch {
+            lastError = "Branch \(switched) kept: the worktree had it checked out instead of \(task.branch)."
+        }
         if let kept = result.keptBranch { lastError = kept.note(branch: task.branch) }
         switch result.branchRefusal {
         case nil:

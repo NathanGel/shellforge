@@ -16,8 +16,11 @@ public enum TaskRemoval {
         public var branchRefusal: BranchRefusal?
         /// A review's local branch kept, and why: a note, not a refusal — the review is gone either way.
         public var keptBranch: ReviewBranchRelease.Kept?
-        public init(branchRefusal: BranchRefusal?, keptBranch: ReviewBranchRelease.Kept? = nil) {
-            self.branchRefusal = branchRefusal; self.keptBranch = keptBranch
+        /// The branch the worktree had checked out instead of the task's — its agent switched — which
+        /// the removal never deletes: only the task's own branch is ever asked about.
+        public var switchedBranch: String?
+        public init(branchRefusal: BranchRefusal?, keptBranch: ReviewBranchRelease.Kept? = nil, switchedBranch: String? = nil) {
+            self.branchRefusal = branchRefusal; self.keptBranch = keptBranch; self.switchedBranch = switchedBranch
         }
     }
 
@@ -43,12 +46,19 @@ public enum TaskRemoval {
     /// The worktree — or what a removal git gave up on left of it, or git's record of a folder
     /// already gone — then the branch when asked for. A branch with commits its base lacks is kept,
     /// and said so; force authorises discarding the checkout's changes, never commits.
+    ///
+    /// `sharedWithAnotherTask`: another task's row names the same worktree path. Its checkout on a
+    /// branch other than this task's is then that task's, and is never removed. Otherwise a branch
+    /// other than the task's is its agent's doing — `git switch -c` in the worktree — and the
+    /// worktree still goes: its commits stay on that branch, and its changes were asked about.
     public static func remove(task: TaskItem, project: Project, deleteBranch: Bool, force: Bool,
-                              launcher: CommandLauncher) throws -> Removed {
+                              sharedWithAnotherTask: Bool, launcher: CommandLauncher) throws -> Removed {
         // Not Shellforge's worktree: the task goes, the checkout and its branch stay.
         guard ownsWorktree(of: task, in: project) else { return Removed(branchRefusal: nil) }
+        var switchedBranch: String?
         if FileManager.default.fileExists(atPath: task.worktreePath) {
-            try removeWorktree(at: task.worktreePath, branch: task.branch, in: project.path, force: force, launcher: launcher)
+            switchedBranch = try removeWorktree(at: task.worktreePath, branch: task.branch, in: project.path, force: force,
+                                                sharedWithAnotherTask: sharedWithAnotherTask, launcher: launcher)
         } else {
             // Locked worktrees cannot be pruned until their lock is released. Refused for one that is
             // not locked, which is no reason to stop.
@@ -59,11 +69,11 @@ public enum TaskRemoval {
         // simply not get it — but released, which deletes only a local copy with nothing origin lacks.
         if task.kind == .review {
             guard case .kept(let why) = GitRepository(project.path, launcher: launcher)
-                .releaseReviewBranch(task.branch, target: task.baseBranch) else { return Removed(branchRefusal: nil) }
-            return Removed(branchRefusal: nil, keptBranch: why)
+                .releaseReviewBranch(task.branch, target: task.baseBranch) else { return Removed(branchRefusal: nil, switchedBranch: switchedBranch) }
+            return Removed(branchRefusal: nil, keptBranch: why, switchedBranch: switchedBranch)
         }
-        guard deleteBranch else { return Removed(branchRefusal: nil) }
-        if let refusal = refusal(toDelete: task) { return Removed(branchRefusal: .other(reason: refusal)) }
+        guard deleteBranch else { return Removed(branchRefusal: nil, switchedBranch: switchedBranch) }
+        if let refusal = refusal(toDelete: task) { return Removed(branchRefusal: .other(reason: refusal), switchedBranch: switchedBranch) }
         do {
             // Already-deleted branches are a successful retry.
             let refs = try git(["for-each-ref", "--format=%(refname)", "refs/heads/" + task.branch], in: project.path, launcher)
@@ -75,11 +85,11 @@ public enum TaskRemoval {
                 let merged = isMerged(task.branch, into: task.baseBranch, in: project.path, launcher: launcher)
                 try git(["branch", merged ? "-D" : "-d", task.branch], in: project.path, launcher)
             }
-            return Removed(branchRefusal: nil)
+            return Removed(branchRefusal: nil, switchedBranch: switchedBranch)
         } catch let failure as GitFailure where failure.message.contains("not fully merged") {
-            return Removed(branchRefusal: .notMerged(base: task.baseBranch))
+            return Removed(branchRefusal: .notMerged(base: task.baseBranch), switchedBranch: switchedBranch)
         } catch let failure as GitFailure {
-            return Removed(branchRefusal: .other(reason: firstLine(of: failure.message)))
+            return Removed(branchRefusal: .other(reason: firstLine(of: failure.message)), switchedBranch: switchedBranch)
         }
     }
 
@@ -100,15 +110,21 @@ public enum TaskRemoval {
 
     // -- the worktree ----------------------------------------------------------------------
 
-    /// The worktree removed: registered, through git; else a leftover git no longer knows.
+    /// The worktree removed: registered, through git; else a leftover git no longer knows. Returns
+    /// the branch it had checked out when that was not the task's.
     private static func removeWorktree(at worktreePath: String, branch: String, in projectPath: String, force: Bool,
-                                       launcher: CommandLauncher) throws {
+                                       sharedWithAnotherTask: Bool, launcher: CommandLauncher) throws -> String? {
+        var switchedBranch: String?
         if let worktree = try registered(worktreePath, in: projectPath, launcher: launcher) {
-            // The path is the task's, the checkout someone else's: a row left by a worktree deleted
-            // outside Shellforge shares its path with a newer task's. Only the task's own branch goes.
             if let checkedOut = worktree.branch, checkedOut != "refs/heads/" + branch {
-                throw GitFailure(command: "git worktree remove \(worktreePath)",
-                                 message: "\(worktreePath) has \(checkedOut.replacingOccurrences(of: "refs/heads/", with: "")) checked out, not \(branch).")
+                let name = checkedOut.replacingOccurrences(of: "refs/heads/", with: "")
+                // The path is the task's, the checkout another task's: a row left by a worktree deleted
+                // outside Shellforge shares its path with a newer task's.
+                if sharedWithAnotherTask {
+                    throw GitFailure(command: "git worktree remove \(worktreePath)",
+                                     message: "\(worktreePath) has \(name) checked out, not \(branch).")
+                }
+                switchedBranch = name
             }
             try removeRegistered(worktreePath, lockedWith: worktree.lockReason, in: projectPath, force: force, launcher: launcher)
         } else {
@@ -117,6 +133,7 @@ public enum TaskRemoval {
         }
         // The checkout is gone either way.
         _ = try? git(["worktree", "prune"], in: projectPath, launcher)
+        return switchedBranch
     }
 
     /// `lockReason` is the one git listed before unlocking: a refused removal puts back what was

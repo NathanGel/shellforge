@@ -7,6 +7,16 @@ a patch fixes, a minor adds features, a major changes a saved setup.
 Each version's section is also its GitHub release notes: `Shellforge/scripts/release.sh` publishes
 it and refuses to release a version that has none.
 
+## 0.6.0 — unreleased
+
+### Fixed
+
+- **Removing a task whose agent switched branch now works.** When Claude or Codex ran
+  `git switch -c` in the task’s worktree, Remove refused because the worktree was no longer on
+  the task’s branch, and the row stayed on “Not removed” for good. The worktree is now removed. The
+  agent’s branch and its commits are kept, and Shellforge says so. The old refusal still applies
+  when another task’s row points at the same folder.
+
 ## 0.5.1 — 2026-10-19
 
 ### Fixed
