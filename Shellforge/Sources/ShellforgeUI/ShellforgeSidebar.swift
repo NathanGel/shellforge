@@ -226,7 +226,7 @@ struct SidebarView: View {
             case .addProject: addProject()
             case .removeTask(let task): Task { await model.confirmRemove(taskId: task) }
             case .closeLastTab(let task, let tab, let paneOnly):
-                Task { await model.confirmRemove(taskId: task, closingFirst: tab, paneOnly: paneOnly) }
+                Task { await model.confirmCloseLastTab(taskId: task, tab: tab, paneOnly: paneOnly) }
             case .newTerminal(let project): showNewTerminal(in: project)
             case .addDivider: showAddDivider()
             }

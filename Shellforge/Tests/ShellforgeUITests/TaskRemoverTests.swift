@@ -71,31 +71,80 @@ import Testing
         #expect(s.row != nil && s.host.closedTasks.isEmpty)
     }
 
-    /// Close Tab on a task's last tab: once Remove is confirmed, that tab closes as iTerm2's Close
-    /// Tab does — a running job asks — before the rest of the removal.
-    @Test func aRemoveFromCloseTabClosesThatTabAsCloseTabDoes() async throws {
-        let s = try await setup([Self.remove])
+    // -- Close Tab on a task's last tab ------------------------------------------------------
+
+    private static let close = AlertAnswer(button: 0)
+    private static let closeAndWorktree = AlertAnswer(button: 0, checked: true)
+    private static let closeAndBoth = AlertAnswer(button: 0, checked: true, subChecked: true)
+
+    /// Closing is the default and deletes nothing: the worktree and branch stay to reopen from the row.
+    @Test func closingTheLastTabKeepsTheTaskWorktreeAndBranch() async throws {
+        let s = try await setup([Self.close])
         let tab = try #require(s.host.tabs.first).id
-        #expect(await s.sidebar.confirmRemove(taskId: s.task.id, closingFirst: tab))
+        #expect(await s.sidebar.confirmCloseLastTab(taskId: s.task.id, tab: tab) == false, "the task stays")
+        let asked = try #require(s.prompter.asked.first)
+        #expect(asked.message == "Close the last tab of task “Fix login”?")
+        #expect(asked.buttons == ["Close Tab", "Cancel"])
+        #expect(!asked.defaultDeletes && asked.escapeButton == 1)
+        #expect(asked.checkbox == "Also delete the worktree")
+        #expect(asked.subCheckbox == "Also delete branch \(s.task.branch)")
         #expect(s.host.closed == [tab])
+        #expect(FileManager.default.fileExists(atPath: s.task.worktreePath))
+        #expect(try s.branchExists())
+        #expect(s.row != nil && s.sidebar.removals[s.task.id] == nil)
+    }
+
+    @Test func cancellingTheCloseLeavesTheTabOpen() async throws {
+        let s = try await setup([Self.cancel])
+        let tab = try #require(s.host.tabs.first).id
+        #expect(await s.sidebar.confirmCloseLastTab(taskId: s.task.id, tab: tab) == false)
+        #expect(s.host.closed.isEmpty && s.host.closedPanes.isEmpty)
+        #expect(s.row != nil)
+    }
+
+    /// Also delete the worktree: the tab closes as Close Tab closes it, then the task is removed as
+    /// Remove removes it — its branch kept unless that is ticked too.
+    @Test func tickingTheWorktreeRemovesTheTaskAndKeepsItsBranch() async throws {
+        let s = try await setup([Self.closeAndWorktree])
+        let tab = try #require(s.host.tabs.first).id
+        #expect(await s.sidebar.confirmCloseLastTab(taskId: s.task.id, tab: tab))
+        #expect(s.host.closed == [tab])
+        #expect(!FileManager.default.fileExists(atPath: s.task.worktreePath))
+        #expect(try s.branchExists())
         #expect(s.row == nil)
     }
 
-    /// From Close Pane in a shared tab: the removal closes that pane, not the tab around it.
-    @Test func aRemoveFromClosePaneClosesOnlyThePane() async throws {
-        let s = try await setup([Self.remove])
+    @Test func tickingBothAlsoDeletesTheBranch() async throws {
+        let s = try await setup([Self.closeAndBoth])
+        let tab = try #require(s.host.tabs.first).id
+        #expect(await s.sidebar.confirmCloseLastTab(taskId: s.task.id, tab: tab))
+        #expect(try !s.branchExists())
+        #expect(s.row == nil)
+    }
+
+    /// The branch only counts with the worktree: git keeps a branch a worktree has checked out.
+    @Test func theBranchAloneIsNotAnAnswer() {
+        #expect(AlertAnswer(button: 0, checked: false, subChecked: true).subChecked == false)
+    }
+
+    /// From Close Pane in a shared tab: the pane closes, not the tab around it, kept or removed.
+    @Test func closingTheLastPaneClosesOnlyThePane() async throws {
+        let s = try await setup([Self.close, Self.closeAndWorktree])
         let tab = try #require(s.host.tabs.first).id
         s.host.tabs[0].paneCount = 2
-        #expect(await s.sidebar.confirmRemove(taskId: s.task.id, closingFirst: tab, paneOnly: true))
-        #expect(s.host.closedPanes == [tab] && s.host.closed.isEmpty)
+        #expect(await s.sidebar.confirmCloseLastTab(taskId: s.task.id, tab: tab, paneOnly: true) == false)
+        #expect(s.prompter.asked.first?.buttons == ["Close Pane", "Cancel"])
+        #expect(s.host.closedPanes == [tab] && s.host.closed.isEmpty && s.row != nil)
+        #expect(await s.sidebar.confirmCloseLastTab(taskId: s.task.id, tab: tab, paneOnly: true))
+        #expect(s.host.closedPanes == [tab, tab] && s.host.closed.isEmpty)
     }
 
     /// The running job's alert answered Cancel: nothing is removed, and the row stays as it was.
     @Test func aTabThatWillNotCloseStopsTheRemove() async throws {
-        let s = try await setup([Self.remove])
+        let s = try await setup([Self.closeAndWorktree])
         let tab = try #require(s.host.tabs.first).id
         s.host.refusesClose = true
-        #expect(await s.sidebar.confirmRemove(taskId: s.task.id, closingFirst: tab) == false)
+        #expect(await s.sidebar.confirmCloseLastTab(taskId: s.task.id, tab: tab) == false)
         #expect(FileManager.default.fileExists(atPath: s.task.worktreePath))
         #expect(s.row != nil && s.sidebar.removals[s.task.id] == nil)
     }
@@ -256,6 +305,16 @@ import Testing
         #expect(asked.message == "Remove review “Gift card”?")
         #expect(asked.detail == "Deletes the worktree and closes its tabs. Its local branch goes too, unless it has commits origin lacks:\n\n\(review.worktreePath)")
         #expect(asked.checkbox == nil)
+    }
+
+    /// Closing a review's last tab offers its worktree, never its branch.
+    @Test func closingAReviewsLastTabNeverOffersItsBranch() async throws {
+        let s = try await setup([Self.cancel])
+        let review = try review(in: s)
+        #expect(await s.sidebar.confirmCloseLastTab(taskId: review.id, tab: "r1") == false)
+        let asked = try #require(s.prompter.asked.last)
+        #expect(asked.message == "Close the last tab of review “Gift card”?")
+        #expect(asked.checkbox == "Also delete the worktree" && asked.subCheckbox == nil)
     }
 
     /// Unpushed fixes keep the review's branch; the review still goes, and the banner says why.

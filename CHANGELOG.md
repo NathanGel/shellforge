@@ -7,6 +7,16 @@ a patch fixes, a minor adds features, a major changes a saved setup.
 Each version's section is also its GitHub release notes: `Shellforge/scripts/release.sh` publishes
 it and refuses to release a version that has none.
 
+## 0.7.0 — 2026-10-28
+
+### Changed
+
+- **Closing a task’s last tab no longer deletes its worktree.** It used to open Remove Task, where
+  ↩ deleted the worktree. Now Close Tab is the default: the tab closes, and the task stays in the
+  sidebar with its worktree and branch, so a task in review can be reopened from its row without
+  making a new branch. To clean up at the same time, tick “Also delete the worktree”, and below it
+  “Also delete branch”. Remove Task is unchanged.
+
 ## 0.6.0 — 2026-10-22
 
 ### Fixed

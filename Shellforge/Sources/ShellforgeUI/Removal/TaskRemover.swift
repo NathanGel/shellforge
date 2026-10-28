@@ -19,11 +19,8 @@ public enum RowRemoval: Equatable, Sendable {
 extension SidebarModel {
     /// True when the task was removed. One removal per task at a time: a second Remove while the
     /// first is asking or running does nothing.
-    ///
-    /// `closingFirst`: the tab a Close Tab started this from. Once Remove is confirmed it closes as
-    /// Close Tab closes it — a running job asks — and a refusal stops the removal there.
     @discardableResult
-    public func confirmRemove(taskId id: UUID, closingFirst tab: String? = nil, paneOnly: Bool = false) async -> Bool {
+    public func confirmRemove(taskId id: UUID) async -> Bool {
         guard !removalBoard.asking.contains(id), removalBoard.removals[id] != .removing,
               let shown = document.workspace.tasks.first(where: { $0.id == id }),
               document.workspace.projects.contains(where: { $0.id == shown.projectId }) else { return false }
@@ -46,8 +43,47 @@ extension SidebarModel {
             : AlertPrompt(message: "Remove \(isReview ? "review" : "task") “\(shown.title)”?",
                           detail: "Removes the task from Shellforge and closes its tabs. Its worktree stays where it is, on its branch:\n\n\(shown.worktreePath)",
                           buttons: ["Remove", "Cancel"]))
+        guard answer.confirmed else { return false }
+        return await remove(taskId: id, deleteBranch: answer.checked)
+    }
+
+    /// Close Tab on a task's last tab — or Close Pane on its last pane, in a tab another task's shares.
+    /// The tab closes and the task stays, worktree, branch and all, to reopen from its row; deleting
+    /// either is ticked for, never the default. True when the task was removed.
+    ///
+    /// The tab closes as Close Tab closes it — a running job asks — and, when the task goes too, a
+    /// refusal there stops the removal.
+    @discardableResult
+    public func confirmCloseLastTab(taskId id: UUID, tab: String, paneOnly: Bool = false) async -> Bool {
+        guard !removalBoard.asking.contains(id), removalBoard.removals[id] != .removing,
+              let shown = document.workspace.tasks.first(where: { $0.id == id }),
+              document.workspace.projects.contains(where: { $0.id == shown.projectId }) else { return false }
+        removalBoard.asking.insert(id)
+        defer { removalBoard.asking.remove(id) }
+        let isReview = shown.kind == .review
+        let owned = document.workspace.projects.first(where: { $0.id == shown.projectId })
+            .map { TaskRemoval.ownsWorktree(of: shown, in: $0) } ?? true
+        let kind = isReview ? "review" : "task"
+        let answer = await prompter.ask(AlertPrompt(
+            message: "Close the last \(paneOnly ? "pane" : "tab") of \(kind) “\(shown.title)”?",
+            detail: "The \(kind) stays in the sidebar with its worktree and branch, to reopen from its row:\n\n\(shown.worktreePath)",
+            buttons: [paneOnly ? "Close Pane" : "Close Tab", "Cancel"],
+            // A review's branch is the merge request's: never offered, as Remove never offers it.
+            checkbox: owned ? "Also delete the worktree" : "Also remove the \(kind) from Shellforge",
+            subCheckbox: owned && !isReview ? "Also delete branch \(shown.branch)" : nil))
+        guard answer.confirmed else { return false }
+        guard answer.checked else {
+            _ = paneOnly ? host.closePane(ofTab: tab) : host.close(tab: tab)
+            return false
+        }
+        return await remove(taskId: id, deleteBranch: answer.subChecked, closingFirst: tab, paneOnly: paneOnly)
+    }
+
+    /// The confirmed removal: uncommitted work asked about, `closingFirst` closed, the task's tabs,
+    /// its worktree, the branch when asked, and its row.
+    private func remove(taskId id: UUID, deleteBranch: Bool, closingFirst tab: String? = nil, paneOnly: Bool = false) async -> Bool {
         // Decided on the task as it is once answered: across the await it, or its project, can be gone.
-        guard answer.confirmed, let task = document.workspace.tasks.first(where: { $0.id == id }),
+        guard let task = document.workspace.tasks.first(where: { $0.id == id }),
               let project = document.workspace.projects.first(where: { $0.id == task.projectId }) else { return false }
         removalBoard.removals[id] = .removing
         do {
@@ -71,7 +107,7 @@ extension SidebarModel {
                 lastError = "Couldn’t remove the task. Its tabs did not close, so nothing was deleted."
                 return false
             }
-            let forced = force, deleteBranch = answer.checked
+            let forced = force
             // Another row at the same path — one left by a worktree deleted outside Shellforge — owns
             // the checkout there when it is on another branch; else the branch is the agent's switch.
             let path = ExistingWorktrees.resolved(task.worktreePath)

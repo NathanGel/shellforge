@@ -2,16 +2,15 @@ import Foundation
 import ShellforgeCore
 
 /// Close Tab, from a tab row or a task's row — Close Pane on a tab split with ⌘D, which closes its
-/// focused pane as iTerm2's Close does. A task left with no pane anywhere closes too: its last asks,
-/// through Remove Task's own confirmation, then closes as Close does — a running job asks too —
-/// before the removal goes on; cancelled at either, both stay.
+/// focused pane as iTerm2's Close does. A task's last pane anywhere asks first: the task stays, its
+/// worktree and branch kept to reopen from its row, unless deleting them is ticked.
 extension SidebarModel {
     public func closeTab(_ row: String) {
         // The row's tab as the window has it now, by tab id: focusing another pane renames its session.
         let live = liveTab(row)
         let id = live?.id ?? row
         if let live, live.paneCount > 1 {
-            // The focused pane is its task's last, in a tab shared with another task's: ask Remove.
+            // The focused pane is its task's last, in a tab shared with another task's: ask first.
             if let task = live.taskId, host.paneCount(ofTask: task) <= 1 {
                 sheetRequests.send(.closeLastTab(task: task, tab: id, paneOnly: true))
                 return

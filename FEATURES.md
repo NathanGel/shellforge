@@ -160,7 +160,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 - **Closing from the sidebar.** Right-click a tab row, or a task row, for **Close Tab**. On a tab split with ⌘D, the item reads **Close Pane** and closes only the focused pane.
   - Anything running asks first, as ⌘W does.
   - A task row brings its tab to the front before closing a pane of it.
-- **A task's last pane.** Closing it asks Remove Task's question first. Cancel keeps both the pane and the task.
+- **A task's last pane.** Closing it asks first, with **Close Tab** as the default. The task stays in the sidebar with its worktree and branch, and clicking its row opens a shell there again. Tick **Also delete the worktree** to remove the task as well, and **Also delete branch** under it to delete its branch. A review is never offered its branch. Cancel keeps both the pane and the task.
 - **Panes join their task.** A pane split off a task's tab, a project's tab or a terminal's tab joins it. Closing the agent's pane first leaves the task its other pane.
 - **The window stays open.** When a close would leave the window with no tab, a fresh shell tab opens first, in the default folder. This applies to Close Tab, Remove Task and Remove Terminal.
 

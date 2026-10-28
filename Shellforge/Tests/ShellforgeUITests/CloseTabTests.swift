@@ -5,8 +5,8 @@ import Testing
 @testable import ShellforgeUI
 @testable import ShellforgeTestSupport
 
-/// Closing a tab from the sidebar: an Other tab or one of several closes; a task's last tab asks to
-/// remove the task instead, through Remove Task's own confirmation, and closes nothing yet.
+/// Closing a tab from the sidebar: an Other tab or one of several closes; a task's last tab asks
+/// first — keep the task or delete its worktree too — and closes nothing yet.
 @MainActor @Suite struct CloseTabTests {
     private func model() throws -> (SidebarModel, FakeTerminalHost, UUID, UUID) {
         let folder = TestScratch.root.appendingPathComponent("shellforge-close-\(UUID().uuidString)")
