@@ -48,20 +48,40 @@
 }
 
 - (NSString *)stringForKey:(NSString *)key table:(NSString *)table localization:(NSString *)localization {
+    NSString *string = [self optionalStringForKey:key table:table localization:localization];
+    XCTAssertNotNil(string, @"No %@ in %@ for %@", key, table, localization);
+    return string;
+}
+
+- (NSString *)optionalStringForKey:(NSString *)key table:(NSString *)table localization:(NSString *)localization {
     NSString *path = [[NSBundle mainBundle] pathForResource:table
                                                      ofType:@"strings"
                                                 inDirectory:nil
                                             forLocalization:localization];
     NSDictionary<NSString *, NSString *> *strings = path ? [NSDictionary dictionaryWithContentsOfFile:path] : nil;
-    XCTAssertNotNil(strings[key], @"No %@ in %@ for %@", key, table, localization);
     return strings[key];
+}
+
+// Shellforge: the crash explanation is English-only (it describes Shellforge's Copy and Report),
+// so every language shows the nib's English text.
+- (NSString *)crashExplanationForLocalization:(NSString *)localization {
+    NSString *translated = [self optionalStringForKey:@"84.title" table:@"UKCrashReporter" localization:localization];
+    if (translated) {
+        return translated;
+    }
+    // Loading the nib replaces _topLevelObjects, which keep the caller's own copy alive.
+    NSArray *callersObjects = _topLevelObjects;
+    UKCrashReporterNibOwnerForTesting *owner = [self loadNib];
+    NSString *english = owner.explanationField.stringValue;
+    _topLevelObjects = callersObjects;
+    return english;
 }
 
 // Both texts the label can show: the crash explanation (from the nib) and the
 // feedback explanation (from Localizable).
 - (NSArray<NSString *> *)explanationsForLocalization:(NSString *)localization {
     NSMutableArray<NSString *> *result = [NSMutableArray array];
-    NSString *crash = [self stringForKey:@"84.title" table:@"UKCrashReporter" localization:localization];
+    NSString *crash = [self crashExplanationForLocalization:localization];
     NSString *feedback = [self stringForKey:@"CrashReporter.FeedbackExplanation" table:@"Localizable" localization:localization];
     for (NSString *string in @[ crash ?: @"", feedback ?: @"" ]) {
         [result addObject:[string stringByReplacingOccurrencesOfString:@"{APPNAME}" withString:@"iTerm2"]];
@@ -104,13 +124,27 @@
     return ceil([label.cell cellSizeForBounds:bounds].height);
 }
 
-- (void)testGermanCrashExplanationNeedsMoreThanTheNibHeight {
-    // Guards the premise: the string QA saw clipped doesn't fit the frame
-    // the nib gives it.
+// Shellforge: the crash explanation is English-only and no shipped translation of the feedback
+// explanation outgrows the nib, so the texts above never exercise the fitting. This one is made
+// long enough to need it: German text the label can show, three times over.
+- (void)testALongExplanationIsGivenRoom {
+    NSString *german = [self explanationsForLocalization:@"de"].lastObject;
+    NSString *string = [@[ german, german, german ] componentsJoinedByString:@" "];
     UKCrashReporterNibOwnerForTesting *owner = [self loadNib];
     NSTextField *label = owner.explanationField;
-    label.stringValue = [self explanationsForLocalization:@"de"][0];
+    const CGFloat top = NSMaxY(label.frame);
+    const NSRect originalTabFrame = owner.switchTabView.frame;
+    label.stringValue = string;
+    // Guards the premise: the text doesn't fit the frame the nib gives it.
     XCTAssertGreaterThan([self heightNeededByLabel:label], NSHeight(label.frame));
+
+    [self fitString:string owner:owner];
+
+    XCTAssertGreaterThanOrEqual(NSHeight(label.frame), [self heightNeededByLabel:label]);
+    XCTAssertEqual(NSMaxY(label.frame), top, @"the label's top moved");
+    XCTAssertLessThanOrEqual(NSMaxY(owner.switchTabView.frame), NSMinY(label.frame),
+                             @"the tab view overlaps the explanation");
+    XCTAssertEqual(NSMinY(owner.switchTabView.frame), NSMinY(originalTabFrame), @"the tab view's bottom moved");
 }
 
 - (void)testEveryExplanationFits {
