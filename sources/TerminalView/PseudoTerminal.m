@@ -14649,6 +14649,17 @@ static BOOL iTermApproximatelyEqualRects(NSRect lhs, NSRect rhs, double epsilon)
                 [[NSNotificationCenter defaultCenter] postNotificationName:iTermDidCreateTerminalWindowNotification object:self];
             }
         }
+        // Shellforge: the first time a window is shown, AppKit replaces its first responder with
+        // initialFirstResponder or, without one, the first key view, which is the sidebar's list.
+        // Becoming key moves focus back to the session, but a window that is only ordered front
+        // keeps the list, and a later window style change preserves it.
+        if (self.tabs.count == 1) {
+            NSView *mainResponder = [NSView castFrom:self.currentSession.mainResponder];
+            if (mainResponder) {
+                DLog(@"Make %@ the initial first responder", mainResponder);
+                self.window.initialFirstResponder = mainResponder;
+            }
+        }
         if (self.windowInitialized && !_fullScreen && !_restoringWindow) {
             RLog(@"insertTab: window is initialized, not full screen, and we are not restoring windows.");
             if (self.isHotKeyWindow && self.window.alphaValue == 0) {
