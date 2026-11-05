@@ -87,18 +87,22 @@ final class ShellforgeHostTest: XCTestCase {
         XCTAssertEqual(info.object(forInfoDictionaryKey: "SUEnableAutomaticChecks") as? Bool, false)
     }
 
-    /// Sparkle asks the app delegate before every check, scheduled or chosen, and is always refused:
-    /// iTerm2's builds are never offered.
+    /// Sparkle asks its delegate before every check, scheduled or chosen, and is always refused:
+    /// iTerm2's builds are never offered. Outside tests that delegate is the app delegate; a test
+    /// host hands Sparkle iTermTestHostIsolation's instead, so both must refuse.
     func testSparkleIsNeverAllowedToCheck() throws {
-        let delegate = try XCTUnwrap(NSApp.delegate as? NSObject)
+        let appDelegate = try XCTUnwrap(NSApp.delegate as? NSObject)
         let updaterClass = try XCTUnwrap(NSClassFromString("SUUpdater") as? NSObject.Type)
         let updater = try XCTUnwrap(updaterClass.perform(NSSelectorFromString("sharedUpdater"))?.takeUnretainedValue() as? NSObject)
-        XCTAssertTrue(updater.value(forKey: "delegate") as? NSObject === delegate, "Sparkle's delegate is the app delegate")
+        let sparkleDelegate = try XCTUnwrap(updater.value(forKey: "delegate") as? NSObject, "Sparkle has a delegate")
+        XCTAssertTrue(sparkleDelegate === TestHostIsolation.updaterDelegate, "a test host's Sparkle delegate is the isolation delegate")
         let ask = NSSelectorFromString("updaterMayCheckForUpdates:")
-        XCTAssertTrue(delegate.responds(to: ask))
         typealias May = @convention(c) (AnyObject, Selector, AnyObject?) -> ObjCBool
-        let may = unsafeBitCast(delegate.method(for: ask), to: May.self)
-        XCTAssertFalse(may(delegate, ask, updater).boolValue)
+        for delegate in [appDelegate, sparkleDelegate] {
+            XCTAssertTrue(delegate.responds(to: ask), "\(type(of: delegate))")
+            let may = unsafeBitCast(delegate.method(for: ask), to: May.self)
+            XCTAssertFalse(may(delegate, ask, updater).boolValue, "\(type(of: delegate))")
+        }
     }
 
     /// Check for Updates… is in the app menu once, and its action reaches Shellforge's controller,
