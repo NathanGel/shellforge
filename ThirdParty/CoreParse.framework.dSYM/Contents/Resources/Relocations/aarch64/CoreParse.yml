@@ -4,8 +4,8 @@ binary-path:     '/Users/nathangeleyn/shellforge/ThirdParty/CoreParse.framework/
 relocations:
   - { offset: 0x4A14B, size: 0x8, addend: 0x0, symName: '-[CPTokeniser init]', symObjAddr: 0x0, symBinAddr: 0xD08, symSize: 0x60 }
   - { offset: 0x4A18C, size: 0x8, addend: 0x0, symName: '-[CPTokeniser advanceLineNumber:columnNumber:withInput:range:]', symObjAddr: 0x61C, symBinAddr: 0x1324, symSize: 0xDC }
-  - { offset: 0x4A1B2, size: 0x8, addend: 0x0, symName: '_advanceLineNumber:columnNumber:withInput:range:.onceToken', symObjAddr: 0x4BD8, symBinAddr: 0x22570, symSize: 0x0 }
-  - { offset: 0x4A2E9, size: 0x8, addend: 0x0, symName: _newlineCharset, symObjAddr: 0x4BE0, symBinAddr: 0x22578, symSize: 0x0 }
+  - { offset: 0x4A1B2, size: 0x8, addend: 0x0, symName: '_advanceLineNumber:columnNumber:withInput:range:.onceToken', symObjAddr: 0x4BD0, symBinAddr: 0x22570, symSize: 0x0 }
+  - { offset: 0x4A2E9, size: 0x8, addend: 0x0, symName: _newlineCharset, symObjAddr: 0x4BD8, symBinAddr: 0x22578, symSize: 0x0 }
   - { offset: 0x4A3E6, size: 0x8, addend: 0x0, symName: '-[CPTokeniser init]', symObjAddr: 0x0, symBinAddr: 0xD08, symSize: 0x60 }
   - { offset: 0x4A41D, size: 0x8, addend: 0x0, symName: '-[CPTokeniser initWithCoder:]', symObjAddr: 0x60, symBinAddr: 0xD68, symSize: 0x68 }
   - { offset: 0x4A464, size: 0x8, addend: 0x0, symName: '-[CPTokeniser encodeWithCoder:]', symObjAddr: 0xC8, symBinAddr: 0xDD0, symSize: 0x30 }
