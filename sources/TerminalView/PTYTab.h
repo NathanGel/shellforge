@@ -331,7 +331,26 @@ typedef NS_ENUM(NSInteger, iTermHiddenFloatingPanesActivity) {
 // Arrangement helpers for floating panes.
 + (NSDictionary *)arrangementWithoutFloatingPanes:(NSDictionary *)arrangement;
 + (NSDictionary *)floatingPaneRecordForSessionWithGUID:(NSString *)guid inArrangement:(NSDictionary *)arrangement;
+
+// The sessions a tmux layout change may reuse for its tiled panes, keyed by tmux pane id (a
+// filtered pane's synthetic session by its live session's pane). Non-tmux sessions and panes that
+// are floating in the new layout are left out.
++ (NSDictionary<NSNumber *, PTYSession *> *)tiledSessionsByTmuxPaneFromSessions:(NSArray<PTYSession *> *)sessions
+                                                                   floatingPanes:(NSSet<NSNumber *> *)floatingPanes;
+// The tmux pane a session shows in a tmux layout: its own, or for a filtered pane's synthetic
+// session, its live session's. -1 if it is not a tmux pane (a native session's id reads as 0,
+// which is tmux's pane %0).
++ (int)tmuxLayoutPaneForSession:(PTYSession *)session;
+// The session among `sessions` that shows tmux pane `wp`, by +tmuxLayoutPaneForSession:, or nil.
++ (PTYSession *)sessionShowingTmuxPane:(int)wp amongSessions:(NSArray<PTYSession *> *)sessions;
+// The sessions left over from a tmux layout change that tmux made floating rather than closed.
++ (NSArray<PTYSession *> *)sessionsBecomingTmuxFloatsAmong:(NSArray<PTYSession *> *)sessions
+                                             floatingPanes:(NSSet<NSNumber *> *)floatingPanes;
 - (void)addRevivedFloatingSession:(PTYSession *)session fromArrangement:(NSDictionary *)arrangement;
+// Undo close of a float whose undo window ran out: create a session from the archived session
+// arrangement in the float's record and put it back where the record says it was. Returns the new
+// session, or nil if the record could not be restored.
+- (PTYSession *)addArchivedFloatingSessionWithGUID:(NSString *)guid fromArrangement:(NSDictionary *)arrangement;
 
 // Whether the user may resize the float or take it out of the float now.
 - (BOOL)floatingPaneCanResize:(iTermFloatingPaneView *)pane;
@@ -360,8 +379,12 @@ typedef NS_ENUM(NSInteger, iTermHiddenFloatingPanesActivity) {
 - (BOOL)updatePaneTitles;
 - (void)updateSessionOrdinals;
 
+// sessionKeepingGrid's views are laid out but its grid is not resized. This is for the session a
+// zoomed layout will maximize, since shrinking it to its hidden split size first would discard rows
+// tmux won't redraw.
 - (void)resizeViewsInViewHierarchy:(NSView *)view
-                      forNewLayout:(NSMutableDictionary *)parseTree;
+                      forNewLayout:(NSMutableDictionary *)parseTree
+                sessionKeepingGrid:(PTYSession *)sessionKeepingGrid;
 - (void)reloadTmuxLayout;
 // Size we are given the current layout
 
@@ -438,6 +461,8 @@ typedef NS_ENUM(NSInteger, iTermHiddenFloatingPanesActivity) {
 - (void)setPerTabSettings:(NSString *)setting;
 
 - (void)updateUseMetal;
+// Panes that count toward the limit on panes using the GPU renderer. Hidden floats don't.
+@property (nonatomic, readonly) NSUInteger numberOfPanesCountingTowardMetalLimit;
 - (ITMSplitTreeNode *)rootSplitTreeNode;
 // The tab's floating panes, back to front, for the API.
 - (NSArray<ITMFloatingPane *> *)floatingPaneMessages;

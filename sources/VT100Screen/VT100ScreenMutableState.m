@@ -48,6 +48,7 @@
 #import "iTermAdvancedSettingsModel.h"
 #import "iTermCapturedOutputMark.h"
 #import "iTermGCD.h"
+#import "TaskNotifier.h"
 #import "iTermImageMark.h"
 #import "iTermIntervalTreeObserver.h"
 #import "iTermOrderEnforcer.h"
@@ -65,6 +66,8 @@ static const int64_t VT100ScreenMutableStateSideEffectFlagLineBufferDidDropLines
 @interface VT100ScreenTokenExecutorUpdate()
 
 @property (nonatomic, readonly) BOOL dirty;
+// Synchronized like the other fields: the mutation queue sets it, and fork reads it on the main
+// thread.
 @property (nonatomic, readwrite) NSInteger estimatedThroughput;
 
 - (void)addBytesExecutedTotal:(NSInteger)total excludingInBandSignaling:(NSInteger)excludingInBandSignaling;
@@ -82,6 +85,7 @@ static const int64_t VT100ScreenMutableStateSideEffectFlagLineBufferDidDropLines
     BOOL _echoProbeShouldSendPassword;
     _Atomic int _executorUpdatePending;
     VT100ScreenTokenExecutorUpdate *_executorUpdate;
+    // Only for sessions on the shared queue; see executorUpdateClient.
     iTermPeriodicScheduler *_executorUpdateScheduler;
     BOOL _screenNeedsUpdate;
     BOOL _alertOnNextMark;
@@ -105,20 +109,17 @@ static const int64_t VT100ScreenMutableStateSideEffectFlagLineBufferDidDropLines
     // $HOST, and must not override the verified host. Atomic because the main
     // thread reads it to skip notifying us on every write. See issue 13117.
     atomic_bool _verifiedOSC7WindowOpen;
+    // Held while parsing and queueing tokens, so they are queued in the order they were parsed
+    // when something besides the pty's thread parses (see -flushParserAsynchronously).
+    NSLock *_parseLock;
 }
 
 // Implemented by the superclass (VT100ScreenState), which owns the backing
 // ivar. We only redeclare it here with a covariant NSMutableArray type.
 @dynamic openAidStack;
 
-// performingJoinedBlock is now centralized in iTermGCD.
-// Provide convenience accessors for compatibility with existing callers.
-+ (BOOL)performingJoinedBlock {
-    return iTermGCD.performingJoinedBlock;
-}
-
-+ (void)setPerformingJoinedBlock:(BOOL)value {
-    [iTermGCD setPerformingJoinedBlock:value];
+- (BOOL)performingJoinedBlock {
+    return _joinState.performingJoinedBlock;
 }
 
 // Process-wide one-shot for the "AcceptOSC7 is off" warning, so restoring N
@@ -146,26 +147,43 @@ static BOOL sOSC7DisabledWarningShown;
 }
 
 - (instancetype)initWithSideEffectPerformer:(id<VT100ScreenSideEffectPerforming>)performer {
-    dispatch_queue_t queue = [iTermGCD mutationQueue];
+    // With task I/O monitors, a session's reads don't stall other sessions, so its token
+    // execution shouldn't either: each session gets a queue of its own, and joining one doesn't
+    // stop the others (issue 13141).
+    const BOOL ownsQueue = [TaskNotifier usesTaskIOMonitors];
+    dispatch_queue_t queue = ownsQueue ? [iTermGCD newMutationQueue] : [iTermGCD mutationQueue];
+    return [self initWithSideEffectPerformer:performer queue:queue ownsQueue:ownsQueue];
+}
 
+- (instancetype)initWithSideEffectPerformer:(id<VT100ScreenSideEffectPerforming>)performer
+                                      queue:(dispatch_queue_t)queue
+                                  ownsQueue:(BOOL)ownsQueue {
     self = [super initForMutationOnQueue:queue];
     if (self) {
         _uniqueIdentifier = [[NSUUID UUID] UUIDString];
         _bottommostFoldAbsLine = -1;
+        _restoredCursorAbsLine = -1;
         // The base class's initForMutationOnQueue: already set a fresh
         // _rcGuid (main-thread pool). Don't touch it here; the override of
         // -rcGuid below returns _uniqueIdentifier so the mutation-thread
         // pool gets its own stable guid distinct from the main-thread one.
         _pendingNonInitialPromptStart = nil;
+        _excludedSubrangeTexts =
+            [NSMapTable mapTableWithKeyOptions:NSPointerFunctionsWeakMemory | NSPointerFunctionsObjectPointerPersonality
+                                  valueOptions:NSPointerFunctionsStrongMemory];
         _marksByAid = [NSMutableDictionary dictionary];
         // _openAidStack is owned and initialized by the base class
         // (VT100ScreenState) so the base's openAidStack getter sees it.
         _queue = queue;
+        _joinState = [iTermGCD joinStateForQueue:queue];
         _executorUpdate = [[VT100ScreenTokenExecutorUpdate alloc] init];
-        __weak __typeof(self) weakSelf = self;
-        _executorUpdateScheduler = [[iTermPeriodicScheduler alloc] initWithQueue:queue period:1 / 120.0 block:^{
-            [weakSelf updateExecutor];
-        }];
+        _ownsQueue = ownsQueue;
+        if (!ownsQueue) {
+            __weak __typeof(self) weakSelf = self;
+            _executorUpdateScheduler = [[iTermPeriodicScheduler alloc] initWithQueue:queue period:1 / 120.0 block:^{
+                [weakSelf updateExecutor];
+            }];
+        }
         _derivativeIntervalTree = [[IntervalTree alloc] init];
         _derivativeSavedIntervalTree = [[IntervalTree alloc] init];
         self.intervalTree =
@@ -181,6 +199,7 @@ static BOOL sOSC7DisabledWarningShown;
         _previousCommandRange = VT100GridCoordRangeMake(-1, -1, -1, -1);
         _triggerEvaluator = [[PTYTriggerEvaluator alloc] initWithQueue:queue];
         _postTriggerActions = [NSMutableArray array];
+        _parseLock = [[NSLock alloc] init];
         _triggerEvaluator.delegate = self;
         _triggerEvaluator.dataSource = self;
         const int defaultWidth = 80;
@@ -194,7 +213,8 @@ static BOOL sOSC7DisabledWarningShown;
         [self setInitialTabStops];
         _tokenExecutor = [[iTermTokenExecutor alloc] initWithTerminal:_terminal
                                                      slownessDetector:_triggerEvaluator.triggersSlownessDetector
-                                                                queue:_queue];
+                                                                queue:_queue
+                                                            ownsQueue:ownsQueue];
         _tokenExecutor.delegate = self;
         _echoProbe = [[iTermEchoProbe alloc] initWithQueue:_queue];
         _echoProbe.delegate = self;
@@ -257,6 +277,11 @@ static BOOL sOSC7DisabledWarningShown;
     } name:@"mutateColorMap"];
 }
 
+- (VT100ScreenTokenExecutorUpdate *)forkExecutorUpdate {
+    return [_executorUpdate fork];
+}
+
+// Sessions on the shared queue only.
 - (void)updateExecutor {
     VT100ScreenTokenExecutorUpdate *update = [_executorUpdate fork];
 
@@ -309,7 +334,7 @@ static BOOL sOSC7DisabledWarningShown;
 #pragma mark - Private
 
 - (void)assertOnMutationThread {
-    [iTermGCD assertMutationQueueSafe];
+    [iTermGCD assertSafeForMutationQueue:_queue];
 }
 
 #pragma mark - Internal
@@ -452,7 +477,7 @@ static BOOL sOSC7DisabledWarningShown;
             DLog(@"[side effects] dealloced %@", name);
             return;
         }
-        if (VT100ScreenMutableState.performingJoinedBlock) {
+        if (strongSelf.performingJoinedBlock) {
             sideEffect(delegate);
             [unpauser unpause];
             DLog(@"[side effects] Already performing %@", name);
@@ -556,7 +581,7 @@ static BOOL sOSC7DisabledWarningShown;
 
 - (void)setConfig:(VT100MutableScreenConfiguration *)config {
     DLog(@"%@ begin %@", self, config);
-    assert(VT100ScreenMutableState.performingJoinedBlock);
+    assert(self.performingJoinedBlock);
     if (config.desiredComposerRows.intValue != self.config.desiredComposerRows.intValue) {
         DLog(@"desiredComposerRows <- %@", config.desiredComposerRows);
     }
@@ -1649,6 +1674,32 @@ static BOOL sOSC7DisabledWarningShown;
     }
 }
 
+- (void)moveScreenContentToBottom {
+    if (self.terminalSoftAlternateScreenMode || self.currentGrid != self.primaryGrid) {
+        return;
+    }
+    VT100Grid *grid = self.primaryGrid;
+    // numberOfLinesUsed counts the cursor's line and every line above the last nonempty one, so
+    // moving down by the rest keeps all content on screen.
+    const int delta = self.height - grid.numberOfLinesUsed;
+    DLog(@"delta=%@", @(delta));
+    if (delta <= 0) {
+        return;
+    }
+    [grid scrollRect:VT100GridRectMake(0, 0, self.width, self.height)
+              downBy:delta
+           softBreak:NO];
+    const int firstScreenLine = self.numberOfScrollbackLines;
+    // An object that starts in scrollback and ends on screen keeps its start.
+    [self shiftIntervalTreeObjectsInRange:VT100GridCoordRangeMake(0,
+                                                                  firstScreenLine,
+                                                                  self.width,
+                                                                  firstScreenLine + self.height)
+                            startingAfter:firstScreenLine - 1
+                              downByLines:delta];
+    grid.cursor = VT100GridCoordMake(grid.cursor.x, grid.cursor.y + delta);
+}
+
 - (void)ensureContentEndsAt:(int)line {
     if (line < 0 || line >= self.height || self.terminalSoftAlternateScreenMode) {
         return;
@@ -2242,7 +2293,7 @@ void VT100ScreenEraseCell(screen_char_t *sct,
 // Calling -screenUpdateDisplay: while joined erases the dirty bits which breaks syncing grid
 // content back to the main thread.
 - (void)redrawSoon {
-    if (VT100ScreenMutableState.performingJoinedBlock) {
+    if (self.performingJoinedBlock) {
         _screenNeedsUpdate = YES;
         return;
     }
@@ -2513,8 +2564,11 @@ void VT100ScreenEraseCell(screen_char_t *sct,
         [super setCursorVisible:visible];
         if (visible) {
             [self.temporaryDoubleBuffer reset];
-        } else {
+        } else if (self.temporaryDoubleBuffer) {
             [self.temporaryDoubleBuffer start];
+        } else if ([self cursorHideBeginsPromptRepaint]) {
+            DLog(@"Cursor hidden for a prompt repaint. Draw the saved grid until it's shown.");
+            [self.unconditionalTemporaryDoubleBuffer startForPromptRepaint];
         }
     }
     if (visible) {
@@ -2528,6 +2582,21 @@ void VT100ScreenEraseCell(screen_char_t *sct,
             [delegate screenSetCursorVisible:NO];
         } name:@"set cursor visible 2"];
     }
+}
+
+// Line editors like reedline erase and redraw the whole prompt line, command included, on every
+// keystroke, hiding the cursor while they do. A sync partway through draws the line with the
+// command missing. This is called when the cursor is hidden while Reduce Flicker is off. It allows
+// the flicker fixer only while editing a command at a prompt, and only if the tokens already queued
+// behind the hide redraw the prompt (OSC 133;A) and then show the cursor, which ends the saved grid.
+- (BOOL)cursorHideBeginsPromptRepaint {
+    if (![iTermAdvancedSettingsModel holdScreenDuringPromptRepaint]) {
+        return NO;
+    }
+    if (!self.enteringCommand) {
+        return NO;
+    }
+    return self.tokenExecutor.queuedTokensRepaintPromptAndShowCursor;
 }
 
 - (void)activateBell {
@@ -3418,6 +3487,9 @@ void VT100ScreenEraseCell(screen_char_t *sct,
     if (range.start.x != -1) {
         mark = [self screenMarkOnLine:self.lastPromptLine - self.cumulativeScrollbackOverflow];
     }
+    // A right prompt hidden by a long command or erased by a transient prompt leaves an exclusion
+    // over cells that now hold command text or nothing.
+    [self dropStaleExcludedSubrangesOfMark:mark];
 
     iTermTextExtractor *extractor = [iTermTextExtractor textExtractorWithDataSource:self];
     NSString *command = [extractor contentInRange:VT100GridWindowedRangeMake(range, 0, 0)
@@ -3455,9 +3527,13 @@ void VT100ScreenEraseCell(screen_char_t *sct,
                      self.lastPromptLine - self.cumulativeScrollbackOverflow,
                      RLogRedact(mark, mark.redactedDescription),
                      RLogRedact(command, @(command.length)));
+                // Capture the date outside the block: the block is replayed on the
+                // main-thread doppelganger later, and both must agree.
+                NSDate *startDate = [NSDate date];
                 [self.mutableIntervalTree mutateObject:mark block:^(id<IntervalTreeObject> _Nonnull obj) {
                     VT100ScreenMark *mark = (VT100ScreenMark *)obj;
                     mark.firstLineOfCommand = firstLine;
+                    mark.startDate = startDate;
                     mark.fullCommand = command;
                     mark.commandRange = commandRange;
                     mark.outputStart = outputStart;
@@ -3767,6 +3843,69 @@ void VT100ScreenEraseCell(screen_char_t *sct,
     count += 1;
     return count;
 }
+- (NSString *)textInExcludedAbsRange:(VT100GridAbsCoordRange)absRange {
+    const long long overflow = self.cumulativeScrollbackOverflow;
+    const VT100GridCoordRange range = VT100GridCoordRangeMake(absRange.start.x,
+                                                              (int)(absRange.start.y - overflow),
+                                                              absRange.end.x,
+                                                              (int)(absRange.end.y - overflow));
+    if (range.start.y < 0 || range.end.y < 0) {
+        return @"";
+    }
+    iTermTextExtractor *extractor = [iTermTextExtractor textExtractorWithDataSource:self];
+    return [extractor contentInRange:VT100GridWindowedRangeMake(range, 0, 0)
+                  excludingSubranges:nil] ?: @"";
+}
+
+- (void)replaceExcludedSubrangesOfMark:(id<VT100ScreenMarkReading>)mark
+                             atIndexes:(NSIndexSet *)indexes
+                     withMutationRange:(iTermResilientCoordinateRange *)mutationRange
+                          unboundRange:(iTermResilientCoordinateRange *)unboundRange {
+    [self.mutableIntervalTree mutateObject:mark block:^(id<IntervalTreeObject> _Nonnull obj) {
+        VT100ScreenMark *m = (VT100ScreenMark *)obj;
+        if (indexes.count > 0) {
+            NSMutableArray<iTermResilientCoordinateRange *> *ranges = [m.excludedSubranges mutableCopy];
+            NSMutableIndexSet *valid = [indexes mutableCopy];
+            [valid removeIndexesInRange:NSMakeRange(ranges.count, NSNotFound - ranges.count)];
+            [ranges removeObjectsAtIndexes:valid];
+            m.excludedSubranges = ranges.count > 0 ? ranges : nil;
+        }
+        // Discriminate by the authoritative iTermMark.isDoppelganger property rather than by
+        // identity with `mark`, in case mutateObject: ever hands the closure only the
+        // doppelganger. The tree's mutate side effect binds the doppelganger's unbound range to
+        // the main-thread pool after this closure returns.
+        iTermResilientCoordinateRange *range = m.isDoppelganger ? unboundRange : mutationRange;
+        if (range) {
+            [m appendExcludedSubrange:range];
+        }
+    }];
+}
+
+- (void)dropStaleExcludedSubrangesOfMark:(id<VT100ScreenMarkReading>)mark {
+    NSArray<iTermResilientCoordinateRange *> *ranges = mark.excludedSubranges;
+    if (ranges.count == 0) {
+        return;
+    }
+    NSMutableIndexSet *stale = [NSMutableIndexSet indexSet];
+    [ranges enumerateObjectsUsingBlock:^(iTermResilientCoordinateRange *range, NSUInteger i, BOOL *stop) {
+        // A range with no recorded text (e.g., restored from an arrangement) can't be checked, so
+        // it's kept. Unresolvable ranges are ignored by every consumer anyway.
+        NSString *expected = [self.excludedSubrangeTexts objectForKey:range];
+        if (!expected || range.start.status != StatusValid || range.end.status != StatusValid) {
+            return;
+        }
+        NSString *actual = [self textInExcludedAbsRange:range.absRange];
+        if (![actual isEqualToString:expected]) {
+            DLog(@"Excluded subrange %@ is stale", VT100GridAbsCoordRangeDescription(range.absRange));
+            [stale addIndex:i];
+        }
+    }];
+    if (stale.count == 0) {
+        return;
+    }
+    [self replaceExcludedSubrangesOfMark:mark atIndexes:stale withMutationRange:nil unboundRange:nil];
+}
+
 // Removes the excluded subranges of the prompt mark on lastPromptLine if its command hasn't been
 // recorded yet. Mutates only when there is something to clear so shells that redraw their prompt
 // on every keystroke without non-initial prompts pay nothing.
@@ -3922,6 +4061,41 @@ void VT100ScreenEraseCell(screen_char_t *sct,
     self.hadCommand = haveCommand;
 }
 
+// Main thread, in a side effect. Asks the delegate for the working directory
+// once and then records it on the mutation queue, in order, at each fetch's
+// line, as if it had been passed to setWorkingDirectory:onAbsLine:pushed:token:.
+- (void)fetchWorkingDirectoryWithDelegate:(id<VT100ScreenDelegate>)delegate
+                                  fetches:(NSArray<iTermTitleDirectoryFetch *> *)fetches
+                                   pushed:(BOOL)pushed {
+    if (fetches.count == 0) {
+        return;
+    }
+    __weak __typeof(self) weakSelf = self;
+    DLog(@"%p: Performing async working directory fetch for %@", self, fetches);
+    dispatch_queue_t queue = _queue;
+    [delegate screenGetWorkingDirectoryWithCompletion:^(NSString *path) {
+        DLog(@"%p: Async update got %@ for %@", weakSelf, path, fetches);
+        if (path) {
+            dispatch_async(queue, ^{
+                for (iTermTitleDirectoryFetch *fetch in fetches) {
+                    [weakSelf setWorkingDirectory:path onAbsLine:fetch.absLine pushed:pushed token:fetch.token];
+                }
+            });
+        }
+    }];
+}
+
+// The screen line for an absolute line where setWorkingDirectory:onAbsLine:pushed:token:
+// may record a directory, or -1 if it may not.
+- (int)workingDirectoryLineForAbsLine:(long long)absLine {
+    const long long bigLine = MAX(0, absLine - self.cumulativeScrollbackOverflow);
+    if (bigLine >= INT_MAX) {
+        DLog(@"suspiciously large line %@ from absLine %@ cumulative %@", @(bigLine), @(absLine), @(self.cumulativeScrollbackOverflow));
+        return -1;
+    }
+    return (int)bigLine;
+}
+
 // Adds a working directory mark at the given line.
 //
 // nil token means it was "strongly" pushed (e.g., CurrentDir=) and you oughtn't poll.
@@ -3939,25 +4113,17 @@ void VT100ScreenEraseCell(screen_char_t *sct,
                      pushed:(BOOL)pushed
                       token:(id<iTermOrderedToken>)token {
     DLog(@"%p: setWorkingDirectory:%@ onLine:%lld token:%@", self, workingDirectory, absLine, token);
-    const long long bigLine = MAX(0, absLine - self.cumulativeScrollbackOverflow);
-    if (bigLine >= INT_MAX) {
-        DLog(@"suspiciously large line %@ from absLine %@ cumulative %@", @(bigLine), @(absLine), @(self.cumulativeScrollbackOverflow));
+    const int line = [self workingDirectoryLineForAbsLine:absLine];
+    if (line < 0) {
         return;
     }
-    const int line = bigLine;
     if (token && !workingDirectory) {
         __weak __typeof(self) weakSelf = self;
-        DLog(@"%p: Performing async working directory fetch for token %@", self, token);
-        dispatch_queue_t queue = _queue;
         [self addSideEffect:^(id<VT100ScreenDelegate> delegate) {
-            [delegate screenGetWorkingDirectoryWithCompletion:^(NSString *path) {
-                DLog(@"%p: Async update got %@ for token %@", weakSelf, path, token);
-                if (path) {
-                    dispatch_async(queue, ^{
-                        [weakSelf setWorkingDirectory:path onAbsLine:absLine pushed:pushed token:token];
-                    });
-                }
-            }];
+            [weakSelf fetchWorkingDirectoryWithDelegate:delegate
+                                                fetches:@[ [[iTermTitleDirectoryFetch alloc] initWithAbsLine:absLine
+                                                                                                       token:token] ]
+                                                 pushed:pushed];
         } name:@"set pwd 1"];
         return;
     }
@@ -4946,7 +5112,7 @@ static NSString *iTermOSC7MachineIDFromComponents(NSURLComponents *components) {
                                                                      offset:offset
                                                                         pwd:self.currentWorkingDirectory
                                                                       width:self.width
-                                                                      queue:[iTermGCD mutationQueue]];
+                                                                      queue:_queue];
     sniffer.delegate = self;
     [sniffer sniff];
     if (sniffer.hasSideEffects) {
@@ -5026,12 +5192,16 @@ static NSString *iTermOSC7MachineIDFromComponents(NSURLComponents *components) {
         return;
     }
     __weak __typeof(self) weakSelf = self;
+    // Captured outside the block so the doppelganger, which replays the block
+    // later, gets the same start date as the progenitor.
+    NSDate *startDate = [NSDate date];
     [self.mutableIntervalTree mutateObject:mark block:^(id<IntervalTreeObject> _Nonnull obj) {
         VT100ScreenMark *screenMark = [VT100ScreenMark castFrom:obj];
         if (!screenMark) {
             return;
         }
         [weakSelf setCommand:command startingAt:startAbsCoord inMark:screenMark];
+        screenMark.startDate = startDate;
     }];
 }
 
@@ -6100,6 +6270,7 @@ basedAtAbsoluteLineNumber:(long long)absoluteLineNumber
 
 // WARNING: This is called on PTYTask's thread.
 - (void)threadedReadTask:(char *)buffer length:(int)length {
+    [_parseLock lock];
     // Pass the input stream to the parser.
     [self.terminal.parser putStreamData:buffer length:length];
 
@@ -6109,14 +6280,137 @@ basedAtAbsoluteLineNumber:(long long)absoluteLineNumber
     int nonSignalingLength = [self.terminal.parser addParsedTokensToVector:&vector];
 
     if (CVectorCount(&vector) == 0) {
+        // The parser holds all of it, such as the start of an escape sequence. The executor
+        // will never hear of these bytes, so count them now: a pane's flow control waits for
+        // every byte it sent to be consumed. The parser holds only a few bytes at a time.
+        [self.consumptionLedger frameDidExecuteWithLength:length];
         CVectorDestroy(&vector);
+        [_parseLock unlock];
         return;
     }
+    [self handleFramesOnArrivalIn:&vector];
 
     [self addTokens:vector
         lengthTotal:length
 lengthExcludingInBandSignaling:nonSignalingLength
        highPriority:NO];
+    [_parseLock unlock];
+}
+
+// Queues what the parser has to say without new input. After it enters conductor recovery mode
+// that is the boundary token that ends recovery, which otherwise waits for the host to print
+// something, which an idle host may not do for a long time. Off the mutation queue because
+// queueing can wait for the mutation queue to make room.
+- (void)flushParserAsynchronously {
+    __weak __typeof(self) weakSelf = self;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        [weakSelf flushParser];
+    });
+}
+
+- (void)flushParser {
+    [_parseLock lock];
+    CVector vector;
+    CVectorCreate(&vector, 1);
+    [self.terminal.parser addParsedTokensToVector:&vector];
+    if (CVectorCount(&vector) == 0) {
+        CVectorDestroy(&vector);
+        [_parseLock unlock];
+        return;
+    }
+    [self handleFramesOnArrivalIn:&vector];
+    // No bytes were read, but the executor ignores an empty batch.
+    [self addTokens:vector
+        lengthTotal:1
+lengthExcludingInBandSignaling:0
+       highPriority:NO];
+    [_parseLock unlock];
+}
+
+// WARNING: This is called on PTYTask's thread, before addTokens can block on a full queue.
+// Flow control counts a frame as arrived here. A workgroup peer's pane output leaves here too,
+// for the pane's own session, rather than waiting its turn behind this session's output; its
+// token is then skipped when executed.
+- (void)handleFramesOnArrivalIn:(CVector *)vector {
+    iTermFramerFlowLedger *ledger = self.flowLedger;
+    const int count = CVectorCount(vector);
+    NSMutableArray<VT100Token *> *paneTokens = nil;
+    for (int i = 0; i < count; i++) {
+        VT100Token *token = CVectorGetObject(vector, i);
+        // Each depth's frames are counted for that depth's framer (nested SSH Integration).
+        const int depth = token.sshInfo.valid ? token.sshInfo.depth : 0;
+        if (token.type == SSH_OUTPUT) {
+            const BOOL isPane = token.csi->p[1] == SSH_OUTPUT_PANE_CHANNEL;
+            if (token.sshFlowControlled && [ledger isActiveForDepth:depth]) {
+                [ledger frameDidArriveWithLength:token.savedData.length
+                                sendMilliseconds:token.sshSendMilliseconds
+                                           flags:token.sshFlowFlags
+                                            flow:isPane ? token.csi->p[0] : 0
+                                           depth:depth
+                             carrierMilliseconds:token.sshCarrierSendMilliseconds];
+            }
+            if (isPane && token.savedData) {
+                if (!paneTokens) {
+                    paneTokens = [NSMutableArray array];
+                }
+                [paneTokens addObject:token];
+            }
+        } else if (token.type == SSH_IT2 && [ledger isActiveForDepth:depth]) {
+            [self recordArrivalOfIT2Data:token.string
+                                  ledger:ledger
+                                   depth:depth
+                     carrierMilliseconds:token.sshCarrierSendMilliseconds];
+        }
+    }
+    if (!paneTokens) {
+        return;
+    }
+    NSMutableArray<NSArray *> *outputs = [NSMutableArray arrayWithCapacity:paneTokens.count];
+    for (VT100Token *token in paneTokens) {
+        [outputs addObject:@[ token.savedData,
+                              @(token.csi->p[0]),
+                              @(token.sshInfo.valid ? token.sshInfo.depth : 0) ]];
+        token.type = VT100_SKIP;
+    }
+    DLog(@"Hand %@ pane frames to their sessions on arrival", @(outputs.count));
+    // Urgent: it is another session's output, and that session is on screen exactly when this
+    // one (its workgroup's leader) is not.
+    [self addUrgentSideEffect:^(id<VT100ScreenDelegate> delegate) {
+        for (NSArray *output in outputs) {
+            [delegate screenDidReadSSHPaneOutput:output[0]
+                                             pid:[output[1] intValue]
+                                           depth:[output[2] intValue]];
+        }
+    } name:@"read pane output"];
+}
+
+// "<connid> data <base64> <send-ms> <flags>": it2 data under flow control (version 2). Credit
+// counts the decoded bytes.
+- (void)recordArrivalOfIT2Data:(NSString *)payload
+                        ledger:(iTermFramerFlowLedger *)ledger
+                         depth:(int)depth
+           carrierMilliseconds:(int64_t)carrierMilliseconds {
+    NSArray<NSString *> *parts = [payload componentsSeparatedByString:@" "];
+    if (parts.count != 5 || ![parts[1] isEqualToString:@"data"]) {
+        return;
+    }
+    NSString *base64 = parts[2];
+    NSUInteger padding = 0;
+    if ([base64 hasSuffix:@"=="]) {
+        padding = 2;
+    } else if ([base64 hasSuffix:@"="]) {
+        padding = 1;
+    }
+    const NSInteger length = (NSInteger)(base64.length / 4 * 3) - (NSInteger)padding;
+    if (length < 0) {
+        return;
+    }
+    [ledger frameDidArriveWithLength:length
+                    sendMilliseconds:parts[3].longLongValue
+                               flags:parts[4].intValue
+                                flow:iTermFramerFlowLedger.it2Flow
+                               depth:depth
+                 carrierMilliseconds:carrierMilliseconds];
 }
 
 // WARNING: This is called on PTYTask's thread.
@@ -6384,7 +6678,7 @@ lengthExcludingInBandSignaling:data.length
 #pragma mark - Cross-Thread Sync
 
 - (void)willSynchronize {
-    assert(VT100ScreenMutableState.performingJoinedBlock);
+    assert(self.performingJoinedBlock);
 
     if (self.currentGrid.isAnyCharDirty) {
         [_triggerEvaluator invalidateIdempotentTriggers];
@@ -6399,9 +6693,22 @@ lengthExcludingInBandSignaling:data.length
 
 - (BOOL)shouldPopulateRTLState {
     if (self.terminal.softAlternateScreenMode && iTermAdvancedSettingsModel.disableBidiInAlternateScreen) {
-        return NO;
+        // The setting may have been turned on while the alternate grid already
+        // had bidi tables. Run the pass once more so populateRTLState drops them;
+        // otherwise rows keep drawing reordered while selection treats them as
+        // unreordered.
+        return self.currentGrid == self.altGrid && [self gridHasBidiInfo:self.currentGrid];
     }
     return self.linebuffer.lastRawLine.metadata.rtlFound || self.currentGrid.mayContainRTL;
+}
+
+- (BOOL)gridHasBidiInfo:(VT100Grid *)grid {
+    for (int i = 0; i < grid.size.height; i++) {
+        if ([grid bidiInfoForLine:i] != nil) {
+            return YES;
+        }
+    }
+    return NO;
 }
 
 // Set the RTL status for all cells in the primary grid. This may require modifying the last line
@@ -6520,7 +6827,7 @@ lengthExcludingInBandSignaling:data.length
     DLog(@"%@", [NSThread callStackSymbols]);
     [iTermGCD assertMainQueueSafe];
 
-    if (VT100ScreenMutableState.performingJoinedBlock) {
+    if (self.performingJoinedBlock) {
         // Reentrant call. Avoid deadlock by running it immediately.
         [self reallyPerformLightweightBlockWithJoinedThreads:block];
         return;
@@ -6546,7 +6853,7 @@ lengthExcludingInBandSignaling:data.length
 
     id<VT100ScreenDelegate> delegate = self.sideEffectPerformer.sideEffectPerformingScreenDelegate;
 
-    if (iTermGCD.performingJoinedBlock) {
+    if (self.performingJoinedBlock) {
         // Reentrant call. Avoid deadlock by running it immediately.
         [self reallyPerformBlockWithJoinedThreads:block delegate:delegate topmost:NO];
     } else {
@@ -6569,7 +6876,7 @@ lengthExcludingInBandSignaling:data.length
 - (void)performSynchroDanceWithBlock:(void (^)(void))block {
     assert(dispatch_queue_get_label(DISPATCH_CURRENT_QUEUE_LABEL) == dispatch_queue_get_label(dispatch_get_main_queue()));
     DLog(@"begin");
-    [iTermGCD setMainQueueSafe:YES];
+    [iTermGCD setMainQueueSafe:YES onQueue:_queue];
 
     // Stop the token executor while we run `block`.
     DLog(@"Calling whilePaused:");
@@ -6578,7 +6885,7 @@ lengthExcludingInBandSignaling:data.length
         DLog(@"done waiting");
         block();
         DLog(@"block finished");
-        [iTermGCD setMainQueueSafe:NO];
+        [iTermGCD setMainQueueSafe:NO onQueue:_queue];
         DLog(@"unblock executor");
     }];
     DLog(@"returning");
@@ -6595,7 +6902,7 @@ lengthExcludingInBandSignaling:data.length
     // deadlock.
     // This get-and-set is not a data race because assignment to performingJoinedBlock only happens
     // on the main queue while joined.
-    const BOOL wasPerformingJoinedBlock = [iTermGCD setPerformingJoinedBlock:YES];
+    const BOOL wasPerformingJoinedBlock = [_joinState setPerformingJoinedBlock:YES];
 
     VT100ScreenState *oldState;
     if (!wasPerformingJoinedBlock) {
@@ -6644,13 +6951,13 @@ lengthExcludingInBandSignaling:data.length
         _screenNeedsUpdate = NO;
     }
 
-    [iTermGCD setPerformingJoinedBlock:wasPerformingJoinedBlock];
+    [_joinState setPerformingJoinedBlock:wasPerformingJoinedBlock];
     DLog(@"done");
 }
 
 - (void)loadConfigIfNeededFromDelegate:(id<VT100ScreenDelegate>)delegate {
     DLog(@"begin");
-    assert(VT100ScreenMutableState.performingJoinedBlock);
+    assert(self.performingJoinedBlock);
     VT100MutableScreenConfiguration *config = [delegate screenConfiguration];
     if (config.isDirty) {
         DLog(@"config is dirty");
@@ -6662,11 +6969,11 @@ lengthExcludingInBandSignaling:data.length
     // Set `performingJoinedBlock` to YES so that a side-effect that wants to join threads won't
     // deadlock.
     DLog(@"begin");
-    const BOOL previousValue = [iTermGCD setPerformingJoinedBlock:YES];
+    const BOOL previousValue = [_joinState setPerformingJoinedBlock:YES];
     if (block) {
         block(self);
     }
-    [iTermGCD setPerformingJoinedBlock:previousValue];
+    [_joinState setPerformingJoinedBlock:previousValue];
 }
 
 - (void)performBlockAsynchronously:(void (^ _Nullable)(VT100Terminal *terminal,
@@ -6726,6 +7033,11 @@ lengthExcludingInBandSignaling:data.length
         }
         lineBuffer.delegate = self;
         self.linebuffer = lineBuffer;
+        if (!reattached) {
+            // Only a program that is still running expects its scroll region back.
+            [self.primaryGrid discardSavedScrollRegion];
+            [self.altGrid discardSavedScrollRegion];
+        }
     }
     if (includeRestorationBanner && [iTermAdvancedSettingsModel showSessionRestoredBanner]) {
         if (isArchive) {
@@ -6734,6 +7046,9 @@ lengthExcludingInBandSignaling:data.length
             [self appendSessionRestoredBanner];
         }
     }
+    self.restoredCursorAbsLine = [self absLineOfCursor];
+    self.restoredGridHeight = self.currentGrid.size.height;
+    self.restoredCursorOffsetFromPreferred = self.currentGrid.cursor.y - self.currentGrid.preferredCursorPosition.y;
 
     if (screenState) {
         self.progress = [screenState[kScreenStateProgressKey] integerValue];
@@ -6841,6 +7156,10 @@ lengthExcludingInBandSignaling:data.length
     }
 }
 
+- (long long)absLineOfCursor {
+    return self.cumulativeScrollbackOverflow + self.numberOfScrollbackLines + self.currentGrid.cursor.y;
+}
+
 - (void)appendArchiveRestoredBanner {
     [self appendRestoredBanner:NSLocalizedStringWithDefaultValue(@"ScreenRestore.ArchiveRestoredBanner", nil, [NSBundle mainBundle], @"Archive Restored", @"Banner shown when an archived session is restored")];
 }
@@ -6854,18 +7173,17 @@ lengthExcludingInBandSignaling:data.length
 }
 
 - (void)appendRestoredBanner:(NSString *)message {
-    // Record the cursor position and append the message.
-    const int yBefore = self.currentGrid.cursor.y;
-
     [self appendBannerMessage:message];
 
-    const int delta = self.currentGrid.cursor.y - yBefore;
-    // Update the preferred cursor position if needed.
-    if (self.currentGrid.preferredCursorPosition.y >= 0 && self.currentGrid.preferredCursorPosition.y + 1 < self.currentGrid.size.height) {
-        VT100GridCoord coord = self.currentGrid.preferredCursorPosition;
-        coord.y = MAX(0, MIN(self.currentGrid.size.height - 1, coord.y + delta));
-        self.currentGrid.preferredCursorPosition = coord;
-    }
+    // The banner leaves the preferred cursor position on its own last row and
+    // the cursor at the start of the row after it, which is where the restored
+    // session's output belongs. Adding the banner's height to the preferred
+    // position instead would count the rows above it twice, leaving a blank row
+    // when the cursor had been mid-line or the banner wrapped.
+    DLog(@"Banner appended. Preferred cursor position %@ -> cursor %@",
+         VT100GridCoordDescription(self.currentGrid.preferredCursorPosition),
+         VT100GridCoordDescription(self.currentGrid.cursor));
+    self.currentGrid.preferredCursorPosition = self.currentGrid.cursor;
 }
 
 - (void)appendBannerMessage:(NSString *)message {
@@ -6916,7 +7234,7 @@ lengthExcludingInBandSignaling:data.length
                 guidOfLastCommandMark:(NSString *)guidOfLastCommandMark
                   progenitorRCDataSource:(id<iTermResilientCoordinateDataSource>)progenitorRCDataSource
                        mainRCDataSource:(id<iTermResilientCoordinateDataSource>)mainRCDataSource {
-    assert(VT100ScreenMutableState.performingJoinedBlock);
+    assert(self.performingJoinedBlock);
     // Restoration deserializes fold marks straight into the tree at fresh coordinates, bypassing the
     // interactive create path, so the cached bottommost-fold line must be recomputed.
     _foldCacheDirty = YES;
@@ -7022,7 +7340,7 @@ lengthExcludingInBandSignaling:data.length
     // Pass 2: bind + resolve PROGENITORS' RCs against `self` (mutation pool).
     // The doppelganger pass below mirrors this for the main pool. Must run
     // inside the joined block so no main-thread observer interleaves.
-    assert(VT100ScreenMutableState.performingJoinedBlock);
+    assert(self.performingJoinedBlock);
 
     if (rcHolders.count == 0) {
         return;
@@ -7635,7 +7953,7 @@ lengthExcludingInBandSignaling:data.length
     if (count == 1) {
         preamble = @"ssh exited";
     } else if (count > 1) {
-        preamble = [NSString stringWithFormat:@"%@ ssh sessions ended.", @(count)];
+        preamble = [NSString stringWithFormat:@"%@ ssh sessions ended", @(count)];
     }
     if (sshLocation) {
         return [NSString stringWithFormat:@"%@ — now at %@.", preamble, sshLocation];
@@ -7748,7 +8066,10 @@ lengthExcludingInBandSignaling:data.length
 #pragma mark - iTermTriggerScopeProvider
 
 - (void)performBlockWithScope:(void (^)(iTermVariableScope *scope, id<iTermObject> object))block {
-    [self addPausedSideEffect:^(id<VT100ScreenDelegate> delegate, iTermTokenExecutorUnpauser *unpauser) {
+    // Urgent because token execution is paused until this runs. At a non-visible session's
+    // side-effect period that could take a second, and while paused the session stops reading
+    // input, which for a tmux pane stalls every session. Issue 13160.
+    [self addUrgentPausedSideEffect:^(id<VT100ScreenDelegate> delegate, iTermTokenExecutorUnpauser *unpauser) {
         [iTermGCD assertMainQueueSafe];
         block([delegate triggerSideEffectVariableScope], delegate);
         [unpauser unpause];
@@ -7764,7 +8085,8 @@ lengthExcludingInBandSignaling:data.length
 
 // Main queue or mutation queue.
 - (void)scheduleTriggerCallback:(void (^)(void))block {
-    if ([iTermGCD onMutationQueue] && _triggerEvaluator.evaluating) {
+    // Inline only on this state's own queue, not another session's.
+    if ([iTermGCD onMutationQueueWithJoinState:_joinState] && _triggerEvaluator.evaluating) {
         block();
         return;
     }
@@ -8134,8 +8456,10 @@ launchCoprocessWithCommand:(NSString *)command
 - (void)triggerSession:(Trigger *)trigger
     setSessionSpecificProfileBool:(BOOL)value
                            forKey:(NSString *)profileKey {
-    [self addSideEffect:^(id<VT100ScreenDelegate>  _Nonnull delegate) {
+    // This updates the profile, which joins threads, so it must be paused.
+    [self addPausedSideEffect:^(id<VT100ScreenDelegate> delegate, iTermTokenExecutorUnpauser *unpauser) {
         [delegate triggerSideEffectSetSessionSpecificProfileBool:value forKey:profileKey];
+        [unpauser unpause];
     } name:@"trigger set profile bool"];
 }
 
@@ -8211,9 +8535,6 @@ launchCoprocessWithCommand:(NSString *)command
 
 - (iTermUnicodeNormalization)gridUnicodeNormalizationForm {
     return self.normalization;
-}
-
-- (void)gridCursorDidMove {
 }
 
 - (void)gridDidResize {
@@ -8478,10 +8799,16 @@ launchCoprocessWithCommand:(NSString *)command
 - (void)tokenExecutorDidExecuteWithLengthTotal:(NSInteger)lengthTotal
                 lengthExcludingInBandSignaling:(NSInteger)lengthExcludingInBandSignaling
                                     throughput:(NSInteger)throughput {
+    [self.consumptionLedger frameDidExecuteWithLength:lengthTotal];
     [_executorUpdate addBytesExecutedTotal:lengthTotal
                   excludingInBandSignaling:lengthExcludingInBandSignaling];
     _executorUpdate.estimatedThroughput = throughput;
-    [_executorUpdateScheduler markNeedsUpdate];
+    iTermExecutorUpdateTickerClient *client = self.executorUpdateClient;
+    if (client) {
+        [client markNeedsUpdate];
+    } else {
+        [_executorUpdateScheduler markNeedsUpdate];
+    }
 }
 
 - (NSString *)tokenExecutorCursorCoordString {
@@ -8695,6 +9022,7 @@ launchCoprocessWithCommand:(NSString *)command
 
 
 @implementation VT100ScreenTokenExecutorUpdate {
+    NSInteger _estimatedThroughput;
     NSInteger _numberOfBytesExecutedTotal;
     NSInteger _numberOfBytesExecutedExcludingInBandSignaling;
     BOOL _inputHandled;
@@ -8705,6 +9033,18 @@ launchCoprocessWithCommand:(NSString *)command
         _dirty = YES;
         _numberOfBytesExecutedTotal += total;
         _numberOfBytesExecutedExcludingInBandSignaling += excludingInBandSignaling;
+    }
+}
+
+- (NSInteger)estimatedThroughput {
+    @synchronized (self) {
+        return _estimatedThroughput;
+    }
+}
+
+- (void)setEstimatedThroughput:(NSInteger)estimatedThroughput {
+    @synchronized (self) {
+        _estimatedThroughput = estimatedThroughput;
     }
 }
 

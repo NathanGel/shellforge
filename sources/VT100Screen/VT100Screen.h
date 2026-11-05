@@ -18,6 +18,7 @@
 #import "iTermRowContentIdentity.h"
 
 @class DVR;
+@class iTermByteBudget;
 @class iTermNotificationController;
 @class iTermMark;
 @class iTermStringLine;
@@ -61,6 +62,14 @@ extern const NSInteger VT100ScreenBigFileDownloadThreshold;
     iTermTriggerSession,
     iTermTriggerScopeProvider,
     iTermTriggerCallbackScheduler>
+
+// Testing only. The mutable state runs on `queue` instead of the default (see
+// -[VT100ScreenMutableState initWithSideEffectPerformer:]). `ownsQueue` says whether `queue` is
+// for this session alone (from +[iTermGCD newMutationQueue]) or the queue every session shares.
+- (instancetype)initWithMutationQueue:(dispatch_queue_t)queue ownsQueue:(BOOL)ownsQueue;
+
+// Main queue. Call when the user presses a key, so the update reporting the echo isn't throttled.
+- (void)expediteExecutorUpdate;
 
 @property(nonatomic) BOOL terminalEnabled;
 @property(atomic, weak, nullable) id<VT100ScreenDelegate> delegate;
@@ -250,6 +259,8 @@ extern const NSInteger VT100ScreenBigFileDownloadThreshold;
 - (VT100GridCoordRange)commandRange;
 - (VT100GridCoordRange)extendedCommandRange;
 - (void)injectData:(NSData *)data;
+// Main queue. See -[VT100ScreenMutableState tmuxInputBudget].
+- (void)setTmuxInputBudget:(iTermByteBudget * _Nullable)budget;
 
 typedef NS_ENUM(NSUInteger, VT100ScreenTriggerCheckType) {
     VT100ScreenTriggerCheckTypeNone,
@@ -289,6 +300,12 @@ typedef NS_ENUM(NSUInteger, VT100ScreenTriggerCheckType) {
 - (void)setEchoProbeDelegate:(id<iTermEchoProbeDelegate>)echoProbeDelegate;
 - (void)resetEchoProbe;
 - (void)threadedReadTask:(char *)buffer length:(int)length;
+// Bytes read from the task so far, for the flow control monitor's receive rate. Safe on any thread.
+- (long long)bytesReceived;
+// Any thread. Whether -threadedReadTask:length: would return without blocking.
+- (BOOL)threadedHasTokenCapacity;
+// Any thread. Runs `block` asynchronously on `queue` once there may be token capacity again.
+- (void)threadedNotifyWhenTokenCapacityAvailableOnQueue:(dispatch_queue_t)queue block:(void (^)(void))block;
 
 - (void)destructivelySetScreenWidth:(int)width
                              height:(int)height

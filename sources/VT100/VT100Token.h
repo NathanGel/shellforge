@@ -427,6 +427,10 @@ void iTermPreconvertedStringDataFree(PreconvertedStringData *data);
 
 #define SSH_OUTPUT_AUTOPOLL_PID -1000
 #define SSH_OUTPUT_NOTIF_PID -1001
+// %output channel of a pane process (framer.py PANE_CHANNEL): a workgroup peer's program run
+// through the leader's framer. Its bytes belong to the peer's terminal, so they are passed on
+// as they are instead of being parsed.
+#define SSH_OUTPUT_PANE_CHANNEL 3
 
 typedef struct {
     int8_t channel;
@@ -487,6 +491,17 @@ NS_INLINE NSString *SSHInfoDescription(SSHInfo info) {
 
 @property(nonatomic) VT100TerminalTokenType type;
 @property(nonatomic) SSHInfo sshInfo;
+// For SSH_OUTPUT under flow control: whether the frame carried the fields below, the framer's
+// clock in milliseconds when it sent the frame, and its flow flags (1: the framer ran out of
+// credit before sending it; 2: sent from the echo allowance, outside credit).
+@property(nonatomic) BOOL sshFlowControlled;
+@property(nonatomic) int64_t sshSendMilliseconds;
+@property(nonatomic) int sshFlowFlags;
+// For an inner framer's controlled SSH_OUTPUT or SSH_IT2 under nested SSH Integration: when the
+// framer around it sent the frame that carried its first line, on that framer's clock, or 0 when
+// that frame was not flow-controlled or there is none. The difference from sshSendMilliseconds
+// is the inner frame's delay over its own hop, plus the clocks' offset.
+@property(nonatomic) int64_t sshCarrierSendMilliseconds;
 @property(nonatomic, strong, nullable) NSArray<VT100Token *> *subtokens;
 
 + (instancetype)token;
@@ -502,6 +517,10 @@ NS_INLINE NSString *SSHInfoDescription(SSHInfo info) {
 - (NSString *)stringForAsciiData;
 
 - (void)translateFromScreenTerminal;
+
+// Whether any of the CSI parameters equals |value|. For DECSET/DECRST that means the mode is among
+// those being changed, as in CSI ? 2004 ; 25 h.
+- (BOOL)csiParametersContain:(int)value;
 
 - (void)realizeCRLFsWithCapacity:(int)capacity;
 

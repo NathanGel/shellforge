@@ -32,7 +32,9 @@ public enum ShellforgeSidebar {
         let host = SidebarHostingView(rootView: ZoomedSidebar(zoom: zoom, sidebar: sidebar))
         host.chrome = chrome
         host.frame = NSRect(x: 0, y: 0, width: width, height: 400)
-        host.autoresizingMask = [.height]
+        // The root view lays the sidebar out by hand. Flexible margins keep its floating inset from
+        // becoming a minimum window height when the window's layout engine is engaged.
+        host.autoresizingMask = [.height, .minYMargin, .maxYMargin]
         return host
     }
 

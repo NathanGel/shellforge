@@ -36,14 +36,17 @@
 //  3. Unless the model is `fixtureExempt`, capture a refusal fixture so the
 //     live-harness regression suite covers this model's response shape:
 //
+//        # every model that lacks a fixture:
+//        ITERM2_AI_LIVE_REFUSAL=missing tools/run_ai_live.sh refusal
+//
 //        # one model:
-//        ITERM2_AI_LIVE_<VENDOR>_MODELS=<modelname> \
+//        ITERM2_AI_LIVE_REFUSAL=missing ITERM2_AI_LIVE_<VENDOR>_MODELS=<modelname> \
 //            tools/run_ai_live.sh test_<vendor>_refusal
 //
-//        # all models for a vendor:
-//        tools/run_ai_live.sh test_<vendor>_refusal
-//
-//     <vendor> is openai / anthropic / gemini / deepseek (lowercase).
+//     <vendor> is openai / anthropic / gemini / deepseek (lowercase). The
+//     refusal prompt is a request vendors flag as abuse, so the scenario is
+//     opt-in and "missing" skips models already fixtured. Don't run it more
+//     than needed.
 //
 //  4. `git add OtherResources/ai-models.json
 //     ModernTests/Resources/SafetyRefusalFixtures/*` and commit together.
@@ -277,19 +280,25 @@ class AIMetadata: NSObject {
     // The cheaper same-vendor model to prefer for high-frequency, low-stakes
     // work (e.g. the orchestration screen-watch poller), or nil if `model` has no
     // economy alternative. Resolves `model`'s economyModelName to a catalog
-    // entry. If `model` carries no pointer (it may have come from settings in
-    // manual mode, which doesn't populate the field), fall back to the catalog
-    // entry of the same name, so a manually-selected catalog model still gets its
-    // economy variant. Returns nil if the pointer names a model absent from the
-    // catalog.
+    // entry. Returns nil if the pointer names a model absent from the catalog.
     //
-    // The returned model PRESERVES `model`'s transport (url and api, and hence
-    // which host the API key is sent to); only the model identity and its size
-    // limits change. This is load-bearing for security: a manual-mode user may
-    // point a catalog-named model at a custom base URL (corporate proxy /
-    // gateway), and resolving to the economy entry's own public endpoint would
-    // bypass that proxy and leak the configured API key to the public vendor
-    // host. Same-vendor guarantees the economy model speaks the same protocol.
+    // Only catalog models carry the pointer. A manual model gets none, even
+    // when it shares a catalog model's name: its endpoint (a gateway or proxy)
+    // may serve only the configured model, so asking it for the catalog's
+    // economy model fails and the safety check then flags every command. A
+    // manual model's economy model is the one the user designates in Manage AI
+    // Models (LLMMetadata.economyModel()); without one, nil leaves the caller on
+    // the manual model itself.
+    //
+    // The returned model PRESERVES `model`'s transport and auth (url, api,
+    // vendor, custom headers, credential choice and manual configuration ID, and
+    // hence which host the API key is sent to and which key it is); only the
+    // model identity and its size limits change. Production models that carry
+    // a pointer use their catalog transport anyway, so this is defense in
+    // depth: should a pointer-carrying model ever be given a custom base URL,
+    // resolving to the economy entry's own public endpoint would bypass it and
+    // could send the API key to the public vendor host. Same-vendor guarantees
+    // the economy model speaks the same protocol.
     static func economyModel(for model: Model) -> Model? {
         return economyModel(for: model, in: instance.models)
     }
@@ -298,14 +307,20 @@ class AIMetadata: NSObject {
     // bundled catalog; production passes the active catalog via the overload
     // above).
     static func economyModel(for model: Model, in models: [Model]) -> Model? {
-        let economyName = model.economyModelName
-            ?? models.first(where: { $0.name == model.name })?.economyModelName
-        guard let economyName,
+        guard let economyName = model.economyModelName,
               var economy = models.first(where: { $0.name == economyName }) else {
             return nil
         }
         economy.url = model.url
         economy.api = model.api
+        // Carry the configured model's auth too, so the economy request is
+        // authenticated exactly like the configured one. The vendor comes along
+        // because, for automatic credentials, it decides which vendor's key is
+        // sent.
+        economy.vendor = model.vendor
+        economy.customHeaders = model.customHeaders
+        economy.credential = model.credential
+        economy.manualConfigurationID = model.manualConfigurationID
         return economy
     }
 

@@ -112,10 +112,24 @@ class TabStatusController: NSObject {
         super.init()
     }
 
-    /// Takes over a status rebuilt from a saved arrangement.
+    /// Whether a change happening now is a status coming back from a saved
+    /// arrangement rather than news, so it should not be announced with a
+    /// notification.
+    @objc private(set) var isRestoring = false
+
+    /// Takes over a status rebuilt from a saved arrangement. Listeners hear
+    /// of it like any change: the session may already be in its tab, which
+    /// caches the status it shows and would otherwise never learn of it.
     @objc
     func adoptRestoredStatus(_ restored: iTermSessionTabStatus) {
+        let previousStatusText = statusIfPresent?.statusText
         _status = restored
+        let saved = isRestoring
+        isRestoring = true
+        defer {
+            isRestoring = saved
+        }
+        didChange(previousStatusText)
     }
 
     /// Clears the status, if there is one to clear. Returns whether anything
@@ -234,7 +248,9 @@ class TabStatusController: NSObject {
         defer {
             isAcknowledging = saved
         }
-        block()
+        // Observers of SessionStatusController (Notify on Status Change)
+        // must also see this as an acknowledgment rather than a change.
+        SessionStatusController.instance.acknowledge(sessionID: sessionID(), block)
     }
 
     /// The user pressed a key in the session, so they have seen a finished or

@@ -9,8 +9,19 @@ import CryptoKit
 import JavaScriptCore
 
 struct WebRequest: CustomDebugStringConvertible, Codable {
+    // Goes into debug logs, which users attach to bug reports, so
+    // credentials (header values, keys in the URL or body) are scrubbed.
     var debugDescription: String {
-        return "\(method) \(url)\n\(headers.debugDescription)\n\n\(body)"
+        let bodyDescription: String
+        switch body {
+        case .string(let string):
+            bodyDescription = AIChatWireLogSanitizer.scrubbingSecrets(string)
+        case .bytes(let bytes):
+            bodyDescription = "<\(bytes.count) bytes>"
+        }
+        let url = AIChatWireLogSanitizer.scrubbingSecrets(self.url)
+        let headers = AIChatWireLogSanitizer.sanitizedHeadersDescription(self.headers)
+        return "\(method) \(url)\n\(headers)\n\(bodyDescription)"
     }
     var headers: [String: String]
     var method: String
@@ -177,6 +188,12 @@ struct Plugin {
         self.code = code
     }
 
+    // Test seam: a plugin running the given code, skipping the installed
+    // app lookup and signature check.
+    init(testingCode code: String) {
+        self.code = code
+    }
+
     private static func checkSignature(message: Data, signature: Data) throws {
         let publicKey = try Curve25519.Signing.PublicKey(rawRepresentation: Data(base64Encoded: publicKeyB64)!)
         guard publicKey.isValidSignature(signature, for: message) else {
@@ -186,28 +203,34 @@ struct Plugin {
     }
 
     func version() throws -> Decimal {
-        let string: String = try PluginClient.instance.call(code: code,
-                                                            functionName: "version",
-                                                            request: nil as Optional<String>,
-                                                            async: false,
-                                                            stream: nil)
+        let string: String = try PluginClient().call(code: code,
+                                                     functionName: "version",
+                                                     request: nil as Optional<String>,
+                                                     async: false,
+                                                     stream: nil)
         guard let decimal = Decimal(string: string) else {
             throw PluginError(reason: String(localized: "AIPluginClient.InvalidVersionString", defaultValue: "Invalid version string: \(string)", comment: "Error message when the AI plugin reports an unparseable version string"))
         }
         return decimal
     }
 
-    func load(webRequest: WebRequest, stream: ((String) -> ())?) throws -> WebResponse {
+    // Cancelling `cancellation` stops this request's HTTP transfer and no other.
+    func load(webRequest: WebRequest,
+              stream: ((String) -> ())?,
+              cancellation: Cancellation) throws -> WebResponse {
         DLog("load \(webRequest)")
-        return try PluginClient.instance.call(code: code,
-                                              functionName: "request",
-                                              request: webRequest,
-                                              async: true,
-                                              stream: stream)
-    }
-
-    func cancel() {
-        PluginClient.instance.cancel()
+        let client = PluginClient()
+        // Runs at once if the request was already cancelled. The caller may
+        // keep the cancellation long after the request finishes, so it must not
+        // keep the client alive.
+        cancellation.impl = { [weak client] in
+            client?.cancel()
+        }
+        return try client.call(code: code,
+                               functionName: "request",
+                               request: webRequest,
+                               async: true,
+                               stream: stream)
     }
 }
 
@@ -232,13 +255,25 @@ class iTermAIClient {
 
     private let requiredVersion = "1.1"
 
+    private static var notAllowedError: PluginError {
+        PluginError(reason: String(localized: "AIPluginClient.NotAllowed", defaultValue: "Plugin not allowed by administrator.", comment: "Error message when the AI plugin is disallowed by administrator policy"))
+    }
+
+    // Test seam: stands in for Plugin.instance() in validate(), so a test can
+    // make the plugin look missing. Nothing in the app sets it.
+    private static let _validationPluginResultForTesting = MutableAtomicObject<Result<Plugin, PluginError>?>(nil)
+    static var validationPluginResultForTesting: Result<Plugin, PluginError>? {
+        get { _validationPluginResultForTesting.value }
+        set { _validationPluginResultForTesting.set(newValue) }
+    }
+
     // Runs on any queue. Throws a PluginError or does nothing.
     func validate() throws {
         DLog("validate")
         if (!iTermAdvancedSettingsModel.generativeAIAllowed()) {
-            throw PluginError(reason: String(localized: "AIPluginClient.NotAllowed", defaultValue: "Plugin not allowed by administator.", comment: "Error message when the AI plugin is disallowed by administrator policy"))
+            throw Self.notAllowedError
         }
-        switch Plugin.instance() {
+        switch Self.validationPluginResultForTesting ?? Plugin.instance() {
         case .success(let plugin):
             guard let pluginVersion = try? plugin.version() else {
                 throw PluginError(reason: String(localized: "AIPluginClient.VersionUnknown", defaultValue: "Unable to determine version of AI plugin. Reinstall it and upgrade iTerm2 if possible.", comment: "Error message when iTerm2 cannot determine the AI plugin version"))
@@ -249,7 +284,10 @@ class iTermAIClient {
             }
             return
         case .failure(let error):
-            RLog("\(error)")
+            // Plugin.load() already put the failure in the retrospective log,
+            // once per distinct reason. Settings probes this every few seconds,
+            // so logging it here too would flood the ring.
+            DLog("\(error)")
             throw error
         }
     }
@@ -360,10 +398,36 @@ class iTermAIClient {
         set { _responseRecorder.set(newValue) }
     }
 
+    // Test seam: when set, requests run this plugin instead of the installed
+    // one. Nothing in the app sets it.
+    private static let _pluginOverrideForTesting = MutableAtomicObject<Plugin?>(nil)
+    static var pluginOverrideForTesting: Plugin? {
+        get { _pluginOverrideForTesting.value }
+        set { _pluginOverrideForTesting.set(newValue) }
+    }
+
+    private static func pluginForRequest() -> Result<Plugin, PluginError> {
+        if let plugin = pluginOverrideForTesting {
+            return .success(plugin)
+        }
+        return Plugin.instance()
+    }
+
     func request(webRequest: WebRequest,
                  stream: ((String) -> ())?,
                  completion: @escaping (Result<WebResponse, PluginError>) -> ()) -> Cancellation {
         let cancellation = Cancellation()
+        // Backstop for the administrator lockout (GenerativeAIAllowed): every
+        // request to a remote LLM goes through here, so refuse it even if some caller
+        // (for example a timer or watch registered before the lockout) did not
+        // check first.
+        if !iTermAdvancedSettingsModel.generativeAIAllowed() {
+            RLog("Refusing LLM request: generative AI is disallowed by the administrator")
+            DispatchQueue.main.async {
+                completion(.failure(cancellation.canceled ? .cancelled : Self.notAllowedError))
+            }
+            return cancellation
+        }
         let observer = Self.liveObserver
         let recorder = Self.responseRecorder
         // Build the capture if anything wants it: the observer (AILiveDriver
@@ -447,14 +511,11 @@ class iTermAIClient {
             }
         }
         executionQueue.async {
-            switch Plugin.instance() {
+            switch Self.pluginForRequest() {
             case .success(let plugin):
                 do {
                     if cancellation.canceled {
                         throw PluginError.cancelled
-                    }
-                    cancellation.impl = {
-                        plugin.cancel()
                     }
                     let wrappedStream: ((String) -> ())? = stream.map { downstream in
                         return { chunk in
@@ -463,7 +524,9 @@ class iTermAIClient {
                             downstream(chunk)
                         }
                     }
-                    let response = try plugin.load(webRequest: webRequest, stream: wrappedStream)
+                    let response = try plugin.load(webRequest: webRequest,
+                                                   stream: wrappedStream,
+                                                   cancellation: cancellation)
                     emit(.success(response))
                 } catch let error as PluginError {
                     emit(.failure(error))

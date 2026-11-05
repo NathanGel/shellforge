@@ -7,6 +7,8 @@
 //
 
 #import "GeneralPreferencesViewController.h"
+
+#import "iTermMigrationHelper.h"
 #import "SFSymbolEnum/SFSymbolEnum.h"
 #import "NSBundle+iTerm.h"
 #import "NSImage+iTerm.h"
@@ -16,6 +18,9 @@
 #import "RegexKitLite.h"
 #import "WindowArrangements.h"
 #import "iTerm2SharedARC-Swift.h"
+#import "TaskNotifier.h"
+#import "iTermSlider.h"
+#import "NSObject+iTerm.h"
 #import "iTermAPIHelper.h"
 #import "iTermAdvancedGPUSettingsViewController.h"
 #import "iTermApplicationDelegate.h"
@@ -62,8 +67,10 @@ static NSString *const kAIManualModelDynamicModelsKey = @"dynamicModels";
 static NSString *const kAIManualModelDynamicSelectedModelKey = @"dynamicSelectedModel";
 // Array of {"name","value"} dictionaries. Must match LLMMetadata.ManualModelKey.customHeaders.
 static NSString *const kAIManualModelCustomHeadersKey = @"customHeaders";
-// Which key authorizes the model: an AIModelCredential.storedValue, absent for
-// automatic. Must match LLMMetadata.ManualModelKey.credential.
+// Which key authorizes the model: an AIModelCredential.storedValue. Absent only
+// in configurations saved before Automatic became host-bound, which
+// LLMMetadata.credential(configuration:...) reads specially. Must match
+// LLMMetadata.ManualModelKey.credential.
 static NSString *const kAIManualModelCredentialKey = @"credential";
 // Never persisted. A duplicated configuration gets a new ID, so this carries the
 // original's ID into the editor so it can offer the original's own key.
@@ -74,6 +81,9 @@ static NSString *const kAIManualModelKeySourceIDKey = @"keySourceID";
 static const NSInteger kAICredentialTagAutomatic = -1;
 static const NSInteger kAICredentialTagModelKey = -2;
 static const NSInteger kAICredentialTagNone = -3;
+// The API key popup's width when its title is short, which leaves room for the
+// key field beside it.
+static const CGFloat kAICredentialPopupMinimumWidth = 210;
 
 // Shows a non-blocking sheet on `window` with just an OK button.
 static void iTermGeneralPreferencesShowSheet(NSString *heading, NSString *body, NSWindow *window) {
@@ -205,12 +215,14 @@ static BOOL iTermAIVendorHasEnterableKey(iTermAIVendor vendor) {
 // and the manual model editor so the two never describe the same model
 // differently. `vendor` is the vendor whose stored key would be used (the chosen
 // one for iTermAICredentialKindVendorKey, else the inferred one).
-// `withheldForLocalEndpoint` applies only to automatic, which is the only kind
-// that withholds a key from a local endpoint. When `reportMissingKey` is set, a
+// `withheldForLocalEndpoint` and `withheldForUnrecognizedHost` apply only to
+// automatic, which is the only kind that withholds a key from a local endpoint
+// or from a host that is not the vendor's own. When `reportMissingKey` is set, a
 // key that has not been entered is called out using `keyIsSet`.
 static NSString *iTermAIKeyHint(iTermAICredentialKind kind,
                                 iTermAIVendor vendor,
                                 BOOL withheldForLocalEndpoint,
+                                BOOL withheldForUnrecognizedHost,
                                 BOOL reportMissingKey,
                                 BOOL keyIsSet) {
     switch (kind) {
@@ -224,6 +236,9 @@ static NSString *iTermAIKeyHint(iTermAICredentialKind kind,
         case iTermAICredentialKindAutomatic:
             if (withheldForLocalEndpoint) {
                 return iTermAIKeyHintSelfHosted();
+            }
+            if (withheldForUnrecognizedHost) {
+                return NSLocalizedStringWithDefaultValue(@"AIKeyHint.UnrecognizedHost", nil, [NSBundle mainBundle], @"No API key is sent automatically, since this endpoint is not run by the model’s provider. Choose the key it needs, or use a custom header.", @"Hint shown when a manual AI model’s endpoint is not its provider’s own server (for example a third-party gateway), where the automatic API key choice sends no key");
             }
             break;
         case iTermAICredentialKindVendorKey:
@@ -240,6 +255,36 @@ static NSString *iTermAIKeyHint(iTermAICredentialKind kind,
     }
     return [NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"AIKeyHint.Authorizes", nil, [NSBundle mainBundle], @"Authorizes with your %@ API key.", @"Hint telling the user which provider's API key authorizes the model; %@ is the provider name"),
             iTermAIVendorProviderName(vendor)];
+}
+
+// Every hint the manual model editor can show (it never reports a missing key),
+// in the running language, so it can reserve room for the longest.
+static NSArray<NSString *> *iTermAIKeyHintEditorVariants(void) {
+    NSMutableOrderedSet<NSString *> *result = [NSMutableOrderedSet orderedSet];
+    const iTermAICredentialKind kinds[] = {
+        iTermAICredentialKindAutomatic,
+        iTermAICredentialKindVendorKey,
+        iTermAICredentialKindModelKey,
+        iTermAICredentialKindNone
+    };
+    const iTermAIVendor vendors[] = {
+        iTermAIVendorDeepSeek,
+        iTermAIVendorGemini,
+        iTermAIVendorOpenAI,
+        iTermAIVendorLlama,
+        iTermAIVendorAnthropic,
+        iTermAIVendorApple
+    };
+    for (size_t k = 0; k < sizeof(kinds) / sizeof(*kinds); k++) {
+        for (size_t v = 0; v < sizeof(vendors) / sizeof(*vendors); v++) {
+            for (int withheld = 0; withheld < 2; withheld++) {
+                for (int withheldFromHost = 0; withheldFromHost < 2; withheldFromHost++) {
+                    [result addObject:iTermAIKeyHint(kinds[k], vendors[v], withheld, withheldFromHost, NO, YES)];
+                }
+            }
+        }
+    }
+    return result.array;
 }
 
 static NSString *iTermManualAIModelHost(NSDictionary *configuration) {
@@ -655,6 +700,16 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn
     NSButton *_testButton;
     NSButton *_fetchModelsButton;
     NSProgressIndicator *_testSpinner;
+    // For -layoutForTranslations: the right-aligned labels in the left column,
+    // the checkboxes in the right column, the buttons pinned to the right
+    // edge, and where the right column starts.
+    NSArray<NSTextField *> *_columnLabels;
+    NSArray<NSButton *> *_columnCheckboxes;
+    NSArray<NSButton *> *_rightAnchoredButtons;
+    CGFloat _fieldX;
+    // The running connection test, if any. While set, the test button stops it.
+    iTermAIConnectionTest *_connectionTest;
+    NSString *_testButtonIdleTitle;
     NSDictionary *_result;
     BOOL (^_nameIsTaken)(NSString *name);
     // The Model name typed before auto-discovery was toggled on. Stashed so
@@ -674,12 +729,22 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn
 
 - (instancetype)initWithConfiguration:(NSDictionary *)configuration
                             isEditing:(BOOL)isEditing {
+    return [self initWithConfiguration:configuration
+                             isEditing:isEditing
+                     apiKeyHintStrings:iTermAIKeyHintEditorVariants()];
+}
+
+// apiKeyHintStrings are the hints the API key hint must have room for. Tests
+// pass a translation's hints to check the layout in that language.
+- (instancetype)initWithConfiguration:(NSDictionary *)configuration
+                            isEditing:(BOOL)isEditing
+                    apiKeyHintStrings:(NSArray<NSString *> *)apiKeyHintStrings {
     self = [super init];
     if (self) {
         _base = [configuration copy] ?: @{};
         _isEditing = isEditing;
         _featureButtons = [NSMutableDictionary dictionary];
-        [self buildWindow];
+        [self buildWindowWithAPIKeyHintStrings:apiKeyHintStrings];
     }
     return self;
 }
@@ -710,22 +775,115 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn
     return button;
 }
 
-- (void)buildWindow {
+// The API key hint label, before it is given a frame.
++ (NSTextField *)makeAPIKeyHintLabel {
+    NSTextField *label = [NSTextField labelWithString:@""];
+    label.font = [NSFont systemFontOfSize:[NSFont smallSystemFontSize]];
+    label.textColor = [NSColor secondaryLabelColor];
+    // Wrapped, with as many lines as the text needs. The self-hosted variant
+    // is an instruction, not a label, and does not fit the 388pt column on one
+    // line in English, and the gateway variant takes four lines in German;
+    // truncating either would hide the actionable half.
+    label.usesSingleLineMode = NO;
+    label.lineBreakMode = NSLineBreakByWordWrapping;
+    label.maximumNumberOfLines = 0;
+    return label;
+}
+
+// The height of the API key hint label: enough for the longest of `strings` at
+// `width`, and never less than the two lines it was designed with.
++ (CGFloat)apiKeyHintHeightForStrings:(NSArray<NSString *> *)strings width:(CGFloat)width {
+    const CGFloat minimumHeight = 30;
+    NSTextField *label = [self makeAPIKeyHintLabel];
+    const NSRect bounds = NSMakeRect(0, 0, width, CGFLOAT_MAX);
+    CGFloat height = minimumHeight;
+    for (NSString *string in strings) {
+        label.stringValue = string;
+        // The 2 points over the text are the slack the two-line height had.
+        height = MAX(height, ceil([label.cell cellSizeForBounds:bounds].height) + 2);
+    }
+    return height;
+}
+
+// The form is laid out for English: a 150-point label column and a right
+// column sized to the window. Translations can be longer, so widen the label
+// column to fit the longest label, and the right column to fit the longest
+// checkbox, growing the window to match. The Test Connection button grows to
+// fit its title too. English is unchanged. Safe to call again after a title
+// changes.
+- (void)layoutForTranslations {
+    NSView *content = _window.contentView;
+    CGFloat labelExtra = 0;
+    for (NSTextField *label in _columnLabels) {
+        labelExtra = MAX(labelExtra, ceil(label.cell.cellSize.width) - NSWidth(label.frame));
+    }
+    CGFloat fieldExtra = 0;
+    for (NSButton *checkbox in _columnCheckboxes) {
+        fieldExtra = MAX(fieldExtra, ceil(checkbox.cell.cellSize.width) - NSWidth(checkbox.frame));
+    }
+    labelExtra = MAX(0, labelExtra);
+    fieldExtra = MAX(0, fieldExtra);
+    const CGFloat extra = labelExtra + fieldExtra;
+    const CGFloat oldWidth = NSWidth(content.bounds);
+    // Everything that ends at the right margin, like the text fields, widens.
+    const CGFloat rightEdge = NSMaxX(_columnCheckboxes.firstObject.frame);
+    const CGFloat fieldX = _fieldX;
+
+    if (extra > 0) {
+        // Move the subviews by hand rather than letting autoresizing do it.
+        const BOOL autoresizes = content.autoresizesSubviews;
+        content.autoresizesSubviews = NO;
+        [_window setContentSize:NSMakeSize(oldWidth + extra, NSHeight(content.bounds))];
+        content.autoresizesSubviews = autoresizes;
+
+        for (NSView *view in content.subviews) {
+            NSRect frame = view.frame;
+            if ([_columnLabels containsObject:(NSTextField *)view]) {
+                frame.size.width += labelExtra;
+            } else if ([_rightAnchoredButtons containsObject:(NSButton *)view]) {
+                frame.origin.x += extra;
+            } else if (NSMinX(frame) >= fieldX - 0.5) {
+                frame.origin.x += labelExtra;
+                if (NSMaxX(view.frame) >= rightEdge - 0.5 || view == _nameField || view == _modelPopup) {
+                    frame.size.width += fieldExtra;
+                }
+            } else if (NSMaxX(frame) >= rightEdge - 0.5) {
+                // The title spans the window.
+                frame.size.width += extra;
+            }
+            view.frame = frame;
+        }
+    }
+
+    NSRect testFrame = _testButton.frame;
+    testFrame.size.width = MAX(NSWidth(testFrame), ceil(_testButton.cell.cellSize.width));
+    _testButton.frame = testFrame;
+    NSRect spinnerFrame = _testSpinner.frame;
+    spinnerFrame.origin.x = NSMaxX(testFrame) + 8;
+    _testSpinner.frame = spinnerFrame;
+}
+
+- (void)buildWindowWithAPIKeyHintStrings:(NSArray<NSString *> *)apiKeyHintStrings {
     // Wide enough for the API-key hint line under the API popup to fit longer
     // localizations (e.g. Russian) without truncating.
     const CGFloat width = 590;
-    // Height must clear the fixed button row (Save/Cancel/Test) at y=16..46: the
-    // content flows downward from height-66 and the custom-headers add/remove
-    // control lands at height-708, so the window has to be tall enough to keep
-    // that (and the headers table above it) above the buttons with a small gap.
-    // The 14 over the old 756 is the second line the API-key hint can now use,
-    // and the 30 after that is the API key row.
-    const CGFloat height = 800;
     const CGFloat margin = 20;
     const CGFloat labelWidth = 150;
     const CGFloat fieldX = margin + labelWidth + 12;
     const CGFloat fieldWidth = width - margin - fieldX;
     const CGFloat rowHeight = 30;
+    // The hint under the API key row is as tall as the longest hint it can show
+    // in this language needs (QA finding F-140).
+    const CGFloat hintHeight = [iTermManualAIModelEditorController apiKeyHintHeightForStrings:apiKeyHintStrings
+                                                                                        width:fieldWidth];
+    // Height must clear the fixed button row (Save/Cancel/Test) at y=16..46: the
+    // content flows downward from height-66 and the custom-headers add/remove
+    // control lands at height-708 (with a two-line hint), so the window has to
+    // be tall enough to keep that (and the headers table above it) above the
+    // buttons with a small gap. The 14 over the old 756 is the second line the
+    // API-key hint uses, the 30 after that is the API key row, and a hint
+    // taller than two lines grows the window by the difference.
+    const CGFloat height = 800 + (hintHeight - 30);
 
     _window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, width, height)
                                           styleMask:NSWindowStyleMaskTitled
@@ -740,11 +898,13 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn
     [content addSubview:title];
 
     __block CGFloat y = height - 66;
+    NSMutableArray<NSTextField *> *columnLabels = [NSMutableArray array];
     void (^addLabel)(NSString *) = ^(NSString *labelTitle) {
         NSTextField *label = [NSTextField labelWithString:labelTitle];
         label.alignment = NSTextAlignmentRight;
         label.frame = NSMakeRect(margin, y + 3, labelWidth, 20);
         [content addSubview:label];
+        [columnLabels addObject:label];
     };
     NSTextField *(^addTextField)(NSString *, NSString *) = ^NSTextField *(NSString *labelTitle, NSString *value) {
         addLabel(labelTitle);
@@ -841,7 +1001,7 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn
     // model name, which guesses wrong for a gateway whose model names mention
     // another vendor (issue 13105), so the user can pick one explicitly.
     addLabel(NSLocalizedStringWithDefaultValue(@"AIModelEditor.APIKeyLabel", nil, [NSBundle mainBundle], @"API key:", @"Label for the popup that chooses which API key a manual AI model sends"));
-    const CGFloat credentialPopupWidth = 210;
+    const CGFloat credentialPopupWidth = kAICredentialPopupMinimumWidth;
     _credentialPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(fieldX, y, credentialPopupWidth, 24)];
     [_credentialPopup addItemWithTitle:@""];  // Titled by updateAutomaticCredentialTitle.
     _credentialPopup.lastItem.tag = kAICredentialTagAutomatic;
@@ -857,7 +1017,9 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn
     _credentialPopup.lastItem.tag = kAICredentialTagModelKey;
     [_credentialPopup addItemWithTitle:NSLocalizedStringWithDefaultValue(@"AIModelEditor.NoAPIKey", nil, [NSBundle mainBundle], @"None", @"API key popup option meaning no API key is sent")];
     _credentialPopup.lastItem.tag = kAICredentialTagNone;
-    id storedCredential = _base[kAIManualModelCredentialKey];
+    // A configuration saved by an older build has no stored choice; show the
+    // key it actually sends so that saving it keeps sending that key.
+    id storedCredential = [iTermLLMMetadata effectiveCredentialStoredValueForConfiguration:_base];
     switch ([iTermAIModelCredential kindForStoredValue:storedCredential]) {
         case iTermAICredentialKindAutomatic:
             [_credentialPopup selectItemWithTag:kAICredentialTagAutomatic];
@@ -906,18 +1068,9 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn
     // The API key sent is the stored key for the vendor inferred from the API,
     // URL, and model name, which is not obvious to users (see issue 12975). Spell
     // it out here, updated live as those fields change.
-    _apiKeyHintLabel = [NSTextField labelWithString:@""];
-    _apiKeyHintLabel.font = [NSFont systemFontOfSize:[NSFont smallSystemFontSize]];
-    _apiKeyHintLabel.textColor = [NSColor secondaryLabelColor];
-    // Two lines, wrapped. The self-hosted variant is an instruction, not a
-    // label, and does not fit the 388pt column on one line in English, let
-    // alone once translated; truncating it would hide the actionable half.
+    _apiKeyHintLabel = [iTermManualAIModelEditorController makeAPIKeyHintLabel];
     // A wrapping field draws from the top of its frame, so keeping the top
     // edge where the one-line version sat leaves short hints in place.
-    const CGFloat hintHeight = 30;
-    _apiKeyHintLabel.usesSingleLineMode = NO;
-    _apiKeyHintLabel.lineBreakMode = NSLineBreakByWordWrapping;
-    _apiKeyHintLabel.maximumNumberOfLines = 2;
     _apiKeyHintLabel.frame = NSMakeRect(fieldX, y + 20 - hintHeight, fieldWidth, hintHeight);
     [content addSubview:_apiKeyHintLabel];
     y -= 22 + (hintHeight - 16);
@@ -1011,6 +1164,7 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn
     headersLabel.alignment = NSTextAlignmentRight;
     headersLabel.frame = NSMakeRect(margin, y - 17, labelWidth, 20);
     [content addSubview:headersLabel];
+    [columnLabels addObject:headersLabel];
 
     const CGFloat headersTableHeight = 120;
     NSScrollView *headersScroll =
@@ -1092,6 +1246,20 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn
     _window.initialFirstResponder = _nameField;
     _window.defaultButtonCell = save.cell;
 
+    _columnLabels = columnLabels;
+    NSMutableArray<NSButton *> *checkboxes = [_featureButtons.allValues mutableCopy];
+    for (NSButton *checkbox in @[ _dynamicModelsButton ?: [NSNull null],
+                                  _configurableThinkingButton ?: [NSNull null],
+                                  _supportsTemperatureButton ?: [NSNull null] ]) {
+        if ([checkbox isKindOfClass:NSButton.class]) {
+            [checkboxes addObject:checkbox];
+        }
+    }
+    _columnCheckboxes = checkboxes;
+    _rightAnchoredButtons = @[ save, cancel, _fetchModelsButton ];
+    _fieldX = fieldX;
+    [self layoutForTranslations];
+
     [self updateEditorAPIKeyHint];
     [self updateDynamicModelsEditorState];
 }
@@ -1113,25 +1281,51 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn
     // the vendor classification says, so automatic must not promise one (issue
     // 13021).
     const BOOL withheld = [AITermControllerObjC modelWithholdsAPIKeyForLocalEndpointURL:url api:api];
-    [self updateAutomaticCredentialTitleWithVendor:inferredVendor withheld:withheld];
+    // Nor does a host that isn't the inferred vendor's own, like a gateway.
+    const BOOL withheldFromHost =
+        [AITermControllerObjC automaticWithholdsAPIKeyFromUnrecognizedHostURL:url api:api keyVendor:inferredVendor];
+    [self updateAutomaticCredentialTitleWithVendor:inferredVendor withheld:withheld withheldFromHost:withheldFromHost];
     const iTermAICredentialKind kind = [self selectedCredentialKind];
     const iTermAIVendor vendor = (kind == iTermAICredentialKindVendorKey)
         ? (iTermAIVendor)_credentialPopup.selectedTag
         : inferredVendor;
     _modelAPIKeyField.hidden = (kind != iTermAICredentialKindModelKey);
-    _apiKeyHintLabel.stringValue = iTermAIKeyHint(kind, vendor, withheld, NO, YES);
-    // The field wraps to at most two lines in a fixed-height window, which the
-    // English text clears with room to spare but a long enough translation
-    // would not. The tooltip keeps the whole sentence reachable either way.
+    [self sizeCredentialPopupToFit];
+    _apiKeyHintLabel.stringValue = iTermAIKeyHint(kind, vendor, withheld, withheldFromHost, NO, YES);
+    // The field is sized for the longest hint, but keep the whole sentence
+    // reachable on hover anyway.
     _apiKeyHintLabel.toolTip = _apiKeyHintLabel.stringValue;
+}
+
+// The selected API key choice can be longer than the popup's usual width
+// (“Automatic (none for a local endpoint)”, and more so translated), so widen
+// the popup to show it, up to the end of its row. The key field beside it,
+// hidden unless “This model’s own key” is chosen, follows the popup.
+- (void)sizeCredentialPopupToFit {
+    const CGFloat rowEnd = NSMaxX(_modelAPIKeyField.frame);
+    NSPopUpButton *measure = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
+    measure.font = _credentialPopup.font;
+    [measure addItemWithTitle:_credentialPopup.titleOfSelectedItem ?: @""];
+    NSRect frame = _credentialPopup.frame;
+    frame.size.width = MIN(rowEnd - NSMinX(frame),
+                           MAX(kAICredentialPopupMinimumWidth, ceil(measure.cell.cellSize.width)));
+    _credentialPopup.frame = frame;
+    NSRect keyFrame = _modelAPIKeyField.frame;
+    keyFrame.origin.x = NSMaxX(frame) + 6;
+    keyFrame.size.width = MAX(0, rowEnd - keyFrame.origin.x);
+    _modelAPIKeyField.frame = keyFrame;
 }
 
 // Automatic shows what it currently resolves to, so a wrong guess is visible
 // before the first request.
-- (void)updateAutomaticCredentialTitleWithVendor:(iTermAIVendor)vendor withheld:(BOOL)withheld {
+- (void)updateAutomaticCredentialTitleWithVendor:(iTermAIVendor)vendor
+                                        withheld:(BOOL)withheld
+                                withheldFromHost:(BOOL)withheldFromHost {
     NSString *title;
     if (withheld) {
         title = NSLocalizedStringWithDefaultValue(@"AIModelEditor.AutomaticNoKeyLocal", nil, [NSBundle mainBundle], @"Automatic (none for a local endpoint)", @"API key popup option that infers the key; shown when the endpoint is local, so no key is sent");
+    } else if (withheldFromHost) {
+        title = NSLocalizedStringWithDefaultValue(@"AIModelEditor.AutomaticNoKeyUnrecognizedHost", nil, [NSBundle mainBundle], @"Automatic (none for this endpoint)", @"API key popup option that infers the key; shown when the endpoint is not the model’s provider’s own server (for example a third-party gateway), so no key is sent");
     } else if (!iTermAIVendorHasEnterableKey(vendor)) {
         title = NSLocalizedStringWithDefaultValue(@"AIModelEditor.AutomaticNoKey", nil, [NSBundle mainBundle], @"Automatic (none)", @"API key popup option that infers the key; shown when the inferred provider uses no key");
     } else {
@@ -1160,7 +1354,7 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn
     }
 }
 
-// The value persisted under kAIManualModelCredentialKey, or nil for automatic.
+// The value persisted under kAIManualModelCredentialKey.
 - (NSString *)selectedCredentialStoredValue {
     const iTermAICredentialKind kind = [self selectedCredentialKind];
     const iTermAIVendor vendor = (kind == iTermAICredentialKindVendorKey)
@@ -1417,8 +1611,26 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn
         preset.supportsTemperature ? NSControlStateValueOn : NSControlStateValueOff;
     // A catalog model names a specific model, so it is never auto-discovering.
     _dynamicModelsButton.state = NSControlStateValueOff;
+    // A catalog preset lives on its vendor's own host, where Automatic sends
+    // that vendor's key.
+    [self resetAuthorizationForPresetWithCredentialTag:kAICredentialTagAutomatic];
     [self updateEditorAPIKeyHint];
     [self updateDynamicModelsEditorState];
+}
+
+// A preset points the model at a new endpoint, so the custom headers and API key
+// choice made for the old one must not follow it there: a local gateway's bearer
+// token or another vendor's key would otherwise be sent to the preset's host.
+// Reset them to no headers and the given key choice.
+- (void)resetAuthorizationForPresetWithCredentialTag:(NSInteger)credentialTag {
+    // End any in-progress header cell edit first, so it can't commit into a row
+    // that no longer exists once the headers are cleared.
+    [_window makeFirstResponder:nil];
+    [_headers removeAllObjects];
+    [_headersTable reloadData];
+    [_credentialPopup selectItemWithTag:credentialTag];
+    // Don't let the old endpoint's own key reappear if the user picks it again.
+    _modelAPIKeyField.stringValue = @"";
 }
 
 // A provider preset configures an OpenAI-compatible gateway: it fills in the
@@ -1451,6 +1663,11 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn
     _dynamicModelsButton.state =
         preset.dynamicModels ? NSControlStateValueOn : NSControlStateValueOff;
     _supportsTemperatureButton.state = NSControlStateValueOn;
+    // A provider preset is a third-party gateway or a local server, which no
+    // vendor's stored key belongs to. Select None so the user explicitly picks
+    // the key it takes. (Auto-discovery, which disables the popup, still
+    // authorizes the automatic way.)
+    [self resetAuthorizationForPresetWithCredentialTag:kAICredentialTagNone];
     [self updateEditorAPIKeyHint];
     [self updateDynamicModelsEditorState];
     // The model name is required to save; nudge the user straight to it (unless
@@ -1637,6 +1854,11 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn
 }
 
 - (void)testClicked:(id)sender {
+    if (_connectionTest) {
+        // The button reads “Stop Test” while a test runs.
+        [_connectionTest cancel];
+        return;
+    }
     // Commit any in-progress header cell edit so the probe uses what's on screen.
     [_window makeFirstResponder:nil];
     NSString *url =
@@ -1675,17 +1897,29 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn
                                          _window);
         return;
     }
+    // The request leaves out headers that aren't valid, so a test that
+    // succeeded without them would mislead. Refuse them as Save does.
+    NSString *headerFailure = [AICustomHeaders validationFailureForHeaders:_headers];
+    if (headerFailure) {
+        iTermGeneralPreferencesShowSheet(NSLocalizedStringWithDefaultValue(@"AIModelEditor.InvalidModelTitle", nil, [NSBundle mainBundle], @"Invalid Manual AI Model", @"Title of alert shown when a manual AI model fails validation"),
+                                         headerFailure,
+                                         _window);
+        return;
+    }
     const iTermAIAPI api = (iTermAIAPI)_apiPopup.selectedItem.tag;
     const BOOL functionCalling =
         _featureButtons[kAIManualModelFunctionCallingKey].state == NSControlStateValueOn;
     const BOOL supportsTemperature =
         _supportsTemperatureButton.state == NSControlStateValueOn;
 
-    NSString *savedTitle = _testButton.title;
-    _testButton.enabled = NO;
-    _testButton.title = NSLocalizedStringWithDefaultValue(@"AIModelEditor.Testing", nil, [NSBundle mainBundle], @"Testing…", @"Title of the test button while an AI connection test is running");
+    _testButtonIdleTitle = _testButton.title;
+    // A test against an unresponsive server lasts as long as the AI timeout,
+    // so let the user stop it rather than disabling the button.
+    _testButton.title = NSLocalizedStringWithDefaultValue(@"AIModelEditor.StopTest", nil, [NSBundle mainBundle], @"Stop Test", @"Title of the test button while an AI connection test is running; clicking it stops the test");
     [_testSpinner startAnimation:nil];
     __weak __typeof(self) weakSelf = self;
+    __block BOOL finished = NO;
+    iTermAIConnectionTest *test =
     [iTermAIConnectionTester testModelName:name
                                        url:url
                                        api:api
@@ -1696,13 +1930,14 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn
                              customHeaders:[self nonEmptyHeaders]
                                   inWindow:_window
                                 completion:^(iTermAIConnectionTestOutcome outcome, NSString *message) {
+        finished = YES;
         __strong __typeof(weakSelf) strongSelf = weakSelf;
         if (!strongSelf) {
             return;
         }
         [strongSelf->_testSpinner stopAnimation:nil];
-        strongSelf->_testButton.enabled = YES;
-        strongSelf->_testButton.title = savedTitle;
+        strongSelf->_testButton.title = strongSelf->_testButtonIdleTitle;
+        strongSelf->_connectionTest = nil;
         if (outcome == iTermAIConnectionTestOutcomeCancelled) {
             return;
         }
@@ -1714,9 +1949,14 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn
         }
         iTermGeneralPreferencesShowSheet(heading, message ?: @"", strongSelf->_window);
     }];
+    // The completion may already have run (for example, a URL that isn't valid).
+    if (!finished) {
+        _connectionTest = test;
+    }
 }
 
 - (void)cancelClicked:(id)sender {
+    [_connectionTest cancel];
     [_window.sheetParent endSheet:_window returnCode:NSModalResponseCancel];
 }
 
@@ -1771,26 +2011,7 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn
     // button click ends the active cell edit, so a per-cell alert would race the
     // sheet teardown. Blank-name rows are dropped on save, so skip them.
     if (!failure) {
-        for (NSDictionary *entry in _headers) {
-            NSString *headerName = [entry[@"name"] isKindOfClass:NSString.class] ? entry[@"name"] : @"";
-            headerName = [headerName stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-            if (headerName.length == 0) {
-                continue;
-            }
-            NSString *headerValue = [entry[@"value"] isKindOfClass:NSString.class] ? entry[@"value"] : @"";
-            if (![AICustomHeaders isValidName:headerName]) {
-                failure = [NSString stringWithFormat:
-                           NSLocalizedStringWithDefaultValue(@"AIModelEditor.InvalidHeaderName", nil, [NSBundle mainBundle], @"Custom header name “%@” is not valid. Use only RFC 7230 token "
-                           @"characters (letters, digits, and any of !#$%%&'*+-.^_`|~).", @"Validation error for an invalid custom HTTP header name; %@ is the name"), headerName];
-                break;
-            }
-            if (![AICustomHeaders isValidValue:headerValue]) {
-                failure = [NSString stringWithFormat:
-                           NSLocalizedStringWithDefaultValue(@"AIModelEditor.InvalidHeaderValue", nil, [NSBundle mainBundle], @"The value for custom header “%@” must not contain newline or "
-                           @"null characters.", @"Validation error for an invalid custom HTTP header value; %@ is the header name"), headerName];
-                break;
-            }
-        }
+        failure = [AICustomHeaders validationFailureForHeaders:_headers];
     }
     if (failure) {
         iTermGeneralPreferencesShowSheet(NSLocalizedStringWithDefaultValue(@"AIModelEditor.InvalidModelTitle", nil, [NSBundle mainBundle], @"Invalid Manual AI Model", @"Title of alert shown when a manual AI model fails validation"),
@@ -1802,12 +2023,9 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn
     NSMutableDictionary *result = [NSMutableDictionary dictionary];
     NSString *configurationID = _base[kAIManualModelIDKey] ?: NSUUID.UUID.UUIDString;
     result[kAIManualModelIDKey] = configurationID;
-    // Absent means automatic, which is how configurations saved before this
-    // setting existed behave.
-    NSString *credential = [self selectedCredentialStoredValue];
-    if (credential) {
-        result[kAIManualModelCredentialKey] = credential;
-    }
+    // Always stored, Automatic included: an absent value marks a configuration
+    // saved before Automatic became host-bound (LLMMetadata.credential).
+    result[kAIManualModelCredentialKey] = [self selectedCredentialStoredValue];
     // The model's own key lives in the keychain under its configuration ID, never
     // in user defaults. Don't leave a key behind when the model stops using it.
     if ([self selectedCredentialKind] == iTermAICredentialKindModelKey) {
@@ -1837,6 +2055,7 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn
     }
     result[kAIManualModelCustomHeadersKey] = [self nonEmptyHeaders];
     _result = result;
+    [_connectionTest cancel];
     [_window.sheetParent endSheet:_window returnCode:NSModalResponseOK];
 }
 
@@ -1887,10 +2106,16 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn
     iTermAdvancedGPUSettingsWindowController *_advancedGPUWindowController;
 
     IBOutlet NSButton *_maximizeThroughput;
+    IBOutlet NSSlider *_maximumConcurrentTokenExecutions;
+    IBOutlet NSButton *_maximumConcurrentTokenExecutionsAutomatic;
     IBOutlet NSButton *_enableAPI;
     IBOutlet NSPopUpButton *_apiPermission;
     IBOutlet NSButton *_browserScriptingPermissions;
     iTermBrowserScriptingPermissionsWindowController *_browserScriptingPermissionsWindowController;
+    // "Remote Hosts Allowed to Control iTerm2…": opens the list of hosts granted Always Allow
+    // for it2 over ssh integration. Enabled only while the Python API is on, since that is the
+    // only thing a grant lets a host use.
+    IBOutlet NSButton *_remoteHostGrantsButton;
 
     // Enable bonjour
     IBOutlet NSButton *_enableBonjour;
@@ -2232,6 +2457,7 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn
             __typeof(self) strongSelf = weakSelf;
             if (strongSelf) {
                 strongSelf->_enableAPI.state = NSControlStateValueOn;
+                [strongSelf updateRemoteHostGrantsButtonEnabled];
             }
         }
     }];
@@ -2283,6 +2509,13 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn
     info = [self defineUnsearchableControl:_advancedGPUWindowController.viewController.preferIntegratedGPU
                                        key:kPreferenceKeyPreferIntegratedGPU
                                       type:kPreferenceInfoTypeCheckbox];
+    // Without this the binding enables the checkbox, undoing the sheet's check, and it could be
+    // toggled on a Mac with only one GPU.
+    const BOOL canPreferIntegratedGPU = [iTermAdvancedGPUSettingsViewController canPreferIntegratedGPU];
+    info.shouldBeEnabled = ^BOOL{
+        return canPreferIntegratedGPU;
+    };
+    [self updateEnabledStateForInfo:info];
     info.observer = ^{
         [[NSNotificationCenter defaultCenter] postNotificationName:iTermMetalSettingsDidChangeNotification object:nil];
     };
@@ -2295,6 +2528,13 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn
     };
 
 
+    [self updateRemoteHostGrantsButtonEnabled];
+    if (_remoteHostGrantsButton) {
+        [self addViewToSearchIndex:_remoteHostGrantsButton
+                       displayName:NSLocalizedStringWithDefaultValue(@"GeneralPrefs.RemoteHostGrants", nil, [NSBundle mainBundle], @"API access over ssh", @"Search index name for the button that lists remote hosts always allowed to use the iTerm2 API over SSH integration; matches that button’s title")
+                           phrases:@[ @"ssh", @"it2", @"remote", @"always allow", @"api" ]
+                               key:nil];
+    }
     [self addViewToSearchIndex:_advancedGPUPrefsButton
                    displayName:NSLocalizedStringWithDefaultValue(@"GeneralPrefs.AdvancedGPUSettings", nil, [NSBundle mainBundle], @"Advanced GPU settings", @"Search index display name for advanced GPU settings")
                        phrases:@[ _advancedGPUWindowController.viewController.disableWhenDisconnected.title,
@@ -2309,6 +2549,8 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn
     info.observer = ^{
         [[NSNotificationCenter defaultCenter] postNotificationName:iTermMetalSettingsDidChangeNotification object:nil];
     };
+
+    [self defineMaximumConcurrentTokenExecutionsControls];
 
     [self defineControl:_enableBonjour
                     key:kPreferenceKeyAddBonjourHostsToProfiles
@@ -2728,10 +2970,14 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn
             displayName:NSLocalizedStringWithDefaultValue(@"GeneralPrefs.AITimeout", nil, [NSBundle mainBundle], @"AI timeout", @"Label for the AI request timeout setting")
                    type:kPreferenceInfoTypeIntegerTextField];
 
-    [self defineControl:_aiSafetyCheck
-                    key:kPreferenceKeyAISafetyCheck
-            relatedView:nil
-                   type:kPreferenceInfoTypeCheckbox];
+    info = [self defineControl:_aiSafetyCheck
+                           key:kPreferenceKeyAISafetyCheck
+                   relatedView:nil
+                          type:kPreferenceInfoTypeCheckbox];
+    info.onChange = ^{
+        // A choice made here is never a 3.6 setting to migrate.
+        [iTermMigrationHelper noteAISafetyCheckChosenByUser];
+    };
 
     [self defineControl:_aiZeroDataRetention
                     key:kPreferenceKeyAIZeroDataRetention
@@ -3528,6 +3774,10 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn
     const BOOL isManual = [self selectedDefaultAIModelEndpoint:&modelURL api:&modelAPI];
     const BOOL withheld = isManual && [AITermControllerObjC modelWithholdsAPIKeyForLocalEndpointURL:modelURL
                                                                                                api:modelAPI];
+    // Automatic also sends nothing to a host that isn't the vendor's own.
+    const BOOL withheldFromHost = isManual && [AITermControllerObjC automaticWithholdsAPIKeyFromUnrecognizedHostURL:modelURL
+                                                                                                             api:modelAPI
+                                                                                                       keyVendor:inferredVendor];
     // A manual model may name its key explicitly (issue 13105).
     NSDictionary *configuration = nil;
     if (isManual) {
@@ -3535,7 +3785,7 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn
         configuration = [self manualAIModelConfigurationNamed:[self manualModelNameFromDefaultAIModelIdentifier:identifier]
                                              inConfigurations:[self mutableManualAIModelConfigurations]];
     }
-    id storedCredential = configuration[kAIManualModelCredentialKey];
+    id storedCredential = configuration ? [iTermLLMMetadata effectiveCredentialStoredValueForConfiguration:configuration] : nil;
     const iTermAICredentialKind kind = [iTermAIModelCredential kindForStoredValue:storedCredential];
     BOOL keyIsSet;
     iTermAIVendor vendor = inferredVendor;
@@ -3551,17 +3801,21 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn
             keyIsSet = [AITermControllerObjC apiKeyIsConfiguredForVendor:vendor];
             break;
         case iTermAICredentialKindAutomatic:
-            keyIsSet = withheld || [AITermControllerObjC apiKeyIsConfiguredForVendor:vendor];
+            keyIsSet = withheld || withheldFromHost || [AITermControllerObjC apiKeyIsConfiguredForVendor:vendor];
             break;
         case iTermAICredentialKindNone:
             keyIsSet = YES;
             break;
     }
-    _mainAIAPIKeyHint.stringValue = iTermAIKeyHint(kind, vendor, withheld, YES, keyIsSet);
-    // This label is a fixed-height single line in the xib, so a long enough
-    // translation would be cut off. Truncate visibly rather than clipping
-    // mid-glyph, and keep the whole sentence reachable on hover.
-    _mainAIAPIKeyHint.lineBreakMode = NSLineBreakByTruncatingTail;
+    _mainAIAPIKeyHint.stringValue = iTermAIKeyHint(kind, vendor, withheld, withheldFromHost, YES, keyIsSet);
+    // This label has room for two wrapped lines in the xib, which every
+    // shipped translation fits (QA finding F-140). Should a future one need
+    // more, truncate the second line visibly rather than clipping mid-glyph,
+    // and keep the whole sentence reachable on hover.
+    _mainAIAPIKeyHint.usesSingleLineMode = NO;
+    _mainAIAPIKeyHint.lineBreakMode = NSLineBreakByWordWrapping;
+    _mainAIAPIKeyHint.cell.truncatesLastVisibleLine = YES;
+    _mainAIAPIKeyHint.maximumNumberOfLines = 2;
     _mainAIAPIKeyHint.toolTip = _mainAIAPIKeyHint.stringValue;
 }
 
@@ -3691,7 +3945,16 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn
 - (void)updateAPIEnabledState {
     _enableAPI.state = [self boolForKey:kPreferenceKeyEnableAPIServer];
     [_apiPermission selectItemWithTag:[iTermAPIHelper requireApplescriptAuth] ? 0 : 1];
+    [self updateRemoteHostGrantsButtonEnabled];
     [self updateEnabledState];
+}
+
+- (void)updateRemoteHostGrantsButtonEnabled {
+    _remoteHostGrantsButton.enabled = [self boolForKey:kPreferenceKeyEnableAPIServer];
+}
+
+- (IBAction)showRemoteHostGrants:(id)sender {
+    [iTermIT2HostGrantsWindowController presentSheetFor:self.view.window];
 }
 
 - (BOOL)shouldEnableAlwaysOpenWindowAtStartup {
@@ -3722,6 +3985,7 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn
 
 - (BOOL)enableAPISettingDidChange {
     const BOOL result = [self reallyEnableAPISettingDidChange];
+    [self updateRemoteHostGrantsButtonEnabled];
     [self updateEnabledState];
     return result;
 }
@@ -3744,6 +4008,65 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn
         return NO;
     }
     return YES;
+}
+
+// The slider shows how many sessions may process output at once. The preference stores 0 for
+// automatic, which the checkbox controls; the slider then shows the automatic number, disabled.
+- (void)defineMaximumConcurrentTokenExecutionsControls {
+    const NSInteger minimum = iTermExecutionPermits.minimumCapacity;
+    const NSInteger maximum = iTermExecutionPermits.maximumCapacity;
+    _maximumConcurrentTokenExecutions.minValue = minimum;
+    _maximumConcurrentTokenExecutions.maxValue = maximum;
+    _maximumConcurrentTokenExecutions.numberOfTickMarks = maximum - minimum + 1;
+    _maximumConcurrentTokenExecutions.allowsTickMarkValuesOnly = YES;
+    [[iTermSlider castFrom:_maximumConcurrentTokenExecutions.superview] sliderRangeDidChange];
+
+    BOOL (^limitApplies)(void) = ^BOOL{
+        // With the old implementation every session shares one thread, so the limit does nothing.
+        // An advanced setting can also turn it off.
+        return [TaskNotifier usesTaskIOMonitors] && iTermExecutionPermits.limitEnabled;
+    };
+
+    PreferenceInfo *sliderInfo = [self defineControl:_maximumConcurrentTokenExecutions
+                                                 key:kPreferenceKeyMaximumConcurrentTokenExecutions
+                                         displayName:NSLocalizedStringWithDefaultValue(@"GeneralPrefs.MaximumConcurrentTokenExecutions", nil, [NSBundle mainBundle], @"Sessions processing output at once", @"Search index name for the setting that limits how many sessions process terminal output at the same time")
+                                                type:kPreferenceInfoTypeSlider];
+    sliderInfo.syntheticGetter = ^id{
+        const NSInteger configured = [iTermPreferences integerForKey:kPreferenceKeyMaximumConcurrentTokenExecutions];
+        // A value saved on a computer with more cores shows as the most this one allows.
+        return @(configured == 0 ? iTermExecutionPermits.automaticCapacity : [iTermExecutionPermits clampedCapacity:configured]);
+    };
+    sliderInfo.syntheticSetter = ^(NSNumber *newValue) {
+        [iTermPreferences setInteger:[iTermExecutionPermits clampedCapacity:lround(newValue.doubleValue)]
+                              forKey:kPreferenceKeyMaximumConcurrentTokenExecutions];
+    };
+    sliderInfo.shouldBeEnabled = ^BOOL{
+        return limitApplies() &&
+            [iTermPreferences integerForKey:kPreferenceKeyMaximumConcurrentTokenExecutions] != 0;
+    };
+    sliderInfo.observer = ^{
+        [iTermExecutionPermits capacityPreferenceDidChange];
+    };
+
+    __weak __typeof(self) weakSelf = self;
+    PreferenceInfo *automaticInfo = [self defineControl:_maximumConcurrentTokenExecutionsAutomatic
+                                                    key:kPreferenceKeyMaximumConcurrentTokenExecutionsAutomatic
+                                            relatedView:nil
+                                                   type:kPreferenceInfoTypeCheckbox];
+    automaticInfo.syntheticGetter = ^id{
+        return @([iTermPreferences integerForKey:kPreferenceKeyMaximumConcurrentTokenExecutions] == 0);
+    };
+    automaticInfo.syntheticSetter = ^(NSNumber *newValue) {
+        // Turning automatic off starts from the number it was using.
+        [iTermPreferences setInteger:newValue.boolValue ? 0 : iTermExecutionPermits.automaticCapacity
+                              forKey:kPreferenceKeyMaximumConcurrentTokenExecutions];
+    };
+    automaticInfo.shouldBeEnabled = limitApplies;
+    automaticInfo.observer = ^{
+        [iTermExecutionPermits capacityPreferenceDidChange];
+        [weakSelf updateValueForInfo:sliderInfo];
+        [weakSelf updateEnabledStateForInfo:sliderInfo];
+    };
 }
 
 #pragma mark - Actions
@@ -3877,7 +4200,10 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn
         kAIManualModelHostedWebSearchKey: @([self boolForKey:kPreferenceKeyAIFeatureHostedWebSearch]),
         kAIManualModelFunctionCallingKey: @([self boolForKey:kPreferenceKeyAIFeatureFunctionCalling]),
         kAIManualModelStreamingKey: @([self boolForKey:kPreferenceKeyAIFeatureStreamingResponses]),
-        kAIManualModelVectorStoreKey: @([self integerForKey:kPreferenceKeyAIVectorStore])
+        kAIManualModelVectorStoreKey: @([self integerForKey:kPreferenceKeyAIVectorStore]),
+        // The legacy model sends the former global headers. Saving this
+        // configuration retires them, so they must come along.
+        kAIManualModelCustomHeadersKey: [iTermMigrationHelper legacyGlobalCustomHeaders]
     };
 }
 
@@ -3905,11 +4231,19 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn
         kAIManualModelHostedWebSearchKey: @([self boolForKey:kPreferenceKeyAIFeatureHostedWebSearch]),
         kAIManualModelFunctionCallingKey: @([self boolForKey:kPreferenceKeyAIFeatureFunctionCalling]),
         kAIManualModelStreamingKey: @([self boolForKey:kPreferenceKeyAIFeatureStreamingResponses]),
-        kAIManualModelVectorStoreKey: @([self integerForKey:kPreferenceKeyAIVectorStore])
+        kAIManualModelVectorStoreKey: @([self integerForKey:kPreferenceKeyAIVectorStore]),
+        // A new model, so not one an older build saved (see
+        // kAIManualModelCredentialKey).
+        kAIManualModelCredentialKey: [iTermAIModelCredential storedValueForKind:iTermAICredentialKindAutomatic
+                                                                         vendor:iTermAIVendorOpenAI]
     };
 }
 
 - (NSMutableArray<NSMutableDictionary *> *)mutableManualAIModelConfigurations {
+    // Copy the former global headers into the models first. The editor saves
+    // an empty header list for a model with none, which the migration treats
+    // as the user's choice.
+    [iTermMigrationHelper migrateCustomHeadersToPerModelIfNeeded];
     NSMutableArray<NSMutableDictionary *> *result = [NSMutableArray array];
     id raw = [iTermPreferences objectForKey:kPreferenceKeyAIManualModelConfigurations];
     if ([raw isKindOfClass:NSArray.class]) {
@@ -3950,6 +4284,9 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn
         [clean addObject:[configuration copy]];
     }
     [iTermPreferences setObject:clean forKey:kPreferenceKeyAIManualModelConfigurations];
+    // The models now carry their own headers. Retire the legacy global list so
+    // another Mac sharing these prefs does not copy it back into them.
+    [iTermMigrationHelper retireLegacyGlobalCustomHeadersIfModelsAreConfigured];
 }
 
 - (void)clearLegacyManualAIModelConfiguration {
@@ -4214,12 +4551,11 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn
     [self selectProviderAsDefaultForNewChats:(iTermAIVendor)[self unsignedIntegerForKey:kPreferenceKeyAIVendor]];
 }
 
-// Legacy single-model users (no saved configurations) keep their former global
-// custom headers only through LLMMetadata.legacyManualModel(). Editing anything
-// in the models panel materializes a configuration, after which the legacy path
-// is never consulted and the headers stop being sent. There is no config to seed
-// during migration, so warn the (small, beta-only) affected population once
-// before they can lose the headers.
+// Legacy single-model users (no saved configurations) get their former global
+// custom headers through LLMMetadata.legacyManualModel(). Editing anything in the
+// models panel materializes a configuration; the legacy model's configuration
+// carries the headers over (see legacyManualAIModelConfiguration), but models
+// added afterward start without them, so warn the affected users once.
 - (void)warnAboutLegacyGlobalHeadersIfNeeded {
     NSUserDefaults *ud = [iTermUserDefaults userDefaults];
     if ([ud boolForKey:@"NoSyncAILegacyGlobalHeadersWarningShown"]) {
@@ -4238,9 +4574,9 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn
     }
     [ud setBool:YES forKey:@"NoSyncAILegacyGlobalHeadersWarningShown"];
     [iTermWarning showWarningWithTitle:NSLocalizedStringWithDefaultValue(@"GeneralPrefs.LegacyHeadersText", nil, [NSBundle mainBundle], @"Your AI custom HTTP headers used to be a single global "
-                                       @"setting. They still apply to your current model, but adding "
-                                       @"or editing models here does not carry them over. Re-add the "
-                                       @"headers you need in each model’s “Custom headers” section.", @"Body of alert explaining custom headers moved to per-model settings")
+                                       @"setting. Your current model keeps them, but models you add "
+                                       @"here start without them. Add the headers you need in each "
+                                       @"new model’s “Custom headers” section.", @"Body of alert explaining custom headers moved to per-model settings")
                                actions:@[ iTermLocalizedOK() ]
                              accessory:nil
                             identifier:nil
@@ -4303,7 +4639,10 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn
 }
 
 - (IBAction)exportAllSettingsAndData:(id)sender {
-    [self showMessage:[iTerm2ImportExport exportAll] title:NSLocalizedStringWithDefaultValue(@"GeneralPrefs.ProblemExporting", nil, [NSBundle mainBundle], @"Problem Exporting", @"Title of alert shown when exporting settings fails")];
+    __weak __typeof(self) weakSelf = self;
+    [iTerm2ImportExport exportAllWithWindow:self.view.window completion:^(NSString *message) {
+        [weakSelf showMessage:message title:NSLocalizedStringWithDefaultValue(@"GeneralPrefs.ProblemExporting", nil, [NSBundle mainBundle], @"Problem Exporting", @"Title of alert shown when exporting settings fails")];
+    }];
 }
 
 - (IBAction)importAllSettingsAndData:(id)sender {

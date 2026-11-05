@@ -79,6 +79,14 @@ static _Atomic int64_t sOutstandingPreconvertBytes = 0;
     [super dealloc];
 }
 
+- (void)setCarrierSendMilliseconds:(int64_t)carrierSendMilliseconds {
+    _controlParser.carrierSendMilliseconds = carrierSendMilliseconds;
+}
+
+- (int64_t)carrierSendMilliseconds {
+    return _controlParser.carrierSendMilliseconds;
+}
+
 - (void)forceUnhookDCS:(NSString *)uniqueID {
     @synchronized (self) {
         if (uniqueID == nil || [_controlParser shouldUnhook:uniqueID]) {
@@ -87,6 +95,29 @@ static _Atomic int64_t sOutstandingPreconvertBytes = 0;
         } else {
             // TOOD: Maybe do something with ssh parsers?
         }
+    }
+}
+
+- (BOOL)forceUnhookDCSReturningSuccess:(NSString *)uniqueID {
+    @synchronized (self) {
+        if (!uniqueID.length) {
+            return NO;
+        }
+        if (![_controlParser shouldUnhook:uniqueID]) {
+            // A nested conductor's hook belongs to the parser for its %output.
+            for (VT100Parser *child in _sshParsers.allValues) {
+                if ([child forceUnhookDCSReturningSuccess:uniqueID]) {
+                    return YES;
+                }
+            }
+            return NO;
+        }
+        _dcsHooked = NO;
+        [_controlParser unhookDCS];
+        // Match SSH_UNHOOK so stale per-pid parsers don't capture a later session's output.
+        [_sshParsers removeAllObjects];
+        _mainSSHParserPID = -1;
+        return YES;
     }
 }
 
@@ -180,6 +211,12 @@ static _Atomic int64_t sOutstandingPreconvertBytes = 0;
 
                     case SSH_OUTPUT: {
                         isSignaling = YES;
+                        if (token.csi->p[1] == SSH_OUTPUT_PANE_CHANNEL) {
+                            // Another session's terminal output. The token itself carries it,
+                            // at any depth (see below).
+                            DLog(@"%@: pane output for pid %d", self, token.csi->p[0]);
+                            break;
+                        }
                         const int pid = token.csi->p[0];
                         DLog(@"%@: handling SSH_OUTPUT", self);
                         VT100Parser *sshParser = _sshParsers[@(pid)];
@@ -201,6 +238,9 @@ static _Atomic int64_t sOutstandingPreconvertBytes = 0;
                         NSData *data = token.savedData;
                         [sshParser putStreamData:data.bytes
                                           length:data.length];
+                        // The child framer's frames travel in this one. Those that begin in it
+                        // left this framer's host when it was sent.
+                        sshParser.carrierSendMilliseconds = token.sshFlowControlled ? token.sshSendMilliseconds : 0;
                         const int start = CVectorCount(vector);
                         DLog(@"count before adding parsed tokens is %@", @(start));
                         [sshParser addParsedTokensToVector:vector];
@@ -226,8 +266,15 @@ static _Atomic int64_t sOutstandingPreconvertBytes = 0;
                                 DLog(@"%@: Update ssh info in rewritten token %@ to %@", self, token, SSHInfoDescription(myInfo));
                                 switch (token.type) {
                                     case SSH_OUTPUT:
-                                        // VT100Parser cannot emit SSH_OUTPUT.
-                                        assert(NO);
+                                        // A child parser emits SSH_OUTPUT for a pane, whose output
+                                        // it keeps whole, and for its own framer's controlled
+                                        // frames, whose contents it already emitted (see below).
+                                        // Either came from the child's framer, and travelled in
+                                        // this frame.
+                                        assert(token.csi->p[1] == SSH_OUTPUT_PANE_CHANNEL ||
+                                               token.sshFlowControlled);
+                                        token.sshInfo = childInfo;
+                                        break;
                                     // Deliberate subset of VT100TokenTypeIsSSHMeta (see
                                     // VT100Token.h): SSH_OUTPUT is handled by the assert above,
                                     // and the synthetic SSH_SIDE_CHANNEL cannot be a %output
@@ -276,6 +323,7 @@ static _Atomic int64_t sOutstandingPreconvertBytes = 0;
                         isSignaling = YES;
                         VT100Parser *tempParser = [[[VT100Parser alloc] init] autorelease];
                         tempParser.encoding = encoding;
+                        tempParser.depth = self.depth;
                         NSData *data = [token.string dataUsingEncoding:encoding];
                         [tempParser putStreamData:data.bytes
                                            length:data.length];
@@ -400,9 +448,14 @@ static _Atomic int64_t sOutstandingPreconvertBytes = 0;
         }
 
         // Don't append the outer wrapper to the output. Earlier, it was unwrapped and the inner
-        // tokens were already added.
+        // tokens were already added. Pane output was not unwrapped, so it goes on at any depth.
+        // So does a controlled frame at any depth, after its contents, to count them as consumed
+        // for its own framer.
         if (token->type != DCS_TMUX_CODE_WRAP &&
-            (token->type != SSH_OUTPUT || self.depth == 0)) {
+            (token->type != SSH_OUTPUT ||
+             self.depth == 0 ||
+             token.csi->p[1] == SSH_OUTPUT_PANE_CHANNEL ||
+             token.sshFlowControlled)) {
             [token retain];
             CVectorAppend(vector, token);
         }
@@ -491,23 +544,35 @@ static _Atomic int64_t sOutstandingPreconvertBytes = 0;
 }
 
 // tree: [child pid: [dcs ID, tree]]
-- (NSInteger)startConductorRecoveryModeWithID:(NSString *)dcsID tree:(NSDictionary *)tree {
-    DLog(@"%@: startConductorRecoveryModeWithID:%@ tree:%@", self, dcsID, tree);
-    [_sshParsers removeAllObjects];
-    const NSInteger boundary = [self reallyStartConductorRecoveryModeWithID:dcsID tree:tree];
-    DLog(@"After recovery:");
-    [self printParsers:@""];
-    return boundary;
+- (NSInteger)startConductorRecoveryModeWithID:(NSString *)dcsID
+                                         tree:(NSDictionary *)tree
+                               clientUniqueID:(NSString *)clientUniqueID {
+    DLog(@"%@: startConductorRecoveryModeWithID:%@ tree:%@ clientUniqueID:%@", self, dcsID, tree, clientUniqueID);
+    // The parse path holds the lock while it uses _sshParsers on another thread.
+    @synchronized (self) {
+        [_sshParsers removeAllObjects];
+        const NSInteger boundary = [self reallyStartConductorRecoveryModeWithID:dcsID
+                                                                           tree:tree
+                                                                 clientUniqueID:clientUniqueID];
+        DLog(@"After recovery:");
+        [self printParsers:@""];
+        return boundary;
+    }
 }
 
 - (void)printParsers:(NSString *)prefix {
-    [_sshParsers enumerateKeysAndObjectsUsingBlock:^(NSNumber * _Nonnull key, VT100Parser * _Nonnull obj, BOOL * _Nonnull stop) {
-        DLog(@"%@%@", prefix, obj);
-        [obj printParsers:[@"    " stringByAppendingString:prefix]];
-    }];
+    // Same lock order as the parse path: this parser, then its children.
+    @synchronized (self) {
+        [_sshParsers enumerateKeysAndObjectsUsingBlock:^(NSNumber * _Nonnull key, VT100Parser * _Nonnull obj, BOOL * _Nonnull stop) {
+            DLog(@"%@%@", prefix, obj);
+            [obj printParsers:[@"    " stringByAppendingString:prefix]];
+        }];
+    }
 }
 
-- (NSInteger)reallyStartConductorRecoveryModeWithID:(NSString *)dcsID tree:(NSDictionary *)tree {
+- (NSInteger)reallyStartConductorRecoveryModeWithID:(NSString *)dcsID
+                                               tree:(NSDictionary *)tree
+                                     clientUniqueID:(NSString *)clientUniqueID {
     DLog(@"%@: reallyStartConductorRecoveryModeWithID:%@ tree:%@", self, dcsID, tree);
     @synchronized (self) {
         if (tree.count == 0) {
@@ -518,13 +583,18 @@ static _Atomic int64_t sOutstandingPreconvertBytes = 0;
             NSArray *tuple = tree[@0];
             NSString *childDcsId = tuple[0];
             NSDictionary *childTree = tuple[1];
-            [self startConductorRecoveryModeWithID:childDcsId tree:childTree];
+            // The child's it2ssh hooks this parser, so clientUniqueID, which belongs to this
+            // node, doesn't apply. The tree doesn't carry the child's ID.
+            [self startConductorRecoveryModeWithID:childDcsId tree:childTree clientUniqueID:nil];
             return _nextBoundaryNumber++;
         }
-        [_controlParser startConductorRecoveryModeWithID:dcsID];
+        [_controlParser startConductorRecoveryModeWithID:dcsID clientUniqueID:clientUniqueID];
         _dcsHooked = YES;
         [self recoverWithConductorTree:tree];
-        _emitRecoveryToken = YES;
+        // Only the outermost parser's boundary ends recovery. A nested parser numbers its own from
+        // zero too, so its boundary would match the one the terminal waits for and resynchronize
+        // the conductors a second time, clearing their queues again.
+        _emitRecoveryToken = (self.depth == 0);
         return _nextBoundaryNumber++;
     }
 }
@@ -539,7 +609,8 @@ static _Atomic int64_t sOutstandingPreconvertBytes = 0;
         childParser.encoding = self.encoding;
         childParser.depth = self.depth + 1;
         _sshParsers[childPID] = childParser;
-        [childParser reallyStartConductorRecoveryModeWithID:childDcsId tree:childTree];
+        // The tree doesn't carry a nested it2ssh's unique ID, so its parser doesn't know it.
+        [childParser reallyStartConductorRecoveryModeWithID:childDcsId tree:childTree clientUniqueID:nil];
         DLog(@"%@: add recovered child parser with pid %@: %@", self, childPID, childParser);
     }
 }
@@ -679,11 +750,14 @@ static _Atomic int64_t sOutstandingPreconvertBytes = 0;
     dispatch_once(&onceToken, ^{
         sHistogram = [[iTermHistogram alloc] init];
     });
-    [sHistogram addValue:(double)length];
-    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
-    if (now - sLastHistogramLog > 5.0) {
-        sLastHistogramLog = now;
-        NSLog(@"Non-ASCII string length histogram: %@", sHistogram.stringValue);
+    // Parsers for different sessions may run on different threads.
+    @synchronized (sHistogram) {
+        [sHistogram addValue:(double)length];
+        CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+        if (now - sLastHistogramLog > 5.0) {
+            sLastHistogramLog = now;
+            NSLog(@"Non-ASCII string length histogram: %@", sHistogram.stringValue);
+        }
     }
 }
 
@@ -691,11 +765,12 @@ static _Atomic int64_t sOutstandingPreconvertBytes = 0;
     NSString *string = token.string;
     const int64_t stringBytes = (int64_t)string.length * sizeof(unichar);
     const int64_t maxBytes = [iTermAdvancedSettingsModel asyncPreconvertMaxOutstandingBytes];
-    const int64_t current = atomic_load(&sOutstandingPreconvertBytes);
-    if (current + stringBytes > maxBytes) {
+    // Reserve first, then check, so concurrent parsers can't all pass the check and overshoot.
+    const int64_t previous = atomic_fetch_add(&sOutstandingPreconvertBytes, stringBytes);
+    if (previous + stringBytes > maxBytes) {
+        atomic_fetch_sub(&sOutstandingPreconvertBytes, stringBytes);
         return;
     }
-    atomic_fetch_add(&sOutstandingPreconvertBytes, stringBytes);
 
     VT100StringConversionConfig config;
     @synchronized (self) {

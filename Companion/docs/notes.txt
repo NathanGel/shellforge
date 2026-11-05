@@ -37,6 +37,21 @@ New Features:
   you can turn them on later under Settings while
   paired. Previously this was only reachable by
   enabling alerts on the Mac.
+- Web browser sessions are now interactive in
+  the live view: tap to click, drag or flick to
+  scroll, pinch to zoom, and type into text
+  fields. The keyboard comes up when a text
+  field on the page has focus, and the keyboard
+  button in the toolbar shows or hides it on
+  demand. Back, forward, reload, and an address
+  field sit above the page. Requires an
+  up-to-date Mac.
+
+Improvements:
+- The session view no longer covers the top-left
+  corner of the terminal with a “LIVE” badge.
+- Holding Delete while typing into a session now
+  repeats, like it does in other apps.
 
 Bug Fixes:
 - The QR scanner used to show a black preview the
@@ -95,6 +110,10 @@ Bug Fixes:
   showing “The request timed out.” Tap Details
   to see each server it tried and what went
   wrong with each.
+- Switching away from iTerm2 Buddy while it was
+  connecting, then coming back later, could
+  wrongly say your Mac’s iTerm2 was too old. It
+  now reconnects instead.
 
 New Features:
 - You can now type into a live session. Tap the

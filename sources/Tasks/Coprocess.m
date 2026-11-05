@@ -8,6 +8,8 @@
 
 #import "Coprocess.h"
 
+#import "iTerm2SharedARC-Swift.h"
+
 #import "NSArray+iTerm.h"
 #import "NSDictionary+iTerm.h"
 #import "iTermUserDefaults.h"
@@ -32,11 +34,10 @@ static NSString *const iTermCoprocessCommandsToIgnoreErrorOutputPrefsKey = @"NoS
 
     NSMutableString *_errors;
     dispatch_group_t _stderrGroup;
+    int _errorFd;
 }
 
 @synthesize pid = pid_;
-@synthesize outputFd = outputFd_;
-@synthesize inputFd = inputFd_;
 @synthesize inputBuffer = inputBuffer_;
 @synthesize outputBuffer = outputBuffer_;
 @synthesize eof = eof_;
@@ -81,12 +82,31 @@ static NSString *const iTermCoprocessCommandsToIgnoreErrorOutputPrefsKey = @"NoS
         replacementEnvironment = [kvps nullTerminatedCStringArray];
     }
     [Coprocess addCommandToMostRecentlyUsed:command];
-    int inputPipe[2];
-    int outputPipe[2];
-    int errorPipe[2];
-    pipe(inputPipe);
-    pipe(outputPipe);
-    pipe(errorPipe);
+    // Plain descriptors, because the child uses them after fork() and the error pipe's read end
+    // goes to fdopen(). The parent's ends are wrapped once the child has its own.
+    int inputPipe[2] = { -1, -1 };
+    int outputPipe[2] = { -1, -1 };
+    int errorPipe[2] = { -1, -1 };
+    if (pipe(inputPipe) != 0 || pipe(outputPipe) != 0 || pipe(errorPipe) != 0) {
+        const int error = errno;
+        DLog(@"pipe() failed: %s", strerror(error));
+        for (int i = 0; i < 2; i++) {
+            if (inputPipe[i] >= 0) {
+                close(inputPipe[i]);
+            }
+            if (outputPipe[i] >= 0) {
+                close(outputPipe[i]);
+            }
+            if (errorPipe[i] >= 0) {
+                close(errorPipe[i]);
+            }
+        }
+        if (replacementEnvironment) {
+            iTermFreeeNullTerminatedCStringArray(replacementEnvironment);
+        }
+        [self showLaunchFailure];
+        return nil;
+    }
     signal(SIGPIPE, SIG_IGN);
     const int maxfd = getdtablesize();
     pid_t pid = fork();
@@ -123,13 +143,16 @@ static NSString *const iTermCoprocessCommandsToIgnoreErrorOutputPrefsKey = @"NoS
         fprintf(stderr, "## exec failed %s for command /bin/sh -c %s##\n", strerror(errno), [command UTF8String]);
         _exit(-1);
     } else if (pid < (pid_t)0) {
-        [iTermWarning showWarningWithTitle:@""
-                                   actions:@[ iTermLocalizedOK() ]
-                                 accessory:nil
-                                identifier:nil
-                               silenceable:kiTermWarningTypePersistent
-                                   heading:NSLocalizedStringWithDefaultValue(@"Coprocess.FailedToLaunch", nil, [NSBundle mainBundle], @"Failed to launch coprocess.", @"Error shown when a coprocess could not be launched.")
-                                    window:nil];
+        DLog(@"fork() failed: %s", strerror(errno));
+        for (int i = 0; i < 2; i++) {
+            close(inputPipe[i]);
+            close(outputPipe[i]);
+            close(errorPipe[i]);
+        }
+        if (replacementEnvironment) {
+            iTermFreeeNullTerminatedCStringArray(replacementEnvironment);
+        }
+        [self showLaunchFailure];
         return nil;
     }
 
@@ -147,6 +170,16 @@ static NSString *const iTermCoprocessCommandsToIgnoreErrorOutputPrefsKey = @"NoS
                                errorFd:errorPipe[0]];
 }
 
++ (void)showLaunchFailure {
+    [iTermWarning showWarningWithTitle:@""
+                               actions:@[ iTermLocalizedOK() ]
+                             accessory:nil
+                            identifier:nil
+                           silenceable:kiTermWarningTypePersistent
+                               heading:NSLocalizedStringWithDefaultValue(@"Coprocess.FailedToLaunch", nil, [NSBundle mainBundle], @"Failed to launch coprocess.", @"Error shown when a coprocess could not be launched.")
+                                window:nil];
+}
+
 + (Coprocess *)coprocessWithPid:(pid_t)pid
                         command:(NSString *)command
                        outputFd:(int)outputFd
@@ -154,14 +187,11 @@ static NSString *const iTermCoprocessCommandsToIgnoreErrorOutputPrefsKey = @"NoS
                         errorFd:(int)errorFd {
     Coprocess *result = [[Coprocess alloc] init];
     result.pid = pid;
-    result.outputFd = outputFd;
-    result.inputFd = inputFd;
+    result->_ownedWriteFileDescriptor = [[iTermOwnedFileDescriptor alloc] initWithFileDescriptor:outputFd];
+    result->_ownedReadFileDescriptor = [[iTermOwnedFileDescriptor alloc] initWithFileDescriptor:inputFd];
 
-    // Make sure the file descriptors are non-blocking.
-    int flags = fcntl(outputFd, F_GETFL);
-    fcntl(outputFd, F_SETFL, flags | O_NONBLOCK);
-    flags = fcntl(inputFd, F_GETFL);
-    fcntl(inputFd, F_SETFL, flags | O_NONBLOCK);
+    result->_ownedWriteFileDescriptor.nonblocking = YES;
+    result->_ownedReadFileDescriptor.nonblocking = YES;
     result->_stderrGroup = dispatch_group_create();
     [result monitorErrorsOnFileDescriptor:errorFd];
     result.command = command;
@@ -195,13 +225,27 @@ static NSString *const iTermCoprocessCommandsToIgnoreErrorOutputPrefsKey = @"NoS
     return self;
 }
 
+// Ties the pipes' lifetimes to this object's rather than to whoever else holds their wrappers. A
+// lease (such as a task I/O monitor's) still keeps them open until it is released.
+- (void)dealloc {
+    [_ownedWriteFileDescriptor close];
+    [_ownedReadFileDescriptor close];
+}
+
 - (void)monitorErrorsOnFileDescriptor:(int)errorFd {
+    _errorFd = errorFd;
     dispatch_queue_t queue = dispatch_queue_create("com.iterm2.coprocess-errors", 0);
     _errors = [[NSMutableString alloc] init];
     dispatch_group_t group = _stderrGroup;
     dispatch_group_enter(group);
     dispatch_async(queue, ^{
         FILE *f = fdopen(errorFd, "r");
+        if (!f) {
+            close(errorFd);
+            self.savedErrors = self->_errors;
+            dispatch_group_leave(group);
+            return;
+        }
         while (1) {
             size_t size = 0;
             char *line = fgetln(f, &size);
@@ -221,6 +265,8 @@ static NSString *const iTermCoprocessCommandsToIgnoreErrorOutputPrefsKey = @"NoS
                 }
             }
         }
+        // Closes errorFd.
+        fclose(f);
         self.savedErrors = self->_errors;
         dispatch_group_leave(group);
     });
@@ -231,10 +277,15 @@ static NSString *const iTermCoprocessCommandsToIgnoreErrorOutputPrefsKey = @"NoS
     if (self.pid < 0 || writePipeClosed_) {
         return -1;
     }
-    int fd = [self writeFileDescriptor];
-    int n = write(fd, [outputBuffer_ bytes], [outputBuffer_ length]);
+    __block int n = -1;
+    // Captured in the block: a close deferred until the block returns could change errno.
+    __block int error = EBADF;
+    [_ownedWriteFileDescriptor withFileDescriptor:^(int fd) {
+        n = write(fd, [outputBuffer_ bytes], [outputBuffer_ length]);
+        error = errno;
+    }];
 
-    if (n < 0 && (!(errno == EAGAIN || errno == EINTR))) {
+    if (n < 0 && (!(error == EAGAIN || error == EINTR))) {
         writePipeClosed_ = YES;
     } else if (n == 0) {
         writePipeClosed_ = YES;
@@ -252,16 +303,22 @@ static NSString *const iTermCoprocessCommandsToIgnoreErrorOutputPrefsKey = @"NoS
         return -1;
     }
     int rc = 0;
-    int fd = [self readFileDescriptor];
     while (inputBuffer_.length < kMaxInputBufferSize) {
         char buffer[1024];
-        int n = read(fd, buffer, sizeof(buffer));
+        char *bufferPointer = buffer;
+        __block int n = -1;
+        // Captured in the block: a close deferred until the block returns could change errno.
+        __block int error = EBADF;
+        [_ownedReadFileDescriptor withFileDescriptor:^(int fd) {
+            n = read(fd, bufferPointer, sizeof(buffer));
+            error = errno;
+        }];
         if (n == 0) {
             rc = 0;
             eof_ = YES;
             break;
         } else if (n < 0) {
-            if (errno != EAGAIN && errno != EINTR) {
+            if (error != EAGAIN && error != EINTR) {
                 eof_ = YES;
                 rc = n;
                 break;
@@ -295,29 +352,28 @@ static NSString *const iTermCoprocessCommandsToIgnoreErrorOutputPrefsKey = @"NoS
 - (void)terminate {
     if (self.pid > 0) {
         kill(self.pid, 15);
-        close(self.outputFd);
-        close(self.inputFd);
-        self.outputFd = -1;
-        self.inputFd = -1;
+        // Closing waits for anything still using them, such as a task I/O monitor.
+        [_ownedWriteFileDescriptor close];
+        [_ownedReadFileDescriptor close];
         self.pid = -1;
         @synchronized (self) {
-            dispatch_group_notify(_stderrGroup, dispatch_get_main_queue(), ^{
-                if (self.savedErrors.length > 0) {
-                    [self.delegate coprocess:self didTerminateWithErrorOutput:self.savedErrors];
+            [self notifyWhenErrorOutputIsComplete:^(NSString *errors) {
+                if (errors.length > 0) {
+                    [self.delegate coprocess:self didTerminateWithErrorOutput:errors];
                 }
-            });
+            }];
         }
     }
 }
 
-- (int)readFileDescriptor
-{
-    return self.inputFd;
+- (void)notifyWhenErrorOutputIsComplete:(void (^)(NSString *errors))completion {
+    dispatch_group_notify(_stderrGroup, dispatch_get_main_queue(), ^{
+        completion(self.savedErrors);
+    });
 }
 
-- (int)writeFileDescriptor
-{
-    return self.outputFd;
+- (int)errorFileDescriptorForTesting {
+    return _errorFd;
 }
 
 @end

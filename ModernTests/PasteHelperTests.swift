@@ -106,6 +106,31 @@ final class PasteHelperTests: XCTestCase, iTermPasteHelperDelegate, iTermWarning
         _ = (iTermWarning.self as AnyObject).perform(#selector(iTermWarning.setWarningHandler(_:)), with: nil)
     }
 
+    /// Runs blocks already on the main queue, such as paste drain callbacks.
+    private func drainMainQueue() {
+        let done = expectation(description: "Main queue drained")
+        DispatchQueue.main.async { done.fulfill() }
+        wait(for: [done], timeout: 10)
+    }
+
+    private func tryToPaste(_ string: String, flags: iTermPasteFlags) {
+        guard let event = PasteEvent(string: string,
+                                     flags: flags,
+                                     defaultChunkSize: Int32(iTermQuickPasteBytesPerCallDefaultValue),
+                                     chunkKey: nil,
+                                     defaultDelay: 0.01,
+                                     delayKey: nil,
+                                     tabTransform: .tabTransformNone,
+                                     spacesPerTab: 0,
+                                     regex: nil,
+                                     substitution: nil,
+                                     shouldPasteNewlinesOutsideBrackets: false) else {
+            XCTFail("Could not create paste event")
+            return
+        }
+        helper.try(to: event)
+    }
+
     private func runTimer() {
         while helper.timer != nil {
             helper.fireTimer()
@@ -389,6 +414,84 @@ final class PasteHelperTests: XCTestCase, iTermPasteHelperDelegate, iTermWarning
 
     // MARK: - Chunking and queueing
 
+    func testDrainCallbackRunsAsynchronouslyWhenIdle() {
+        var drained = false
+        helper.perform(afterPasting: { drained = true })
+        XCTAssertFalse(drained)
+        drainMainQueue()
+        XCTAssertTrue(drained)
+    }
+
+    func testDrainCallbackWaitsForLaterQueuedPaste() {
+        let first = String(repeating: "1", count: 2000)
+        let second = String(repeating: "2", count: 2000)
+        paste(first)
+        paste(second)
+        var drained = false
+        helper.perform(afterPasting: {
+            XCTAssertEqual(self.writeBuffer, first + second)
+            drained = true
+        })
+        drainMainQueue()
+        XCTAssertFalse(drained)
+        helper.fireTimer()
+        // Finish the first paste and start the queued one.
+        helper.fireTimer()
+        drainMainQueue()
+        XCTAssertFalse(drained)
+        runTimer()
+        XCTAssertFalse(drained)
+        drainMainQueue()
+        XCTAssertTrue(drained)
+    }
+
+    func testAbortRunsDrainCallbackExactlyOnceAndNotOnItsStack() {
+        paste(String(repeating: "1", count: 2000))
+        paste("queued")
+        var calls = 0
+        helper.perform(afterPasting: { calls += 1 })
+        helper.abort()
+        helper.abort()
+        XCTAssertEqual(calls, 0)
+        drainMainQueue()
+        XCTAssertEqual(calls, 1)
+        XCTAssertEqual(writeBuffer, String(repeating: "1", count: 768))
+    }
+
+    func testDrainCallbackDefersWhenPasteStartsBeforeItRuns() {
+        var drained = false
+        helper.perform(afterPasting: { drained = true })
+        paste(String(repeating: "1", count: 2000))
+        drainMainQueue()
+        XCTAssertFalse(drained)
+        runTimer()
+        drainMainQueue()
+        XCTAssertTrue(drained)
+    }
+
+    func testDrainCallbackDoesNotWaitForPrompt() {
+        isAtShellPrompt = false
+        tryToPaste("ls\n", flags: [.pasteFlagsCommands, .pasteFlagsDisableWarnings])
+        XCTAssertTrue(helper.isWaitingForPrompt)
+        var drained = false
+        helper.perform(afterPasting: { drained = true })
+        drainMainQueue()
+        XCTAssertTrue(drained)
+    }
+
+    func testQueuedPasteThatSanitizesToNothingDoesNotStallQueue() {
+        let first = String(repeating: "1", count: 2000)
+        paste(first)
+        tryToPaste("\u{1}", flags: [.pasteFlagsRemovingUnsafeControlCodes, .pasteFlagsDisableWarnings])
+        paste("tail")
+        var drained = false
+        helper.perform(afterPasting: { drained = true })
+        runTimer()
+        drainMainQueue()
+        XCTAssertEqual(writeBuffer, first + "tail")
+        XCTAssertTrue(drained)
+    }
+
     // 2000 bytes at the default 768 bytes per chunk is three chunks, so two delays of 0.01.
     func testTwoChunkPasteString() {
         let test = String(repeating: " ", count: 2000)
@@ -449,6 +552,82 @@ final class PasteHelperTests: XCTestCase, iTermPasteHelperDelegate, iTermWarning
         runTimer()
         XCTAssertEqual(writeBuffer, test1 + "x" + test2)
         XCTAssertEqual(helper.duration, 4 * 0.01, accuracy: tolerance)
+    }
+
+    // MARK: - Aborting some pastes
+
+    private func pasteEvent(_ string: String) -> PasteEvent {
+        let event = helper.pasteEvent(with: string,
+                                      slowly: false,
+                                      escapeShellChars: false,
+                                      isUpload: false,
+                                      allowBracketing: false,
+                                      tabTransform: .tabTransformNone,
+                                      spacesPerTab: 0,
+                                      progress: nil)!
+        event.flags.insert(.pasteFlagsDisableWarnings)
+        return event
+    }
+
+    private func keyDown(_ characters: String) -> NSEvent? {
+        return NSEvent.keyEvent(with: .keyDown,
+                                location: .zero,
+                                modifierFlags: [],
+                                timestamp: 0,
+                                windowNumber: 0,
+                                context: nil,
+                                characters: characters,
+                                charactersIgnoringModifiers: characters,
+                                isARepeat: false,
+                                keyCode: 0)
+    }
+
+    // F-463: aborting the paste in progress stops it where it is.
+    func testAbortingThePasteInProgressStopsIt() {
+        let test = String(repeating: "1", count: 2000)
+        let event = pasteEvent(test)
+        helper.`try`(to: event)
+        XCTAssertEqual(writeBuffer.count, Int(iTermQuickPasteBytesPerCallDefaultValue))
+
+        helper.abortPasteEvents { $0 === event }
+        runTimer()
+
+        XCTAssertEqual(writeBuffer, String(test.prefix(Int(iTermQuickPasteBytesPerCallDefaultValue))))
+        XCTAssertFalse(helper.isPasting)
+    }
+
+    // F-463: what is queued after the aborted paste still goes, in order.
+    func testAbortingThePasteInProgressLetsQueuedOnesGo() {
+        let aborted = pasteEvent(String(repeating: "1", count: 2000))
+        helper.`try`(to: aborted)
+        guard let keyDown = keyDown("x") else {
+            XCTFail("Could not synthesize key event")
+            return
+        }
+        helper.enqueue(keyDown)
+        let test2 = String(repeating: "2", count: 2000)
+        paste(test2)
+
+        helper.abortPasteEvents { $0 === aborted }
+        runTimer()
+
+        XCTAssertEqual(writeBuffer, String(repeating: "1", count: Int(iTermQuickPasteBytesPerCallDefaultValue)) + "x" + test2)
+    }
+
+    // F-463: a queued paste that passes is removed, and the paste in progress and the rest of
+    // the queue are not touched.
+    func testAbortingAQueuedPasteLeavesTheOthers() {
+        let test1 = String(repeating: "1", count: 2000)
+        paste(test1)
+        let aborted = pasteEvent(String(repeating: "2", count: 2000))
+        helper.`try`(to: aborted)
+        let test3 = String(repeating: "3", count: 10)
+        paste(test3)
+
+        helper.abortPasteEvents { $0 === aborted }
+        runTimer()
+
+        XCTAssertEqual(writeBuffer, test1 + test3)
     }
 
     // MARK: - iTermPasteHelperDelegate

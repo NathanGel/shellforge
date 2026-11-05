@@ -25,9 +25,8 @@ final class iTermWorkgroupInstance: NSObject {
 
     // Stable identifier for this *entry* of the workgroup, distinct
     // from workgroupUniqueIdentifier (which is the config's UUID and
-    // is the same across re-entries). Exposed to spawned sessions as
-    // ITERM_WORKGROUP_ID so external tools can tell two runs of the
-    // same workgroup config apart.
+    // is the same across re-entries), so two runs of the same
+    // workgroup config can be told apart.
     @objc let instanceUniqueIdentifier: String
 
     @objc weak var mainSession: PTYSession?
@@ -50,6 +49,14 @@ final class iTermWorkgroupInstance: NSObject {
     // PseudoTerminal, and iTermSessionFactory). Tests inject a fake
     // that returns synthetic PTYSessions without touching windows.
     let spawner: WorkgroupSessionSpawner
+
+    // The instance's state on the tmux server when its leader is a tmux
+    // Integration pane; nil otherwise. See TmuxWorkgroupBinding.
+    var tmuxBinding: TmuxWorkgroupBinding?
+
+    // Set when another client ended this instance on the tmux server: tear
+    // it down here without touching the server again.
+    var tmuxInstanceEndedElsewhere = false
 
     // Per-session bundle of state for a non-peer (split/tab) child:
     // the live PTYSession and its toolbar item views.
@@ -168,7 +175,9 @@ final class iTermWorkgroupInstance: NSObject {
     // set already covers the whole workgroup, or no member is a
     // workgroup session).
     @objc(closeCascadeWarningForSessions:)
-    static func closeCascadeWarning(forSessions closingSessions: [PTYSession]) -> String? {
+    static func closeCascadeWarning(forSessions sessionsToClose: [PTYSession]) -> String? {
+        // A filter or Instant Replay shows a member through a stand-in; closing it closes the member.
+        let closingSessions = sessionsToClose.map { $0.live ?? $0 }
         let closingIDs = Set(closingSessions.map { ObjectIdentifier($0) })
         var instancesByID: [ObjectIdentifier: iTermWorkgroupInstance] = [:]
         for session in closingSessions {
@@ -280,6 +289,28 @@ final class iTermWorkgroupInstance: NSObject {
             return false
         }()
         guard isMine else { return }
+        // isTmuxClient is already false here: terminate() clears it before saying so.
+        if let tmuxBinding, tmuxBinding.isConnected, session !== mainSession,
+           session.tmuxPaneIfClient != nil,
+           let configID = configID(forSession: session),
+           let position = tmuxBinding.position(ofConfigID: configID) {
+            // A member on a tmux server ends when its pane does. But its pane may have been
+            // replaced (a relaunch before tmux 3.8), and then the new pane's session is on its way
+            // to take its place. Only a position with no pane on the server means it ended.
+            tmuxBinding.positionIsOccupied(position) { [weak self] occupied in
+                guard let self, !self.didTeardown else { return }
+                if occupied {
+                    RLog("iTermWorkgroupInstance: member \(session.guid) ended because its pane was replaced; carrying on")
+                    return
+                }
+                self.exitBecauseMemberTerminated(session)
+            }
+            return
+        }
+        exitBecauseMemberTerminated(session)
+    }
+
+    private func exitBecauseMemberTerminated(_ session: PTYSession) {
         // Tear down through the controller so the registration is
         // removed first. exit(instance:) is keyed by the stable
         // instanceUniqueIdentifier, so this works no matter which
@@ -413,6 +444,25 @@ final class iTermWorkgroupInstance: NSObject {
         // repeating them in the tab titlebar would be redundant.
         applyConfiguredName(config: config, to: session)
         // Refresh the new session's toolbar view to pick up its items.
+        session.delegate?.sessionDidChangeDesiredToolbarItems(session)
+    }
+
+    /// A split or tab on a tmux server whose pane was replaced (see
+    /// TmuxWorkgroupCommands.RelaunchMethod): its new session takes its place, toolbar and all.
+    func replaceNonPeer(configID: String, with session: PTYSession) {
+        guard !didTeardown,
+              let entry = nonPeerEntriesByConfigID[configID],
+              entry.session !== session,
+              let config = config(forConfigID: configID) else {
+            return
+        }
+        RLog("iTermWorkgroupInstance.replaceNonPeer: \(configID) is now \(session.guid), replacing \(entry.session.guid)")
+        trackedSessionIdentities.remove(ObjectIdentifier(entry.session))
+        nonPeerEntriesByConfigID[configID] = NonPeerEntry(session: session, items: entry.items)
+        trackedSessionIdentities.insert(ObjectIdentifier(session))
+        session.workgroupInstance = self
+        session.forceDefaultEndAction = true
+        applyConfiguredName(config: config, to: session)
         session.delegate?.sessionDidChangeDesiredToolbarItems(session)
     }
 
@@ -612,7 +662,7 @@ final class iTermWorkgroupInstance: NSObject {
     // tagged with the config UUID; resolves it to whatever live
     // session that config currently corresponds to (peer in main
     // port, peer in a nested port, or non-peer host).
-    fileprivate func liveSession(forConfigID configID: String) -> PTYSession? {
+    func liveSession(forConfigID configID: String) -> PTYSession? {
         if let s = peerPort.session(forIdentifier: configID) { return s }
         for port in nestedPeerPorts {
             if let s = port.session(forIdentifier: configID) { return s }
@@ -681,20 +731,32 @@ final class iTermWorkgroupInstance: NSObject {
         // deallocated synchronously) can't keep pointing at a
         // torn-down instance.
         let peerSessions = allPeerPorts.flatMap { $0.realizedPeerSessions }
-        peerPort.invalidate()
+        let keepPeersInTabs = Self.keepsPeersInTabsOnTeardown(hasTmuxBinding: tmuxBinding != nil)
+        peerPort.invalidate(keepingPeersInTabs: keepPeersInTabs)
         for port in nestedPeerPorts {
-            port.invalidate()
+            port.invalidate(keepingPeersInTabs: keepPeersInTabs)
         }
         nestedPeerPorts.removeAll()
         for configID in nonPeerOrderedConfigIDs {
             guard let entry = nonPeerEntriesByConfigID[configID] else { continue }
             entry.session.workgroupInstance = nil
             entry.session.peerPort = nil
+            // A member on a tmux server stays (see below), even one that ended, as at a detach:
+            // it is an ordinary pane now, with no workgroup toolbar (QA finding F-831).
+            if tmuxBinding != nil, let delegate = entry.session.delegate {
+                delegate.sessionDidChangeDesiredToolbarItems(entry.session)
+            }
             // Skip sessions that have already exited.
             // iTermSessionWillTerminate fires before `exited` is set,
             // so this guard does NOT skip the session that triggered
             // teardown — only ones that exited earlier.
             guard !entry.session.exited else { continue }
+            // A member in a tmux tab is a pane on the server. Closing its
+            // session would kill the pane even when only this Mac's
+            // session is going away (a hidden window). The server side is
+            // handled below, from what tmux reports; the session stays an
+            // ordinary pane until then.
+            guard tmuxBinding == nil else { continue }
             // Defer the actual close to the next runloop. Reason:
             // when teardown is triggered by the leader's
             // iTermSessionWillTerminate notification, the leader is
@@ -711,6 +773,16 @@ final class iTermWorkgroupInstance: NSObject {
         nonPeerOrderedConfigIDs.removeAll()
         nonPeerEntriesByConfigID.removeAll()
         trackedSessionIdentities.removeAll()
+        if let tmuxBinding, !tmuxInstanceEndedElsewhere {
+            // isTmuxClient is already false for a terminating session (terminate() clears it
+            // before saying so), so it is recognized by the pane it showed.
+            if let terminatingSession, let paneID = terminatingSession.tmuxPaneIfClient {
+                tmuxBinding.removeFromServerIfPaneIsGone(paneID)
+            } else if terminatingSession == nil {
+                // Exit Workgroup.
+                tmuxBinding.removeFromServer()
+            }
+        }
         for session in peerSessions {
             session.workgroupInstance = nil
             // Also drop the (weak) port reference: set(peerPort:)
@@ -718,6 +790,11 @@ final class iTermWorkgroupInstance: NSObject {
             // is later joined to a new port could trip it while a
             // lingering reference keeps the invalidated port alive.
             session.peerPort = nil
+            // A peer kept in its tab (keepsPeersInTabsOnTeardown) is an
+            // ordinary pane now, with no workgroup toolbar.
+            if keepPeersInTabs, let delegate = session.delegate {
+                delegate.sessionDidChangeDesiredToolbarItems(session)
+            }
         }
         // Put the leader's tab title back to its pre-workgroup state. The
         // spawned tabs are closed above, so only the surviving leader needs
@@ -751,6 +828,18 @@ final class iTermWorkgroupInstance: NSObject {
 
         mainSession?.workgroupInstance = nil
         mainSession?.peerPort = nil
+    }
+
+    /// Whether ending the instance leaves its peers that are in tabs where they are, rather than
+    /// closing them. On a tmux server, tmux is the source of truth for members, as for its
+    /// non-peer members (see teardown): ending the instance there swaps the leader back in through
+    /// tmux and kills the members' panes, and tabs follow tmux's layout. Closing the peers in view
+    /// here as well could empty the leader's tab before its pane came back to it, and closing a
+    /// tmux tab's last session hides its window (QA finding F-614). After a detach or a lost
+    /// connection, the tmux windows outlive the connection, so a peer in view stays in its window
+    /// like any other pane (QA finding F-652).
+    static func keepsPeersInTabsOnTeardown(hasTmuxBinding: Bool) -> Bool {
+        return hasTmuxBinding
     }
 
     // The main peer group shares a single tab pane among the leader
@@ -793,8 +882,7 @@ final class iTermWorkgroupInstance: NSObject {
 
     // The marker that distinguishes a workgroup instance ID from a
     // session GUID (both are otherwise bare UUIDs) everywhere the ID
-    // travels: ITERM_WORKGROUP_ID, logs, saved arrangements, and
-    // @-mentions. Shared with OrchestrationMentionRenderer's parsing
+    // travels: logs, saved arrangements, and @-mentions. Shared with OrchestrationMentionRenderer's parsing
     // and reconstruction so the mint and the parsers can't diverge.
     static let instanceIDPrefix = "wg-"
 
@@ -813,10 +901,7 @@ final class iTermWorkgroupInstance: NSObject {
                       spawner: WorkgroupSessionSpawner = DefaultWorkgroupSessionSpawner()) -> iTermWorkgroupInstance? {
         guard let root = workgroup.root else { return nil }
 
-        // Per-entry ID, generated upfront so peer spawns (which run
-        // before the iTermWorkgroupInstance is constructed) can carry
-        // it into the spawned sessions' environment as
-        // ITERM_WORKGROUP_ID.
+        // Per-entry ID for the instance assembled below.
         let instanceUniqueIdentifier = mintInstanceUniqueIdentifier()
 
         // Peer-group members = the root + its peer children.
@@ -840,9 +925,20 @@ final class iTermWorkgroupInstance: NSObject {
         // anew via the spawner. Each peer's command is pre-substituted
         // for `\(gitBase)` so the non-swifty spawn path doesn't ship
         // a literal backslash-paren to the shell.
+        // A leader in a tmux Integration tab keeps the instance on the
+        // tmux server, and its peers are tmux panes parked in hidden
+        // windows: their promises are fulfilled when tmux reports them.
+        let tmuxBinding = TmuxWorkgroupBinding(leader: mainSession,
+                                               workgroup: workgroup,
+                                               instanceID: instanceUniqueIdentifier,
+                                               gitBase: CCGitBaseSelectorItem.defaultBase)
         var peers: [String: iTermPromise<PTYSession>] = [:]
         peers[root.uniqueIdentifier] = iTermPromise<PTYSession>(value: mainSession)
         for peer in peerChildren {
+            if let tmuxBinding {
+                peers[peer.uniqueIdentifier] = tmuxBinding.peerPromise(for: peer.uniqueIdentifier)
+                continue
+            }
             // .diff peers resolve gitBase at fire time so a gitBase
             // change while the deferred launch is pending propagates
             // without rebuilding the closure. Pass the unsubstituted
@@ -853,8 +949,7 @@ final class iTermWorkgroupInstance: NSObject {
                 : peer.substitutingGitBase(CCGitBaseSelectorItem.defaultBase)
             peers[peer.uniqueIdentifier] =
                 spawner.spawnPeer(parent: mainSession,
-                                  config: configToSpawn,
-                                  workgroupInstanceID: instanceUniqueIdentifier)
+                                  config: configToSpawn)
         }
 
         let instance = assemble(workgroup: workgroup,
@@ -865,6 +960,15 @@ final class iTermWorkgroupInstance: NSObject {
                                 activeSessionIdentifier: root.uniqueIdentifier,
                                 gitBase: CCGitBaseSelectorItem.defaultBase,
                                 spawner: spawner)
+
+        // A leader in a tmux Integration tab: publish the instance on the
+        // server before creating members there, so the record exists
+        // before any member's tag.
+        if let tmuxBinding {
+            instance.wireTmux(tmuxBinding)
+            tmuxBinding.publish(leaderPaneID: Int(mainSession.tmuxPane))
+            tmuxBinding.createPeers(peerChildren, gitBase: CCGitBaseSelectorItem.defaultBase)
+        }
 
         // Recursively spawn split-pane and tab children. Each non-peer
         // session that lands is used as the parent for its own children
@@ -1079,6 +1183,8 @@ final class iTermWorkgroupInstance: NSObject {
                       gitBase: String,
                       peerSessionsByConfigID: [String: PTYSession],
                       nonPeerSessionsByConfigID: [String: PTYSession],
+                      tmuxBinding: TmuxWorkgroupBinding? = nil,
+                      nestedActiveIdentifiers: [String: String] = [:],
                       spawner: WorkgroupSessionSpawner = DefaultWorkgroupSessionSpawner()) -> iTermWorkgroupInstance? {
         guard let root = workgroup.root else { return nil }
 
@@ -1139,6 +1245,13 @@ final class iTermWorkgroupInstance: NSObject {
                 if let stolen = restored {
                     RLog("iTermWorkgroupInstance.adopt: peer \(peer.uniqueIdentifier) resolves to session \(stolen.guid) already owned by another workgroup; spawning fresh instead")
                 }
+                // An instance on a tmux server: a missing peer is never
+                // spawned here; its promise is fulfilled when its pane
+                // exists (created by whoever entered, or on demand).
+                if let tmuxBinding {
+                    peers[peer.uniqueIdentifier] = tmuxBinding.peerPromise(for: peer.uniqueIdentifier)
+                    continue
+                }
                 // Spawn fresh, exactly like enter(): .diff resolves
                 // gitBase at fire time, others substitute now.
                 let configToSpawn = peer.mode == .diff
@@ -1146,8 +1259,7 @@ final class iTermWorkgroupInstance: NSObject {
                     : peer.substitutingGitBase(gitBase)
                 peers[peer.uniqueIdentifier] =
                     spawner.spawnPeer(parent: anchorSession,
-                                      config: configToSpawn,
-                                      workgroupInstanceID: instanceUniqueIdentifier)
+                                      config: configToSpawn)
             }
         }
 
@@ -1159,6 +1271,9 @@ final class iTermWorkgroupInstance: NSObject {
                                 activeSessionIdentifier: activeIdentifier,
                                 gitBase: gitBase,
                                 spawner: spawner)
+        if let tmuxBinding {
+            instance.wireTmux(tmuxBinding)
+        }
 
         // Re-wire each already-restored non-peer split/tab child: build
         // its toolbar items and set the workgroup back-pointer. Children
@@ -1179,6 +1294,18 @@ final class iTermWorkgroupInstance: NSObject {
             }
             switch child.kind {
             case .split, .tab:
+                // A split or tab that hosts peers on a tmux server: its group is rebuilt from the
+                // peers' panes, as the leader's is above.
+                if let tmuxBinding, !instance.peerChildren(of: child).isEmpty {
+                    instance.registerTmuxPeerGroup(host: session,
+                                                   config: child,
+                                                   binding: tmuxBinding,
+                                                   adopted: peerSessionsByConfigID,
+                                                   activeIdentifier: nestedActiveIdentifiers[child.uniqueIdentifier] ??
+                                                       child.uniqueIdentifier,
+                                                   createMissing: false)
+                    continue
+                }
                 instance.registerNonPeer(session: session, config: child)
             case .root, .peer:
                 break
@@ -1439,7 +1566,7 @@ extension iTermWorkgroupInstance: WorkgroupNavigationToolbarItemDelegate {
                 })
             return
         }
-        guard session.isRestartable() else {
+        guard session.canRelaunchWorkgroupMember else {
             RLog("iTermWorkgroupInstance: nav Reload aborted, session not restartable config=\(configID) mode=\(session.workgroupSessionMode)")
             return
         }
@@ -1449,6 +1576,12 @@ extension iTermWorkgroupInstance: WorkgroupNavigationToolbarItemDelegate {
            session.codeReviewRawCommand != nil {
             RLog("iTermWorkgroupInstance: nav Reload re-showing code-review overlay for config=\(configID)")
             session.reloadCodeReviewPromptOverlay()
+            return
+        }
+        if let binding = session.workgroupTmuxBinding, let cfg = config(forConfigID: configID) {
+            // Its program ran on the tmux server, not here; its command is evaluated again.
+            RLog("iTermWorkgroupInstance: nav Reload relaunching tmux member config=\(configID)")
+            session.relaunchTmuxWorkgroupMember(binding, command: cfg.resolvedCommand(gitBase: currentGitBase))
             return
         }
         RLog("iTermWorkgroupInstance: nav Reload restarting session config=\(configID) mode=\(session.workgroupSessionMode)")
@@ -1465,7 +1598,7 @@ extension iTermWorkgroupInstance: WorkgroupNavigationToolbarItemDelegate {
             .first
     }
 
-    // The login-shell-wrapped diff command matching the non-peer host's
+    // The diff command (the session wraps it for running) matching the non-peer host's
     // diff popup CURRENT selection: the per-file command when a file is
     // picked, the All Files command otherwise. Reload runs this rather
     // than replaying the session's stale _program so a popup that
@@ -1484,7 +1617,7 @@ extension iTermWorkgroupInstance: WorkgroupNavigationToolbarItemDelegate {
             resolved = cfg.resolvedCommand(gitBase: currentGitBase)
         }
         guard !resolved.isEmpty else { return nil }
-        return ITAddressBookMgr.commandByWrapping(inLoginShell: resolved)
+        return resolved
     }
 
     // The navigation cluster for a non-peer host's toolbar, used to
@@ -1512,8 +1645,7 @@ extension iTermWorkgroupInstance: CCDiffSelectorItemDelegate {
         }
         let command = cfg.resolvedPerFileCommand(filename: filename,
                                                  gitBase: currentGitBase)
-        let wrapped = ITAddressBookMgr.commandByWrapping(inLoginShell: command)
-        session.restart(withCommand: wrapped)
+        session.relaunchWorkgroupMember(command: command)
     }
 
     func diffDidSelectAllFiles(sender: CCDiffSelectorItem) {
@@ -1528,8 +1660,7 @@ extension iTermWorkgroupInstance: CCDiffSelectorItemDelegate {
             return
         }
         let resolved = cfg.resolvedCommand(gitBase: currentGitBase)
-        let wrapped = ITAddressBookMgr.commandByWrapping(inLoginShell: resolved)
-        session.restart(withCommand: wrapped)
+        session.relaunchWorkgroupMember(command: resolved)
     }
 
     // Push the diff selector's can-navigate state and the "X/Y"
@@ -1680,9 +1811,7 @@ extension iTermWorkgroupInstance {
                 resolved = cfg.resolvedCommand(gitBase: base)
             }
             guard !resolved.isEmpty else { return }
-            let wrapped = ITAddressBookMgr.commandByWrapping(
-                inLoginShell: resolved)
-            session.restart(withCommand: wrapped)
+            session.relaunchWorkgroupMember(command: resolved)
         }
     }
 
@@ -1783,6 +1912,23 @@ extension iTermWorkgroupInstance {
             }
         }
         return false
+    }
+
+    /// Reloads a tmux member as its toolbar's Reload does, through whichever group holds it.
+    func reloadTmuxMember(_ session: PTYSession) -> Bool {
+        guard let configID = configID(forSession: session) else {
+            return false
+        }
+        if peerPort.contains(session: session) {
+            peerPort.workgroupNavigationDidTapReload(ownerPeerID: configID)
+            return true
+        }
+        for port in nestedPeerPorts where port.contains(session: session) {
+            port.workgroupNavigationDidTapReload(ownerPeerID: configID)
+            return true
+        }
+        workgroupNavigationDidTapReload(ownerPeerID: configID)
+        return true
     }
 
     // Find the workgroup-config UUID that owns `session`. Mirrors the

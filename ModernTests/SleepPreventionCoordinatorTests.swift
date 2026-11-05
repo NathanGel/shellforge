@@ -74,3 +74,194 @@ final class SleepPreventionCoordinatorTests: XCTestCase {
         XCTAssertEqual(requesting(["A", "B"], excluding: "A"), 1)
     }
 }
+
+// Drives a coordinator instance with fake sessions, a private notification center, a manual
+// scheduler, and a fake assertion so the restart and revive paths can be tested deterministically.
+final class SleepPreventionCoordinatorLifecycleTests: XCTestCase {
+    private final class Fixture {
+        var requesters: [String] = []
+        var pendingBlocks: [() -> Void] = []
+        var heldAssertions = 0
+        let center = NotificationCenter()
+        lazy var coordinator: SleepPreventionCoordinator = {
+            let environment = SleepPreventionCoordinator.Environment(
+                requesterGUIDs: { [unowned self] in self.requesters },
+                connectedToPower: { true },
+                allowedOnBattery: { false },
+                scheduleOnNextTurn: { [unowned self] block in self.pendingBlocks.append(block) },
+                beginAssertion: { [unowned self] in
+                    self.heldAssertions += 1
+                    return NSObject()
+                },
+                endAssertion: { [unowned self] _ in self.heldAssertions -= 1 })
+            return SleepPreventionCoordinator(environment: environment, notificationCenter: center)
+        }()
+
+        func runPendingBlocks() {
+            let blocks = pendingBlocks
+            pendingBlocks = []
+            blocks.forEach { $0() }
+        }
+    }
+
+    // F-003 / F-200: Restart Session clears the session's exited flag (brokenPipe already dropped it
+    // from the requesters). The coordinator must recompute when that flips, without needing some
+    // unrelated event.
+    func testExitedDidChangeRecomputes() {
+        let fixture = Fixture()
+        _ = fixture.coordinator
+        XCTAssertEqual(fixture.coordinator.numberOfSessionsPreventingSleep, 0)
+
+        // The restarted session is a requester again.
+        fixture.requesters = ["A"]
+        fixture.center.post(name: .PTYSessionExitedDidChange, object: nil)
+
+        XCTAssertEqual(fixture.coordinator.numberOfSessionsPreventingSleep, 1)
+        XCTAssertEqual(fixture.heldAssertions, 1)
+    }
+
+    // The explicit recompute in brokenPipe was replaced by this notification, so a session whose
+    // process exits must still release the assertion when it was the last requester.
+    func testExitedDidChangeReleasesWhenLastRequesterExits() {
+        let fixture = Fixture()
+        fixture.requesters = ["A"]
+        _ = fixture.coordinator
+        XCTAssertEqual(fixture.heldAssertions, 1)
+
+        fixture.requesters = []
+        fixture.center.post(name: .PTYSessionExitedDidChange, object: nil)
+
+        XCTAssertEqual(fixture.coordinator.numberOfSessionsPreventingSleep, 0)
+        XCTAssertEqual(fixture.heldAssertions, 0)
+    }
+
+    // F-204: -revive posts PTYSessionRevived before its caller re-adds the session to a window, so a
+    // recompute at that moment can't see it. The coordinator must recompute on a later turn.
+    func testReviveRecomputesAfterSessionIsReAdded() {
+        let fixture = Fixture()
+        _ = fixture.coordinator
+        fixture.runPendingBlocks()
+
+        // -revive posts while the session is not yet enumerated.
+        fixture.center.post(name: .PTYSessionRevived, object: nil)
+        // Later in the same turn the caller adds it back to a window.
+        fixture.requesters = ["A"]
+        XCTAssertEqual(fixture.heldAssertions, 0)
+
+        // Next main-queue turn.
+        fixture.runPendingBlocks()
+
+        XCTAssertEqual(fixture.coordinator.numberOfSessionsPreventingSleep, 1)
+        XCTAssertEqual(fixture.heldAssertions, 1)
+    }
+
+    // Undo Close of several sessions at once posts PTYSessionRevived for each; one deferred
+    // recompute is enough.
+    func testMultipleRevivesCoalesce() {
+        let fixture = Fixture()
+        _ = fixture.coordinator
+        fixture.center.post(name: .PTYSessionRevived, object: nil)
+        fixture.center.post(name: .PTYSessionRevived, object: nil)
+        XCTAssertEqual(fixture.pendingBlocks.count, 1)
+    }
+
+    // The coordinator relies on PTYSession posting PTYSessionExitedDidChange whenever its exited
+    // state actually flips (Restart Session calls -setExited:NO in
+    // -replaceTerminatedShellWithNewInstance), and not when it is set to its current value.
+    func testSessionPostsExitedDidChangeOnlyWhenItFlips() {
+        let session = PTYSession(synthetic: false)!
+        var posts = 0
+        let token = NotificationCenter.default.addObserver(forName: .PTYSessionExitedDidChange,
+                                                           object: session,
+                                                           queue: nil) { _ in posts += 1 }
+        defer { NotificationCenter.default.removeObserver(token) }
+
+        XCTAssertFalse(session.exited)
+        session.setValue(false, forKey: "exited")
+        XCTAssertEqual(posts, 0)
+
+        session.setValue(true, forKey: "exited")
+        XCTAssertTrue(session.exited)
+        XCTAssertEqual(posts, 1)
+
+        session.setValue(true, forKey: "exited")
+        XCTAssertEqual(posts, 1)
+
+        session.setValue(false, forKey: "exited")
+        XCTAssertFalse(session.exited)
+        XCTAssertEqual(posts, 2)
+    }
+
+    // F-212: detaching from tmux leaves each tmux window's pane open but marks its session exited
+    // ("tmux detached"). Call the real tmux detach handler on real sessions in a real window, with
+    // the coordinator using the real session enumeration and exited filter, and keep the windows
+    // open after detach (the QA repro; if they closed, termination would release the assertion and
+    // mask the bug): both detached panes must stop counting and the assertion must be released
+    // without any unrelated event. A reattach needs no test here: closeAllPanes forgets the old
+    // panes, so reattaching builds new sessions, which PTYSessionCreated already covers.
+    //
+    // The app's own SleepPreventionCoordinator.instance also observes these notifications, so it
+    // briefly holds a real idle-sleep assertion between the two detaches; the second detach releases
+    // it (window.close() covers a mid-test failure).
+    func testTmuxDisconnectHandlerReleasesAssertion() throws {
+        func setCloseAfterDetach(_ value: Bool?) {
+            guard let value else {
+                iTermAdvancedSettingsModel.setTmuxWindowsShouldCloseAfterDetach(nil)
+                return
+            }
+            withUnsafePointer(to: ObjCBool(value)) {
+                iTermAdvancedSettingsModel.setTmuxWindowsShouldCloseAfterDetach($0)
+            }
+        }
+        let savedCloseAfterDetach = iTermAdvancedSettingsModel.tmuxWindowsShouldCloseAfterDetach()?.pointee.boolValue
+        setCloseAfterDetach(false)
+        defer { setCloseAfterDetach(savedCloseAfterDetach) }
+
+        let window = TerminalWindowTestFixture()
+        defer { window.close() }
+        let first = try XCTUnwrap(window.terminal.currentSession())
+        let second = window.addTab()
+        for session in [first, second] {
+            var profile = session.profile ?? [:]
+            profile[KEY_PREVENT_SLEEP] = true
+            // “After a session ends: No Action”, as in the repro; Close would close the pane.
+            profile[KEY_SESSION_END_ACTION] = iTermSessionEndAction.default.rawValue
+            session.profile = profile
+            session.endAction = .default
+            // Closing the window terminates these exited, seconds-old panes, which would otherwise
+            // put up the modal short-lived-session warning (real tmux panes skip it).
+            session.shortLivedSingleUse = true
+        }
+
+        // Only count this test's sessions so other windows in the test host can't affect it.
+        let mine: Set<String> = [first.guid, second.guid]
+        var heldAssertions = 0
+        let coordinator = SleepPreventionCoordinator(
+            environment: SleepPreventionCoordinator.Environment(
+                requesterGUIDs: {
+                    SleepPreventionCoordinator.liveRequesterGUIDs().filter { mine.contains($0) }
+                },
+                connectedToPower: { true },
+                allowedOnBattery: { false },
+                scheduleOnNextTurn: { _ in },
+                beginAssertion: {
+                    heldAssertions += 1
+                    return NSObject()
+                },
+                endAssertion: { _ in heldAssertions -= 1 }),
+            notificationCenter: .default)
+        XCTAssertEqual(coordinator.numberOfSessionsPreventingSleep, 2)
+        XCTAssertEqual(heldAssertions, 1)
+
+        first.tmuxDidDisconnect()
+        XCTAssertTrue(first.exited)
+        XCTAssertEqual(coordinator.numberOfSessionsPreventingSleep, 1)
+        XCTAssertEqual(heldAssertions, 1)
+
+        second.tmuxDidDisconnect()
+        XCTAssertTrue(second.exited)
+        XCTAssertEqual(coordinator.numberOfSessionsPreventingSleep, 0)
+        XCTAssertEqual(coordinator.numberOfSessionsRequestingPreventSleep, 0)
+        XCTAssertEqual(heldAssertions, 0)
+    }
+}

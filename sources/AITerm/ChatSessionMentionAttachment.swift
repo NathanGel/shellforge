@@ -26,6 +26,9 @@ class ChatSessionMentionAttachment: NSTextAttachment {
     // a different symbol so the three kinds are visually distinct.
     let symbolName: String
 
+    // The font the current image was rendered for.
+    private(set) var renderedFont: NSFont?
+
     init(guid: String, displayName: String, symbolName: String = SFSymbol.terminal.rawValue) {
         self.guid = guid
         self.displayName = displayName
@@ -63,34 +66,129 @@ class ChatSessionMentionAttachment: NSTextAttachment {
     // token is a rasterized image, so callers must invoke this again when the
     // effective appearance changes or the baked link color goes stale.
     func renderImage(font: NSFont, color: NSColor) {
-        let image = Self.tokenImage(displayName: displayName, font: font, color: color, symbolName: symbolName)
+        renderedFont = font
+        let metrics = VerticalMetrics(font: font, displayName: displayName)
+        let image = Self.tokenImage(displayName: displayName,
+                                    font: font,
+                                    color: color,
+                                    symbolName: symbolName,
+                                    metrics: metrics)
         self.image = image
-        // The image is rendered with its single text line laid out from the top
-        // (flipped drawing handler), so the baseline sits `ascender` below the
-        // image top. Offsetting bounds by ascender - height puts that baseline
-        // on the surrounding text's baseline. (Mirrors the descender-based
-        // offset OrchestrationMentionRenderer.iconString uses for its glyph.)
+        // The image's baseline sits `metrics.ascent` below its top, so an
+        // origin of `metrics.descent` (negative) puts it on the surrounding
+        // text's baseline. For a name that fits the font's line box, the
+        // image stays within the ascent and descent that plain text in
+        // `font` already gives the line, so the chip changes neither the
+        // line's height nor where its baseline falls.
         self.bounds = NSRect(x: 0,
-                             y: font.ascender - image.size.height,
+                             y: metrics.descent,
                              width: image.size.width,
                              height: image.size.height)
+    }
+
+    // The vertical box the token image occupies, relative to the baseline.
+    // TextKit 1 lays a line of plain text out with its baseline at the
+    // layout manager's rounded baseline offset, not at the font's exact
+    // ascender (e.g. Menlo 12 has an 11.14pt ascender but an 11pt baseline
+    // offset). An attachment taller than that pushes the baseline down and
+    // makes the line taller, so the image never reaches past the line box
+    // the name would get if it were typed as plain text. That box is the
+    // font's own for most names and taller for one with a fallback-font
+    // glyph such as an emoji, so a chip affects the line exactly as its
+    // name typed out would. Within that box the image covers the name's
+    // ink, so the image (which clips what it draws) cuts nothing off that
+    // plain text would show inside its line.
+    struct VerticalMetrics {
+        // Distance from the baseline up to the top of the image.
+        let ascent: CGFloat
+        // Distance from the baseline down to the bottom of the image
+        // (negative, like NSFont.descender).
+        let descent: CGFloat
+
+        init(font: NSFont, displayName: String) {
+            // Without font leading this is the smallest box plain text
+            // gets, so it holds whether or not the text view uses leading.
+            let fontOnly = Self.lineBox(NSAttributedString(string: " ", attributes: [.font: font]))
+            iconAscent = min(font.ascender, fontOnly.baseline)
+            iconDescent = max(font.descender, fontOnly.baseline - fontOnly.height)
+
+            let name = NSAttributedString(string: displayName, attributes: [.font: font])
+            let plain = displayName.isEmpty ? fontOnly : Self.lineBox(name)
+            // Without .usesLineFragmentOrigin the rect is relative to the
+            // baseline origin with y increasing upward.
+            let ink = name.boundingRect(with: NSSize(width: CGFloat.greatestFiniteMagnitude,
+                                                     height: CGFloat.greatestFiniteMagnitude),
+                                        options: [.usesDeviceMetrics])
+            let inkTop = ink.isEmpty ? 0 : ink.maxY
+            let inkBottom = ink.isEmpty ? 0 : ink.minY
+            let exactAscent = max(iconAscent, min(inkTop, plain.baseline))
+            let exactDescent = min(iconDescent, max(inkBottom, plain.baseline - plain.height))
+            // Put the image's edges whole points from the baseline. Plain
+            // text's baseline lands on the pixel grid, so edges a fraction
+            // of a point away got rounded to the grid when the chip was
+            // drawn, moving the name off the adjacent text's baseline (a
+            // device pixel low on a 2x display). Grow outward to the next
+            // whole point when the line box has room; otherwise keep the
+            // exact edge rather than clip the name.
+            let lineTop = max(fontOnly.baseline, plain.baseline)
+            let lineBottom = min(fontOnly.baseline - fontOnly.height, plain.baseline - plain.height)
+            let roundedUp = ceil(exactAscent)
+            ascent = roundedUp <= lineTop + 0.001 ? roundedUp : exactAscent
+            let roundedDown = floor(exactDescent)
+            descent = roundedDown >= lineBottom - 0.001 ? roundedDown : exactDescent
+        }
+
+        // The height of a single laid-out line of `string` and its
+        // baseline's distance below the line's top, as TextKit 1 lays it
+        // out without font leading.
+        private static func lineBox(_ string: NSAttributedString) -> (height: CGFloat, baseline: CGFloat) {
+            let storage = NSTextStorage(attributedString: string)
+            let layoutManager = NSLayoutManager()
+            layoutManager.usesFontLeading = false
+            let container = NSTextContainer(size: NSSize(width: CGFloat.greatestFiniteMagnitude,
+                                                         height: CGFloat.greatestFiniteMagnitude))
+            container.lineFragmentPadding = 0
+            layoutManager.addTextContainer(container)
+            storage.addLayoutManager(layoutManager)
+            layoutManager.ensureLayout(for: container)
+            let lineRect = layoutManager.lineFragmentRect(forGlyphAt: 0, effectiveRange: nil)
+            return (lineRect.height, layoutManager.location(forGlyphAt: 0).y)
+        }
+
+        // The icon fills the font's line box, whatever the name needs.
+        let iconAscent: CGFloat
+        let iconDescent: CGFloat
+
+        var height: CGFloat { ascent - descent }
     }
 
     // Renders the glyph + underlined name to a resolution-independent image.
     private static func tokenImage(displayName: String,
                                    font: NSFont,
                                    color: NSColor,
-                                   symbolName: String) -> NSImage {
-        let inner = innerAttributedString(displayName: displayName, font: font, color: color, symbolName: symbolName)
+                                   symbolName: String,
+                                   metrics: VerticalMetrics) -> NSImage {
+        let inner = innerAttributedString(displayName: displayName,
+                                          font: font,
+                                          color: color,
+                                          symbolName: symbolName,
+                                          metrics: metrics)
         let bounding = inner.boundingRect(with: NSSize(width: CGFloat.greatestFiniteMagnitude,
                                                        height: CGFloat.greatestFiniteMagnitude),
                                           options: [.usesLineFragmentOrigin])
-        let size = NSSize(width: ceil(bounding.width), height: ceil(bounding.height))
+        let size = NSSize(width: ceil(bounding.width), height: metrics.height)
         guard size.width > 0, size.height > 0 else {
             return NSImage(size: NSSize(width: 1, height: 1))
         }
         return NSImage(size: size, flipped: true) { rect in
-            inner.draw(with: rect, options: [.usesLineFragmentOrigin])
+            // Without .usesLineFragmentOrigin the rect's origin is the
+            // baseline origin, so the name's baseline sits exactly
+            // `metrics.ascent` below the top of the image.
+            inner.draw(with: NSRect(x: rect.minX,
+                                    y: rect.minY + metrics.ascent,
+                                    width: rect.width,
+                                    height: rect.height),
+                       options: [])
             return true
         }
     }
@@ -99,9 +197,10 @@ class ChatSessionMentionAttachment: NSTextAttachment {
     private static func innerAttributedString(displayName: String,
                                               font: NSFont,
                                               color: NSColor,
-                                              symbolName: String) -> NSAttributedString {
+                                              symbolName: String,
+                                              metrics: VerticalMetrics) -> NSAttributedString {
         let result = NSMutableAttributedString()
-        if let icon = iconString(font: font, color: color, symbolName: symbolName) {
+        if let icon = iconString(color: color, symbolName: symbolName, metrics: metrics) {
             result.append(icon)
             result.append(NSAttributedString(string: "\u{2009}",
                                              attributes: [.font: font, .foregroundColor: color]))
@@ -115,13 +214,16 @@ class ChatSessionMentionAttachment: NSTextAttachment {
     }
 
     // A glyph in `color`, sized to the run's font and embedded in an
-    // attachment so it lays out inline with the name.
-    private static func iconString(font: NSFont, color: NSColor, symbolName: String) -> NSAttributedString? {
+    // attachment so it lays out inline with the name. It fills the font's
+    // line box, which the token image always contains.
+    private static func iconString(color: NSColor,
+                                   symbolName: String,
+                                   metrics: VerticalMetrics) -> NSAttributedString? {
         guard let symbol = NSImage(systemSymbolName: symbolName,
                                    accessibilityDescription: String(localized: "ChatSessionMentionAttachment.SessionAccessibility", defaultValue: "iTerm2 session", comment: "Accessibility description for the session icon in a mention")) else {
             return nil
         }
-        let height = font.ascender - font.descender
+        let height = metrics.iconAscent - metrics.iconDescent
         let aspectRatio = symbol.size.height > 0 ? symbol.size.width / symbol.size.height : 1
         // Render every layer in `color` at full opacity (monochrome).
         // it_image(withTintColor:) preserves a symbol's built-in
@@ -131,12 +233,12 @@ class ChatSessionMentionAttachment: NSTextAttachment {
             ?? symbol.it_image(withTintColor: color)
         let attachment = NSTextAttachment()
         attachment.image = tinted
-        attachment.bounds = NSRect(x: 0, y: font.descender, width: height * aspectRatio, height: height)
+        attachment.bounds = NSRect(x: 0, y: metrics.iconDescent, width: height * aspectRatio, height: height)
         return NSAttributedString(attachment: attachment)
     }
 }
 
-// Single source of truth for how a terminal session is named in chat mentions:
+// Single source of truth for how a session is named and iconed in chat mentions:
 // the @-mention picker, the inserted token, and the rendered message bubbles all
 // go through this so they stay consistent. A session inside a workgroup is
 // prefixed with its component/role (e.g. "Diff", "Code Review", "Chat") so peers
@@ -153,6 +255,31 @@ enum ChatMentionDisplay {
             }
         }
         return nil
+    }
+
+    // The chip icon for a session mention: a globe for a browser session,
+    // otherwise a terminal.
+    static func symbolName(for session: PTYSession) -> String {
+        return session.isBrowserSession() ? SFSymbol.globe.rawValue : SFSymbol.terminal.rawValue
+    }
+
+    // The chip icon for a token: window ("win:"), tab ("tab:"), or session.
+    // Matches the window/tab/pane glyphs used elsewhere (the Companion app's
+    // session tree): macwindow / folder / terminal. A session token (a
+    // stableID or guid) is resolved with `resolve` so a browser session gets
+    // the globe; one that no longer resolves falls back to the terminal.
+    static func symbolName(forToken token: String,
+                           resolve: (String) -> PTYSession? = { iTermController.sharedInstance()?.anySession(forReference: $0) }) -> String {
+        if token.hasPrefix("win:") {
+            return SFSymbol.macwindow.rawValue
+        }
+        if token.hasPrefix("tab:") {
+            return SFSymbol.folder.rawValue
+        }
+        if let session = resolve(token) {
+            return symbolName(for: session)
+        }
+        return SFSymbol.terminal.rawValue
     }
 
     // The user-facing name for a session mention: "Role: title", or just "Role"

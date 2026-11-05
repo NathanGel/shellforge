@@ -9,22 +9,16 @@
 @MainActor
 extension Conductor: ConductorFileTransferDelegate {
     func beginDownload(fileTransfer: ConductorFileTransfer) {
-        guard let path = fileTransfer.localPath() else {
-            fileTransfer.fail(reason: "No local path specified")
-            return
-        }
-        let remotePath = fileTransfer.path.path!
-
-        FileManager.default.createFile(atPath: path, contents: nil, attributes: nil)
-        guard let fileHandle = FileHandle(forUpdatingAtPath: path) else {
-            fileTransfer.fail(reason: "Could not open \(path)")
-            return
-        }
+        // Every fetch for this download shares an ID so Stop can cancel the unsent ones.
+        let uniqueID = UUID().uuidString
+        let operations = ConductorDownloadOperations(
+            stat: { path in try await self.stat(path) },
+            zip: { path in try await self.zip(path) },
+            fetch: { path, chunk in try await self.download(path, chunk: chunk, uniqueID: uniqueID) },
+            rm: { path in try await self.rm(path, recursive: false) },
+            cancelFetches: { try? await self.cancelDownload(uniqueID: uniqueID) })
         Task {
-            await reallyBeginDownload(fileTransfer: fileTransfer,
-                                      remotePath: remotePath,
-                                      fileHandle: fileHandle,
-                                      allowDirectories: true)
+            await ConductorDownload.run(fileTransfer: fileTransfer, operations: operations)
         }
     }
 
@@ -71,58 +65,51 @@ extension Conductor: ConductorFileTransferDelegate {
         continuation.finish()
     }
 
-    @MainActor
-    private func reallyBeginDownload(fileTransfer: ConductorFileTransfer,
-                                     remotePath: String,
-                                     fileHandle: FileHandle,
-                                     allowDirectories: Bool) async {
-        do {
-            let info = try await stat(remotePath)
-            if info.kind == .folder {
-                if !allowDirectories {
-                    fileTransfer.fail(reason: "Transfer of directory at \(remotePath) not allowed")
-                }
-                await reallyDownloadFolder(info: info,
-                                           fileTransfer: fileTransfer,
-                                           remotePath: remotePath,
-                                           fileHandle: fileHandle)
-                return
+    // The remote zip command's archive holds the folder itself (`folderName/…`), which is what a
+    // download saved as a .zip file needs. Here the folder's contents go directly in
+    // `destination`, which is the folder, so it isn't nested one level too deep (F-921). Items
+    // already in `destination` with the same name are replaced and others are kept.
+    static func unzipFolderArchive(_ zipURL: URL,
+                                   folderName: String,
+                                   to destination: URL) async throws {
+        let fileManager = FileManager.default
+        let parent = destination.deletingLastPathComponent()
+        let staging = parent.appendingPathComponent(".iTerm2.\(UUID().uuidString)")
+        defer {
+            try? fileManager.removeItem(at: staging)
+        }
+        // unzip creates the -d folder but not its parent. The `destination` argument is just
+        // the directory it runs in.
+        try fileManager.createDirectory(at: parent, withIntermediateDirectories: true)
+        // The framer adds only files, so an empty folder's archive has no entries: just its
+        // 22-byte end of central directory record. unzip fails on that.
+        let emptyArchiveSize = 22
+        let endOfCentralDirectorySignature = Data([0x50, 0x4b, 0x05, 0x06])
+        if let size = (try? fileManager.attributesOfItem(atPath: zipURL.path))?[.size] as? Int,
+           size == emptyArchiveSize,
+           let contents = try? Data(contentsOf: zipURL),
+           contents.starts(with: endOfCentralDirectorySignature) {
+            try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
+            return
+        }
+        try await iTermCommandRunner.unzipURL(
+            zipURL,
+            withArguments: ["-q", "-o", "-d", staging.path],
+            destination: "/",
+            callbackQueue: .main)
+        let unzippedFolder = staging.appendingPathComponent(folderName)
+        var isDirectory = ObjCBool(false)
+        let foundFolder = fileManager.fileExists(atPath: unzippedFolder.path,
+                                                 isDirectory: &isDirectory) && isDirectory.boolValue
+        // Only when the archive's folder isn't named `folderName`, which shouldn't happen.
+        let source = foundFolder ? unzippedFolder : staging
+        try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
+        for name in try fileManager.contentsOfDirectory(atPath: source.path) {
+            let target = destination.appendingPathComponent(name)
+            if fileManager.fileExists(atPath: target.path) {
+                try fileManager.removeItem(at: target)
             }
-            let sizeKnown: Bool
-            if let size = info.size {
-                sizeKnown = true
-                fileTransfer.fileSize = size
-            } else {
-                sizeKnown = false
-            }
-            var done = false
-            var offset = 0
-
-            let chunkSize = 1024
-            defer {
-                try? fileHandle.close()
-            }
-            while !done {
-                if fileTransfer.isStopped {
-                    fileTransfer.abort()
-                    return
-                }
-                let chunk = DownloadChunk(offset: offset, size: chunkSize)
-                let data = try await download(remotePath, chunk: chunk, uniqueID: nil)
-                if data.isEmpty {
-                    done = true
-                } else {
-                    try fileHandle.write(contentsOf: data)
-                    if !sizeKnown {
-                        fileTransfer.fileSize = fileTransfer.fileSize + data.count
-                    }
-                    fileTransfer.didTransferBytes(UInt(data.count))
-                    offset += data.count
-                }
-            }
-            fileTransfer.didFinishSuccessfully()
-        } catch {
-            fileTransfer.fail(reason: error.localizedDescription)
+            try fileManager.moveItem(at: source.appendingPathComponent(name), to: target)
         }
     }
 
@@ -131,6 +118,21 @@ extension Conductor: ConductorFileTransferDelegate {
                          progress: Progress?,
                          cancellation: Cancellation?,
                          destination: URL) async throws -> DownloadType {
+        return try await downloadChunked(remoteFile: remoteFile,
+                                         progress: progress,
+                                         cancellation: cancellation,
+                                         destination: destination,
+                                         completionNote: nil)
+    }
+
+    // `completionNote` is shown with the finished notification, such as what a folder's
+    // archive left out (F-721).
+    @MainActor
+    private func downloadChunked(remoteFile: RemoteFile,
+                                 progress: Progress?,
+                                 cancellation: Cancellation?,
+                                 destination: URL,
+                                 completionNote: String?) async throws -> DownloadType {
         RLog("Download of \(remoteFile.absolutePath) requested")
         await Conductor.downloadSemaphore.wait()
         RLog("Download of \(remoteFile.absolutePath) beginning")
@@ -141,7 +143,8 @@ extension Conductor: ConductorFileTransferDelegate {
             }
         }
         if remoteFile.kind.isFolder {
-            let remoteZipPath = try await zip(remoteFile.absolutePath)
+            let zipReply = try await zip(remoteFile.absolutePath)
+            let remoteZipPath = zipReply.path
             do {
                 let zipRemoteFile = try await stat(remoteZipPath)
                 let localZipPath = destination.appendingPathExtension("zip")
@@ -149,16 +152,12 @@ extension Conductor: ConductorFileTransferDelegate {
                     remoteFile: zipRemoteFile,
                     progress: progress,
                     cancellation: cancellation,
-                    destination: localZipPath)
+                    destination: localZipPath,
+                    completionNote: zipReply.skippedItemsNote)
 
-                // The `destination` argument is the current directory in which unzip is run. I give
-                // -d path in args so it will create destination.path if needed and then
-                // unzip therein.
-                try await iTermCommandRunner.unzipURL(
-                    localZipPath,
-                    withArguments: ["-q", "-o", "-d", destination.path],
-                    destination: "/",
-                    callbackQueue: .main)
+                try await Self.unzipFolderArchive(localZipPath,
+                                                  folderName: remoteFile.absolutePath.lastPathComponent,
+                                                  to: destination)
                 try? await rm(remoteZipPath, recursive: false)
                 try? FileManager.default.removeItem(at: localZipPath)
             } catch {
@@ -169,7 +168,10 @@ extension Conductor: ConductorFileTransferDelegate {
         }
 
         guard remoteFile.kind.isRegularFile else {
-            throw ConductorFileTransfer.ConductorFileTransferError("\(remoteFile.absolutePath) on \(sshIdentity.displayName) is not a regular file")
+            throw ConductorFileTransfer.ConductorFileTransferError(
+                String(localized: "ConductorFileTransfer.NotRegularFile",
+                       defaultValue: "“\(remoteFile.absolutePath)” on \(sshIdentity.displayName) is not a regular file.",
+                       comment: "Error shown when an SSH Integration download is not a regular file; the first argument is the remote path and the second is the host"))
         }
 
         let scpPath = SCPPath()
@@ -187,7 +189,7 @@ extension Conductor: ConductorFileTransferDelegate {
             return .file
         }
 
-        let chunkSize = 4096
+        let chunkSize = ConductorDownload.chunkSize
         progress?.fraction = 0
         let state = DownloadState(remoteFile: remoteFile,
                                   chunkSize: chunkSize,
@@ -195,15 +197,30 @@ extension Conductor: ConductorFileTransferDelegate {
                                   progress: progress,
                                   fileTransfer: fileTransfer,
                                   conductor: self)
-        while state.shouldFetchMore {
-            try await state.addTask(conductor: self)
+        do {
+            while state.shouldFetchMore {
+                try await state.addTask(conductor: self)
+            }
+            if let cancellation, cancellation.canceled {
+                RLog("Download of \(remoteFile.absolutePath) throwing")
+                throw SSHEndpointException.transferCanceled
+            }
+            RLog("Download of \(remoteFile.absolutePath) finished normally")
+            try state.content.write(to: destination)
+        } catch {
+            // The Downloads menu lists the transfer until it is told how it ended (F-714). A
+            // canceled one was already told it stopped; one stopped from the menu is told now.
+            if fileTransfer.isStopped {
+                if cancellation?.canceled != true {
+                    fileTransfer.abort()
+                }
+            } else if cancellation?.canceled != true {
+                fileTransfer.fail(reason: SSHEndpointException.transferFailureReason(for: error, isDownload: true))
+            }
+            throw error
         }
-        if let cancellation, cancellation.canceled {
-            RLog("Download of \(remoteFile.absolutePath) throwing")
-            throw SSHEndpointException.transferCanceled
-        }
-        RLog("Download of \(remoteFile.absolutePath) finished normally")
-        try state.content.write(to: destination)
+        fileTransfer.completionNote = completionNote
+        fileTransfer.didFinishChunkedDownload(to: destination)
         return .file
     }
 
@@ -268,7 +285,7 @@ extension Conductor: ConductorFileTransferDelegate {
                 offset: taskOffset,
                 task: Task { @MainActor in
                     if fileTransfer.isStopped {
-                        throw ConductorFileTransfer.ConductorFileTransferError("Canceled")
+                        throw SSHEndpointException.transferCanceled
                     }
                     let data = try await conductor.downloadOneChunk(
                         remoteFile: remoteFile,
@@ -287,7 +304,7 @@ extension Conductor: ConductorFileTransferDelegate {
                     return data
                 })
             tasks.append(pending)
-            let maxConcurrency = 8
+            let maxConcurrency = ConductorDownload.maxRequestsInFlight
             while tasks.count >= maxConcurrency || (!tasks.isEmpty && !shouldFetchMore) {
                 if fileTransfer.isStopped {
                     cancellation?.cancel()
@@ -327,24 +344,6 @@ extension Conductor: ConductorFileTransferDelegate {
         return data
     }
 
-    @MainActor
-    private func reallyDownloadFolder(info: RemoteFile,
-                                      fileTransfer: ConductorFileTransfer,
-                                      remotePath: String,
-                                      fileHandle: FileHandle) async {
-        do {
-            let remoteZipPath = try await zip(remotePath)
-            fileTransfer.isZipOfFolder = true
-            await reallyBeginDownload(fileTransfer: fileTransfer,
-                                      remotePath: remoteZipPath,
-                                      fileHandle: fileHandle,
-                                      allowDirectories: false)
-            try? await rm(remoteZipPath, recursive: false)
-        } catch {
-            fileTransfer.fail(reason: error.localizedDescription)
-        }
-    }
-
     func beginUpload(fileTransfer: ConductorFileTransfer) {
         if let data = fileTransfer.data {
             Task {
@@ -353,7 +352,9 @@ extension Conductor: ConductorFileTransferDelegate {
             return
         }
         guard let path = fileTransfer.localPath() else {
-            fileTransfer.fail(reason: "No local filename specified")
+            fileTransfer.fail(reason: String(localized: "ConductorFileTransfer.NoLocalFile",
+                                              defaultValue: "No file was chosen to upload.",
+                                              comment: "Error shown when an SSH Integration upload has no local file"))
             return
         }
         Task {
@@ -389,20 +390,24 @@ extension Conductor: ConductorFileTransferDelegate {
             } didTransfer: { count in
                 fileTransfer.didTransferBytes(UInt(count))
             }
-            // Find a good name
-            var proposedName = fileTransfer.path.path!
-            var remoteName: String?
-            for i in 0..<100 {
-                let info = try? await stat(proposedName)
-                try checkCancellation()
-                if info == nil {
-                    remoteName = proposedName
-                    break
+            // Find a good name. The claim keeps a concurrent upload of a file with the same name
+            // from choosing it too; it is released once the rename has put the file there.
+            let remoteName = try await uploadNameReservations.reserve(base: fileTransfer.path.path!) { proposedName in
+                // A failed check must not read as “free”: that would overwrite an existing file.
+                let exists = try await ConductorUpload.remotePathExists(proposedName) { path in
+                    _ = try await self.stat(path)
                 }
-                proposedName = fileTransfer.path.path + " (\(i + 2))"
+                try checkCancellation()
+                return exists
             }
             guard let remoteName else {
-                throw ConductorFileTransfer.ConductorFileTransferError("Too many iterations to find a valid file name on remote host for upload")
+                throw ConductorFileTransfer.ConductorFileTransferError(
+                    String(localized: "ConductorFileTransfer.NoFreeRemoteName",
+                           defaultValue: "Could not find an unused file name on the remote host for the upload.",
+                           comment: "Error shown when an SSH Integration upload cannot find a file name that is not already taken on the remote host"))
+            }
+            defer {
+                uploadNameReservations.release(remoteName)
             }
             fileTransfer.remoteName = remoteName
             // Rename the tempfile to the proper name
@@ -422,7 +427,7 @@ extension Conductor: ConductorFileTransferDelegate {
                 }
                 fileTransfer.abort()
             } else {
-                fileTransfer.fail(reason: error.localizedDescription)
+                fileTransfer.fail(reason: SSHEndpointException.transferFailureReason(for: error, isDownload: false))
             }
         }
     }

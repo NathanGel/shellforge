@@ -10,9 +10,15 @@
 #import "iTerm2SharedARC-Swift.h"
 #import "iTermAdvancedSettingsModel.h"
 #import "iTermApplication.h"
+#import "iTermController.h"
+#import "iTermVariables.h"
+#import "iTermVariableScope+Global.h"
 #import "NSData+iTerm.h"
 #import "NSFileManager+iTerm.h"
 #import "NSView+RecursiveDescription.h"
+#import "PseudoTerminal.h"
+#import "PTYSession.h"
+#import "PTYTab.h"
 #import <Cocoa/Cocoa.h>
 
 #import <os/log.h>
@@ -95,6 +101,67 @@ static NSString *iTermOSVersionInfo(void) {
     return value ?: @"(nil)";
 }
 
+static NSMutableDictionary<NSString *, NSString *(^)(void)> *DebugLogStateProviders(void) {
+    static NSMutableDictionary<NSString *, NSString *(^)(void)> *providers;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        providers = [NSMutableDictionary dictionary];
+    });
+    return providers;
+}
+
+void iTermRegisterDebugLogStateProvider(NSString *name, NSString *(^provider)(void)) {
+    NSMutableDictionary<NSString *, NSString *(^)(void)> *providers = DebugLogStateProviders();
+    @synchronized (providers) {
+        providers[name] = [provider copy];
+    }
+}
+
+// The registered providers' descriptions, sorted by name.
+static NSString *DebugLogStateString(void) {
+    NSMutableDictionary<NSString *, NSString *(^)(void)> *providers = DebugLogStateProviders();
+    NSDictionary<NSString *, NSString *(^)(void)> *copy;
+    @synchronized (providers) {
+        copy = [providers copy];
+    }
+    NSMutableString *result = [NSMutableString string];
+    for (NSString *name in [copy.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
+        [result appendFormat:@"%@:\n%@\n", name, copy[name]()];
+    }
+    return result;
+}
+
+static void AppendVariables(iTermVariables *variables, NSString *indent, NSMutableString *result) {
+    NSDictionary<NSString *, NSString *> *dict = variables.stringValuedDictionary;
+    for (NSString *name in [dict.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
+        [result appendFormat:@"%@%@=%@\n", indent, name, dict[name]];
+    }
+}
+
+// Every window, tab, and session's variables plus the global variables.
+static NSString *DebugLogVariablesString(void) {
+    NSMutableString *result = [NSMutableString string];
+    [result appendString:@"Global:\n"];
+    for (iTermVariables *variables in [[iTermVariableScope globalsScope] variablesInScopeNamed:nil]) {
+        AppendVariables(variables, @"  ", result);
+    }
+    for (PseudoTerminal *term in [[iTermController sharedInstance] terminals]) {
+        [result appendFormat:@"%@:\n", term];
+        for (iTermVariables *variables in [term.scope variablesInScopeNamed:nil]) {
+            AppendVariables(variables, @"  ", result);
+        }
+        for (PTYTab *tab in term.tabs) {
+            [result appendFormat:@"  %@:\n", tab];
+            AppendVariables(tab.variables, @"    ", result);
+            for (PTYSession *session in tab.sessions) {
+                [result appendFormat:@"    %@:\n", session];
+                AppendVariables(session.variables, @"      ", result);
+            }
+        }
+    }
+    return result;
+}
+
 NSString *iTermDebugLogHeaderString(void) {
     NSMutableString *windows = [NSMutableString string];
     for (NSWindow *window in [[NSApplication sharedApplication] windows]) {
@@ -114,6 +181,8 @@ NSString *iTermDebugLogHeaderString(void) {
                         @"Windows: %@\n"
                         @"Ordered windows: %@\n"
                         @"Pinned messages: %@\n"
+                        @"State: %@\n"
+                        @"Variables:\n%@\n"
                         @"------ END HEADER ------\n\n",
 
                         [[[NSBundle mainBundle] infoDictionary] objectForKey:@"CFBundleVersion"],
@@ -125,7 +194,9 @@ NSString *iTermDebugLogHeaderString(void) {
                         [[NSApplication sharedApplication] keyWindow],
                         windows,
                         [(iTermApplication *)NSApp orderedWindowsPlusAllHotkeyPanels],
-                        pinnedMessages];
+                        pinnedMessages,
+                        DebugLogStateString(),
+                        DebugLogVariablesString()];
     return header;
 }
 
@@ -142,11 +213,15 @@ static NSString *DebugLogFooterString(void) {
           @"------ BEGIN FOOTER -----\n"
           @"Screens: %@\n"
           @"Windows: %@\n"
-          @"Ordered windows: %@\n",
+          @"Ordered windows: %@\n"
+          @"State: %@\n"
+          @"Variables:\n%@\n",
 
           iTermScreensInfo(),
           windows,
-          [(iTermApplication *)NSApp orderedWindowsPlusAllHotkeyPanels]];
+          [(iTermApplication *)NSApp orderedWindowsPlusAllHotkeyPanels],
+          DebugLogStateString(),
+          DebugLogVariablesString()];
 }
 
 // Replaces unpaired UTF-16 surrogates with U+FFFD. UTF-8 cannot represent a lone
@@ -422,14 +497,16 @@ int DebugLogImpl(const char *file, int line, const char *function, NSString* val
     }
 
     const char *thread;
+    // A joined main queue is marked safe for mutable state, and a joined mutation queue is marked
+    // safe for main-queue state.
     if ([iTermGCD onMainQueue]) {
-        if ([iTermGCD joined]) {
+        if ([iTermGCD isMutationQueueSafe]) {
             thread = "joined";
         } else {
             thread = "main";
         }
     } else if ([iTermGCD onMutationQueue]) {
-        if ([iTermGCD joined]) {
+        if ([iTermGCD isMainQueueSafe]) {
             thread = "joined";
         } else {
             thread = "mut";

@@ -2266,3 +2266,78 @@ final class AITitleWindowDegradeTests: XCTestCase {
                        "the AI tab title still applies, with the Job suffix")
     }
 }
+
+// With “Support basic HTML tags in tab titles” on, tab and pane titles render the
+// tags, but the native window title is plain text, so every window-title source
+// must arrive with its tags stripped.
+final class WindowTitleHTMLTests: XCTestCase {
+    private var savedHTMLTabTitles = false
+
+    override func setUp() {
+        super.setUp()
+        savedHTMLTabTitles = iTermPreferences.bool(forKey: kPreferenceKeyHTMLTabTitles)
+        iTermPreferences.setBool(true, forKey: kPreferenceKeyHTMLTabTitles)
+    }
+
+    override func tearDown() {
+        iTermPreferences.setBool(savedHTMLTabTitles, forKey: kPreferenceKeyHTMLTabTitles)
+        super.tearDown()
+    }
+
+    private func title(isWindow: Bool,
+                       windowName: String?,
+                       tmuxPane: String? = nil,
+                       tmuxWindowTitle: String? = nil,
+                       profileName: String = "Prof",
+                       components: iTermTitleComponents = .sessionName) -> String {
+        return iTermSessionTitleBuiltInFunction.title(
+            forSessionName: "the-session-name",
+            profileName: profileName,
+            job: "", commandLine: "", pwd: "", tty: "", user: "", host: "",
+            aiTitle: nil, homeDirectory: nil, tmuxPane: tmuxPane,
+            iconName: nil, windowName: windowName,
+            tmuxWindowName: nil, tmuxWindowTitle: tmuxWindowTitle,
+            rows: 0, columns: 0,
+            components: components, isWindowTitle: isWindow)
+    }
+
+    func testOSCWindowNameIsStrippedForWindowTitle() {
+        XCTAssertEqual(title(isWindow: true, windowName: "<b>bold</b> <i>it</i>"), "bold it")
+    }
+
+    func testTmuxWindowTitleIsStrippedForWindowTitle() {
+        XCTAssertEqual(title(isWindow: true,
+                             windowName: nil,
+                             tmuxPane: "host",
+                             tmuxWindowTitle: "<u>tmux</u>"),
+                       "tmux")
+    }
+
+    func testTabTitleKeepsTagsForTheTabBarToRender() {
+        XCTAssertEqual(title(isWindow: false, windowName: nil, tmuxPane: "<b>pane</b>"), "<b>pane</b>")
+    }
+
+    func testProfileNameIsStrippedForWindowTitle() {
+        XCTAssertEqual(title(isWindow: true,
+                             windowName: nil,
+                             profileName: "<b>Work</b>",
+                             components: .profileName),
+                       "Work")
+    }
+
+    func testProfileAndSessionNameIsStrippedForWindowTitle() {
+        XCTAssertEqual(title(isWindow: true,
+                             windowName: nil,
+                             profileName: "<b>Work</b>",
+                             components: .profileAndSessionName),
+                       "Work: the-session-name")
+    }
+
+    func testProfileNameKeepsTagsForTabTitle() {
+        XCTAssertEqual(title(isWindow: false,
+                             windowName: nil,
+                             profileName: "<b>Work</b>",
+                             components: .profileName),
+                       "<b>Work</b>")
+    }
+}

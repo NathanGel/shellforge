@@ -18,8 +18,11 @@
 + (instancetype)sharedInstance;
 - (void)removeItem:(TransferrableFileMenuItemViewController *)viewController;
 - (void)animateImage:(NSImage *)image intoDownloadsMenuFromPoint:(NSPoint)point onScreen:(NSScreen *)screen;
+// These act on a later turn of the run loop, never on the caller's stack.
 - (void)openDownloadsMenu;
 - (void)openUploadsMenu;
+// Refresh the menu bar once per launch after adding a transfer menu on macOS 27.
+- (void)refreshMenuBarIfNeeded;
 
 #pragma mark - Calls made by subclasses of TransferrableFile
 
@@ -53,4 +56,14 @@
 - (void)removeAllDownloads;
 - (void)removeAllUploads;
 
+@end
+
+// Exposed for tests.
+@interface FileTransferManager (Testing)
+- (void)setPasswordManagerCompletionForTesting:(void (^)(NSString *password))completion;
+- (void)iTermPasswordManagerEnterPassword:(NSString *)password broadcast:(BOOL)broadcast;
+- (void)iTermPasswordManagerDidClose;
++ (void)setOpensMenusForTesting:(BOOL)opensMenus;
+// Whether the Downloads or Uploads menu lists the transfer.
+- (BOOL)isListingTransferrableFileForTesting:(TransferrableFile *)transferrableFile;
 @end

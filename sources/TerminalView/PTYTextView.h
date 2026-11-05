@@ -114,6 +114,8 @@ extern const CGFloat PTYTextViewMarginClickGraceWidth;
 - (void)sendText:(NSString *)text escaping:(iTermSendTextEscaping)escaping;
 - (void)openAdvancedPasteWithText:(NSString *)text escaping:(iTermSendTextEscaping)escaping;
 - (void)sendTextSlowly:(NSString *)text;
+// Stops typing what sendTextSlowly: was given and has not typed yet. Other pastes go on.
+- (void)stopSendingTextSlowly;
 - (void)textViewSelectionDidChangeToTruncatedString:(NSString *)maybeSelection;
 - (void)launchCoprocessWithCommand:(NSString *)command;
 - (void)insertText:(NSString *)string;
@@ -340,6 +342,7 @@ extern const CGFloat PTYTextViewMarginClickGraceWidth;
 - (void)textViewShowFindPanel;
 - (void)textViewDidAddOrRemovePorthole;
 - (NSString *)textViewCurrentSSHSessionName;
+- (BOOL)textViewCanDisconnectSSH;
 - (void)textViewDisconnectSSH;
 // Returns whether the remote host currently has an it2-over-ssh grant (menu checkmark), and
 // sets *available to whether the menu item should be enabled at all (an it2-capable ssh

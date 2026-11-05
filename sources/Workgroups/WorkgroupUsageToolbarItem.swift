@@ -46,6 +46,16 @@ struct WorkgroupUsageReport: Decodable {
     let reportable: Bool?
 }
 
+// What running the usage command produced.
+struct WorkgroupUsageRunResult {
+    // Everything the command wrote to stdout, or nil if it wrote nothing.
+    var output: Data?
+    // The command's exit status. Meaningless when it timed out.
+    var exitStatus: Int32
+    // True when the command was killed for running past the timeout.
+    var timedOut: Bool
+}
+
 // A thin determinate progress bar drawn with CALayers. No VT100
 // coupling; just a track with a fractional fill.
 private final class WorkgroupUsageBarView: NSView {
@@ -188,6 +198,21 @@ class WorkgroupUsageToolbarItem: SessionToolbarGenericView {
     // is still running (a slow claude invocation must not pile up).
     private var runInFlight = false
 
+    /// Supplies the environment for the usage command. Calls its completion exactly once, on
+    /// the main thread.
+    typealias EnvironmentProvider = (_ completion: @escaping ([String: String]) -> Void) -> Void
+    /// Runs the usage command synchronously off the main thread and reports what it did.
+    typealias CommandRunner = (_ launchPath: String,
+                               _ arguments: [String],
+                               _ environment: [String: String],
+                               _ timeout: TimeInterval) -> WorkgroupUsageRunResult
+    private let environmentProvider: EnvironmentProvider
+    private let commandRunner: CommandRunner
+
+    // How long the usage command may run before it's killed. `claude -p /usage` takes
+    // around ten seconds and much longer on a busy machine.
+    private static let commandTimeout: TimeInterval = 40
+
     // iTerm2's convention for flagging an error in the UI.
     private static let errorPrefix = "🐞 "
 
@@ -203,8 +228,12 @@ class WorkgroupUsageToolbarItem: SessionToolbarGenericView {
          priority: Int,
          provider: WorkgroupUsageProvider,
          command: String,
-         intervalSeconds: Double) {
+         intervalSeconds: Double,
+         environmentProvider: @escaping EnvironmentProvider = WorkgroupUsageToolbarItem.shellEnvironment,
+         commandRunner: @escaping CommandRunner = WorkgroupUsageToolbarItem.runCommand) {
         self.provider = provider
+        self.environmentProvider = environmentProvider
+        self.commandRunner = commandRunner
         self.command = command
         self.intervalSeconds = max(5, intervalSeconds)
         self.container = WorkgroupUsageContainerView(frame: .zero)
@@ -221,9 +250,18 @@ class WorkgroupUsageToolbarItem: SessionToolbarGenericView {
         messageLabel.isBordered = false
         messageLabel.isEditable = false
         messageLabel.isSelectable = false
-        messageLabel.stringValue = String(localized: "WorkgroupUsage.Loading",
-                                           defaultValue: "AI usage…",
-                                           comment: "Placeholder shown in the AI usage toolbar item before the first result arrives")
+        if bundledScriptNameIfUsed != nil {
+            messageLabel.stringValue = String(localized: "WorkgroupUsage.CheckingClaude",
+                                              defaultValue: "Checking Claude usage…",
+                                              comment: "Placeholder shown in the AI usage toolbar item while waiting for Claude Code to report usage for the first time")
+            container.toolTip = String(localized: "WorkgroupUsage.CheckingClaudeTooltip",
+                                       defaultValue: "iTerm2 is asking Claude Code for your usage. This can take several seconds.",
+                                       comment: "Tooltip on the AI usage toolbar item while waiting for Claude Code to report usage for the first time")
+        } else {
+            messageLabel.stringValue = String(localized: "WorkgroupUsage.RunningCommand",
+                                              defaultValue: "Running usage command…",
+                                              comment: "Placeholder shown in the AI usage toolbar item while waiting for the user’s custom usage command to finish for the first time")
+        }
         container.addSubview(messageLabel)
 
         container.onWindowChange = { [weak self] window in
@@ -262,9 +300,16 @@ class WorkgroupUsageToolbarItem: SessionToolbarGenericView {
 
         let n = CGFloat(rows.count)
         let totalGap = Self.rowGap * max(0, n - 1)
-        let rowHeight = max(0, (height - totalGap) / n)
+        // Rows get their natural height when they fit and share the space
+        // evenly when they don't. The stack is centered so a short list
+        // doesn't leave a hole between rows.
+        let naturalRowHeight = rows.map {
+            max($0.label.fittingSize.height, $0.percent.fittingSize.height, Self.barHeight)
+        }.max() ?? 0
+        let rowHeight = max(0, min(naturalRowHeight, (height - totalGap) / n))
+        let stackHeight = rowHeight * n + totalGap
         // Lay rows top-down.
-        var y = height - rowHeight
+        var y = (height + stackHeight) / 2.0 - rowHeight
         let barX = Self.hInset + Self.labelWidth + Self.hGap
         let barW = max(0, width - barX - Self.hGap - Self.percentWidth - Self.hInset)
         for row in rows {
@@ -307,7 +352,8 @@ class WorkgroupUsageToolbarItem: SessionToolbarGenericView {
         timer = nil
     }
 
-    private func tick() {
+    // Internal rather than private so tests can trigger a run without a window or timer.
+    func tick() {
         guard !runInFlight else {
             DLog("WorkgroupUsage: skipping tick, previous run still in flight")
             return
@@ -327,21 +373,107 @@ class WorkgroupUsageToolbarItem: SessionToolbarGenericView {
             return
         }
         runInFlight = true
-        queue.async { [weak self] in
-            let data = WorkgroupUsageToolbarItem.runCommand(
-                launchPath: invocation.launchPath,
-                arguments: invocation.arguments,
-                timeout: 20)
-            let report = WorkgroupUsageToolbarItem.decode(data: data)
-            DispatchQueue.main.async {
-                guard let self else { return }
-                self.runInFlight = false
-                self.apply(report: report)
+        let bundledScriptName = bundledScriptNameIfUsed
+        let identifier = self.identifier
+        // The environment may take a while the first time (it reads PATH from the user's
+        // shell), but it arrives asynchronously so the main thread never waits.
+        environmentProvider { [weak self] environment in
+            guard let self else { return }
+            let runner = self.commandRunner
+            self.queue.async { [weak self] in
+                DLog("WorkgroupUsage[\(identifier)]: running \(invocation.launchPath) \(invocation.arguments)")
+                let start = ProcessInfo.processInfo.systemUptime
+                let result = runner(invocation.launchPath, invocation.arguments, environment, Self.commandTimeout)
+                let elapsed = ProcessInfo.processInfo.systemUptime - start
+                let report = WorkgroupUsageToolbarItem.decode(result: result,
+                                                              bundledScriptName: bundledScriptName)
+                Self.logOutcome(identifier: identifier,
+                                result: result,
+                                elapsed: elapsed,
+                                report: report)
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.runInFlight = false
+                    self.apply(report: report)
+                }
             }
         }
     }
 
+    // MARK: - Environment
+
+    // iTerm2's own environment, with PATH replaced by the user's shell PATH. Launched from
+    // the Dock, iTerm2's PATH is only /usr/bin:/bin:/usr/sbin:/sbin, so `claude` installed
+    // in ~/.local/bin or /opt/homebrew/bin would not be found. Uses the same cached shell
+    // PATH lookup as the password manager adapters. It doesn't call prefetch(), so it never
+    // starts a refresh of a cached PATH (that would run the user's login shell periodically).
+    // The same lookup reports CLAUDE_CONFIG_DIR; see usageEnvironment.
+    static func shellEnvironment(_ completion: @escaping ([String: String]) -> Void) {
+        shellEnvironment(from: AdapterShellEnvironment.shared,
+                         base: ProcessInfo.processInfo.environment,
+                         recordedClaudeConfigDir: iTermUserDefaults.claudeCodeConfigDirPath,
+                         completion: completion)
+    }
+
+    static func shellEnvironment(from shell: AdapterShellEnvironment,
+                                 base: [String: String],
+                                 recordedClaudeConfigDir: String?,
+                                 completion: @escaping ([String: String]) -> Void) {
+        shell.shellValues { values in
+            completion(Self.usageEnvironment(base: base,
+                                             shellValues: values,
+                                             recordedClaudeConfigDir: recordedClaudeConfigDir))
+        }
+    }
+
+    // ~/.local/bin is where Claude Code's native installer puts claude. It's appended when
+    // missing because the shell PATH fallback (used when the shell can't report PATH) lacks it.
+    //
+    // CLAUDE_CONFIG_DIR selects the Claude Code account, so it must match what `claude` in a
+    // terminal session would use. In order of precedence:
+    // 1. The value the user's shell startup files export. They run after the environment a
+    //    session inherits from iTerm2, so in a terminal this one wins. (The lookup's shell
+    //    doesn't inherit iTerm2's environment, so a profile that only sets a default when the
+    //    variable is unset can differ from a session here; that case is rare.)
+    // 2. A value in iTerm2's own environment, which sessions inherit when the startup files
+    //    don't set one.
+    // 3. Only when the shell couldn't be read: the directory recorded when the Claude Code
+    //    integration was installed, which came from the same shell lookup. When the shell was
+    //    read and doesn't set it, the recorded value is stale and is not used.
+    static func usageEnvironment(base: [String: String],
+                                 shellValues: AdapterShellEnvironment.ShellValues,
+                                 recordedClaudeConfigDir: String?) -> [String: String] {
+        var result = base
+        let home = base["HOME"] ?? NSHomeDirectory()
+        let localBin = (home as NSString).appendingPathComponent(".local/bin")
+        var directories = shellValues.path.components(separatedBy: ":").filter { !$0.isEmpty }
+        if !directories.contains(localBin) {
+            directories.append(localBin)
+        }
+        result["PATH"] = directories.joined(separator: ":")
+
+        let configDirKey = "CLAUDE_CONFIG_DIR"
+        if let shellConfigDir = shellValues.claudeConfigDir, !shellConfigDir.isEmpty {
+            result[configDirKey] = shellConfigDir
+        } else if base[configDirKey]?.isEmpty ?? true,
+                  !shellValues.reportedByShell,
+                  let recordedClaudeConfigDir,
+                  !recordedClaudeConfigDir.isEmpty {
+            result[configDirKey] = recordedClaudeConfigDir
+        }
+        DLog("WorkgroupUsage: CLAUDE_CONFIG_DIR=\(result[configDirKey] ?? "(unset)")")
+        return result
+    }
+
     // MARK: - Command
+
+    // The bundled script's file name when it's what runs, or nil for a custom command.
+    private var bundledScriptNameIfUsed: String? {
+        guard command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        return provider.bundledScriptResourceName + ".sh"
+    }
 
     // Returns the command to run, or nil when the provider's bundled
     // script is missing from the app bundle (a packaging regression the
@@ -361,28 +493,46 @@ class WorkgroupUsageToolbarItem: SessionToolbarGenericView {
         return ("/bin/sh", ["-c", trimmed])
     }
 
-    // Runs the command with a hard timeout and returns its stdout, or nil
-    // on failure. Uses the shared iTermBufferedCommandRunner so timeout,
+    // Runs the command with a hard timeout and reports its stdout, exit
+    // status, and whether it timed out. Uses the shared iTermBufferedCommandRunner so timeout,
     // stderr draining, and SIGKILL escalation live in one place. stderr is
     // discarded (routed to /dev/null), which both avoids an unread pipe
     // filling and deadlocking the read, and keeps a stray warning from
     // corrupting the JSON on stdout; the bundled script already folds
     // claude's stderr into its own diagnostic field.
-    private static func runCommand(launchPath: String,
+    static func runCommand(launchPath: String,
+                           arguments: [String],
+                           environment: [String: String],
+                           timeout: TimeInterval) -> WorkgroupUsageRunResult {
+        let runner = makeRunner(launchPath: launchPath,
+                                arguments: arguments,
+                                environment: environment)
+        registerActiveRunner(runner)
+        defer { unregisterActiveRunner(runner) }
+        let status = runner.blockingRun(withTimeout: timeout)
+        return WorkgroupUsageRunResult(output: runner.output,
+                                       exitStatus: status,
+                                       timedOut: runner.timedOut)
+    }
+
+    private static func makeRunner(launchPath: String,
                                    arguments: [String],
-                                   timeout: TimeInterval) -> Data? {
+                                   environment: [String: String]) -> iTermBufferedCommandRunner {
         let runner = iTermBufferedCommandRunner(command: launchPath,
                                                 withArguments: arguments,
                                                 path: "/")
+        runner.environment = environment
         runner.discardStandardError = true
         // Bound captured output so a runaway custom command can't grow
         // memory unbounded (1 MiB dwarfs any real usage JSON).
-        runner.maximumOutputSize = NSNumber(value: 1024 * 1024)
-
-        registerActiveRunner(runner)
-        defer { unregisterActiveRunner(runner) }
-        _ = runner.blockingRun(withTimeout: timeout)
-        return runner.output
+        runner.maximumOutputSize = NSNumber(value: maximumOutputSize)
+        // Output past the cap can't be valid JSON, so stop the command there instead of
+        // reading until the timeout.
+        runner.terminateWhenOutputExceedsMaximum = true
+        // A timeout (or the cap) kills the command's children too, so one left holding
+        // stdout open can't keep the run going until it exits on its own.
+        runner.terminatesProcessGroup = true
+        return runner
     }
 
     // MARK: - In-flight process registry
@@ -426,14 +576,109 @@ class WorkgroupUsageToolbarItem: SessionToolbarGenericView {
         activeRunnersLock.unlock()
     }
 
-    private static func decode(data: Data?) -> WorkgroupUsageReport {
-        guard let data, !data.isEmpty else {
-            // No output at all. Could be transient (command still warming
-            // up, a slow claude launch), so don't nag the user to report.
+    static let maximumOutputSize = 1024 * 1024
+
+    // The most of the report the alert shows. A runaway command's diagnostic
+    // can be a megabyte, which made the sheet taller than the screen with its
+    // buttons out of reach. The clipboard still gets the whole report.
+    static let maximumDisplayedReportLength = 2000
+
+    // A character cap alone isn't enough: 2000 characters of `yes` output is
+    // a thousand lines. Also cap the rows the text takes up, counting a long
+    // line as the several rows it wraps to.
+    static let maximumDisplayedReportRows = 30
+    static let assumedCharactersPerRow = 80
+
+    static func displayedReport(_ report: String) -> String {
+        var rows = 0
+        var kept = [Substring]()
+        // Nothing past the character cap is shown, so don't split a megabyte into lines.
+        let head = report.prefix(maximumDisplayedReportLength)
+        var truncated = head.endIndex != report.endIndex
+        for line in head.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline) {
+            let lineRows = max(1, (line.count + assumedCharactersPerRow - 1) / assumedCharactersPerRow)
+            if rows + lineRows > maximumDisplayedReportRows {
+                let remainingRows = maximumDisplayedReportRows - rows
+                if remainingRows > 0 {
+                    kept.append(line.prefix(remainingRows * assumedCharactersPerRow))
+                }
+                truncated = true
+                break
+            }
+            rows += lineRows
+            kept.append(line)
+        }
+        guard truncated else {
+            return report
+        }
+        return kept.joined(separator: "\n")
+            + "\n\n"
+            + String(localized: "WorkgroupUsage.AlertReportTruncated",
+                     defaultValue: "…(truncated; click “Report a Bug” to copy the full report)",
+                     comment: "Appended to the AI usage problem report shown in an alert when it was shortened to fit; “Report a Bug” is the title of a button in the same alert")
+    }
+
+    // Failures go to RLog so a debug log taken after the fact shows why the item
+    // showed an error. Once a minute per item is cheap enough to always log.
+    private static func logOutcome(identifier: String,
+                                   result: WorkgroupUsageRunResult,
+                                   elapsed: TimeInterval,
+                                   report: WorkgroupUsageReport) {
+        let timing = String(format: "%.1fs", elapsed)
+        let bytes = result.output?.count ?? 0
+        if !report.bars.isEmpty {
+            DLog("WorkgroupUsage[\(identifier)]: \(report.bars.count) bars after \(timing), status=\(result.exitStatus)")
+            return
+        }
+        RLog("WorkgroupUsage[\(identifier)]: no bars after \(timing). timedOut=\(result.timedOut) status=\(result.exitStatus) bytes=\(bytes) error=\(report.error ?? "(none)") reportable=\(report.reportable ?? false)")
+    }
+
+    // `bundledScriptName` is nil when a custom command ran.
+    static func decode(result: WorkgroupUsageRunResult,
+                       bundledScriptName: String?) -> WorkgroupUsageReport {
+        // The timeout can elapse after the command exited but before the
+        // runner finished reading its output, so a timed-out run may still
+        // carry a complete report. Use it when it decodes.
+        if result.timedOut,
+           let data = result.output,
+           let report = try? JSONDecoder().decode(WorkgroupUsageReport.self, from: data) {
+            return report
+        }
+        if result.timedOut {
+            // Usually a slow claude on a busy machine. Expected and
+            // transient, so don't ask the user to report it.
+            let error = bundledScriptName != nil
+                ? String(localized: "WorkgroupUsage.ClaudeTimedOut",
+                         defaultValue: "Claude Code took too long to report usage",
+                         comment: "AI usage toolbar item message when `claude -p /usage` ran past the time limit and was stopped")
+                : String(localized: "WorkgroupUsage.CommandTimedOut",
+                         defaultValue: "The AI usage command took too long",
+                         comment: "AI usage toolbar item message when the user’s custom usage command ran past the time limit and was stopped")
             return WorkgroupUsageReport(bars: [],
-                                        error: String(localized: "WorkgroupUsage.NoOutput",
-                                                      defaultValue: "No usage data",
-                                                      comment: "AI usage toolbar item message when the command produced no output"),
+                                        error: error,
+                                        diagnostic: nil,
+                                        reportable: false)
+        }
+        guard let data = result.output, !data.isEmpty else {
+            if let bundledScriptName {
+                // The bundled script prints JSON on every path, so
+                // finishing without any output means it crashed or was
+                // killed by something other than our timeout.
+                return WorkgroupUsageReport(
+                    bars: [],
+                    error: String(localized: "WorkgroupUsage.HelperNoOutput",
+                                  defaultValue: "The AI usage helper stopped without reporting usage",
+                                  comment: "AI usage toolbar item message when iTerm2’s bundled usage script exited without printing anything"),
+                    diagnostic: "\(bundledScriptName) exited with status \(result.exitStatus) and wrote nothing to stdout",
+                    reportable: true)
+            }
+            // A custom command's empty output is the user's to fix, so
+            // tell them how it exited rather than offering a bug report.
+            let error = String(localized: "WorkgroupUsage.CommandNoOutput",
+                               defaultValue: "The AI usage command exited with status \(result.exitStatus) without printing anything",
+                               comment: "AI usage toolbar item message when the user’s custom usage command printed nothing; the placeholder is its exit status")
+            return WorkgroupUsageReport(bars: [],
+                                        error: error,
                                         diagnostic: nil,
                                         reportable: false)
         }
@@ -444,7 +689,12 @@ class WorkgroupUsageToolbarItem: SessionToolbarGenericView {
             // That's a real defect (our shipped script, or a user's custom
             // command) worth reporting, so surface the raw bytes.
             DLog("WorkgroupUsage: JSON decode failed: \(error)")
-            let raw = String(data: data, encoding: .utf8)
+            var raw = String(decoding: data, as: UTF8.self)
+            if data.count >= maximumOutputSize {
+                // The runner stopped the command at the cap, so say why the
+                // output is unusable. English only: this is for the developer.
+                raw = "(The command’s output was cut off at \(maximumOutputSize) bytes.)\n" + raw
+            }
             return WorkgroupUsageReport(bars: [],
                                         error: String(localized: "WorkgroupUsage.BadOutput",
                                                       defaultValue: "Unreadable usage data",
@@ -543,7 +793,7 @@ class WorkgroupUsageToolbarItem: SessionToolbarGenericView {
         warning.heading = summary
         warning.title = String(localized: "WorkgroupUsage.ReportGuidanceIntro",
                                defaultValue: "iTerm2 couldn’t read the AI usage report. Updating iTerm2 to the latest version may fix this. If you’re already up to date, click “Report a Bug” to open a pre-filled report. The full details below are also copied to your clipboard.",
-                               comment: "Guidance shown when the AI usage format couldn’t be parsed") + "\n\n" + report
+                               comment: "Guidance shown when the AI usage format couldn’t be parsed") + "\n\n" + Self.displayedReport(report)
         let reportBug = String(localized: "WorkgroupUsage.ReportBug",
                                defaultValue: "Report a Bug",
                                comment: "Button that opens a pre-filled bug report and copies the details to the clipboard")

@@ -77,6 +77,7 @@ help:
 	@echo "  make run          Build and launch Development build"
 	@echo "  make run-keychain Signed dev build w/ keychain entitlement (test migration)"
 	@echo "  make purge-keychain-test  Wipe the app's data-protection keychain (test reset)"
+	@echo "  make reset-suite  Erase the dev suite's settings, keeping the dev-only advanced settings on"
 	@echo "  make watch        Build and launch with interactive r=reload q=quit loop"
 	@echo "  make test         Run unit tests"
 	@echo "  make install      Build Deployment and install to /Applications"
@@ -309,6 +310,13 @@ install-hooks:
 	git config core.hooksPath tools/git-hooks
 	@echo "Git hooks enabled (core.hooksPath=tools/git-hooks)."
 
+# Every configuration but Development builds its intermediates in a folder of its own.
+# Xcode doesn't separate some of them (generated module maps and precompiled headers) by
+# configuration, so building one configuration leaves another's precompiled header stale
+# and its next build fails. Development keeps Xcode's default, which Xcode and the tests
+# also use.
+intermediates = $(BUILD_DIR)/Intermediates-$(1).noindex
+
 Development:
 	echo "Using PATH for build: $(PATH)"
 	cp plists/dev-iTerm2.plist plists/iTerm2.plist
@@ -317,18 +325,18 @@ Development:
 
 Beta:
 	cp plists/beta-iTerm2.plist plists/iTerm2.plist
-	xcodebuild -scheme iTerm2 -configuration Beta -destination 'platform=macOS' -skipPackagePluginValidation $(SIGNING_FLAGS) $(ARCH_FLAGS) SYMROOT="$(BUILD_DIR)" ENABLE_ADDRESS_SANITIZER=NO && \
+	xcodebuild -scheme iTerm2 -configuration Beta -destination 'platform=macOS' -skipPackagePluginValidation $(SIGNING_FLAGS) $(ARCH_FLAGS) SYMROOT="$(BUILD_DIR)" OBJROOT="$(call intermediates,Beta)" ENABLE_ADDRESS_SANITIZER=NO && \
 	chmod -R go+rX $(BUILD_DIR)/Beta
-	tools/extract_strings.sh Beta "$(BUILD_DIR)"
+	OBJROOT="$(call intermediates,Beta)" tools/extract_strings.sh Beta "$(BUILD_DIR)"
 
 Deployment:
-	xcodebuild -scheme iTerm2 -configuration Deployment -destination 'platform=macOS' -skipPackagePluginValidation $(SIGNING_FLAGS) $(ARCH_FLAGS) SYMROOT="$(BUILD_DIR)" ENABLE_ADDRESS_SANITIZER=NO && \
+	xcodebuild -scheme iTerm2 -configuration Deployment -destination 'platform=macOS' -skipPackagePluginValidation $(SIGNING_FLAGS) $(ARCH_FLAGS) SYMROOT="$(BUILD_DIR)" OBJROOT="$(call intermediates,Deployment)" ENABLE_ADDRESS_SANITIZER=NO && \
 	chmod -R go+rX $(BUILD_DIR)/Deployment
-	tools/extract_strings.sh Deployment "$(BUILD_DIR)"
+	OBJROOT="$(call intermediates,Deployment)" tools/extract_strings.sh Deployment "$(BUILD_DIR)"
 
 Nightly: force
 	cp plists/nightly-iTerm2.plist plists/iTerm2.plist
-	xcodebuild -scheme iTerm2 -configuration Nightly -destination 'platform=macOS' -skipPackagePluginValidation $(SIGNING_FLAGS) $(ARCH_FLAGS) SYMROOT="$(BUILD_DIR)" ENABLE_ADDRESS_SANITIZER=NO
+	xcodebuild -scheme iTerm2 -configuration Nightly -destination 'platform=macOS' -skipPackagePluginValidation $(SIGNING_FLAGS) $(ARCH_FLAGS) SYMROOT="$(BUILD_DIR)" OBJROOT="$(call intermediates,Nightly)" ENABLE_ADDRESS_SANITIZER=NO
 	chmod -R go+rX $(BUILD_DIR)/Nightly
 
 companion-iphone: force
@@ -342,12 +350,42 @@ open: Development
 run: Development
 	$(MAKE) run-nobuild
 
+# Like `run`, but builds the Deployment configuration signed as a release is (Developer ID,
+# hardened runtime, release entitlements and provisioning profile). Use it to test things
+# that depend on the release signature, such as reading login keychain items that release
+# builds saved without macOS asking about each one. It uses the dev Info.plist, so it checks
+# the nightly appcast rather than the release one, and skips the string extraction the
+# Deployment target runs. A debugger can't attach. The signed app is launched with `open`,
+# since macOS kills a signed app that is exec'd directly.
+run-deployment: ingest-catalogs
+	cp plists/dev-iTerm2.plist plists/iTerm2.plist
+	xcodebuild -scheme iTerm2 -configuration Deployment -destination 'platform=macOS' -skipPackagePluginValidation $(ARCH_FLAGS) SYMROOT="$(BUILD_DIR)" OBJROOT="$(call intermediates,Deployment)" ENABLE_ADDRESS_SANITIZER=NO
+	open -W -n "$(BUILD_DIR)/Deployment/iTerm2.app" --args -suite $(SUITE) $(if $(LANGUAGE),-AppleLanguages '($(LANGUAGE))')
+
 run-nobuild: force
 	"$(BUILD_DIR)/Development/iTerm2.app/Contents/MacOS/iTerm2" -suite $(SUITE) $(if $(LANGUAGE),-AppleLanguages '($(LANGUAGE))') & \
 	pid=$$!; \
 	trap 'kill $$pid 2>/dev/null' INT TERM; \
 	( sleep 1 && osascript -e "tell application \"System Events\" to set frontmost of (first process whose unix id is $$pid) to true" >/dev/null 2>&1 ) & \
 	wait $$pid
+
+# Erase every setting of this checkout's suite (the main and .private defaults
+# domains for $(SUITE)) and turn back on the two advanced settings a dev build
+# should always have: SetIT2AppPath, so the it2 CLI asks this instance for its
+# cookie rather than whichever iTerm2 owns the bundle identifier, and
+# AiChatRawWireLogging. The suite must not be running: cfprefsd would hand the
+# live instance's cached settings straight back on quit. Advanced-setting keys
+# are the setting names with the first letter capitalized.
+reset-suite: force
+	@if pgrep -f -- "-suite $(SUITE)( |$$)" >/dev/null; then \
+	  echo "reset-suite: an iTerm2 with -suite $(SUITE) is running; quit it first" >&2; \
+	  exit 1; \
+	fi
+	-defaults delete "$(SUITE)" 2>/dev/null
+	-defaults delete "$(SUITE).private" 2>/dev/null
+	defaults write "$(SUITE)" SetIT2AppPath -bool YES
+	defaults write "$(SUITE)" AiChatRawWireLogging -bool YES
+	@echo "reset-suite: $(SUITE) erased; SetIT2AppPath and AiChatRawWireLogging are on"
 
 # Regenerate sources/Localizable.xcstrings from the current sources. Swift strings come
 # from the per-file .stringsdata the build emits (SWIFT_EMIT_LOC_STRINGS=YES); Objective-C
@@ -608,8 +646,11 @@ it2cli: force
 	cd it2cli/ && UNIVERSAL=$(UNIVERSAL) ./build.sh
 	cp it2cli/.build/release/it2 it2cli/bin
 
+# Limit PATH to system directories so SwiftPM clones dependencies with
+# /usr/bin/git. The PATH set at the top of this file puts Homebrew first, and
+# the sandbox blocks Homebrew's git, which fails a build with no cached checkouts.
 paranoid-it2cli: force
-	/usr/bin/sandbox-exec -f deps.sb $(MAKE) BUILD_DIR="$(BUILD_DIR)" it2cli
+	/usr/bin/sandbox-exec -f deps.sb $(MAKE) BUILD_DIR="$(BUILD_DIR)" PATH=/usr/bin:/bin:/usr/sbin:/sbin it2cli
 
 cc-status: force
 	cd cc-status/ && ./build.sh

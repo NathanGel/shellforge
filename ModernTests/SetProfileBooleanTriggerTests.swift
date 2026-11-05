@@ -37,4 +37,103 @@ final class SetProfileBooleanTriggerTests: XCTestCase {
         }
         wait(for: [exp], timeout: 5)
     }
+
+    // F-270: the trigger list row of an unconfigured trigger showed the English literal
+    // “Set Profile Setting” after the (localized) action title. With no setting chosen the row
+    // should show just the title, so there must be no parameter text.
+    func testUnconfiguredTriggerHasNoParameterText() {
+        let dict: [String: Any] = [
+            "action": "iTermSetProfileBooleanTrigger",
+            "parameter": "",
+            "regex": "",
+            "matchType": NSNumber(value: iTermTriggerMatchType.regex.rawValue)
+        ]
+        guard let trigger = Trigger(fromUntrustedDict: dict) else {
+            XCTFail("could not create trigger")
+            return
+        }
+        XCTAssertNil(trigger.paramAttributedString())
+    }
+
+    func testConfiguredTriggerParameterTextNamesOnOrOff() {
+        guard let on = makeTrigger(key: "Prevent Sleep", on: true),
+              let off = makeTrigger(key: "Prevent Sleep", on: false) else {
+            XCTFail("could not create trigger")
+            return
+        }
+        let onText = on.paramAttributedString()?.string ?? ""
+        let offText = off.paramAttributedString()?.string ?? ""
+        XCTAssertTrue(onText.hasSuffix(" to On"), onText)
+        XCTAssertTrue(offText.hasSuffix(" to Off"), offText)
+    }
+
+    // F-270: the picker placeholder, the On/Off popup and the row description were English
+    // literals in every language.
+    func testSetProfileSettingStringsAreTranslated() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let data = try Data(contentsOf: root.appendingPathComponent("xcstrings/Localizable.xcstrings"))
+        let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        let strings = json["strings"] as! [String: Any]
+        let keys = ["ProfileBoolSettingPicker.SelectSetting",
+                    "ProfileBoolSettingPicker.On",
+                    "ProfileBoolSettingPicker.Off",
+                    "Trigger.SetProfileBoolean.SetToOn",
+                    "Trigger.SetProfileBoolean.SetToOff"]
+        for key in keys {
+            let localizations = (strings[key] as? [String: Any])?["localizations"] as? [String: Any]
+            for language in ["de", "ja", "pt-BR", "ru", "zh-Hans"] {
+                let unit = (localizations?[language] as? [String: Any])?["stringUnit"] as? [String: Any]
+                XCTAssertEqual(unit?["state"] as? String, "translated", "\(key) \(language)")
+            }
+        }
+    }
+
+    // F-201: firing the trigger used to crash. Its side effect reaches
+    // PTYSession.setSessionSpecificProfileValues, which reloads the profile and
+    // joins threads. Joining from inside an ordinary (non-paused) side effect
+    // trips the assert in -[VT100Screen performBlockWithJoinedThreads:], so the
+    // side effect must be a paused one. This fires a real trigger through the
+    // real side-effect path and checks, at the moment the delegate is called,
+    // the same condition that assert checks.
+    func testFiredTriggerRunsInSideEffectThatPermitsJoiningThreads() {
+        let harness = TerminalTestHarness()
+        let param = TwoParameterTriggerCodec.convert(tuple: ("Prevent Sleep", "1"))
+        let triggerDict: [String: Any] = [
+            "regex": "ZAPME",
+            "action": "iTermSetProfileBooleanTrigger",
+            "parameter": param
+        ]
+        harness.screen.performBlock(joinedThreads: { _, ms, _ in
+            let config = VT100MutableScreenConfiguration()
+            config.triggerProfileDicts = [triggerDict]
+            ms.setConfig(config)
+        })
+
+        let screen = harness.screen
+        var joinPermitted: Bool?
+        let delivered = expectation(description: "set profile bool side effect")
+        harness.delegate.onSetSessionSpecificProfileBool = { _, _ in
+            let ms: VT100ScreenMutableState = screen.mutableState
+            joinPermitted = !ms.performingSideEffect || ms.performingPausedSideEffect
+            delivered.fulfill()
+        }
+
+        harness.send(Array("ZAPME\r\n".utf8))
+        harness.sync()
+        wait(for: [delivered], timeout: 30)
+
+        XCTAssertEqual(harness.delegate.setSessionSpecificProfileBoolCalls.count, 1)
+        XCTAssertEqual(harness.delegate.setSessionSpecificProfileBoolCalls.first?.key, "Prevent Sleep")
+        XCTAssertEqual(harness.delegate.setSessionSpecificProfileBoolCalls.first?.value, true)
+        XCTAssertEqual(joinPermitted, true,
+                       "Side effect must be paused so the delegate may join threads")
+
+        // The executor must be unpaused afterwards, or later output would stall.
+        harness.send(Array("after\r\n".utf8))
+        harness.sync()
+        let dump: String = harness.screen.compactLineDump()
+        XCTAssertTrue(dump.contains("after"), "Expected later output to be processed: \(dump)")
+    }
 }

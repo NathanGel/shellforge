@@ -66,6 +66,7 @@
 #import "VT100RemoteHost.h"
 #import "VT100Screen.h"
 #import "VT100ScreenMutableState.h"
+#import "VT100ScreenMutableState+Resizing.h"
 #import "VT100Terminal.h"
 #import "iTerm.h"
 #import "iTermAPIHelper.h"
@@ -236,7 +237,12 @@ typedef NS_OPTIONS(NSUInteger, iTermSuppressMakeCurrentTerminal) {
     iTermSuppressMakeCurrentTerminalHotkey = 1 << 0,
 
     // This window is being restored miniaturized and restoration should not reveal it.
-    iTermSuppressMakeCurrentTerminalMiniaturized = 1 << 1
+    iTermSuppressMakeCurrentTerminalMiniaturized = 1 << 1,
+
+    // This window is being created from a saved arrangement. Adding a tab should not reveal it
+    // yet; it is revealed once, after all its tabs are in and its saved frame is applied. See
+    // -endDeferringMakeCurrentTerminal.
+    iTermSuppressMakeCurrentTerminalLoadingArrangement = 1 << 2
 };
 
 typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
@@ -426,6 +432,9 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
     BOOL _anyPaneIsTransparent;
     BOOL _windowDidResize;
     iTermSuppressMakeCurrentTerminal _suppressMakeCurrentTerminal;
+    // Set when adding a tab would have made this window current but
+    // iTermSuppressMakeCurrentTerminalLoadingArrangement deferred it.
+    BOOL _makeCurrentTerminalDeferred;
     BOOL _deallocing;
     iTermOrderEnforcer *_proxyIconOrderEnforcer;
     BOOL _restorableStateInvalid;
@@ -473,6 +482,24 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
     // window away when their panel hides.
     CGFloat _rightExtraWindowGrowthDelta;
     BOOL _excursionPrevented;
+
+    // While a tab drag is in flight every window shows its tab bar (issue 12846). These remember
+    // the window as it was before the drag so it can go back to exactly that frame afterwards,
+    // even if the screen kept it from growing to fit the tab bar (issue 13165).
+    BOOL _sawHideTabBarSuppressedDuringDrag;
+    BOOL _haveFrameBeforeTabDrag;
+    NSRect _frameBeforeTabDrag;
+    // The frame after the drag showed the tab bar. A change after that (e.g., dropping a lone
+    // tab on the desktop moves its window) is not the drag's to undo.
+    NSRect _frameAfterTabDragBegan;
+    NSInteger _numberOfTabsBeforeTabDrag;
+    BOOL _excursionPreventedBeforeTabDrag;
+
+    // Whether the tab bar was visible as of the last updateTabBarControlIsTitlebarAccessory, so
+    // refreshTerminal: can tell whether a settings change showed or hid it. The tab bar control's
+    // hidden flag doesn't say this reliably, nor does tabBarShouldBeVisible while the tab bar is a
+    // titlebar accessory.
+    BOOL _tabBarWasVisibleAtLastUpdate;
 
 }
 
@@ -798,6 +825,8 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
 
     [self updateTabBarStyle];
     self.window.delegate = self;
+    // A window created mid-drag (e.g., by dragging a tab out) has no pre-drag frame to restore.
+    _sawHideTabBarSuppressedDuringDrag = [iTermPreferences hideTabBarSuppressedDuringDrag];
 
     [[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(updateWindowNumberVisibility:)
@@ -1216,8 +1245,23 @@ ITERM_WEAKLY_REFERENCEABLE
         // Every other window type has a title bar to show the name in.
         return nil;
     }
-    if ([iTermPreferences intForKey:kPreferenceKeyTabPosition] != PSMTab_TopTab) {
-        return nil;
+    // Beside top tabs the name takes space from them. Atop a left or right tab
+    // bar it takes nothing as long as something else already holds the strip
+    // there open.
+    BOOL nameIsFree = NO;
+    switch ([iTermPreferences intForKey:kPreferenceKeyTabPosition]) {
+        case PSMTab_TopTab:
+            break;
+        case PSMTab_LeftTab:
+            // The stoplight buttons are always atop a left tab bar.
+            nameIsFree = YES;
+            break;
+        case PSMTab_RightTab:
+            nameIsFree = ([self rootTerminalViewWindowNumberLabelShouldBeVisible] ||
+                          [iTermPreferences boolForKey:kPreferenceKeyEnableProxyIcon]);
+            break;
+        case PSMTab_BottomTab:
+            return nil;
     }
     if (!self.tabBarShouldBeVisible) {
         // The window title is already drawn in place of the tab bar.
@@ -1230,7 +1274,10 @@ ITERM_WEAKLY_REFERENCEABLE
             return nil;
 
         case iTermWindowNameBesideTabsModeWhenCustom:
-            return haveCustomName ? self.scope.windowTitleOverride : nil;
+            if (haveCustomName) {
+                return self.scope.windowTitleOverride;
+            }
+            return nameIsFree ? self.currentSession.nameController.presentationWindowTitle : nil;
 
         case iTermWindowNameBesideTabsModeAlways:
             if (haveCustomName) {
@@ -1807,10 +1854,9 @@ ITERM_WEAKLY_REFERENCEABLE
 
 - (void)closeSession:(PTYSession *)aSession soft:(BOOL)soft {
     RLog(@"closeSession:%@ soft:%@", aSession, @(soft));
-    if (!soft &&
-        [aSession isTmuxClient] &&
-        [[aSession tmuxController] isAttached]) {
-        [[aSession tmuxController] killWindowPane:[aSession tmuxPane]];
+    PTYSession *tmuxPaneSession = [PseudoTerminal tmuxPaneSessionClosedByClosing:aSession];
+    if (!soft && tmuxPaneSession) {
+        [[tmuxPaneSession tmuxController] killWindowPane:[tmuxPaneSession tmuxPane]];
     } else {
         PTYTab *tab = [self tabForSession:aSession];
         if ([[tab sessions] count] == 1) {
@@ -1819,6 +1865,25 @@ ITERM_WEAKLY_REFERENCEABLE
             [aSession terminate];
         }
     }
+}
+
+// The name a close confirmation gives `session`: for a filter's or Instant Replay's stand-in, the
+// session it shows, which is what closes (QA finding F-846).
++ (NSString *)nameForClosingSession:(PTYSession *)session {
+    PTYSession *live = session.liveSession ?: session;
+    return [[live name] removingHTMLFromTabTitleIfNeeded];
+}
+
+// The attached tmux pane's session that closing `session` closes, if any: the session itself, or
+// the one a filter or Instant Replay stand-in shows. Closing a stand-in alone would leave its pane
+// on the server, and a tmux workgroup member's pane there keeps its workgroup half alive (QA
+// finding F-830).
++ (PTYSession *)tmuxPaneSessionClosedByClosing:(PTYSession *)session {
+    PTYSession *live = session.liveSession ?: session;
+    if (live.isTmuxClient && [[live tmuxController] isAttached]) {
+        return live;
+    }
+    return nil;
 }
 
 - (PTYTab *)tabForSession:(PTYSession *)session {
@@ -2318,6 +2383,121 @@ typedef NS_ENUM(NSInteger, iTermCloseSubject) {
     return @"";
 }
 
+// Names of the jobs running in all the live sessions in `sessions`, excluding login.
+- (NSArray<NSString *> *)jobNamesForSessions:(NSArray<PTYSession *> *)sessions {
+    NSMutableArray<NSString *> *names = [NSMutableArray array];
+    for (PTYSession *aSession in sessions) {
+        if ([aSession exited]) {
+            continue;
+        }
+        [names addObjectsFromArray:[aSession.childJobNameTuples mapWithBlock:^id(iTermTuple<NSString *,NSString *> *tuple) {
+            if ([tuple.firstObject isEqualToString:@"login"]) {
+                return nil;
+            }
+            return tuple.secondObject.lastPathComponent;
+        }]];
+    }
+    return names;
+}
+
+// Describes the jobs running in a batch of tabs being closed together. Returns nil if none are
+// running anything. A few jobs get a sentence; more get one bullet per tab.
+- (NSString *)closeConfirmationBodyForTabs:(NSArray<PTYTab *> *)tabs {
+    const NSUInteger maxJobsInSentence = 3;
+    NSMutableArray<NSString *> *allNames = [NSMutableArray array];
+    NSMutableArray<NSString *> *bullets = [NSMutableArray array];
+    PTYTab *lastTabWithJobs = nil;
+    NSUInteger numberOfTabsWithJobs = 0;
+    for (PTYTab *aTab in tabs) {
+        NSArray<NSString *> *names = [self jobNamesForSessions:aTab.sessions];
+        if (names.count == 0) {
+            continue;
+        }
+        numberOfTabsWithJobs += 1;
+        lastTabWithJobs = aTab;
+        [allNames addObjectsFromArray:names];
+        NSString *line = [NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"PseudoTerminal.CloseBody.Tabs.Bullet", nil, [NSBundle mainBundle], @"Tab #%1$d: %2$@", @"One line in a list of tabs being closed and the jobs each is running; %1$d is the tab number and %2$@ is its job list"),
+                          aTab.tabNumber,
+                          [[names countedInstancesStrings] componentsJoinedWithOxfordComma]];
+        // Localization unneeded
+        [bullets addObject:[@"• " stringByAppendingString:line]];
+    }
+    if (allNames.count == 0) {
+        return nil;
+    }
+    NSArray<NSString *> *sortedNames = [allNames countedInstancesStrings];
+    if (sortedNames.count <= maxJobsInSentence) {
+        NSString *joined = [sortedNames componentsJoinedWithOxfordComma];
+        if (numberOfTabsWithJobs == 1) {
+            return [NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"PseudoTerminal.CloseBody.Tabs.OneTab", nil, [NSBundle mainBundle], @"Tab #%1$d is running %2$@.", @"Close-confirmation body when closing several tabs and only one is running jobs; %1$d is the tab number and %2$@ is its job list"), lastTabWithJobs.tabNumber, joined];
+        }
+        return [NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"PseudoTerminal.CloseBody.Tabs.Jobs", nil, [NSBundle mainBundle], @"The tabs being closed are running %@.", @"Close-confirmation body when closing several tabs that are running a few jobs; %@ is the job list"), joined];
+    }
+    NSString *heading = NSLocalizedStringWithDefaultValue(@"PseudoTerminal.CloseBody.Tabs.List", nil, [NSBundle mainBundle], @"The tabs being closed are running the following jobs:", @"Close-confirmation body when closing several tabs that are running many jobs; a bulleted list of tabs and their jobs follows");
+    return [[@[ heading ] arrayByAddingObjectsFromArray:bullets] componentsJoinedByString:@"\n"];
+}
+
+// Asks before closing a batch of tabs if any of them would ask when closed on its own, or if the
+// multiple-sessions preference applies. `alwaysConfirm` asks even if nothing else calls for it.
+// Returns YES if the tabs should be closed.
+- (BOOL)confirmCloseTabs:(NSArray<PTYTab *> *)tabs
+                question:(NSString *)question
+           alwaysConfirm:(BOOL)alwaysConfirm {
+    BOOL mustAsk = alwaysConfirm;
+    NSMutableArray<PTYSession *> *sessions = [NSMutableArray array];
+    NSUInteger numClosing = 0;
+    for (PTYTab *aTab in tabs) {
+        const NSUInteger numLive = [[aTab.sessions filteredArrayUsingBlock:^BOOL(PTYSession *session) {
+            return !session.exited;
+        }] count];
+        if (aTab.isPinned) {
+            mustAsk = YES;
+        }
+        if (numLive > 0 && aTab.promptOnCloseReason.hasReason) {
+            mustAsk = YES;
+        }
+        numClosing += numLive;
+        [sessions addObjectsFromArray:aTab.sessions];
+    }
+    if (numClosing > 1 &&
+        [iTermPreferences boolForKey:kPreferenceKeyConfirmClosingMultipleTabs]) {
+        mustAsk = YES;
+    }
+    DLog(@"Closing %@ tabs with %@ live sessions. mustAsk=%@", @(tabs.count), @(numClosing), @(mustAsk));
+    if (!mustAsk) {
+        return YES;
+    }
+
+    NSString *count = [NSString localizedStringWithFormat:NSLocalizedStringWithDefaultValue(@"PseudoTerminal.TabCount", nil, [NSBundle mainBundle], @"%lu tabs", @"A count of tabs shown in a close-confirmation; %lu is the number of tabs"), (unsigned long)tabs.count];
+    NSMutableArray<NSString *> *paragraphs = [NSMutableArray arrayWithObject:[NSString stringWithFormat:@"%@ (%@)", question, count]];
+    NSString *body = [self closeConfirmationBodyForTabs:tabs];
+    if (body) {
+        [paragraphs addObject:body];
+    }
+    const BOOL anyIsLocked = [sessions anyWithBlock:^BOOL(PTYSession *session) {
+        return session.locked;
+    }];
+    if (anyIsLocked) {
+        [paragraphs addObject:NSLocalizedStringWithDefaultValue(@"PseudoTerminal.CloseBody.Tabs.Locked", nil, [NSBundle mainBundle], @"Some of these tabs have locked sessions.", @"Added to a close-confirmation for several tabs when at least one has a locked session")];
+    }
+    NSString *cascade = [iTermWorkgroupInstance closeCascadeWarningForSessions:sessions];
+    if (cascade.length > 0) {
+        [paragraphs addObject:cascade];
+    }
+
+    // The PseudoTerminal might close while the dialog is open so keep it around for now.
+    [[self retain] autorelease];
+    const iTermWarningSelection selection =
+        [iTermWarning showWarningWithTitle:[paragraphs componentsJoinedByString:@"\n\n"]
+                                   actions:@[ NSLocalizedStringWithDefaultValue(@"General.Close", nil, [NSBundle mainBundle], @"Close", @"Close: used on buttons and menu items"), iTermLocalizedCancel() ]
+                                 accessory:nil
+                                identifier:@"NoSyncCloseTabGroup"
+                               silenceable:kiTermWarningTypePersistent
+                                   heading:NSLocalizedStringWithDefaultValue(@"PseudoTerminal.CloseTabsHeading", nil, [NSBundle mainBundle], @"Close Tabs", @"Warning heading shown when closing multiple tabs")
+                                    window:self.window];
+    return selection == kiTermWarningSelection0;
+}
+
 - (BOOL)confirmCloseForSessions:(NSArray *)sessions
                         subject:(iTermCloseSubject)subject
                      closeTitle:(NSString *)closeTitle {
@@ -2332,18 +2512,7 @@ typedef NS_ENUM(NSInteger, iTermCloseSubject) {
                      closeTitle:(NSString *)closeTitle
               additionalMessage:(NSString *)additionalMessage
 {
-    NSArray *names = @[];
-    for (PTYSession *aSession in sessions) {
-        if (![aSession exited]) {
-            names = [aSession.childJobNameTuples mapWithBlock:^id(iTermTuple<NSString *,NSString *> *tuple) {
-                if ([tuple.firstObject isEqualToString:@"login"]) {
-                    return nil;
-                }
-                return tuple.secondObject.lastPathComponent;
-            }];
-        }
-    }
-    NSArray *sortedNames = [names countedInstancesStrings];
+    NSArray *sortedNames = [[self jobNamesForSessions:sessions] countedInstancesStrings];
     NSString *message = [self closeConfirmationBodyForSubject:subject sortedNames:sortedNames];
     if (additionalMessage.length > 0) {
         message = [NSString stringWithFormat:@"%@\n\n%@", message, additionalMessage];
@@ -2386,6 +2555,9 @@ typedef NS_ENUM(NSInteger, iTermCloseSubject) {
     }
     if (numClosing > 1 &&
         [iTermPreferences boolForKey:kPreferenceKeyConfirmClosingMultipleTabs]) {
+        mustAsk = YES;
+    }
+    if (numClosing > 0 && [PseudoTerminal closingEndsTmuxWorkgroup:sessions]) {
         mustAsk = YES;
     }
 
@@ -2443,6 +2615,18 @@ typedef NS_ENUM(NSInteger, iTermCloseSubject) {
     return ([aTab isTmuxTab] &&
             [[aTab sessions] count] > 0 &&
             [[aTab tmuxController] isAttached]);
+}
+
+// Closing a member of a workgroup in a tmux Integration tab ends the workgroup and kills its other
+// members' panes on the server. tmux hides panes' jobs from iTerm2, so the usual reasons to ask
+// first may not apply; ask anyway, with the workgroup warning. QA finding F-618.
++ (BOOL)closingEndsTmuxWorkgroup:(NSArray<PTYSession *> *)sessions {
+    const BOOL anyTmuxMember = [sessions anyWithBlock:^BOOL(PTYSession *session) {
+        // A filter or Instant Replay shows the member through a stand-in.
+        PTYSession *live = session.liveSession ?: session;
+        return live.isTmuxClient && live.workgroupInstance != nil;
+    }];
+    return anyTmuxMember && [iTermWorkgroupInstance closeCascadeWarningForSessions:sessions] != nil;
 }
 
 - (BOOL)willShowTmuxWarningWhenClosingTab:(PTYTab *)aTab {
@@ -2761,12 +2945,13 @@ typedef NS_ENUM(NSInteger, iTermCloseSubject) {
     BOOL okToClose = NO;
     if ([aSession exited]) {
         okToClose = YES;
-    } else if (![aSession promptOnCloseReason].hasReason) {
+    } else if (![aSession promptOnCloseReason].hasReason &&
+               ![PseudoTerminal closingEndsTmuxWorkgroup:@[ aSession ]]) {
         okToClose = YES;
     } else {
       okToClose = [self confirmCloseForSessions:@[aSession]
                                         subject:aSession.locked ? iTermCloseSubjectLockedSession : iTermCloseSubjectSession
-                                     closeTitle:[NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"PseudoTerminal.CloseSessionTitle", nil, [NSBundle mainBundle], @"Close session “%@”?", @"Close-confirmation title for a session; %@ is the session name"), [[aSession name] removingHTMLFromTabTitleIfNeeded]]
+                                     closeTitle:[NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"PseudoTerminal.CloseSessionTitle", nil, [NSBundle mainBundle], @"Close session “%@”?", @"Close-confirmation title for a session; %@ is the session name"), [PseudoTerminal nameForClosingSession:aSession]]
                               additionalMessage:[iTermWorkgroupInstance closeCascadeWarningForSessions:@[aSession]]];
     }
     if (okToClose) {
@@ -3826,15 +4011,56 @@ typedef NS_ENUM(NSInteger, iTermCloseSubject) {
             RLog(@"Failed to revive session %@", session);
         }
     }
-    if ([term loadArrangement:arrangement
-                        named:arrangementName
-                     sessions:revivedSessions
-           partialAttachments:nil
-         largeContentProvider:nil]) {
-        return term;
-    } else {
-        return term;
+    [term beginDeferringMakeCurrentTerminalForArrangement:arrangement];
+    [term loadArrangement:arrangement
+                    named:arrangementName
+                 sessions:revivedSessions
+       partialAttachments:nil
+     largeContentProvider:nil];
+    [term endDeferringMakeCurrentTerminal];
+    return term;
+}
+
+// Restoring tabs used to reveal the window when its first tab was added, before the saved frame
+// was applied. Ordering a window in lets -[NSWindow _reallyDoOrderWindowAboveOrBelow:] move it, and
+// with separate Spaces per display it moves it to whichever display holds the active Space. Defer
+// revealing the window until the arrangement is fully loaded so it goes on screen exactly once, at
+// its saved frame. Issue 13002.
+- (void)beginDeferringMakeCurrentTerminalForArrangement:(NSDictionary *)arrangement {
+    iTermPercentage percentage;
+    const iTermWindowType windowType = [PseudoTerminal _windowTypeForArrangement:arrangement
+                                                                      percentage:&percentage];
+    if (windowType == WINDOW_TYPE_TRADITIONAL_FULL_SCREEN ||
+        windowType == WINDOW_TYPE_LION_FULL_SCREEN) {
+        // Full screen windows depend on AppKit sizing them as they are ordered in.
+        RLog(@"Not deferring make-current for full screen window %@", self);
+        return;
     }
+    RLog(@"Begin deferring make-current while loading arrangement in %@", self);
+    _suppressMakeCurrentTerminal |= iTermSuppressMakeCurrentTerminalLoadingArrangement;
+    _makeCurrentTerminalDeferred = NO;
+}
+
+- (void)endDeferringMakeCurrentTerminal {
+    if (!(_suppressMakeCurrentTerminal & iTermSuppressMakeCurrentTerminalLoadingArrangement)) {
+        return;
+    }
+    _suppressMakeCurrentTerminal &= ~iTermSuppressMakeCurrentTerminalLoadingArrangement;
+    const BOOL deferred = _makeCurrentTerminalDeferred;
+    _makeCurrentTerminalDeferred = NO;
+    RLog(@"End deferring make-current in %@. deferred=%@ frame=%@",
+         self, @(deferred), NSStringFromRect(self.window.frame));
+    if (!deferred) {
+        return;
+    }
+    // The frame is now the arrangement's, which reflects the user's intent regardless of AppKit's
+    // opinion about secondary displays (see the comment in -loadArrangement:...), so refuse any
+    // frame change AppKit makes while ordering the window in.
+    const BOOL savedPreventFrameChange = self.ptyWindow.it_preventFrameChange;
+    self.ptyWindow.it_preventFrameChange = YES;
+    [[iTermController sharedInstance] setCurrentTerminal:self];
+    self.ptyWindow.it_preventFrameChange = savedPreventFrameChange;
+    RLog(@"Made restored window current. Frame is now %@", NSStringFromRect(self.window.frame));
 }
 
 + (PseudoTerminal *)terminalWithArrangement:(NSDictionary *)arrangement
@@ -4369,7 +4595,7 @@ typedef NS_ENUM(NSInteger, iTermCloseSubject) {
     for (PTYSession *session in self.allSessions) {
         RLog(@"restore preferred cursor position for %@", session);
         [session.screen performBlockWithJoinedThreads:^(VT100Terminal *terminal, VT100ScreenMutableState *mutableState, id<VT100ScreenDelegate> delegate) {
-            [mutableState.currentGrid restorePreferredCursorPositionIfPossible];
+            [mutableState restorePreferredCursorPositionIfPossible];
         }];
     }
     [_contentView updateToolbeltForWindow:self.window];
@@ -5651,8 +5877,11 @@ hidingToolbeltShouldResizeWindow:(BOOL)hidingToolbeltShouldResizeWindow
         case PSMTab_TopTab:
             return NO;
         case PSMTab_LeftTab:
-        case PSMTab_RightTab:
+            // A visible left tab bar has room for the buttons atop it.
             return !self.tabBarShouldBeVisible;
+        case PSMTab_RightTab:
+            // The buttons go in the top-left corner, over the session.
+            return YES;
     }
 
     return NO;
@@ -5671,6 +5900,11 @@ hidingToolbeltShouldResizeWindow:(BOOL)hidingToolbeltShouldResizeWindow
     }
     if (!iTermWindowTypeIsCompact(effectiveWindowType)) {
         if (@available(macOS 26, *)) {
+            if ([iTermAdvancedSettingsModel useSequoiaStyleTabs]) {
+                // These insets make room around the Tahoe pill. Sequoia-style tabs fill the bar
+                // edge to edge, as they do on earlier OS versions. Issue 12498.
+                return NSEdgeInsetsZero;
+            }
             switch ((iTermPreferencesTabStyle)[iTermPreferences intForKey:kPreferenceKeyTabStyle]) {
                 case TAB_STYLE_MINIMAL:
                 case TAB_STYLE_COMPACT:
@@ -5767,7 +6001,7 @@ hidingToolbeltShouldResizeWindow:(BOOL)hidingToolbeltShouldResizeWindow
         }
         case PSMTab_LeftTab:
         case PSMTab_RightTab:
-            return NSEdgeInsetsMake(24, 0, 0, 0);
+            return NSEdgeInsetsMake([_contentView topInsetForCompactVerticalTabBar], 0, 0, 0);
 
         case PSMTab_BottomTab:
             return NSEdgeInsetsZero;
@@ -7066,6 +7300,7 @@ hidingToolbeltShouldResizeWindow:(BOOL)hidingToolbeltShouldResizeWindow
 //  menu bar.
 - (void)updateTabBarControlIsTitlebarAccessory {
     RLog(@"updateTabBarControlIsTitlebarAccessory %@", self);
+    _tabBarWasVisibleAtLastUpdate = [self tabBarShouldBeVisibleWithAdditionalTabs:0];
     if ((self.window.styleMask & NSWindowStyleMaskTitled) == 0) {
         RLog(@"Style mask does not include titled");
         return;
@@ -8260,12 +8495,10 @@ hidingToolbeltShouldResizeWindow:(BOOL)hidingToolbeltShouldResizeWindow
         if (willShowTabBar && (tabPosition == PSMTab_LeftTab || tabPosition == PSMTab_RightTab)) {
             [_contentView willShowTabBar];
         }
-        const BOOL generallyPreserveWindowSize = [iTermPreferences boolForKey:kPreferenceKeyPreserveWindowSizeWhenTabBarVisibilityChanges];
-        const BOOL preserveOnlyIfExcursion = [iTermPreferences boolForKey:kPreferenceKeyPreserveWindowSizeToKeepOnScreenWhenTabBarVisibilityChanges];
         const BOOL wouldCauseExcursion = willShowTabBar && [self fittingWindowToTabsWouldCauseExcursion];
-        const BOOL preserveDueToShowing = generallyPreserveWindowSize && (!preserveOnlyIfExcursion || wouldCauseExcursion);
-        const BOOL preserveDueToHiding = willHideTabBar && _excursionPrevented;
-        const BOOL actuallyPreserve = preserveDueToHiding || preserveDueToShowing;
+        const BOOL actuallyPreserve = [self shouldPreserveWindowSizeWhenShowingTabBar:willShowTabBar
+                                                                        hidingTabBar:willHideTabBar
+                                                                 wouldCauseExcursion:wouldCauseExcursion];
         const BOOL shouldResizeWindow = _windowNeedsInitialSize || !actuallyPreserve;
 
         if (shouldResizeWindow) {
@@ -8291,15 +8524,10 @@ hidingToolbeltShouldResizeWindow:(BOOL)hidingToolbeltShouldResizeWindow
                 // Minimal theme.
                 [self fitTabsToWindow];
             }
-        } else if (!_windowNeedsInitialSize &&
-                   wouldCauseExcursion &&
-                   preserveDueToShowing &&
-                   preserveOnlyIfExcursion) {
-            RLog(@"Prevented due to excursion.");
-            // Set this flag because if the tab bar goes away later we don't want it to shrink.
-            _excursionPrevented = YES;
-        } else if (preserveDueToHiding) {
-            _excursionPrevented = NO;
+        } else {
+            [self didPreserveWindowSizeWhenShowingTabBar:willShowTabBar
+                                            hidingTabBar:willHideTabBar
+                                     wouldCauseExcursion:wouldCauseExcursion];
         }
         // May need to enter or exit being a titlebar accessory if its visibility changed.
         [self updateTabBarControlIsTitlebarAccessory];
@@ -8371,8 +8599,39 @@ hidingToolbeltShouldResizeWindow:(BOOL)hidingToolbeltShouldResizeWindow
     }
 }
 
+// Decides whether showing or hiding the tab bar keeps the window's size (Settings > Appearance >
+// Resizing > Preserve window size when tab bar shows or hides).
+- (BOOL)shouldPreserveWindowSizeWhenShowingTabBar:(BOOL)showing
+                                     hidingTabBar:(BOOL)hiding
+                              wouldCauseExcursion:(BOOL)wouldCauseExcursion {
+    const BOOL generallyPreserveWindowSize = [iTermPreferences boolForKey:kPreferenceKeyPreserveWindowSizeWhenTabBarVisibilityChanges];
+    const BOOL preserveOnlyIfExcursion = [iTermPreferences boolForKey:kPreferenceKeyPreserveWindowSizeToKeepOnScreenWhenTabBarVisibilityChanges];
+    const BOOL preserveDueToShowing = generallyPreserveWindowSize && (!preserveOnlyIfExcursion || wouldCauseExcursion);
+    const BOOL preserveDueToHiding = hiding && _excursionPrevented;
+    return preserveDueToHiding || preserveDueToShowing;
+}
+
+// Call after keeping the window's size because of
+// -shouldPreserveWindowSizeWhenShowingTabBar:hidingTabBar:wouldCauseExcursion:.
+- (void)didPreserveWindowSizeWhenShowingTabBar:(BOOL)showing
+                                  hidingTabBar:(BOOL)hiding
+                           wouldCauseExcursion:(BOOL)wouldCauseExcursion {
+    const BOOL generallyPreserveWindowSize = [iTermPreferences boolForKey:kPreferenceKeyPreserveWindowSizeWhenTabBarVisibilityChanges];
+    const BOOL preserveOnlyIfExcursion = [iTermPreferences boolForKey:kPreferenceKeyPreserveWindowSizeToKeepOnScreenWhenTabBarVisibilityChanges];
+    if (showing && wouldCauseExcursion && generallyPreserveWindowSize && preserveOnlyIfExcursion) {
+        RLog(@"Prevented due to excursion.");
+        // Set this flag because if the tab bar goes away later we don't want it to shrink.
+        _excursionPrevented = YES;
+    } else if (hiding && _excursionPrevented) {
+        _excursionPrevented = NO;
+    }
+}
+
 - (BOOL)fittingWindowToTabsWouldCauseExcursion {
-    const NSRect proposedFrame = [self frameFittingWindowToTabs];
+    return [self fittingWindowToFrameWouldCauseExcursion:[self frameFittingWindowToTabs]];
+}
+
+- (BOOL)fittingWindowToFrameWouldCauseExcursion:(NSRect)proposedFrame {
     if (isnan(proposedFrame.origin.x) ||
         isnan(proposedFrame.origin.y) ||
         isnan(proposedFrame.size.width) ||
@@ -8405,15 +8664,20 @@ hidingToolbeltShouldResizeWindow:(BOOL)hidingToolbeltShouldResizeWindow
     return tabPosition == PSMTab_LeftTab || tabPosition == PSMTab_RightTab;
 }
 
-- (NSMenu *)tabView:(NSTabView *)tabView menuForTabViewItem:(NSTabViewItem *)tabViewItem {
-    NSMenu *rootMenu = [[[NSMenu alloc] init] autorelease];
+// The appearance for context menus in the tab bar, which should match the
+// window rather than the system when the two differ.
+- (NSAppearance *)tabBarContextMenuAppearance {
     if (self.window.ptyWindow.it_terminalWindowUseMinimalStyle) {
         NSColor *bgColor = [self.window.ptyWindow it_terminalWindowDecorationBackgroundColor];
         NSAppearanceName appearanceName = bgColor.perceivedBrightness < 0.5 ? NSAppearanceNameDarkAqua : NSAppearanceNameAqua;
-        rootMenu.appearance = [NSAppearance appearanceNamed:appearanceName];
-    } else {
-        rootMenu.appearance = self.window.appearance;
+        return [NSAppearance appearanceNamed:appearanceName];
     }
+    return self.window.appearance;
+}
+
+- (NSMenu *)tabView:(NSTabView *)tabView menuForTabViewItem:(NSTabViewItem *)tabViewItem {
+    NSMenu *rootMenu = [[[NSMenu alloc] init] autorelease];
+    rootMenu.appearance = [self tabBarContextMenuAppearance];
 
     BOOL (^addSelect)(void) = ^{
         NSMenuItem *item;
@@ -8962,6 +9226,10 @@ hidingToolbeltShouldResizeWindow:(BOOL)hidingToolbeltShouldResizeWindow
     // Note: this assume that self is the front window (it should be!). It is smart enough to create
     // a tmux tab if the user wants one (or ask if needed).
     [itad newSession:nil];
+}
+
+- (BOOL)tabViewShouldShowActivityIndicators:(NSTabView *)tabView {
+    return ![iTermPreferences hideTabActivityIndicator];
 }
 
 - (void)tabView:(NSTabView *)tabView updateStateForTabViewItem:(NSTabViewItem *)tabViewItem {
@@ -9612,6 +9880,7 @@ hidingToolbeltShouldResizeWindow:(BOOL)hidingToolbeltShouldResizeWindow
     }
     NSMenu *menu = [[[NSMenu alloc] initWithTitle:@""] autorelease];
     menu.autoenablesItems = NO;  // contextual actions are always applicable
+    menu.appearance = [self tabBarContextMenuAppearance];
     const BOOL collapsed = [self tabsInGroup:groupID].firstObject.tabGroupCollapsed;
     NSString *closeAfterTitle = [self tabBarIsVertical] ? NSLocalizedStringWithDefaultValue(@"PseudoTerminal.CloseTabsBelow", nil, [NSBundle mainBundle], @"Close Tabs Below", @"Menu item that closes tabs below the current one")
                                                         : NSLocalizedStringWithDefaultValue(@"PseudoTerminal.CloseTabsToTheRight", nil, [NSBundle mainBundle], @"Close Tabs to the Right", @"Menu item that closes tabs to the right");
@@ -10030,7 +10299,8 @@ hidingToolbeltShouldResizeWindow:(BOOL)hidingToolbeltShouldResizeWindow
     // Close every member, including pinned ones -- the pinned tabs are the group.
     [self closeTabs:[self tabsInGroup:[sender representedObject]]
         confirmWith:NSLocalizedStringWithDefaultValue(@"PseudoTerminal.CloseTabGroupPrompt", nil, [NSBundle mainBundle], @"Close this tab group?", @"Confirmation prompt for closing a tab group")
-      skippingPinned:NO];
+      skippingPinned:NO
+       alwaysConfirm:YES];
 }
 
 - (void)closeTabsOutsideGroup:(id)sender {
@@ -10041,7 +10311,7 @@ hidingToolbeltShouldResizeWindow:(BOOL)hidingToolbeltShouldResizeWindow
             [others addObject:aTab];
         }
     }
-    [self closeTabs:others confirmWith:NSLocalizedStringWithDefaultValue(@"PseudoTerminal.CloseTabsOutsideGroupPrompt", nil, [NSBundle mainBundle], @"Close all tabs outside this group?", @"Confirmation prompt for closing tabs outside a group") skippingPinned:YES];
+    [self closeTabs:others confirmWith:NSLocalizedStringWithDefaultValue(@"PseudoTerminal.CloseTabsOutsideGroupPrompt", nil, [NSBundle mainBundle], @"Close all tabs outside this group?", @"Confirmation prompt for closing tabs outside a group") skippingPinned:YES alwaysConfirm:YES];
 }
 
 - (void)closeTabsRightOfGroup:(id)sender {
@@ -10058,15 +10328,17 @@ hidingToolbeltShouldResizeWindow:(BOOL)hidingToolbeltShouldResizeWindow
     NSArray<PTYTab *> *toRight = [tabs subarrayWithRange:NSMakeRange(lastIndex + 1, tabs.count - lastIndex - 1)];
     NSString *question = [self tabBarIsVertical] ? NSLocalizedStringWithDefaultValue(@"PseudoTerminal.CloseTabsBelowGroupPrompt", nil, [NSBundle mainBundle], @"Close all tabs below this group?", @"Confirmation prompt for closing tabs below a group, shown when the tab bar is vertical")
                                                  : NSLocalizedStringWithDefaultValue(@"PseudoTerminal.CloseTabsRightOfGroupPrompt", nil, [NSBundle mainBundle], @"Close all tabs to the right of this group?", @"Confirmation prompt for closing tabs to the right of a group");
-    [self closeTabs:toRight confirmWith:question skippingPinned:YES];
+    [self closeTabs:toRight confirmWith:question skippingPinned:YES alwaysConfirm:YES];
 }
 
 // Close a batch of tabs with a single confirmation. `skipPinned` protects
-// pinned tabs when closing things *around* a group (Close Other / to the
+// pinned tabs when closing things *around* a group or tab (Close Other / to the
 // Right); Close Group passes NO so it can close its own pinned members.
+// `alwaysConfirm` asks even when no tab would ask if closed on its own.
 - (void)closeTabs:(NSArray<PTYTab *> *)tabsToClose
       confirmWith:(NSString *)question
-   skippingPinned:(BOOL)skipPinned {
+   skippingPinned:(BOOL)skipPinned
+    alwaysConfirm:(BOOL)alwaysConfirm {
     if (_layoutLocked) {
         RLog(@"Layout is locked, refusing to close tabs");
         return;
@@ -10080,19 +10352,16 @@ hidingToolbeltShouldResizeWindow:(BOOL)hidingToolbeltShouldResizeWindow
     if (closable.count == 0) {
         return;
     }
-    NSString *count = [NSString localizedStringWithFormat:NSLocalizedStringWithDefaultValue(@"PseudoTerminal.TabCount", nil, [NSBundle mainBundle], @"%lu tabs", @"A count of tabs shown in a close-confirmation; %lu is the number of tabs"), (unsigned long)closable.count];
-    const iTermWarningSelection selection =
-        [iTermWarning showWarningWithTitle:[NSString stringWithFormat:@"%@ (%@)", question, count]
-                                   actions:@[ NSLocalizedStringWithDefaultValue(@"General.Close", nil, [NSBundle mainBundle], @"Close", @"Close: used on buttons and menu items"), iTermLocalizedCancel() ]
-                                 accessory:nil
-                                identifier:@"NoSyncCloseTabGroup"
-                               silenceable:kiTermWarningTypePersistent
-                                   heading:NSLocalizedStringWithDefaultValue(@"PseudoTerminal.CloseTabsHeading", nil, [NSBundle mainBundle], @"Close Tabs", @"Warning heading shown when closing multiple tabs")
-                                    window:self.window];
-    if (selection != kiTermWarningSelection0) {
+    if (![self confirmCloseTabs:closable question:question alwaysConfirm:alwaysConfirm]) {
         return;
     }
+    // -closeTab: won't remove a tmux tab from -tabs immediately, so iterate over our own copy.
     for (PTYTab *aTab in closable) {
+        // A tab might have closed on its own while the confirmation was open.
+        if (![[self tabs] containsObject:aTab]) {
+            DLog(@"Tab %@ is already gone; not closing it", aTab);
+            continue;
+        }
         [self closeTab:aTab];
     }
 }
@@ -10951,9 +11220,33 @@ static CGFloat iTermDimmingAmount(PSMTabBarControl *tabView) {
     [[self window] setFrameTopLeftPoint:point];
 }
 
-- (void)windowSetFrame:(NSRect)frame
-{
-    [[self window] setFrame:frame display:YES];
+// Used by OSC 1337 SetWindowFrame, whose frame comes from terminal output, so
+// keep the window at least its minimum size, no bigger than the screens, and
+// reachable on a screen.
+- (void)windowSetFrame:(NSRect)frame {
+    NSSize minSize = NSZeroSize;
+    for (PTYTab *tab in self.tabs) {
+        const NSSize minTabSize = [tab minSize];
+        minSize.width = MAX(minSize.width, minTabSize.width);
+        minSize.height = MAX(minSize.height, minTabSize.height);
+    }
+    const NSSize decorationSize = [self windowDecorationSize];
+    const NSSize internalDecorationSize = self.currentSession.view.internalDecorationSize;
+    minSize.width += decorationSize.width + internalDecorationSize.width;
+    minSize.height += decorationSize.height + internalDecorationSize.height;
+    minSize = [iTermSetWindowFrameRequest minimumFrameSizeForContentMinimum:minSize
+                                                              windowMinSize:self.window.minSize
+                                                                  styleMask:self.window.styleMask];
+
+    NSArray<NSValue *> *screenFrames = [[NSScreen screens] mapWithBlock:^id _Nullable(NSScreen *screen) {
+        return [NSValue valueWithRect:screen.visibleFrame];
+    }];
+    const NSRect clamped = [iTermSetWindowFrameRequest clampedFrame:frame
+                                                            minSize:minSize
+                                                       screenFrames:screenFrames];
+    DLog(@"Requested %@, min size %@, setting %@",
+         NSStringFromRect(frame), NSStringFromSize(minSize), NSStringFromRect(clamped));
+    [[self window] setFrame:clamped display:YES];
 }
 
 - (void)windowPerformMiniaturize:(id)sender {
@@ -11401,10 +11694,26 @@ static CGFloat iTermDimmingAmount(PSMTabBarControl *tabView) {
             [tab addRevivedFloatingSession:session fromArrangement:fullArrangement];
         }
     };
-    if (tiledRevived.count == 0 && floatingRevived.count > 0) {
+    // Floats whose undo window ran out are gone. Each comes back as a float made from the archive
+    // in its record.
+    NSMutableArray<NSString *> *archivedFloatGUIDs = [NSMutableArray array];
+    for (NSString *guid in archives.sessionGUIDs) {
+        if ([PTYTab floatingPaneRecordForSessionWithGUID:guid inArrangement:fullArrangement]) {
+            [archivedFloatGUIDs addObject:guid];
+        }
+    }
+    if (tiledRevived.count == 0 && (floatingRevived.count > 0 || archivedFloatGUIDs.count > 0)) {
         RLog(@"Only floating panes come back; the tiled layout is unchanged");
         restoreFloats();
-        [self addTabsForArchives:archives];
+        NSMutableSet<NSString *> *restoredGUIDs = [NSMutableSet set];
+        for (NSString *guid in archivedFloatGUIDs) {
+            RLog(@"Restore archived float %@", guid);
+            if ([tab addArchivedFloatingSessionWithGUID:guid fromArrangement:fullArrangement]) {
+                [restoredGUIDs addObject:guid];
+            }
+        }
+        // Other archives, and floats that could not be restored, get tabs of their own.
+        [self addTabsForArchives:archives excludingSessionGUIDs:restoredGUIDs];
         return;
     }
     NSMutableArray *allSessions = [NSMutableArray array];
@@ -11520,7 +11829,12 @@ static CGFloat iTermDimmingAmount(PSMTabBarControl *tabView) {
 }
 
 - (void)addTabsForArchives:(iTermUndoCloseArchives *)archives {
-    for (NSDictionary *arrangement in archives.standaloneTabArrangements) {
+    [self addTabsForArchives:archives excludingSessionGUIDs:[NSSet set]];
+}
+
+- (void)addTabsForArchives:(iTermUndoCloseArchives *)archives
+     excludingSessionGUIDs:(NSSet<NSString *> *)excludedGUIDs {
+    for (NSDictionary *arrangement in [archives standaloneTabArrangementsExcludingSessionGUIDs:excludedGUIDs]) {
         RLog(@"Add a tab for an archived session");
         PTYTab *tab = [PTYTab tabWithArrangement:arrangement
                                            named:nil
@@ -11876,6 +12190,25 @@ static CGFloat iTermDimmingAmount(PSMTabBarControl *tabView) {
             (![tab isTmuxTab] || tab.tmuxController.supportsFloatingPanes) &&
             ![self inInstantReplay] &&
             self.currentSession != nil);
+}
+
+- (BOOL)canInstallNativeFloatingPane {
+    return [PseudoTerminal canInstallNativeFloatingPaneWhenFloatsAllowed:[self canCreateFloatingPane]
+                                                        currentTabIsTmux:self.currentTab.isTmuxTab];
+}
+
+// A tmux tab's layout is rebuilt from tmux's pane ids, so a session tmux doesn't know about can't
+// live there, even as a float. Callers that are refused open the session elsewhere, such as in a
+// new tab.
++ (BOOL)canInstallNativeFloatingPaneWhenFloatsAllowed:(BOOL)canCreateFloatingPane
+                                     currentTabIsTmux:(BOOL)currentTabIsTmux {
+    return canCreateFloatingPane && !currentTabIsTmux;
+}
+
+// The next tmux layout change would remove a session tmux doesn't know about from a tmux tab.
+// Callers that are refused open the session elsewhere, such as in a new tab.
+- (BOOL)canInstallNativeSplitPane {
+    return !self.currentTab.isTmuxTab;
 }
 
 - (IBAction)newFloatingPaneWithCurrentProfile:(id)sender {
@@ -12364,10 +12697,14 @@ typedef struct {
         // mask or autoresizing is off for the content view. I'm sure this isn't
         // the best fix, but it's all I could find: I turn off the autoresizing
         // mask for the _contentView.tabView (which I really don't want autoresized--it needs to
-        // be done by hand in fitTabToWindow), and add a silly one pixel view
+        // be done by hand in fitTabToWindow), and add a silly view
         // that lives just long enough to be resized in this function. I don't know
         // why it works but it does.
-        bugFixView = [[[NSView alloc] initWithFrame:NSMakeRect(0, 0, 1, 1)] autorelease];
+        // Fill the content view rather than being one pixel. A sizable view's
+        // margins become a minimum window size if the layout engine is ever
+        // engaged, and that floor clamps the setFrame:display: this view
+        // surrounds. With no margins there is no floor. Issue 13118.
+        bugFixView = [[[NSView alloc] initWithFrame:[[[self window] contentView] bounds]] autorelease];
         bugFixView.autoresizingMask = (NSViewWidthSizable | NSViewHeightSizable);
         [[[self window] contentView] addSubview:bugFixView];
         *savedMaskPtr = _contentView.tabView.autoresizingMask;
@@ -12770,7 +13107,9 @@ typedef struct {
 // tab belongs to a group the group is NOT moved as a unit: the tab slides within
 // the group until it reaches an edge, then a further move in that direction pops
 // it out of the group (membership -> nil) in place. Conversely an ungrouped tab
-// that would cross into an adjacent group joins that group in place. With no
+// that would cross into an adjacent group joins that group in place, unless the
+// group is across the pinned boundary (joining would change the tab's pinned
+// state), in which case the tab stays where it is. With no
 // groups this behaves exactly like the old single-tab swap (including wrap at the
 // ends). The membership decision and target order come from
 // iTermTabGroupOrdering.singleTabMove; -applyTabOrder: then canonicalizes so the
@@ -12791,10 +13130,13 @@ typedef struct {
     }
 
     NSMutableArray *groupIDs = [NSMutableArray arrayWithCapacity:tabs.count];
+    NSMutableArray<NSNumber *> *pinned = [NSMutableArray arrayWithCapacity:tabs.count];
     for (PTYTab *tab in tabs) {
         [groupIDs addObject:(tab.tabGroupID ?: (id)[NSNull null])];
+        [pinned addObject:@(tab.isPinned)];
     }
     iTermSingleTabMove *move = [iTermTabGroupOrdering singleTabMoveForGroupIDs:groupIDs
+                                                                       pinned:pinned
                                                                 selectedIndex:sel
                                                                        offset:offset];
 
@@ -12836,28 +13178,37 @@ typedef struct {
     NSArray<PTYTab *> *tabs = self.tabs;
     if (selectedIndex >= 0 && selectedIndex < (NSInteger)tabs.count) {
         PTYTab *movingTab = tabs[selectedIndex];
-        NSInteger lastPinnedIndex = -1;
-        for (NSInteger i = 0; i < (NSInteger)tabs.count; i++) {
-            if (tabs[i].isPinned) {
-                lastPinnedIndex = i;
+        // destinationIndex is an index after movingTab is removed, where the
+        // other pinned tabs occupy [0, otherPinnedCount). Counting them (rather
+        // than taking the last pinned index in the current order) stays correct
+        // when movingTab sits left of the boundary, as it does mid-unpin.
+        NSInteger otherPinnedCount = 0;
+        for (PTYTab *aTab in tabs) {
+            if (aTab != movingTab && aTab.isPinned) {
+                otherPinnedCount++;
             }
         }
         if (movingTab.isPinned) {
             // Pinned tab cannot move past the unpinned zone.
-            if (destinationIndex > lastPinnedIndex) {
-                destinationIndex = lastPinnedIndex;
+            if (destinationIndex > otherPinnedCount) {
+                destinationIndex = otherPinnedCount;
             }
         } else {
             // Unpinned tab cannot move into the pinned zone.
-            if (destinationIndex <= lastPinnedIndex) {
-                destinationIndex = lastPinnedIndex + 1;
+            if (destinationIndex < otherPinnedCount) {
+                destinationIndex = otherPinnedCount;
             }
+        }
+        if (destinationIndex >= (NSInteger)tabs.count) {
+            DLog(@"Clamping out-of-range destination %@ for %@ tabs", @(destinationIndex), @(tabs.count));
+            destinationIndex = tabs.count - 1;
         }
         if (selectedIndex == destinationIndex) {
             return;
         }
     }
 
+    DLog(@"Move tab from %@ to %@ of %@", @(selectedIndex), @(destinationIndex), @(tabs.count));
     [_contentView.tabBarControl moveTabAtIndex:selectedIndex toIndex:destinationIndex];
     [self setNeedsUpdateTabObjectCounts:YES];
     [self tabsDidReorder];
@@ -13046,6 +13397,89 @@ static BOOL iTermApproximatelyEqualRects(NSRect lhs, NSRect rhs, double epsilon)
     }
 }
 
+- (void)rememberFrameBeforeTabDrag {
+    _haveFrameBeforeTabDrag = (!_windowNeedsInitialSize && !togglingFullScreen_ && ![self anyFullScreen]);
+    if (!_haveFrameBeforeTabDrag) {
+        return;
+    }
+    _frameBeforeTabDrag = self.window.frame;
+    _frameAfterTabDragBegan = _frameBeforeTabDrag;
+    _numberOfTabsBeforeTabDrag = self.numberOfTabs;
+    _excursionPreventedBeforeTabDrag = _excursionPrevented;
+    RLog(@"Remember frame %@ with %@ tabs before tab drag",
+         NSStringFromRect(_frameBeforeTabDrag), @(_numberOfTabsBeforeTabDrag));
+}
+
+// Undoes the size change the drag made by showing the tab bar. If the window moved during the
+// drag (dropping its lone tab on the desktop moves it), it keeps that move. Returns NO if this
+// doesn't apply, for example because a tab was dragged into or out of this window or something
+// else resized it; then the usual refit decides its size, as it would without a drag.
+- (BOOL)restoreFrameFromBeforeTabDrag {
+    if (!_haveFrameBeforeTabDrag) {
+        return NO;
+    }
+    _haveFrameBeforeTabDrag = NO;
+    if (togglingFullScreen_ || [self anyFullScreen]) {
+        RLog(@"Not restoring frame from before tab drag: full screen");
+        return NO;
+    }
+    if (self.numberOfTabs != _numberOfTabsBeforeTabDrag) {
+        RLog(@"Not restoring frame from before tab drag: tab count went from %@ to %@",
+             @(_numberOfTabsBeforeTabDrag), @(self.numberOfTabs));
+        return NO;
+    }
+    const NSRect currentFrame = self.window.frame;
+    if (!NSEqualSizes(currentFrame.size, _frameAfterTabDragBegan.size)) {
+        RLog(@"Not restoring frame from before tab drag: size changed from %@ to %@ during the drag",
+             NSStringFromRect(_frameAfterTabDragBegan), NSStringFromRect(currentFrame));
+        return NO;
+    }
+    NSRect frame = _frameBeforeTabDrag;
+    frame.origin.x += NSMinX(currentFrame) - NSMinX(_frameAfterTabDragBegan);
+    frame.origin.y += NSMinY(currentFrame) - NSMinY(_frameAfterTabDragBegan);
+    RLog(@"Restore frame %@ (%@ before tab drag, %@ after it began). Current frame is %@",
+         NSStringFromRect(frame),
+         NSStringFromRect(_frameBeforeTabDrag),
+         NSStringFromRect(_frameAfterTabDragBegan),
+         NSStringFromRect(currentFrame));
+    _excursionPrevented = _excursionPreventedBeforeTabDrag;
+    [self.window setFrame:frame display:YES];
+    [self repositionWidgets];
+    [self fitTabsToWindow];
+    [self notifyTmuxOfWindowResize];
+    return YES;
+}
+
+// refreshTerminal: runs when settings change, including the tab bar showing or hiding because the
+// tab bar visibility setting changed or a tab drag began or ended. This applies the
+// preserve-window-size setting to those, as tabViewDidChangeNumberOfTabViewItems: does when the
+// tab count changes. Returns YES if the window should keep its size.
+- (BOOL)shouldPreserveWindowSizeInRefreshWhenTabBarWasVisible:(BOOL)tabBarWasVisible
+                                             sizeOfLargestTab:(NSSize)sizeOfLargestTab {
+    if (_windowNeedsInitialSize || togglingFullScreen_ || [self anyFullScreen]) {
+        return NO;
+    }
+    const BOOL tabBarIsVisible = [self tabBarShouldBeVisibleWithAdditionalTabs:0];
+    if (tabBarIsVisible == tabBarWasVisible) {
+        return NO;
+    }
+    const BOOL showing = tabBarIsVisible;
+    const BOOL hiding = !tabBarIsVisible;
+    const NSRect proposedFrame = [self frameFittingWindowToTabsExcludingTmuxTabs:NO
+                                                                preservingHeight:NO
+                                                                sizeOfLargestTab:sizeOfLargestTab];
+    const BOOL wouldCauseExcursion = showing && [self fittingWindowToFrameWouldCauseExcursion:proposedFrame];
+    if (![self shouldPreserveWindowSizeWhenShowingTabBar:showing
+                                            hidingTabBar:hiding
+                                     wouldCauseExcursion:wouldCauseExcursion]) {
+        return NO;
+    }
+    [self didPreserveWindowSizeWhenShowingTabBar:showing
+                                    hidingTabBar:hiding
+                             wouldCauseExcursion:wouldCauseExcursion];
+    return YES;
+}
+
 - (void)refreshTerminal:(NSNotification *)aNotification {
     RLog(@"refreshTerminal: trigger=%@ effective=%@ desiredAppearance=%@ fullScreen=%@ lionFullScreen=%@ key=%@ main=%@ appActive=%@",
          aNotification ? aNotification.name : @"(nil/internal)",
@@ -13061,6 +13495,15 @@ static BOOL iTermApproximatelyEqualRects(NSRect lhs, NSRect rhs, double epsilon)
         });
         return;
     }
+    const BOOL hideTabBarSuppressedDuringDrag = [iTermPreferences hideTabBarSuppressedDuringDrag];
+    const BOOL tabDragBegan = hideTabBarSuppressedDuringDrag && !_sawHideTabBarSuppressedDuringDrag;
+    const BOOL tabDragEnded = !hideTabBarSuppressedDuringDrag && _sawHideTabBarSuppressedDuringDrag;
+    _sawHideTabBarSuppressedDuringDrag = hideTabBarSuppressedDuringDrag;
+    if (tabDragBegan) {
+        [self rememberFrameBeforeTabDrag];
+    }
+    const BOOL tabBarWasVisible = _tabBarWasVisibleAtLastUpdate;
+
     if (self.windowType != _windowType) {
         [self updateWindowType];
     }
@@ -13085,9 +13528,19 @@ static BOOL iTermApproximatelyEqualRects(NSRect lhs, NSRect rhs, double epsilon)
         [self.window setFrame:[self traditionalFullScreenFrame] display:YES];
     }
 
-    [self fitWindowToTabsExcludingTmuxTabs:NO
-                          preservingHeight:NO
-                          sizeOfLargestTab:tabSizeBeforeUpdatingTitleBarAccessories];
+    if (tabDragEnded && [self restoreFrameFromBeforeTabDrag]) {
+        RLog(@"refreshTerminal: restored frame from before tab drag");
+    } else if ([self shouldPreserveWindowSizeInRefreshWhenTabBarWasVisible:tabBarWasVisible
+                                                          sizeOfLargestTab:tabSizeBeforeUpdatingTitleBarAccessories]) {
+        RLog(@"refreshTerminal: preserving window size as tab bar visibility changes");
+        [self repositionWidgets];
+        [self fitTabsToWindow];
+        [self notifyTmuxOfWindowResize];
+    } else {
+        [self fitWindowToTabsExcludingTmuxTabs:NO
+                              preservingHeight:NO
+                              sizeOfLargestTab:tabSizeBeforeUpdatingTitleBarAccessories];
+    }
 
     // If tab style or position changed.
     [self repositionWidgets];
@@ -13150,6 +13603,9 @@ static BOOL iTermApproximatelyEqualRects(NSRect lhs, NSRect rhs, double epsilon)
     [_contentView setCurrentSessionAlpha:self.currentSession.textview.transparencyAlpha];
     // If the theme changed from light to dark make sure split pane dividers redraw.
     [_contentView.tabView setNeedsDisplay:YES];
+    if (tabDragBegan && _haveFrameBeforeTabDrag) {
+        _frameAfterTabDragBegan = self.window.frame;
+    }
 }
 
 - (BOOL)rootTerminalViewWindowNumberLabelShouldBeVisible {
@@ -13606,6 +14062,12 @@ static BOOL iTermApproximatelyEqualRects(NSRect lhs, NSRect rhs, double epsilon)
                                                           effectiveAppearance:self.window.effectiveAppearance];
     [_contentView.tabBarControl setStyle:style];
     [_contentView.tabBarControl setTabsHaveCloseButtons:[iTermPreferences boolForKey:kPreferenceKeyTabsHaveCloseButton]];
+    // PTYTab.isProcessing depends on the Hide Activity Indicator setting and is only pushed when
+    // the tab's real processing state changes, so re-push it in case the setting changed.
+    for (PTYTab *tab in self.tabs) {
+        [_contentView.tabBarControl setIsProcessing:tab.isProcessing forTabWithIdentifier:tab];
+    }
+    [_contentView.tabBarControl updateActivityIndicators];
     [_contentView.tabBarControl updateHeightWithDefault:[self desiredTabBarHeight]];
 
     [[self currentTab] recheckBlur];
@@ -14187,6 +14649,17 @@ static BOOL iTermApproximatelyEqualRects(NSRect lhs, NSRect rhs, double epsilon)
                 [[NSNotificationCenter defaultCenter] postNotificationName:iTermDidCreateTerminalWindowNotification object:self];
             }
         }
+        // Shellforge: the first time a window is shown, AppKit replaces its first responder with
+        // initialFirstResponder or, without one, the first key view, which is the sidebar's list.
+        // Becoming key moves focus back to the session, but a window that is only ordered front
+        // keeps the list, and a later window style change preserves it.
+        if (self.tabs.count == 1) {
+            NSView *mainResponder = [NSView castFrom:self.currentSession.mainResponder];
+            if (mainResponder) {
+                DLog(@"Make %@ the initial first responder", mainResponder);
+                self.window.initialFirstResponder = mainResponder;
+            }
+        }
         if (self.windowInitialized && !_fullScreen && !_restoringWindow) {
             RLog(@"insertTab: window is initialized, not full screen, and we are not restoring windows.");
             if (self.isHotKeyWindow && self.window.alphaValue == 0) {
@@ -14213,15 +14686,19 @@ static BOOL iTermApproximatelyEqualRects(NSRect lhs, NSRect rhs, double epsilon)
         } else {
             PtyLog(@"window not initialized, is fullscreen, or is being restored. Stack:\n%@", [NSThread callStackSymbols]);
         }
-        if (_suppressMakeCurrentTerminal == iTermSuppressMakeCurrentTerminalNone &&
-            !openInBackground &&
+        if (!openInBackground &&
             (_automaticallyOrderFrontNewTabs || self.tabs.count == 1)) {
             // A background tab (automaticallyOrderFrontNewTabs == NO), or a tab
             // the caller asked to open in the background, should not become the
             // current terminal: doing so moves iTerm's current-window pointer to
             // it, which clients observe as a focus/window steal even though the
             // window itself was not ordered front above.
-            [[iTermController sharedInstance] setCurrentTerminal:self];
+            if (_suppressMakeCurrentTerminal == iTermSuppressMakeCurrentTerminalNone) {
+                [[iTermController sharedInstance] setCurrentTerminal:self];
+            } else if (_suppressMakeCurrentTerminal == iTermSuppressMakeCurrentTerminalLoadingArrangement) {
+                RLog(@"Deferring make-current until the arrangement is loaded");
+                _makeCurrentTerminalDeferred = YES;
+            }
         }
     }
 }
@@ -15106,8 +15583,17 @@ typedef NS_ENUM(NSUInteger, iTermBroadcastCommand) {
 }
 
 - (void)reallyDuplicateWindow {
-    NSDictionary *arrangement = [self arrangementExcludingTmuxTabs:NO includingContents:NO];
-    [[iTermController sharedInstance] tryOpenArrangement:arrangement named:nil asTabsInWindow:nil];
+    [[iTermController sharedInstance] tryOpenArrangement:[self arrangementForDuplicateWindow]
+                                                   named:nil
+                                          asTabsInWindow:nil];
+}
+
+- (NSDictionary *)arrangementForDuplicateWindow {
+    // The copy is a different window, so it must not take this one's Lock Location. Locked to
+    // this window's frame, it would open on top of it and snap back there when moved.
+    return [self arrangementWithTabs:[self tabsToEncodeExcludingTmux:NO]
+                   includingContents:NO
+                representsThisWindow:NO];
 }
 
 - (void)createDuplicateOfTab:(PTYTab *)theTab {
@@ -15220,48 +15706,29 @@ typedef NS_ENUM(NSUInteger, iTermBroadcastCommand) {
     }];
 }
 
-// These two methods are delicate because -closeTab: won't remove the tab from
-// the -tabs array immediately for tmux tabs.
-- (void)closeOtherTabs:(id)sender
-{
-    if (_layoutLocked) {
-        RLog(@"Layout is locked, refusing to close other tabs");
-        return;
-    }
+- (void)closeOtherTabs:(id)sender {
     NSTabViewItem *aTabViewItem = [sender representedObject];
     PTYTab *tabToKeep = [aTabViewItem identifier];
-    NSMutableArray *tabsToRemove = [[[self tabs] mutableCopy] autorelease];
+    NSMutableArray<PTYTab *> *tabsToRemove = [[[self tabs] mutableCopy] autorelease];
     [tabsToRemove removeObject:tabToKeep];
-    for (PTYTab *tab in tabsToRemove) {
-        if (tab.isPinned) {
-            continue;
-        }
-        [self closeTab:tab];
-    }
+    [self closeTabs:tabsToRemove
+        confirmWith:NSLocalizedStringWithDefaultValue(@"PseudoTerminal.CloseOtherTabsPrompt", nil, [NSBundle mainBundle], @"Close all other tabs?", @"Confirmation prompt for closing every tab except the one that was clicked")
+     skippingPinned:YES
+      alwaysConfirm:NO];
 }
 
-- (void)closeTabsToTheRight:(id)sender
-{
-    if (_layoutLocked) {
-        RLog(@"Layout is locked, refusing to close tabs to the right");
-        return;
-    }
+- (void)closeTabsToTheRight:(id)sender {
     NSTabViewItem *aTabViewItem = [sender representedObject];
     PTYTab *tabToKeep = [aTabViewItem identifier];
-
-    NSMutableArray *tabsToRemove = [[[self tabs] mutableCopy] autorelease];
-    PTYTab *current;
-    do {
-        current = tabsToRemove[0];
-        [tabsToRemove removeObjectAtIndex:0];
-    } while (current != tabToKeep);
-
-    for (PTYTab *tab in tabsToRemove) {
-        if (tab.isPinned) {
-            continue;
-        }
-        [self closeTab:tab];
+    NSArray<PTYTab *> *tabs = [self tabs];
+    const NSUInteger index = [tabs indexOfObject:tabToKeep];
+    if (index == NSNotFound || index + 1 >= tabs.count) {
+        return;
     }
+    NSArray<PTYTab *> *tabsToRemove = [tabs subarrayWithRange:NSMakeRange(index + 1, tabs.count - index - 1)];
+    NSString *question = [self tabBarIsVertical] ? NSLocalizedStringWithDefaultValue(@"PseudoTerminal.CloseTabsBelowPrompt", nil, [NSBundle mainBundle], @"Close all tabs below this one?", @"Confirmation prompt for closing tabs below the one that was clicked, shown when the tab bar is vertical")
+                                                 : NSLocalizedStringWithDefaultValue(@"PseudoTerminal.CloseTabsToTheRightPrompt", nil, [NSBundle mainBundle], @"Close all tabs to the right of this one?", @"Confirmation prompt for closing tabs to the right of the one that was clicked");
+    [self closeTabs:tabsToRemove confirmWith:question skippingPinned:YES alwaysConfirm:NO];
 }
 
 - (IBAction)exitWorkgroup:(id)sender {
@@ -15535,7 +16002,7 @@ typedef NS_ENUM(NSUInteger, iTermBroadcastCommand) {
                          target:(NSString *)target
                     baseProfile:(Profile *)base {
     PTYTab *tab = self.currentTab;
-    if (!tab || ![self canCreateFloatingPane]) {
+    if (!tab || ![self canInstallNativeFloatingPane]) {
         return;
     }
     MutableProfile *profile = [[base mutableCopy] autorelease];

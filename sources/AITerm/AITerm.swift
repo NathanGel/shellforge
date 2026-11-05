@@ -170,6 +170,10 @@ class AITermController {
     //   Such an endpoint carries its own auth via the model's custom headers
     //   instead, which the user opts into explicitly.
     // - .noKeySelected: the user chose to send no key (AIModelCredential.none).
+    // - .unrecognizedHost: Automatic sends a vendor's stored key only to that
+    //   vendor's own host (LLMMetadata.endpoint(_:isOwnHostOf:)). A gateway
+    //   such as OpenRouter speaking OpenAI's protocol must not receive the
+    //   user's OpenAI key; the user chooses which key to send it instead.
     //
     // .modelKey is a key stored for one manual model (AIModelCredential.modelKey).
     enum APIKeyPolicy: Equatable {
@@ -181,6 +185,7 @@ class AITermController {
             case onDevice
             case localEndpoint
             case noKeySelected
+            case unrecognizedHost
         }
     }
 
@@ -200,15 +205,31 @@ class AITermController {
 
     // An explicit credential overrides the inference above. Choosing a vendor's
     // key sends it even to a local endpoint, because the user asked for that.
+    // `keyVendor` is the vendor whose stored key Automatic would send
+    // (AIMetadata.Model.keyVendor, or the fallback vendor when there is no
+    // model); Automatic sends it only to that vendor's own host. Which vendor's
+    // protocol the request speaks is decided elsewhere and is unaffected.
     static func apiKeyPolicy(url: String,
                              api: iTermAIAPI,
-                             credential: AIModelCredential) -> APIKeyPolicy {
+                             credential: AIModelCredential,
+                             keyVendor: iTermAIVendor) -> APIKeyPolicy {
         if api == .appleIntelligence {
             return .placeholder(.onDevice)
         }
         switch credential {
         case .automatic:
-            return apiKeyPolicy(url: url, api: api)
+            let inferred = apiKeyPolicy(url: url, api: api)
+            guard inferred == .vendorKey else {
+                return inferred
+            }
+            // Ollama's key is a self-hosted server's own token with no public
+            // host to bind it to, so it still goes to a remote Ollama server.
+            // But a model merely named like Llama on another protocol (say,
+            // “meta-llama/…” at OpenRouter) is at a gateway, not Ollama.
+            let onOwnHost = (keyVendor == .llama && api != .llama)
+                ? false
+                : LLMMetadata.endpoint(url, isOwnHostOf: keyVendor)
+            return onOwnHost == false ? .placeholder(.unrecognizedHost) : .vendorKey
         case .vendorKey:
             return .vendorKey
         case .modelKey:
@@ -219,13 +240,17 @@ class AITermController {
     }
 
     static func usesPlaceholderAPIKey(url: String, api: iTermAIAPI) -> Bool {
-        return usesPlaceholderAPIKey(url: url, api: api, credential: .automatic)
+        if case .placeholder = apiKeyPolicy(url: url, api: api) {
+            return true
+        }
+        return false
     }
 
     static func usesPlaceholderAPIKey(url: String,
                                       api: iTermAIAPI,
-                                      credential: AIModelCredential) -> Bool {
-        if case .placeholder = apiKeyPolicy(url: url, api: api, credential: credential) {
+                                      credential: AIModelCredential,
+                                      keyVendor: iTermAIVendor) -> Bool {
+        if case .placeholder = apiKeyPolicy(url: url, api: api, credential: credential, keyVendor: keyVendor) {
             return true
         }
         return false
@@ -244,7 +269,8 @@ class AITermController {
         fallbackVendor: iTermAIVendor,
         vendorRegistration: (iTermAIVendor) -> Registration?,
         modelKey: (String) -> String? = { AITermControllerObjC.modelAPIKey(forConfigurationID: $0) }) -> Registration? {
-        let stored = vendorRegistration(model?.keyVendor ?? fallbackVendor)
+        let keyVendor = model?.keyVendor ?? fallbackVendor
+        let stored = vendorRegistration(keyVendor)
         // The App Review key contacts no service at all, so it has to win over
         // every other rule: requestCompletion short-circuits on it and answers
         // locally. Substituting the self-hosted placeholder first would send a
@@ -256,7 +282,7 @@ class AITermController {
         guard let model else {
             return stored
         }
-        switch apiKeyPolicy(url: model.url, api: model.api, credential: model.credential) {
+        switch apiKeyPolicy(url: model.url, api: model.api, credential: model.credential, keyVendor: keyVendor) {
         case .placeholder:
             return Registration(apiKey: selfHostedPlaceholderAPIKey)
         case .modelKey:
@@ -417,14 +443,24 @@ class AITermController {
     }
 
     func cancel() {
+        requestGeneration += 1
         cancellation?.cancel()
         cancellation = nil
         state = .ground
     }
 
     func cancelOutstandingOperation() {
+        requestGeneration += 1
         handle(event: .cancel)
     }
+
+    // Bumped on every cancel. A request captures it when it begins, and its
+    // deferred send, streamed words, and final response are dropped once it has
+    // changed. Cancelling does not always stop the transfer (or words already
+    // queued for the main thread), and the controller is reused for the next
+    // turn, so without this a cancelled request's late words and response would
+    // be parsed as the NEXT request's reply. Main thread only.
+    private var requestGeneration = 0
 
     // The user-visible error for a provider that answered with one, for every
     // path that makes such a request (chat and the vector-store/file-upload
@@ -454,6 +490,7 @@ class AITermController {
                                                    url: requestURL,
                                                    api: model.api,
                                                    credential: model.credential,
+                                                   keyVendor: requiredRegistrationVendor,
                                                    customHeaders: model.customHeaders))
     }
 
@@ -461,7 +498,10 @@ class AITermController {
         guard let model = llmProvider?.model else {
             return .vendorKey
         }
-        return Self.apiKeyPolicy(url: model.url, api: model.api, credential: model.credential)
+        return Self.apiKeyPolicy(url: model.url,
+                                 api: model.api,
+                                 credential: model.credential,
+                                 keyVendor: requiredRegistrationVendor)
     }
 
     var requiredRegistrationVendor: iTermAIVendor {
@@ -477,7 +517,13 @@ class AITermController {
 
         case .creatingVectorStore:
             switch event {
-            case .begin, .pluginError, .cancel, .word:
+            case .cancel:
+                // Stop, or deleting the message whose turn is preparing it.
+                cancellation?.cancel()
+                cancellation = nil
+                state = .ground
+                delegate?.aitermController(self, didFailToCreateVectorStoreWithError: PendingCommandCanceled())
+            case .begin, .pluginError, .word:
                 it_fatalError()
             case .webResponse:
                 state = .ground
@@ -489,7 +535,13 @@ class AITermController {
 
         case .uploadingFile:
             switch event {
-            case .begin, .pluginError, .cancel, .word:
+            case .cancel:
+                // Stop, or deleting the message whose attachment is uploading.
+                cancellation?.cancel()
+                cancellation = nil
+                state = .ground
+                delegate?.aitermController(self, didFailToUploadFileWithError: PendingCommandCanceled())
+            case .begin, .pluginError, .word:
                 it_fatalError()
             case .webResponse:
                 state = .ground
@@ -501,7 +553,12 @@ class AITermController {
 
         case .addingFileToVectorStore:
             switch event {
-            case .begin, .pluginError, .cancel, .word:
+            case .cancel:
+                cancellation?.cancel()
+                cancellation = nil
+                state = .ground
+                delegate?.aitermControllerDidFailToAddFilesToVectorStore(self, error: PendingCommandCanceled())
+            case .begin, .pluginError, .word:
                 it_fatalError()
             case .webResponse:
                 state = .ground
@@ -516,7 +573,12 @@ class AITermController {
                     requestRegistration(continuation: state)
                     return
                 }
+                let generation = requestGeneration
                 DispatchQueue.main.async { [self] in
+                    guard requestGeneration == generation else {
+                        DLog("Request was cancelled before it was sent")
+                        return
+                    }
                     switch query {
                     case .completion(let prompt):
                         requestCompletion(query: prompt,
@@ -527,7 +589,12 @@ class AITermController {
                             // @MainActor chat stack (ChatService -> ChatBroker
                             // -> SQLite), which must run on main; hop there
                             // like the begin path above does.
-                            DispatchQueue.main.async { self?.handle(event: .word(word)) }
+                            DispatchQueue.main.async {
+                                guard let self, self.requestGeneration == generation else {
+                                    return
+                                }
+                                self.handle(event: .word(word))
+                            }
                         } : nil)
 
                     case .createVectorStore(name: let name):
@@ -568,6 +635,19 @@ class AITermController {
             case .cancel:
                 DLog("Cancel")
                 state = .ground
+                // The deferred send is dropped (see requestGeneration), so fail
+                // non-chat requests here or their callers wait forever. A chat
+                // completion is ended by AIConversation's cancel fallback.
+                switch query {
+                case .completion:
+                    break
+                case .createVectorStore:
+                    delegate?.aitermController(self, didFailToCreateVectorStoreWithError: PendingCommandCanceled())
+                case .fileUpload:
+                    delegate?.aitermController(self, didFailToUploadFileWithError: PendingCommandCanceled())
+                case .addFilesToVectorStore:
+                    delegate?.aitermControllerDidFailToAddFilesToVectorStore(self, error: PendingCommandCanceled())
+                }
             case .word:
                 DLog("Ignore unexpected word")
                 break
@@ -580,13 +660,23 @@ class AITermController {
                     requestRegistration(continuation: state)
                     return
                 }
+                let generation = requestGeneration
                 DispatchQueue.main.async { [self] in
+                    guard requestGeneration == generation else {
+                        DLog("Request was cancelled before it was sent")
+                        return
+                    }
                     requestCompletion(messages: messages,
                                 registration: registration,
                                 stream: stream ? { [weak self] word in
                         // See note above: hop to main so the streaming path
                         // drives the @MainActor chat stack on the main thread.
-                        DispatchQueue.main.async { self?.handle(event: .word(word)) }
+                        DispatchQueue.main.async {
+                            guard let self, self.requestGeneration == generation else {
+                                return
+                            }
+                            self.handle(event: .word(word))
+                        }
                     } : nil)
                 }
                 delegate?.aitermControllerWillSendRequest(self)
@@ -767,12 +857,17 @@ class AITermController {
             handle(event: .error(error))
             return
         }
+        let generation = requestGeneration
         cancellation = client.request(webRequest: request, stream: stream) { [weak self] result in
+            guard let self, self.requestGeneration == generation else {
+                DLog("Dropping the response to a cancelled request")
+                return
+            }
             switch result {
             case .success(let response):
-                self?.handle(event: .webResponse(response))
+                self.handle(event: .webResponse(response))
             case .failure(let error):
-                self?.handle(event: .pluginError(error))
+                self.handle(event: .pluginError(error))
             }
         }
         state = .querySent(messages: messages,
@@ -797,8 +892,13 @@ class AITermController {
             return
         }
         state = .creatingVectorStore
+        let generation = requestGeneration
         cancellation = client.request(webRequest: request, stream: nil, completion: { [weak self] result in
             guard let self else { return }
+            guard requestGeneration == generation else {
+                DLog("Dropping the response to a cancelled request")
+                return
+            }
             do {
                 switch result {
                 case .success(let webResponse):
@@ -846,8 +946,13 @@ class AITermController {
             return
         }
         state = .addingFileToVectorStore
+        let generation = requestGeneration
         cancellation = client.request(webRequest: request, stream: nil, completion: { [weak self] result in
             guard let self else { return }
+            guard requestGeneration == generation else {
+                DLog("Dropping the response to a cancelled request")
+                return
+            }
             do {
                 switch result {
                 case .success(let webResponse):
@@ -970,8 +1075,13 @@ class AITermController {
             return
         }
         state = .uploadingFile
+        let generation = requestGeneration
         cancellation = client.request(webRequest: request, stream: nil, completion: { [weak self] result in
             guard let self else { return }
+            guard requestGeneration == generation else {
+                DLog("Dropping the response to a cancelled request")
+                return
+            }
             do {
                 switch result {
                 case .success(let webResponse):
@@ -1337,6 +1447,14 @@ class AITermController {
             handle(event: .error(AIError(String(localized: "AITerm.AppleIntelligenceRequiresOS", defaultValue: "Apple Intelligence requires macOS 26 or later.", comment: "Error shown when Apple Intelligence is used on an older macOS version"))))
             return
         }
+        // The administrator lockout (GenerativeAIAllowed). HTTP providers are
+        // refused in iTermAIClient.request, which this path never reaches. The
+        // runner also refuses, but failing here reports the lockout plainly
+        // instead of as an Apple Intelligence error.
+        guard iTermAdvancedSettingsModel.generativeAIAllowed() else {
+            handle(event: .error(AIError(AppleIntelligenceRunnerError.disallowedByAdministrator.localizedDescription)))
+            return
+        }
         let system = messages
             .filter { $0.role == .system }
             .compactMap { $0.content }
@@ -1450,6 +1568,7 @@ class AITermController {
                 // of the ring while the opt-in debug log still gets them.
                 RLog("Invoke function \(functionName) with arguments \(redacted: functionCall.arguments ?? "")")
                 delegate?.aitermController(self, willInvokeFunction: impl)
+                let generation = requestGeneration
                 impl.invoke(message: messageForCall,
                             json: (functionCall.arguments ?? "").data(using: .utf8)!) { [weak self] result in
                     // The result is terminal content fed back to the model; keep it out
@@ -1462,6 +1581,13 @@ class AITermController {
                     RLog("function call \(functionName) completed: \(outcome). Result: \(redacted: result)")
                     guard let self else {
                         DLog("I have been released")
+                        return
+                    }
+                    // A tool that finishes after its turn was cancelled must not
+                    // send a follow-up request: it would take over whatever
+                    // request is now outstanding.
+                    guard requestGeneration == generation else {
+                        DLog("Dropping the result of \(functionName): its request was cancelled")
                         return
                     }
                     switch result {

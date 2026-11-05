@@ -22,6 +22,9 @@
 extern const int64_t VT100ScreenMutableStateSideEffectFlagDidReceiveLineFeed;
 
 @class iTermKittyImageDraw;
+@class iTermProgramStatusReportBatch;
+@class iTermTitleBatch;
+@class iTermTitleDirectoryFetch;
 
 @interface VT100ScreenMutableState()<
 PTYAnnotationDelegate,
@@ -44,6 +47,21 @@ iTermTriggerSession,
 iTermTriggerScopeProvider> {
     VT100GridCoordRange _previousCommandRange;
     iTermIdempotentOperationJoiner *_commandRangeChangeJoiner;
+    // The batch the next OSC 7501 report may join, if its side effect is
+    // still the last one added. Mutation thread only.
+    iTermProgramStatusReportBatch *_programStatusBatch;
+    // The token executor's side effect serial just after the batch's side
+    // effect was added.
+    int64_t _programStatusBatchSideEffectSerial;
+    // The batch the next title change may join, if its side effect is still
+    // the last one added. Mutation thread only.
+    iTermTitleBatch *_titleBatch;
+    // The token executor's side effect serial just after the title batch's
+    // side effect was added.
+    int64_t _titleBatchSideEffectSerial;
+    // Whether the title batch's side effect was added with addSideEffect
+    // rather than deferred. A working directory request needs that.
+    BOOL _titleBatchIsImmediate;
     dispatch_queue_t _queue;
     PTYTriggerEvaluator *_triggerEvaluator;
     dispatch_group_t _tmuxGroup;
@@ -85,11 +103,6 @@ iTermTriggerScopeProvider> {
 }
 
 @property (atomic) BOOL hadCommand;
-// This is a class variable because there is a single mutation queue. If that queue gets locked up
-// in a joined block, then any VT100ScreenMutableState can consider itself joined while on the
-// main thread. This can happen when performBlockWithJoinedThreads is reentrant with two different
-// VT100ScreenMutableState objects (for example, when detaching in tmux mode).
-@property (class, atomic, readwrite) BOOL performingJoinedBlock;
 
 // One-shot: set inside a report's joined sync so the rolled-back report token,
 // when it re-executes, is allowed to send (returns YES) instead of rolling back
@@ -101,6 +114,17 @@ iTermTriggerScopeProvider> {
 // Redeclared readwrite; see VT100ScreenMutableState.h. Incremented in the report
 // gate's sync path.
 @property (nonatomic, readwrite) NSInteger reportSyncCount;
+
+// Absolute line number of the cursor right after contents were restored from saved state, or
+// -1. Lets -restorePreferredCursorPositionIfPossible tell a resize that slid the screen over
+// history apart from output that moved the cursor.
+@property (nonatomic) long long restoredCursorAbsLine;
+// Height of the current grid right after contents were restored from saved state.
+@property (nonatomic) int restoredGridHeight;
+// cursor.y - preferredCursorPosition.y right after contents were restored from saved state.
+// Usually 0; the restoration banner can leave it nonzero.
+@property (nonatomic) int restoredCursorOffsetFromPreferred;
+- (long long)absLineOfCursor;
 
 // Has the running command appended any output since it began executing (FTCS C)? Reset at FTCS C,
 // set whenever text is appended. Used to decide whether a program that moves the cursor above its
@@ -147,6 +171,22 @@ iTermTriggerScopeProvider> {
 - (void)addDeferredSideEffect:(void (^)(id<VT100ScreenDelegate> delegate))sideEffect
                          name:(NSString *)name;
 
+// Main thread, in a side effect. Fetches the working directory once and
+// records it at each fetch's line, in order, as
+// setWorkingDirectory:onAbsLine:pushed:token: would for a nil directory.
+- (void)fetchWorkingDirectoryWithDelegate:(id<VT100ScreenDelegate>)delegate
+                                  fetches:(NSArray<iTermTitleDirectoryFetch *> *)fetches
+                                   pushed:(BOOL)pushed;
+
+// The screen line for an absolute line where setWorkingDirectory:onAbsLine:pushed:token:
+// may record a directory, or -1 if it may not.
+- (int)workingDirectoryLineForAbsLine:(long long)absLine;
+
+// Runs a side effect's block now, if there is a delegate. For a side effect
+// added straight to the token executor.
+- (void)performSideEffect:(void (^)(id<VT100ScreenDelegate> delegate))block
+                     name:(NSString *)name;
+
 // Runs even if there is no delegate yet.
 - (void)addNoDelegateSideEffect:(void (^)(void))sideEffect
                            name:(NSString *)name;
@@ -162,5 +202,20 @@ iTermTriggerScopeProvider> {
 // Refresh _bottommostFoldAbsLine from the interval tree. Call after any event that adds, removes, or
 // repositions folds in the grid (fold create/unfold, the fold-preserving scroll, reflow).
 - (void)recomputeBottommostFoldAbsLine;
+
+// The trimmed text in `absRange`, or the empty string.
+- (NSString *)textInExcludedAbsRange:(VT100GridAbsCoordRange)absRange;
+
+// Removes the excluded subranges of `mark` at `indexes`, then appends `mutationRange` (bound to
+// the mutation-thread pool) and its unbound twin `unboundRange` for the doppelganger, if given.
+// The progenitor's and doppelganger's arrays are parallel, so the same indexes apply to both.
+- (void)replaceExcludedSubrangesOfMark:(id<VT100ScreenMarkReading>)mark
+                             atIndexes:(NSIndexSet *)indexes
+                     withMutationRange:(iTermResilientCoordinateRange * _Nullable)mutationRange
+                          unboundRange:(iTermResilientCoordinateRange * _Nullable)unboundRange;
+
+// Drops excluded subranges of `mark` whose cells no longer hold the text they held when their
+// prompt closed: the shell erased or typed over them.
+- (void)dropStaleExcludedSubrangesOfMark:(id<VT100ScreenMarkReading>)mark;
 
 @end

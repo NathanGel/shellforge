@@ -55,16 +55,30 @@ class SpyingScreenDelegate: FakeSession {
     }
     private(set) var setSessionSpecificProfileBoolCalls: [SetSessionSpecificProfileBoolCall] = []
 
+    /// Fired after each triggerSideEffectSetSessionSpecificProfileBool. The real
+    /// implementation (PTYSession) reloads the profile, which joins threads, so
+    /// a test can use this to check that joining is legal at that point.
+    var onSetSessionSpecificProfileBool: ((Bool, String) -> Void)?
+
     override func triggerSideEffectSetSessionSpecificProfileBool(_ value: Bool, forKey profileKey: String) {
         setSessionSpecificProfileBoolCalls.append(SetSessionSpecificProfileBoolCall(value: value, key: profileKey))
+        onSetSessionSpecificProfileBool?(value, profileKey)
     }
 
     /// Number of times screenMouseModeDidChange fired (one per drained
     /// "mouse mode did change" side effect).
     private(set) var mouseModeDidChangeCount = 0
 
+    /// The mouse mode the main-thread state reported each time
+    /// screenMouseModeDidChange fired. PTYSession reads it there to decide
+    /// whether to track mouse-moved events.
+    private(set) var mouseModesSeenOnChange: [MouseMode] = []
+
     override func screenMouseModeDidChange() {
         mouseModeDidChangeCount += 1
+        if let screen {
+            mouseModesSeenOnChange.append(screen.terminalMouseMode)
+        }
     }
 
     /// Every report the terminal sent back to the "process", in order. This is
@@ -97,6 +111,20 @@ class SpyingScreenDelegate: FakeSession {
         sentReports.append(data)
     }
 
+    /// sshargs passed to screenDidHookSSHConductor, in order.
+    private(set) var hookedSSHArgs: [String] = []
+
+    /// Unique IDs passed to screenDidFailToParseSSHConductorHook, in order.
+    private(set) var failedSSHHookUniqueIDs: [String] = []
+
+    override func screenDidHookSSHConductor(withToken token: String, uniqueID: String, boolArgs: String, sshargs: String, dcsID: String, parentDepth: Int32, savedState: [AnyHashable : Any]) {
+        hookedSSHArgs.append(sshargs)
+    }
+
+    override func screenDidFailToParseSSHConductorHook(withToken token: String, uniqueID: String, dcsID: String, parentDepth: Int32, savedState: [AnyHashable : Any]) {
+        failedSSHHookUniqueIDs.append(uniqueID)
+    }
+
     /// Hosts passed to screenCurrentHostDidChange, in order.
     private(set) var currentHostDidChangeCalls: [any VT100RemoteHostReading] = []
 
@@ -111,15 +139,58 @@ class SpyingScreenDelegate: FakeSession {
         onCurrentHostDidChange?(host)
     }
 
+    /// Whether a program may set the window and icon titles. FakeSession
+    /// says no; the spy says yes so title tests can see them.
+    var allowTitleSetting = true
+
+    /// Window titles, icon names, subtitles, bells and title-driven working
+    /// directory requests, in the order they reached the delegate.
+    private(set) var titleEvents: [String] = []
+
+    /// Times screenSetWindowTitle fired.
+    var windowTitleCount: Int {
+        titleEvents.filter { $0.hasPrefix("window ") }.count
+    }
+
+    /// Times screenSetIconName fired.
+    var iconNameCount: Int {
+        titleEvents.filter { $0.hasPrefix("icon ") }.count
+    }
+
+    override func screenAllowTitleSetting() -> Bool {
+        allowTitleSetting
+    }
+
+    override func screenSetWindowTitle(_ title: String) {
+        titleEvents.append("window \(title)")
+    }
+
+    override func screenSetIconName(_ name: String) {
+        titleEvents.append("icon \(name)")
+    }
+
+    override func screenSetSubtitle(_ subtitle: String) {
+        titleEvents.append("subtitle \(subtitle)")
+    }
+
+    override func screenActivateBellAudibly(_ audibleBell: Bool,
+                                            visibly flashBell: Bool,
+                                            showIndicator showBellIndicator: Bool,
+                                            quell: Bool) {
+        titleEvents.append("bell")
+    }
+
     func reset() {
         getWorkingDirectoryCalls.removeAll()
         pollLocalDirectoryOnlyCalls.removeAll()
+        titleEvents.removeAll()
         logWorkingDirectoryCalls.removeAll()
         currentDirectoryDidChangeCalls.removeAll()
         promptDidStartCalls.removeAll()
         promptDidEndCalls.removeAll()
         commandDidChangeCalls.removeAll()
         mouseModeDidChangeCount = 0
+        mouseModesSeenOnChange.removeAll()
         setWindowFrameCalls.removeAll()
         sentReports.removeAll()
         currentHostDidChangeCalls.removeAll()
@@ -129,11 +200,13 @@ class SpyingScreenDelegate: FakeSession {
 
     override func screenGetWorkingDirectory(completion: @escaping (String?) -> Void) {
         getWorkingDirectoryCalls.append(GetWorkingDirectoryCall())
+        titleEvents.append("pwd")
         completion(polledWorkingDirectory)
     }
 
     override func screenPollLocalDirectoryOnly() {
         pollLocalDirectoryOnlyCalls.append(PollLocalDirectoryOnlyCall())
+        titleEvents.append("poll local")
     }
 
     override func screenLogWorkingDirectory(onAbsoluteLine line: Int64,

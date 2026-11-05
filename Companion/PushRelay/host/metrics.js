@@ -23,14 +23,68 @@ const COUNTER_HELP = {
   push_apns_error_total: "Pushes that reached APNs but got a non-2xx (surfaced as 502).",
   rate_limited_total: "Requests rejected by a rate limit (429).",
   process_exceptions_total: "Process-level exceptions swallowed to keep serving.",
+  push_failed_total: "Pushes that failed on our side or Apple's (502 APNs reject or 500 transport error); excludes client faults.",
+  apns_connects_total: "New HTTP/2 connections opened to APNs.",
+  apns_connect_throttled_total: "Connection attempts delayed by the 1/sec per-host reconnect floor.",
+  apns_session_errors_total: "APNs sessions that errored (reset, TLS failure, ...).",
+  apns_discarded_idle_total: "APNs sessions replaced because they sat idle too long.",
+  apns_discarded_timeout_total: "APNs sessions thrown away after a request timed out.",
+  apns_request_timeouts_total: "APNs requests that got no answer within the timeout.",
+  peer_forward_ok_total: "Registrations passed on to the peer relay.",
+  peer_forward_failed_total: "Forwards to the peer relay that failed (queued for retry).",
+  peer_forward_dropped_total: "Records the peer refused as malformed (400), dropped.",
+  peer_received_total: "Valid registrations received from the peer relay.",
+  peer_applied_total: "Peer registrations stored (newer than what we had).",
+  peer_ignored_total: "Peer registrations ignored (not newer, or already expired).",
+  peer_rejected_total: "Peer requests rejected (bad secret, malformed, or clock too far off).",
+  peer_self_total: "Responses showing PUSH_PEER_URL points at this relay itself (misconfiguration).",
+  peer_rebuilt_total: "Times the peer's database changed (it was rebuilt) and everything was resent.",
 };
 const GAUGE_HELP = {
   devices: "Registered devices currently in KV (live, non-expired).",
+  apns_sessions: "Open HTTP/2 sessions to APNs right now.",
+  apns_oldest_session_age_seconds: "Age of the oldest open APNs session.",
+  last_delivery_timestamp_seconds: "Unix time of the last push APNs accepted; 0 if none since process start.",
+  peer_outbox: "Registrations waiting to be passed on to the peer relay.",
+  peer_clock_skew_ms: "Peer's clock minus ours, estimated from the last round trip to it.",
+  peer_last_ok_timestamp_seconds: "Unix time the peer last answered an authenticated request; 0 if never.",
 };
+
+// Apple's rejection reasons are a small closed set, so labeling by reason is
+// bounded and carries nothing identifying. Anything else folds into "other" and
+// the distinct-label count is capped, so a misbehaving upstream can't grow it.
+const REJECT_HELP = "Pushes APNs rejected, by Apple's reason string.";
+const KNOWN_REASONS = [
+  "BadDeviceToken", "Unregistered", "DeviceTokenNotForTopic", "TooManyRequests",
+  "ExpiredProviderToken", "InvalidProviderToken", "InternalServerError",
+  "ServiceUnavailable", "other",
+];
+const MAX_REASONS = 40;
+
+// APNs round-trip latency, seconds. Upper bound is the 10s request timeout.
+export const LATENCY_BUCKETS = [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10];
+const LATENCY_HELP = "Round-trip time of pushes sent to APNs (seconds), incl. connect and any throttle wait.";
 
 export class Metrics {
   constructor() {
     this.counters = new Map();
+    this.rejects = new Map(KNOWN_REASONS.map((r) => [r, 0]));
+    this.latency = { buckets: LATENCY_BUCKETS.map(() => 0), sum: 0, count: 0 };
+  }
+
+  // Count one APNs rejection under its reason (sanitized: alphabetic, bounded).
+  incReject(reason) {
+    let r = typeof reason === "string" && /^[A-Za-z]{1,40}$/.test(reason) ? reason : "other";
+    if (!this.rejects.has(r) && this.rejects.size >= MAX_REASONS) r = "other";
+    this.rejects.set(r, (this.rejects.get(r) || 0) + 1);
+  }
+
+  // Record one APNs round trip (seconds) in the cumulative latency histogram.
+  observeLatency(seconds) {
+    const l = this.latency;
+    LATENCY_BUCKETS.forEach((le, i) => { if (seconds <= le) l.buckets[i] += 1; });
+    l.sum += seconds;
+    l.count += 1;
   }
 
   inc(name, by = 1) {
@@ -63,6 +117,22 @@ export class Metrics {
       help(name, "gauge");
       lines.push(`pushrelay_${name} ${value}`);
     }
+
+    lines.push(`# HELP pushrelay_apns_rejected_total ${REJECT_HELP}`);
+    lines.push("# TYPE pushrelay_apns_rejected_total counter");
+    for (const [reason, value] of this.rejects) {
+      lines.push(`pushrelay_apns_rejected_total{reason="${reason}"} ${value}`);
+    }
+
+    const l = this.latency;
+    lines.push(`# HELP pushrelay_apns_latency_seconds ${LATENCY_HELP}`);
+    lines.push("# TYPE pushrelay_apns_latency_seconds histogram");
+    LATENCY_BUCKETS.forEach((le, i) => {
+      lines.push(`pushrelay_apns_latency_seconds_bucket{le="${le}"} ${l.buckets[i]}`);
+    });
+    lines.push(`pushrelay_apns_latency_seconds_bucket{le="+Inf"} ${l.count}`);
+    lines.push(`pushrelay_apns_latency_seconds_sum ${l.sum}`);
+    lines.push(`pushrelay_apns_latency_seconds_count ${l.count}`);
     return lines.join("\n") + "\n";
   }
 }
@@ -70,3 +140,23 @@ export class Metrics {
 // The counters worker.js decisions map to, pre-registered at boot so every line
 // is present from the first scrape.
 export const COUNTER_NAMES = Object.keys(COUNTER_HELP);
+
+// Maps the APNs transport's telemetry events (see host/apns.js onEvent) onto
+// counters and the latency histogram. Kept here so the mapping is testable
+// without standing up the whole server.
+export function apnsEventSink(metrics) {
+  return (name, data) => {
+    switch (name) {
+      case "connect": metrics.inc("apns_connects_total"); break;
+      case "connect_throttled": metrics.inc("apns_connect_throttled_total"); break;
+      case "session_error": metrics.inc("apns_session_errors_total"); break;
+      case "discard":
+        metrics.inc(data.kind === "idle" ? "apns_discarded_idle_total" : "apns_discarded_timeout_total");
+        break;
+      case "request":
+        metrics.observeLatency(data.ms / 1000);
+        if (data.outcome === "timeout") metrics.inc("apns_request_timeouts_total");
+        break;
+    }
+  };
+}

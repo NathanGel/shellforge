@@ -128,6 +128,11 @@ fileprivate struct KeyEventInfo: CustomDebugStringConvertible, Codable {
     var charactersIgnoringModifiers: String?
     var isARepeat: Bool
 
+    // A flags-changed event that changed only the Caps Lock state but didn't
+    // come from a modifier key, such as the keyCode 255 events macOS posts when
+    // Caps Lock switches the input source. virtualKeyCode is kVK_CapsLock.
+    var isSynthesizedCapsLockChange: Bool
+
     // associated with key, so 97 for shift-A; for function keys, use private
     // use values. Can be 0 for some function keys that don't have private use values.
     var unicodeKeyCode: UInt32
@@ -175,11 +180,12 @@ fileprivate struct KeyEventInfo: CustomDebugStringConvertible, Codable {
         } else {
             true
         }
-        unicodeKeyCode = if event.type == .keyDown || event.type == .keyUp {
-            event.it_unicodeKeyCode(
+        isSynthesizedCapsLockChange = false
+        if event.type == .keyDown || event.type == .keyUp {
+            unicodeKeyCode = event.it_unicodeKeyCode(
                 useNativeOptionBehavior: useNativeOptionBehavior)
         } else {
-            switch Int(virtualKeyCode) {
+            let modifierKeyCode: UInt32 = switch Int(virtualKeyCode) {
             case kVK_Shift:
                 57441
             case kVK_RightShift:
@@ -205,6 +211,20 @@ fileprivate struct KeyEventInfo: CustomDebugStringConvertible, Codable {
                 57358
             default:
                 0
+            }
+            let capsLockChanged = (event.it_modifierFlags.contains(.capsLock) !=
+                                   event.it_previousFlags.contains(.capsLock))
+            if modifierKeyCode == 0 && capsLockChanged {
+                // When Caps Lock switches the input source, macOS posts
+                // flags-changed events with keyCode 255 that change only the
+                // lock state. Treat them as Caps Lock so they're never reported
+                // without a key number. Issue 13136.
+                DLog("Treat flags-changed with keyCode \(virtualKeyCode) as a synthesized Caps Lock change")
+                virtualKeyCode = UInt16(kVK_CapsLock)
+                isSynthesizedCapsLockChange = true
+                unicodeKeyCode = 57358
+            } else {
+                unicodeKeyCode = modifierKeyCode
             }
         }
 
@@ -264,6 +284,17 @@ class ModernKeyMapper: NSObject, iTermKeyMapper {
         }
         set {
             impl.flags = newValue
+        }
+    }
+
+    // Reports whether macOS's “Use the Caps Lock key to switch to and from the
+    // last used Latin input source” setting is on. Replaceable for tests.
+    var capsLockSwitchesInputSource: () -> Bool {
+        get {
+            impl.capsLockSwitchesInputSource
+        }
+        set {
+            impl.capsLockSwitchesInputSource = newValue
         }
     }
 
@@ -351,7 +382,12 @@ class ModernKeyMapper: NSObject, iTermKeyMapper {
     }
 
     func transformedText(toInsert text: String) -> String {
-        return impl.transformedText(toInsert: text)
+        return impl.transformedText(toInsert: text, currentEvent: NSApp.currentEvent)
+    }
+
+    // Exposed for tests, which have no current event.
+    func transformedText(toInsert text: String, currentEvent: NSEvent?) -> String {
+        return impl.transformedText(toInsert: text, currentEvent: currentEvent)
     }
 
     func wouldReportControlReturn() -> Bool {
@@ -401,6 +437,29 @@ fileprivate class ModernKeyMapperImpl {
                                                      functionKey: .regular)
     var event: KeyEventInfo?
     private var lastDeadKey: KeyEventInfo?
+    var capsLockSwitchesInputSource: () -> Bool = { ModernKeyMapperImpl.systemCapsLockSwitchesInputSource }
+    // Lock state before the physical press of a Caps Lock gesture in progress.
+    // See capsLockReportsWhenSwitchingInputSource(for:).
+    private var capsLockGestureStartedLocked: Bool?
+
+    // The global default behind the “Use the Caps Lock key to switch to and
+    // from the last used Latin input source” checkbox. Synchronize first so a
+    // change made in System Settings (or by the test harness) is seen without
+    // a restart. This only runs on Caps Lock events.
+    static var systemCapsLockSwitchesInputSource: Bool {
+        let key = "TISRomanSwitchState" as CFString
+        CFPreferencesAppSynchronize(kCFPreferencesAnyApplication)
+        let value = CFPreferencesCopyAppValue(key, kCFPreferencesAnyApplication) as? NSNumber
+        return value?.boolValue ?? false
+    }
+    // The most recent dead key press, kept until the next key down. Unlike
+    // lastDeadKey it survives the dead key's key-up.
+    private var pendingDeadKey: KeyEventInfo?
+    // The dead key pressed just before the key being handled, until the first
+    // text it inserts. See transformedText(toInsert:currentEvent:).
+    private var deadKeyBeforeCurrentEvent: KeyEventInfo?
+    // The key code of the key down that followed deadKeyBeforeCurrentEvent.
+    private var keyCodeAfterDeadKey: UInt16?
 
     var keyMapperWantsKeyUp: Bool {
         return flags.contains(.reportAllEventTypes)
@@ -411,8 +470,14 @@ fileprivate class ModernKeyMapperImpl {
         if let report = keyReport(for: event), report.isDeadKey {
             DLog("is dead key")
             lastDeadKey = event
+            pendingDeadKey = event
+            deadKeyBeforeCurrentEvent = nil
+            keyCodeAfterDeadKey = nil
         } else {
             lastDeadKey = nil
+            deadKeyBeforeCurrentEvent = pendingDeadKey
+            keyCodeAfterDeadKey = pendingDeadKey == nil ? nil : event.virtualKeyCode
+            pendingDeadKey = nil
         }
     }
 
@@ -538,12 +603,19 @@ fileprivate class ModernKeyMapperImpl {
         return ["flags": NSNumber(value: flags.rawValue)]
     }
 
-    func transformedText(toInsert text: String) -> String {
+    func transformedText(toInsert text: String, currentEvent: NSEvent?) -> String {
+        // Only the first text inserted for the key press that followed the
+        // dead key can be the dead key's leftover character. Text inserted
+        // without that key press (dictation, for example) can't.
+        let precedingDeadKey = (currentEvent?.type == .keyDown &&
+                                currentEvent?.keyCode == keyCodeAfterDeadKey) ? deadKeyBeforeCurrentEvent : nil
+        deadKeyBeforeCurrentEvent = nil
+        keyCodeAfterDeadKey = nil
         if !flags.contains(.reportAllKeysAsEscapeCodes) {
             return text
         }
         let currentKeyCode: UInt16 = {
-            guard let currentEvent = NSApp.currentEvent,
+            guard let currentEvent,
                   currentEvent.type == .keyDown || currentEvent.type == .keyUp else {
                 return 0
             }
@@ -551,7 +623,7 @@ fileprivate class ModernKeyMapperImpl {
         }()
         let phonyEvent = NSEvent.keyEvent(with: .keyDown,
                                           location: .zero,
-                                          modifierFlags: NSApp.currentEvent?.modifierFlags ?? [],
+                                          modifierFlags: currentEvent?.modifierFlags ?? [],
                                           timestamp: Date.timeIntervalSinceReferenceDate,
                                           windowNumber: 0,
                                           context: nil,
@@ -563,6 +635,20 @@ fileprivate class ModernKeyMapperImpl {
             return text
         }
         var event = KeyEventInfo(event: phonyEvent, configuration: configuration, flags: flags)
+
+        // A dead key followed by a key it doesn't compose with (German ^ then
+        // <) inserts the dead key's own character and then the second key's
+        // text, both while handling the second key. Report the first as the
+        // dead key's press; otherwise both would be reported as the second key.
+        // Space after a dead key composes to the accent in a single insertion,
+        // like any other composition, so it is still reported as space.
+        if let precedingDeadKey,
+           Self.spacingTexts(ofDeadKey: precedingDeadKey).contains(text),
+           text.it_ucs4CodePoints != event.textAsCodepoints,
+           event.textAsCodepoints != [UInt32(UnicodeScalar(" ").value)] {
+            DLog("Text \(text) is the uncomposed character of dead key \(precedingDeadKey)")
+            event = precedingDeadKey
+        }
 
         // A dead-key composition (for example US International apostrophe then e,
         // producing é) generates text the physical key cannot produce on its own.
@@ -595,6 +681,23 @@ fileprivate class ModernKeyMapperImpl {
             DLog("Unexpected result from csiU: \(encoded)")
             return text
         }
+    }
+
+    // What a dead key types on its own when the next key doesn't compose with
+    // it: the key translated without dead-key processing (^ for the German
+    // dead circumflex). charactersIgnoringModifiers is usually empty for a
+    // dead key but is checked too.
+    private static func spacingTexts(ofDeadKey deadKey: KeyEventInfo) -> Set<String> {
+        var result = Set<String>()
+        if let nsevent = deadKey.nsevent,
+           let translated = nsevent.characters(byApplyingModifiers: nsevent.modifierFlags),
+           !translated.isEmpty {
+            result.insert(translated)
+        }
+        if let ignoring = deadKey.charactersIgnoringModifiers, !ignoring.isEmpty {
+            result.insert(ignoring)
+        }
+        return result
     }
 
     func keyMapperData(forKeyUp event: KeyEventInfo) -> Data? {
@@ -649,10 +752,64 @@ private extension ModernKeyMapperImpl {
                 return ""
             }
         }
+        if let reports = capsLockReportsWhenSwitchingInputSource(for: event) {
+            return reports.map { encodedString(report: $0, preCocoa: preCocoa, event: event) }.joined()
+        }
         guard let report = keyReport(for: event) else {
             DLog("no key report")
             return ""
         }
+        return encodedString(report: report, preCocoa: preCocoa, event: event)
+    }
+
+    // When “Use the Caps Lock key to switch to and from the last used Latin
+    // input source” is on, a Caps Lock press is followed by synthetic
+    // flags-changed events (keyCode 255) that undo the lock change if the
+    // press switched the input source, and redo it if the press turned out to
+    // be a lock or unlock. A hold sends no key-up. Recorded sequences:
+    //   Tap (switches input source): 57 on, 255 off, 57 off
+    //   Hold until locked:           57 on, 255 off, 255 on (after ~500 ms)
+    //   Tap while locked (unlocks):  57 off, 255 on, 57 on, 255 off
+    //   Hold until unlocked:         57 off, 255 on, 255 off (after ~500 ms)
+    // So report nothing until a synthetic event leaves the lock state different
+    // from where the press started, then report a press and release. A press
+    // that only switches the input source reports nothing.
+    //
+    // Returns nil if the event isn't handled here, or the reports to send,
+    // which may be empty. Issue 13136.
+    private func capsLockReportsWhenSwitchingInputSource(for event: KeyEventInfo) -> [KeyReport]? {
+        guard event.eventType == .flagsChanged,
+              event.virtualKeyCode == kVK_CapsLock,
+              capsLockSwitchesInputSource() else {
+            return nil
+        }
+        let wasLocked = event.previousModifiers.raw.flags.contains(.capsLock)
+        let isLocked = event.modifiers.raw.flags.contains(.capsLock)
+        if wasLocked == isLocked {
+            DLog("Caps Lock event with no lock change (key-up of a tap)")
+            return []
+        }
+        if !event.isSynthesizedCapsLockChange {
+            DLog("Physical Caps Lock press starts a gesture with locked=\(wasLocked)")
+            capsLockGestureStartedLocked = wasLocked
+            return []
+        }
+        let startedLocked = capsLockGestureStartedLocked ?? wasLocked
+        if isLocked == startedLocked {
+            DLog("Synthetic Caps Lock change restores locked=\(startedLocked); input source switch so far")
+            return []
+        }
+        DLog("Synthetic Caps Lock change to locked=\(isLocked) ends the gesture")
+        capsLockGestureStartedLocked = nil
+        if !flags.contains(.reportAllKeysAsEscapeCodes) {
+            DLog("Not reporting all keys as escape codes")
+            return []
+        }
+        return [KeyReport(type: .press, event: event),
+                KeyReport(type: .release, event: event)]
+    }
+
+    private func encodedString(report: KeyReport, preCocoa: Bool, event: KeyEventInfo) -> String {
         switch report.encoded(enhancementFlags: flags) {
         case .fallbackToAmbiguous:
             DLog("encode returned fallbackToAmbiguous")
@@ -685,6 +842,12 @@ private extension ModernKeyMapperImpl {
         case .flagsChanged:
             if !flags.contains(.reportAllKeysAsEscapeCodes) {
                 DLog("Ignore flags changed when not reporting all keys as escape codes")
+                return nil
+            }
+            if event.csiUNumber == 0 {
+                // Without a key number the modifiers would land in the number
+                // slot and be read as a codepoint, e.g., \e[1:3u.
+                DLog("Ignore flags changed for key without a key number")
                 return nil
             }
             let isRelease = event.modifiers.cooked.subtracting(event.previousModifiers.cooked).isEmpty

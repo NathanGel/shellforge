@@ -7,7 +7,7 @@
 # Usage:
 #   tools/run_shell_integration_live.sh                 # all shells
 #   tools/run_shell_integration_live.sh zsh             # one shell only
-#   tools/run_shell_integration_live.sh test_zsh_baseline_singleCommandEmitsOneInitialPrompt
+#   tools/run_shell_integration_live.sh testZsh_baseline_emitsOnePromptAPerCommand
 #
 # Shells that aren't installed are skipped automatically by the harness.
 #
@@ -46,7 +46,7 @@ class_path="ModernTests/ShellIntegrationLiveHarness"
 
 if [[ -z "$filter" ]]; then
     only_testing_args=( "$class_path" )
-elif [[ "$filter" == test_* ]]; then
+elif [[ "$filter" == test* ]]; then
     only_testing_args=( "${class_path}/${filter}" )
 else
     # Treat as a shell name (zsh, bash, fish, tcsh, xonsh, nu).
@@ -54,9 +54,8 @@ else
         zsh|bash|fish|tcsh|xonsh|nu)
             # Match all tests whose method name starts with the capitalized shell name.
             cap="$(tr '[:lower:]' '[:upper:]' <<< "${filter:0:1}")${filter:1}"
-            methods=(
-                "test${cap}_baseline_emitsOnePromptAPerCommand"
-            )
+            methods=( $(grep -o "func test${cap}_[A-Za-z0-9_]*" \
+                            "$PROJECT_DIR/ModernTests/ShellIntegrationLiveHarness.swift" | sed 's/^func //') )
             only_testing_args=()
             for m in "${methods[@]}"; do
                 only_testing_args+=( "${class_path}/${m}" )
@@ -73,4 +72,8 @@ cd "$PROJECT_DIR"
 # Tell run_tests.expect to leave the config file alone (it's the live
 # invocation marker for ShellIntegrationLiveHarness's setUpWithError).
 export ITERM2_SHELL_INTEGRATION_LIVE_KEEP_CONFIG=1
+# Live tests can wait minutes on a remote API, a local model, or a download, so
+# allow a longer quiet stretch than run_tests.expect's 300-second default before
+# it treats the run as hung.
+export RUN_TESTS_STALL_SECONDS="${RUN_TESTS_STALL_SECONDS:-1800}"
 tools/run_tests.expect "${only_testing_args[@]}"

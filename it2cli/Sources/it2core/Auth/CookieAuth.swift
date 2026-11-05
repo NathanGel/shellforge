@@ -2,8 +2,20 @@ import Foundation
 
 /// Handles authentication with iTerm2's API server.
 enum CookieAuth {
+    /// How to ask iTerm2 for a cookie when the environment has none.
+    enum Policy {
+        /// Run osascript. What every command has always done, so existing scripts see no change.
+        case appleScript
+        /// Check for consent first and never let prompts pile up. See AgentHookAuth.
+        case agentHook
+    }
+
+    /// Set by `handle-agent-hook` around its work. A task-local rather than a parameter because the
+    /// connection is made several layers down, by whichever sub-command needs it first.
+    @TaskLocal static var policy: Policy = .appleScript
+
     /// Get cookie and key credentials for the WebSocket handshake.
-    /// Checks environment variables first, falls back to AppleScript.
+    /// Checks environment variables first, then asks iTerm2 as `policy` says.
     static func getCredentials() -> (cookie: String?, key: String?) {
         // Fast path: cookie from environment
         if let cookie = ProcessInfo.processInfo.environment["ITERM2_COOKIE"] {
@@ -11,8 +23,13 @@ enum CookieAuth {
             return (cookie, key)
         }
 
-        // Fallback: request single-use cookie via AppleScript
-        return runAppleScript(reusable: false)
+        switch policy {
+        case .appleScript:
+            // Fallback: request single-use cookie via AppleScript
+            return runAppleScript(reusable: false)
+        case .agentHook:
+            return AgentHookAuth.getCredentials()
+        }
     }
 
     /// Request a reusable cookie via AppleScript.
@@ -28,12 +45,25 @@ enum CookieAuth {
 
     // MARK: - Private
 
-    /// The AppleScript target application. Defaults to "iTerm2" but can be
-    /// overridden with IT2_APP_PATH to target a specific instance (e.g. a
-    /// path like "/Applications/iTerm2-nightly.app").
+    /// The AppleScript target application for the current process.
+    ///
+    /// Prefers the advertiser this process actually connected to (see
+    /// SocketConnection.chosenAdvertisedRecord) over the inherited IT2_APP_PATH, because the
+    /// variable is frozen into a tmux server's environment by whichever tab started it, days and
+    /// several builds ago, while the record is published by an iTerm2 attached right now. Asking
+    /// the wrong one yields a cookie this instance rejects.
     private static var appTarget: String {
-        if let path = ProcessInfo.processInfo.environment["IT2_APP_PATH"] {
-            return "application \"\(path)\""
+        return appTarget(recordAppPath: SocketConnection.chosenAdvertisedRecord?["app"],
+                         inheritedAppPath: ProcessInfo.processInfo.environment["IT2_APP_PATH"])
+    }
+
+    /// Pure form of the rule above, so it can be tested without a tmux server or a live socket.
+    /// Defaults to "iTerm2", which is correct whenever only one instance is running.
+    static func appTarget(recordAppPath: String?, inheritedAppPath: String?) -> String {
+        for candidate in [recordAppPath, inheritedAppPath] {
+            if let candidate, !candidate.isEmpty {
+                return "application \"\(candidate)\""
+            }
         }
         return "application \"iTerm2\""
     }

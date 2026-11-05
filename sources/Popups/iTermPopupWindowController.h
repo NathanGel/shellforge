@@ -35,6 +35,10 @@
 // If the cursor is preceded by whitespace the last word will be empty. Words go in reverse order.
 - (NSArray<NSString *> *)popupWordsBeforeInsertionPoint:(int)count;
 - (BOOL)popupWindowShouldAvoidChangingWindowOrderOnClose;
+// What has been typed at the prompt up to the cursor right now, or nil if the
+// delegate can't tell. The auto command history popup uses it to decide what
+// to insert, since what was typed when it last loaded may be stale.
+- (NSString *)popupTypedCommand;
 @end
 
 @protocol iTermPopupWindowHosting
@@ -92,6 +96,10 @@
 - (PopupModel*)model;
 - (void)setPosition:(BOOL)canChangeSide;
 - (void)reloadData:(BOOL)canChangeSide;
+
+// Widens the column with identifier "date", if there is one, so every row's
+// text fits, taking the room from the column with identifier "value".
+- (void)sizeDateColumnToFit;
 - (void)_setClearFilterOnNextKeyDownFlag:(id)sender;
 - (int)convertIndex:(int)i;
 - (NSAttributedString*)attributedStringForEntry:(PopupEntry*)entry isSelected:(BOOL)isSelected;

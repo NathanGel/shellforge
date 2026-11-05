@@ -4,10 +4,10 @@
 # Anthropic (Claude Code) provider script for the "AI Usage" workgroup
 # toolbar item. Emits AI usage as JSON.
 # Reads Claude Code's subscription usage via `claude -p /usage` and
-# converts the three progress lines into a bar list.
+# converts the weekly progress lines into a bar list.
 #
 # Output contract (always valid JSON on stdout, always exit 0):
-#   {"bars":[{"label":"Session","short":"S","fraction":0.02,
+#   {"bars":[{"label":"Week","short":"W","fraction":0.02,
 #             "detail":"resets ..."}],
 #    "error":null}
 # `short` is the caption for the cramped toolbar row (the toolbar item
@@ -32,8 +32,11 @@
 # whole input, rejoining lines with a literal \n so a multi-line
 # diagnostic stays one valid JSON string. Truncation is done by the caller
 # on line boundaries (never mid-byte) so UTF-8 stays intact.
+# Other control characters (ESC, BS, and so on, as in colored stderr) are
+# written as \u00XX: JSON forbids them raw.
 json_escape() {
     awk '
+    BEGIN { for (i = 1; i < 32; i++) ctl[sprintf("%c", i)] = i; ctl[sprintf("%c", 127)] = 127 }
     { if (NR > 1) buf = buf "\n" $0; else buf = $0 }
     END {
         gsub(/\r/, "", buf)
@@ -45,6 +48,7 @@ json_escape() {
             else if (c == "\"") out = out "\\\""
             else if (c == "\n") out = out "\\n"
             else if (c == "\t") out = out "\\t"
+            else if (c in ctl) out = out sprintf("\\u%04x", ctl[c])
             else out = out c
         }
         printf "%s", out
@@ -99,7 +103,6 @@ fi
 
 # Parse the usage text with awk. Recognized line shapes (the middle dot
 # is UTF-8; we key off "% used" and "resets" rather than the dot):
-#   Current session: N% used ... resets REST
 #   Current week (all models): N% used ... resets REST
 #   Current week (LABEL): N% used ... resets REST
 json=$(printf '%s\n' "$usage_text" | awk '
@@ -109,6 +112,7 @@ function jsonesc(s,   out, i, c) {
         c = substr(s, i, 1)
         if (c == "\\") out = out "\\\\"
         else if (c == "\"") out = out "\\\""
+        else if (c in ctl) out = out sprintf("\\u%04x", ctl[c])
         else out = out c
     }
     return out
@@ -118,7 +122,12 @@ function trim(s) {
     sub(/[ \t]+$/, "", s)
     return s
 }
-BEGIN { n = 0 }
+BEGIN {
+    n = 0
+    # Control characters (such as ESC from colored output) must be escaped.
+    for (i = 1; i < 32; i++) ctl[sprintf("%c", i)] = i
+    ctl[sprintf("%c", 127)] = 127
+}
 {
     line = $0
     # Must look like a usage line.
@@ -126,10 +135,7 @@ BEGIN { n = 0 }
 
     label = ""
     shortlbl = ""
-    if (line ~ /^Current session:/) {
-        label = "Session"
-        shortlbl = "S"
-    } else if (line ~ /^Current week \(all models\):/) {
+    if (line ~ /^Current week \(all models\):/) {
         label = "Week"
         shortlbl = "W"
     } else if (line ~ /^Current week \(/) {
@@ -213,16 +219,27 @@ fi
 # ending "...rate limi" + stderr starting "t exceeded").
 both_output=$(printf '%s\n%s' "$usage_text" "$stderr_text")
 
+# Anthropic retired session limits, but a "Current session:" line may
+# still appear. The parser ignores it, so it's not evidence of drift.
+usage_lines=$(printf '%s\n' "$usage_text" | grep -v '^Current session:')
+
 # Does the output resemble a usage report? These phrases are the load-
 # bearing parts of the format; if they're present but no bar parsed, the
 # format drifted and that's worth reporting.
-case "$usage_text" in
-    *"% used"*|*"Current session"*|*"Current week"*)
+case "$usage_lines" in
+    *"% used"*|*"Current week"*)
         diag=$usage_text
         if [ -n "$stderr_text" ]; then
             diag=$(printf '%s\n--- stderr ---\n%s' "$usage_text" "$stderr_text")
         fi
         emit_error "Could not read the Claude usage report. iTerm2 may need to be updated." true "$diag"
+        ;;
+esac
+
+# Only a session line: valid output with no weekly limit to show.
+case "$usage_text" in
+    *"Current session:"*)
+        emit_error "Claude Code reported no weekly usage limits." false ""
         ;;
 esac
 

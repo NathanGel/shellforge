@@ -57,6 +57,76 @@ final class WorkgroupUsageTests: XCTestCase {
         XCTAssertEqual(report.bars[1].clampedFraction, 0.0, accuracy: 1e-9)
     }
 
+    // A command whose output hit the 1 MiB cap must say so, and the report
+    // alert must not try to show a megabyte of text. QA finding F-375.
+    func test_decode_outputAtCapSaysItWasCutOff() throws {
+        let data = Data(repeating: UInt8(ascii: "y"), count: WorkgroupUsageToolbarItem.maximumOutputSize)
+        let report = WorkgroupUsageToolbarItem.decode(
+            result: WorkgroupUsageRunResult(output: data, exitStatus: 0, timedOut: false),
+            bundledScriptName: nil)
+        XCTAssertEqual(report.reportable, true)
+        XCTAssertTrue(report.diagnostic?.hasPrefix("(The command’s output was cut off at") ?? false)
+    }
+
+    func test_decode_shortGarbageIsNotCalledCutOff() throws {
+        let report = WorkgroupUsageToolbarItem.decode(
+            result: WorkgroupUsageRunResult(output: Data("y\ny\n".utf8), exitStatus: 0, timedOut: false),
+            bundledScriptName: nil)
+        XCTAssertEqual(report.diagnostic, "y\ny\n")
+    }
+
+    func test_displayedReport_capsHugeReports() {
+        let huge = String(repeating: "y\n", count: 500_000)
+        let shown = WorkgroupUsageToolbarItem.displayedReport(huge)
+        XCTAssertLessThan(shown.count, WorkgroupUsageToolbarItem.maximumDisplayedReportLength + 200)
+        XCTAssertTrue(shown.hasPrefix(String(huge.prefix(40))))
+        XCTAssertEqual(WorkgroupUsageToolbarItem.displayedReport("short"), "short")
+    }
+
+    // 2000 characters of `yes` output is about 1000 lines, which still made
+    // the alert taller than the screen. QA finding F-388.
+    func test_displayedReport_capsManyShortLines() {
+        let huge = String(repeating: "y\n", count: 500_000)
+        let shown = WorkgroupUsageToolbarItem.displayedReport(huge)
+        let lineCount = shown.split(separator: "\n", omittingEmptySubsequences: false).count
+        // Allow for the blank line and truncation note appended after the cap.
+        XCTAssertLessThanOrEqual(lineCount, WorkgroupUsageToolbarItem.maximumDisplayedReportRows + 2)
+        XCTAssertTrue(shown.hasPrefix("y\ny\ny\n"))
+        XCTAssertNotEqual(shown, huge)
+    }
+
+    // In Swift "\r\n" is one Character, so it must still count as a line break.
+    func test_displayedReport_capsManyCRLFLines() {
+        let huge = String(repeating: "y\r\n", count: 500_000)
+        let shown = WorkgroupUsageToolbarItem.displayedReport(huge)
+        let lineCount = shown.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).count
+        XCTAssertLessThanOrEqual(lineCount, WorkgroupUsageToolbarItem.maximumDisplayedReportRows + 2)
+    }
+
+    // A long line counts as the rows it wraps to.
+    func test_displayedReport_countsWrappedRows() {
+        let perRow = WorkgroupUsageToolbarItem.assumedCharactersPerRow
+        let maxRows = WorkgroupUsageToolbarItem.maximumDisplayedReportRows
+        // Well under the character cap, but 20 + 10 * 2 = 40 rows.
+        let shortLines = Array(repeating: "a", count: 20)
+        let longLines = Array(repeating: String(repeating: "x", count: perRow * 2), count: 10)
+        let report = (shortLines + longLines).joined(separator: "\n")
+        XCTAssertLessThan(report.count, WorkgroupUsageToolbarItem.maximumDisplayedReportLength)
+        let shown = WorkgroupUsageToolbarItem.displayedReport(report)
+        let rows = shown.split(separator: "\n", omittingEmptySubsequences: false)
+            .map { max(1, ($0.count + perRow - 1) / perRow) }
+            .reduce(0, +)
+        // Allow for the blank line and truncation note appended after the cap.
+        XCTAssertLessThanOrEqual(rows, maxRows + 2)
+        XCTAssertTrue(shown.hasPrefix(shortLines.joined(separator: "\n") + "\n" + longLines[0]))
+    }
+
+    func test_displayedReport_keepsReportThatFits() {
+        let lines = (0..<WorkgroupUsageToolbarItem.maximumDisplayedReportRows).map { "line \($0)" }
+        let report = lines.joined(separator: "\n")
+        XCTAssertEqual(WorkgroupUsageToolbarItem.displayedReport(report), report)
+    }
+
     // MARK: - Bundled parser script
 
     // Resolve the shipped parser from the source tree so the test
@@ -112,36 +182,32 @@ final class WorkgroupUsageTests: XCTestCase {
         let data = try runScript(fixture: fixture)
         let report = try JSONDecoder().decode(WorkgroupUsageReport.self, from: data)
         XCTAssertNil(report.error)
-        XCTAssertEqual(report.bars.count, 3)
+        XCTAssertEqual(report.bars.count, 2)
 
-        XCTAssertEqual(report.bars[0].label, "Session")
-        XCTAssertEqual(report.bars[0].short, "S")
-        XCTAssertEqual(report.bars[1].short, "W")
-        XCTAssertEqual(report.bars[2].short, "WF")
-        XCTAssertEqual(report.bars[0].fraction, 0.02, accuracy: 1e-6)
+        XCTAssertEqual(report.bars[0].label, "Week")
+        XCTAssertEqual(report.bars[0].short, "W")
+        XCTAssertEqual(report.bars[0].fraction, 0.67, accuracy: 1e-6)
 
-        XCTAssertEqual(report.bars[1].label, "Week")
-        XCTAssertEqual(report.bars[1].fraction, 0.67, accuracy: 1e-6)
-
-        XCTAssertEqual(report.bars[2].label, "Week (Fable)")
-        XCTAssertEqual(report.bars[2].fraction, 0.12, accuracy: 1e-6)
+        XCTAssertEqual(report.bars[1].label, "Week (Fable)")
+        XCTAssertEqual(report.bars[1].short, "WF")
+        XCTAssertEqual(report.bars[1].fraction, 0.12, accuracy: 1e-6)
 
         // The reset detail is carried through for the tooltip.
         XCTAssertEqual(report.bars[0].detail,
-                       "resets Sep 15 at 5pm (America/Los_Angeles)")
+                       "resets Sep 19 at 1pm (America/Los_Angeles)")
     }
 
     func test_script_reportsErrorOnUsageShapedButUnparseable() throws {
         // Output that *looks* like a usage report but no bar parses (a
         // changed or localized format) is the one reportable case, and it
         // carries the raw text as a diagnostic.
-        let data = try runScript(fixture: "Current session: deux pour cent\n")
+        let data = try runScript(fixture: "Current week (all models): deux pour cent\n")
         let report = try JSONDecoder().decode(WorkgroupUsageReport.self, from: data)
         XCTAssertTrue(report.bars.isEmpty)
         XCTAssertNotNil(report.error)
         XCTAssertEqual(report.reportable, true)
         XCTAssertNotNil(report.diagnostic)
-        XCTAssertTrue(report.diagnostic?.contains("Current session") ?? false)
+        XCTAssertTrue(report.diagnostic?.contains("Current week") ?? false)
     }
 
     func test_script_unparseableDiagnosticStaysValidJSON() throws {
@@ -149,10 +215,29 @@ final class WorkgroupUsageTests: XCTestCase {
         // not break the emitted JSON string. (Usage-shaped so it takes the
         // reportable path that carries a diagnostic.)
         let data = try runScript(
-            fixture: "Current session: \"weird\" \\ back\ttab\nsecond line\n")
+            fixture: "Current week (all models): \"weird\" \\ back\ttab\nsecond line\n")
         let report = try JSONDecoder().decode(WorkgroupUsageReport.self, from: data)
         XCTAssertEqual(report.reportable, true)
         XCTAssertTrue(report.diagnostic?.contains("\"weird\"") ?? false)
+    }
+
+    // Control bytes such as ESC and BS (claude's colored stderr) must be
+    // escaped too, or the item shows “Unreadable usage data” instead of the
+    // script's message. QA finding F-245.
+    func test_script_controlBytesInDiagnosticStayValidJSON() throws {
+        let data = try runScript(
+            fixture: "weird output line \u{1b}[31mboom\u{08}\u{1b}[0m \u{01}\u{7f}\n")
+        let report = try JSONDecoder().decode(WorkgroupUsageReport.self, from: data)
+        XCTAssertEqual(report.reportable, true)
+        XCTAssertTrue(report.diagnostic?.contains("\u{1b}[31mboom\u{08}") ?? false)
+    }
+
+    func test_script_controlBytesInUsageLineStayValidJSON() throws {
+        let data = try runScript(
+            fixture: "Current week (all models): 5% used \u{00b7} resets \u{1b}[1msoon\u{1b}[0m\n")
+        let report = try JSONDecoder().decode(WorkgroupUsageReport.self, from: data)
+        XCTAssertEqual(report.bars.count, 1)
+        XCTAssertEqual(report.bars.first?.detail, "resets \u{1b}[1msoon\u{1b}[0m")
     }
 
     // Expected environment states must NOT be reportable (otherwise users
@@ -184,6 +269,17 @@ final class WorkgroupUsageTests: XCTestCase {
         XCTAssertTrue(report.bars.isEmpty)
         XCTAssertEqual(report.reportable, true)
         XCTAssertNotNil(report.diagnostic)
+    }
+
+    // Session limits are gone, so a session line alone is valid output
+    // with nothing to show, not format drift.
+    func test_script_sessionLineAloneIsNotReportable() throws {
+        let data = try runScript(fixture: "Current session: 2% used · resets 5pm\n")
+        let report = try JSONDecoder().decode(WorkgroupUsageReport.self, from: data)
+        XCTAssertTrue(report.bars.isEmpty)
+        XCTAssertEqual(report.error, "Claude Code reported no weekly usage limits.")
+        XCTAssertEqual(report.reportable, false)
+        XCTAssertNil(report.diagnostic)
     }
 
     func test_script_nonLatinModelEmitsEmptyShort() throws {
@@ -227,5 +323,346 @@ final class WorkgroupUsageTests: XCTestCase {
             return XCTFail("expected a .usage item, got \(item)")
         }
         XCTAssertEqual(provider, .anthropicClaudeCode)
+    }
+
+    // MARK: - Command environment (QA finding F-011)
+
+    // Launched from the Dock, iTerm2's PATH is /usr/bin:/bin:/usr/sbin:/sbin, so the
+    // usage command must get the user's shell PATH or `claude` is not found.
+    func test_tick_runsCommandWithProvidedShellPath() {
+        let ran = expectation(description: "command ran")
+        var capturedEnvironment: [String: String]?
+        var capturedArguments: [String]?
+        let item = WorkgroupUsageToolbarItem(
+            identifier: "usage",
+            priority: 0,
+            provider: .anthropicClaudeCode,
+            command: "echo hi",
+            intervalSeconds: 60,
+            environmentProvider: { completion in
+                completion(["PATH": "/shell/bin:/usr/bin", "HOME": "/home/test"])
+            },
+            commandRunner: { _, arguments, environment, _ in
+                capturedArguments = arguments
+                capturedEnvironment = environment
+                ran.fulfill()
+                return Self.emptyResult
+            })
+        item.tick()
+        wait(for: [ran], timeout: 10)
+        XCTAssertEqual(capturedArguments, ["-c", "echo hi"])
+        XCTAssertEqual(capturedEnvironment?["PATH"], "/shell/bin:/usr/bin")
+        XCTAssertEqual(capturedEnvironment?["HOME"], "/home/test")
+    }
+
+    func test_tick_waitsForEnvironmentBeforeRunning() {
+        var pending: (([String: String]) -> Void)?
+        let ran = expectation(description: "command ran")
+        let item = WorkgroupUsageToolbarItem(
+            identifier: "usage",
+            priority: 0,
+            provider: .anthropicClaudeCode,
+            command: "echo hi",
+            intervalSeconds: 60,
+            environmentProvider: { completion in pending = completion },
+            commandRunner: { _, _, environment, _ in
+                XCTAssertEqual(environment["PATH"], "/late/bin")
+                ran.fulfill()
+                return Self.emptyResult
+            })
+        item.tick()
+        XCTAssertNotNil(pending)
+        pending?(["PATH": "/late/bin"])
+        wait(for: [ran], timeout: 10)
+    }
+
+    func test_usageEnvironment_replacesOnlyPath() {
+        let merged = WorkgroupUsageToolbarItem.usageEnvironment(
+            base: ["PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": "/Users/me", "LANG": "en_US.UTF-8"],
+            shellValues: shellValues(path: "/Users/me/.local/bin:/opt/homebrew/bin:/usr/bin"),
+            recordedClaudeConfigDir: nil)
+        // ~/.local/bin is already present, so the shell PATH is used verbatim.
+        XCTAssertEqual(merged["PATH"], "/Users/me/.local/bin:/opt/homebrew/bin:/usr/bin")
+        XCTAssertEqual(merged["HOME"], "/Users/me")
+        XCTAssertEqual(merged["LANG"], "en_US.UTF-8")
+    }
+
+    // The native Claude Code installer puts claude in ~/.local/bin, which the shell PATH
+    // fallback (used when the shell can't report PATH) lacks.
+    func test_usageEnvironment_appendsLocalBinWhenMissing() {
+        let merged = WorkgroupUsageToolbarItem.usageEnvironment(
+            base: ["HOME": "/Users/me"],
+            shellValues: shellValues(path: "/opt/homebrew/bin:/usr/bin"),
+            recordedClaudeConfigDir: nil)
+        XCTAssertEqual(merged["PATH"], "/opt/homebrew/bin:/usr/bin:/Users/me/.local/bin")
+    }
+
+    func test_usageEnvironment_doesNotDuplicateLocalBin() {
+        let merged = WorkgroupUsageToolbarItem.usageEnvironment(
+            base: ["HOME": "/Users/me"],
+            shellValues: shellValues(path: "/Users/me/.local/bin:/usr/bin"),
+            recordedClaudeConfigDir: nil)
+        XCTAssertEqual(merged["PATH"], "/Users/me/.local/bin:/usr/bin")
+    }
+
+    // MARK: - CLAUDE_CONFIG_DIR (QA finding F-244)
+
+    private func shellValues(path: String = "/usr/bin",
+                             claudeConfigDir: String? = nil,
+                             reportedByShell: Bool = true) -> AdapterShellEnvironment.ShellValues {
+        return AdapterShellEnvironment.ShellValues(path: path,
+                                                   claudeConfigDir: claudeConfigDir,
+                                                   reportedByShell: reportedByShell)
+    }
+
+    // A CLAUDE_CONFIG_DIR exported by the user's shell startup files is what `claude` in a
+    // terminal uses, so it reaches the usage command.
+    func test_usageEnvironment_passesShellClaudeConfigDir() {
+        let merged = WorkgroupUsageToolbarItem.usageEnvironment(
+            base: ["HOME": "/Users/me"],
+            shellValues: shellValues(claudeConfigDir: "/Users/me/work-claude"),
+            recordedClaudeConfigDir: "/Users/me/recorded")
+        XCTAssertEqual(merged["CLAUDE_CONFIG_DIR"], "/Users/me/work-claude")
+    }
+
+    // The startup files run after the inherited environment, so in a terminal the shell's
+    // value wins over one iTerm2 itself was launched with.
+    func test_usageEnvironment_shellClaudeConfigDirBeatsInheritedOne() {
+        let merged = WorkgroupUsageToolbarItem.usageEnvironment(
+            base: ["HOME": "/Users/me", "CLAUDE_CONFIG_DIR": "/inherited"],
+            shellValues: shellValues(claudeConfigDir: "/Users/me/work-claude"),
+            recordedClaudeConfigDir: nil)
+        XCTAssertEqual(merged["CLAUDE_CONFIG_DIR"], "/Users/me/work-claude")
+    }
+
+    // The shell ran and doesn't set it: an inherited value is what a terminal session would
+    // see, and the recorded value is stale, so neither is replaced by it.
+    func test_usageEnvironment_shellWithoutClaudeConfigDirKeepsInheritedAndIgnoresRecorded() {
+        let inherited = WorkgroupUsageToolbarItem.usageEnvironment(
+            base: ["HOME": "/Users/me", "CLAUDE_CONFIG_DIR": "/inherited"],
+            shellValues: shellValues(),
+            recordedClaudeConfigDir: "/Users/me/recorded")
+        XCTAssertEqual(inherited["CLAUDE_CONFIG_DIR"], "/inherited")
+
+        let none = WorkgroupUsageToolbarItem.usageEnvironment(
+            base: ["HOME": "/Users/me"],
+            shellValues: shellValues(),
+            recordedClaudeConfigDir: "/Users/me/recorded")
+        XCTAssertNil(none["CLAUDE_CONFIG_DIR"])
+    }
+
+    // The shell couldn't be read: fall back to the directory recorded when the Claude Code
+    // integration was installed, which came from the same shell lookup.
+    func test_usageEnvironment_unreadableShellUsesRecordedClaudeConfigDir() {
+        let merged = WorkgroupUsageToolbarItem.usageEnvironment(
+            base: ["HOME": "/Users/me"],
+            shellValues: shellValues(reportedByShell: false),
+            recordedClaudeConfigDir: "/Users/me/recorded")
+        XCTAssertEqual(merged["CLAUDE_CONFIG_DIR"], "/Users/me/recorded")
+    }
+
+    func test_usageEnvironment_unreadableShellKeepsInheritedOverRecorded() {
+        let merged = WorkgroupUsageToolbarItem.usageEnvironment(
+            base: ["HOME": "/Users/me", "CLAUDE_CONFIG_DIR": "/inherited"],
+            shellValues: shellValues(reportedByShell: false),
+            recordedClaudeConfigDir: "/Users/me/recorded")
+        XCTAssertEqual(merged["CLAUDE_CONFIG_DIR"], "/inherited")
+    }
+
+    func test_usageEnvironment_emptyRecordedClaudeConfigDirIsIgnored() {
+        let merged = WorkgroupUsageToolbarItem.usageEnvironment(
+            base: ["HOME": "/Users/me"],
+            shellValues: shellValues(reportedByShell: false),
+            recordedClaudeConfigDir: "")
+        XCTAssertNil(merged["CLAUDE_CONFIG_DIR"])
+    }
+
+    // End to end from the shell lookup's output through to the environment given to the
+    // runner: what AdapterShellEnvironment parses must arrive as CLAUDE_CONFIG_DIR.
+    func test_shellEnvironment_deliversClaudeConfigDirFromShellOutput() {
+        let shell = AdapterShellEnvironment(fetchPath: { completion in
+                                                completion("/Users/me/bin:/usr/bin\n/Users/me/work-claude")
+                                            },
+                                            timeout: 10,
+                                            dropDeadline: 20,
+                                            refreshInterval: .infinity)
+        var delivered: [String: String]?
+        WorkgroupUsageToolbarItem.shellEnvironment(from: shell,
+                                                   base: ["HOME": "/Users/me"],
+                                                   recordedClaudeConfigDir: nil) { delivered = $0 }
+        XCTAssertEqual(delivered?["CLAUDE_CONFIG_DIR"], "/Users/me/work-claude")
+        XCTAssertTrue(delivered?["PATH"]?.hasPrefix("/Users/me/bin:/usr/bin") ?? false)
+    }
+
+    func test_tick_whileWaitingForEnvironmentIsSkipped() {
+        var providerCalls = 0
+        var pending: (([String: String]) -> Void)?
+        let ran = expectation(description: "command ran")
+        ran.expectedFulfillmentCount = 1
+        ran.assertForOverFulfill = true
+        let item = WorkgroupUsageToolbarItem(
+            identifier: "usage",
+            priority: 0,
+            provider: .anthropicClaudeCode,
+            command: "echo hi",
+            intervalSeconds: 60,
+            environmentProvider: { completion in
+                providerCalls += 1
+                pending = completion
+            },
+            commandRunner: { _, _, _, _ in
+                ran.fulfill()
+                return Self.emptyResult
+            })
+        item.tick()
+        item.tick()
+        XCTAssertEqual(providerCalls, 1)
+        pending?(["PATH": "/late/bin"])
+        wait(for: [ran], timeout: 10)
+    }
+
+    // End to end through the real runner and the shipped script: a `claude` that exists
+    // only in a directory on the supplied PATH must be found.
+    func test_runCommand_findsClaudeOnSuppliedPath() throws {
+        let script = scriptURL()
+        try XCTSkipUnless(FileManager.default.fileExists(atPath: script.path),
+                          "claude_usage.sh not found at \(script.path)")
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("claude_usage_path_\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let claude = dir.appendingPathComponent("claude")
+        try """
+        #!/bin/sh
+        echo 'Current week (all models): 42% used · resets soon'
+        """.write(to: claude, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: claude.path)
+
+        var environment = ProcessInfo.processInfo.environment
+        environment.removeValue(forKey: "ITERM2_AI_USAGE_FIXTURE")
+        environment["PATH"] = dir.path + ":/usr/bin:/bin:/usr/sbin:/sbin"
+        let data = WorkgroupUsageToolbarItem.runCommand(launchPath: "/bin/sh",
+                                                        arguments: [script.path],
+                                                        environment: environment,
+                                                        timeout: 20).output
+        let report = try JSONDecoder().decode(WorkgroupUsageReport.self, from: try XCTUnwrap(data))
+        XCTAssertNil(report.error)
+        XCTAssertEqual(report.bars.count, 1)
+        XCTAssertEqual(try XCTUnwrap(report.bars.first).fraction, 0.42, accuracy: 1e-6)
+    }
+
+    // MARK: - Runaway commands (QA findings F-116, F-117)
+
+    private func runCommandOffMain(arguments: [String],
+                                   timeout: TimeInterval,
+                                   deadline: TimeInterval) -> WorkgroupUsageRunResult? {
+        let done = expectation(description: "runCommand returned")
+        var result: WorkgroupUsageRunResult?
+        DispatchQueue.global().async {
+            result = WorkgroupUsageToolbarItem.runCommand(launchPath: "/bin/sh",
+                                                          arguments: arguments,
+                                                          environment: ProcessInfo.processInfo.environment,
+                                                          timeout: timeout)
+            done.fulfill()
+        }
+        wait(for: [done], timeout: deadline)
+        return result
+    }
+
+    // A command that floods stdout stops at the 1 MiB cap instead of
+    // running until the timeout.
+    func test_runCommand_floodingCommandStopsAtCap() {
+        let data = runCommandOffMain(arguments: ["-c", "/usr/bin/yes"],
+                                     timeout: 35,
+                                     deadline: 30)
+        XCTAssertEqual(data?.output?.count, 1024 * 1024)
+        XCTAssertEqual(data?.timedOut, false)
+    }
+
+    // The timeout kills the whole command, including a child that keeps
+    // stdout open after its parent dies.
+    func test_runCommand_timeoutKillsChildHoldingStdout() {
+        let result = runCommandOffMain(arguments: ["-c", "/bin/sleep 600; true"],
+                                       timeout: 1,
+                                       deadline: 30)
+        XCTAssertEqual(result?.timedOut, true)
+    }
+
+    func test_runCommand_reportsExitStatus() {
+        let result = runCommandOffMain(arguments: ["-c", "exit 3"],
+                                       timeout: 20,
+                                       deadline: 30)
+        XCTAssertEqual(result?.exitStatus, 3)
+        XCTAssertEqual(result?.timedOut, false)
+        XCTAssertNil(result?.output)
+    }
+
+    // MARK: - Run outcomes
+
+    private static let emptyResult = WorkgroupUsageRunResult(output: nil, exitStatus: 0, timedOut: false)
+
+    // A timeout is transient (a slow claude on a busy machine), not a bug.
+    func test_decodeResult_timeoutIsNotReportable() {
+        let report = WorkgroupUsageToolbarItem.decode(
+            result: WorkgroupUsageRunResult(output: nil, exitStatus: 9, timedOut: true),
+            bundledScriptName: "claude_usage.sh")
+        XCTAssertTrue(report.bars.isEmpty)
+        XCTAssertEqual(report.error, "Claude Code took too long to report usage")
+        XCTAssertEqual(report.reportable, false)
+    }
+
+    // The timeout can elapse after the command finished but before its
+    // output was read; a complete report must not be thrown away.
+    func test_decodeResult_timedOutRunWithValidOutputIsUsed() {
+        let json = #"{"bars":[{"label":"Week","fraction":0.5}],"error":null}"#
+        let report = WorkgroupUsageToolbarItem.decode(
+            result: WorkgroupUsageRunResult(output: Data(json.utf8), exitStatus: 0, timedOut: true),
+            bundledScriptName: "claude_usage.sh")
+        XCTAssertEqual(report.bars.count, 1)
+        XCTAssertNil(report.error)
+    }
+
+    func test_decodeResult_timedOutRunWithPartialOutputIsATimeout() {
+        let report = WorkgroupUsageToolbarItem.decode(
+            result: WorkgroupUsageRunResult(output: Data(#"{"bars":["#.utf8), exitStatus: 9, timedOut: true),
+            bundledScriptName: "claude_usage.sh")
+        XCTAssertEqual(report.error, "Claude Code took too long to report usage")
+        XCTAssertEqual(report.reportable, false)
+    }
+
+    func test_decodeResult_customCommandTimeout() {
+        let report = WorkgroupUsageToolbarItem.decode(
+            result: WorkgroupUsageRunResult(output: nil, exitStatus: 9, timedOut: true),
+            bundledScriptName: nil)
+        XCTAssertEqual(report.error, "The AI usage command took too long")
+        XCTAssertEqual(report.reportable, false)
+    }
+
+    // The bundled script prints JSON on every path, so silence from it is a bug.
+    func test_decodeResult_bundledScriptWithoutOutputIsReportable() {
+        let report = WorkgroupUsageToolbarItem.decode(
+            result: WorkgroupUsageRunResult(output: Data(), exitStatus: 2, timedOut: false),
+            bundledScriptName: "claude_usage.sh")
+        XCTAssertEqual(report.reportable, true)
+        XCTAssertEqual(report.diagnostic,
+                       "claude_usage.sh exited with status 2 and wrote nothing to stdout")
+    }
+
+    func test_decodeResult_customCommandWithoutOutputShowsStatus() {
+        let report = WorkgroupUsageToolbarItem.decode(
+            result: WorkgroupUsageRunResult(output: nil, exitStatus: 127, timedOut: false),
+            bundledScriptName: nil)
+        XCTAssertEqual(report.error,
+                       "The AI usage command exited with status 127 without printing anything")
+        XCTAssertEqual(report.reportable, false)
+    }
+
+    func test_decodeResult_parsesOutput() {
+        let json = #"{"bars":[{"label":"Week","fraction":0.5}],"error":null}"#
+        let report = WorkgroupUsageToolbarItem.decode(
+            result: WorkgroupUsageRunResult(output: Data(json.utf8), exitStatus: 0, timedOut: false),
+            bundledScriptName: "claude_usage.sh")
+        XCTAssertEqual(report.bars.count, 1)
+        XCTAssertNil(report.error)
     }
 }

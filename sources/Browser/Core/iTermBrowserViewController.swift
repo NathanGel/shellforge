@@ -162,6 +162,15 @@ class iTermBrowserViewController: NSViewController {
         }
     }
 
+    // Views holding clickable controls (the navigation buttons and URL bar) that
+    // the window's stoplight hotbox must not cover.
+    @objc var clickableDecorationViews: [NSView] {
+        guard isViewLoaded, let toolbar, !toolbarHidden else {
+            return []
+        }
+        return [toolbar]
+    }
+
     // 100.0 = 100%
     @objc var zoom: CGFloat {
         get {
@@ -517,6 +526,19 @@ extension iTermBrowserViewController {
         browserManager.loadURL(urlString)
     }
 
+    /// Loads text typed into an address field outside the toolbar, such as the
+    /// one in iTerm2 Buddy.
+    func loadTypedText(_ text: String) {
+        guard let urlString = urlStringForTypedText(text) else {
+            return
+        }
+        loadURL(urlString)
+    }
+
+    func stopLoading() {
+        browserManager.stop()
+    }
+
     // MARK: - Password
 
     @objc(enterPassword:)
@@ -822,7 +844,8 @@ extension iTermBrowserViewController {
         // Don't seed the page background color here: before any page has loaded, the web
         // view's underPageBackgroundColor is WebKit's (light) default, not the page's
         // real color. Seeding it would flip a dark-profile browser tab to light until a
-        // real page loads. The color is emitted once the page settles in didFinish.
+        // real page loads. The color is emitted once the page settles (at didFinish,
+        // or when WebKit reports the new page's color after that).
     }
 
     private func setupToolbar() {

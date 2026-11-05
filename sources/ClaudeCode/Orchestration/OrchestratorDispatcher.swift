@@ -171,11 +171,100 @@ final class OrchestratorDispatcher {
     // escalating to the screen-observation backstop.
     private static let tabStatusEscalationDelay: TimeInterval = 300  // 5 minutes
 
+    // How long after launch-time reconcile a watch on a tmux -CC pane waits
+    // for its pane to reattach before it is dropped. A tmux client session is
+    // not restored by window restoration; the restored gateway reattaches tmux
+    // and its panes come back as new sessions some time after the restoration
+    // gate opens (see holdForTmuxReattach). It counts from reconcile, not from
+    // the attach, so a gateway stuck (for example on ssh authentication) for
+    // longer than this loses its tmux watches.
+    static let tmuxReattachDeadline: TimeInterval = 300  // 5 minutes
+
+    // Resolves a tmux pane identity to the session currently showing that
+    // pane. Injectable so tests can stand in for TmuxControllerRegistry.
+    private let tmuxPaneLookup: (TmuxPaneIdentity) -> PTYSession?
+
+    // Runs a block on the main queue after a delay. Injectable so tests can
+    // fire the tmux reattach deadline without waiting.
+    private let scheduleTmuxReattachDeadline: (TimeInterval, @escaping @MainActor @Sendable () -> Void) -> Void
+
+    // Persisted watchers whose tmux pane had not reattached when reconcile
+    // ran. Each is re-bound when its pane's new session appears, or dropped
+    // when its tmux session detaches or tmuxReattachDeadline passes. May hold
+    // IDs of watchers removed since (fired, unregistered, unlinked); every use
+    // intersects it with `watchers`.
+    private var pendingTmuxWatcherIDs = Set<String>()
+    private var tmuxObservers = [NSObjectProtocol]()
+
+    // The tmux identity of a watched session, or nil when it is not a tmux
+    // client or its tmux session's @iterm2_id isn't known yet. Pure so a test
+    // can pin it.
+    nonisolated static func tmuxPaneIdentity(isTmuxClient: Bool,
+                                             tmuxSessionGUID: String?,
+                                             pane: Int32) -> TmuxPaneIdentity? {
+        guard isTmuxClient, let tmuxSessionGUID, !tmuxSessionGUID.isEmpty else {
+            return nil
+        }
+        return TmuxPaneIdentity(tmuxSessionGUID: tmuxSessionGUID, pane: pane)
+    }
+
+    private static func tmuxPaneIdentity(for session: PTYSession) -> TmuxPaneIdentity? {
+        return tmuxPaneIdentity(isTmuxClient: session.isTmuxClient,
+                                tmuxSessionGUID: session.tmuxController?.sessionGuid,
+                                pane: session.tmuxPane)
+    }
+
+    // Resolves a watcher's session reference. Injectable so tests can stand in
+    // for the app's session registry.
+    private let sessionLookup: (String) -> PTYSession?
+
+    // False until reconcilePersistedWatchers has run. Restoration is still
+    // creating sessions until then, so tab-status changes for sessions with no
+    // seeded history are ignored: a persisted watcher would otherwise treat a
+    // restoration-time status as a real transition.
+    private var reconciled = false
+
+    // Whether a terminating session is going away for a quit that window
+    // restoration will undo (see SessionQuitRestoration). Injectable for tests.
+    private let quitWillRestoreSessions: (Notification) -> Bool
+
+    // Whether a terminating tmux client session is going away for a quit after
+    // which windows will be restored, so its pane may reattach at the next
+    // launch (see SessionQuitRestoration). Injectable for tests.
+    private let quitMayReattachTmuxSession: (Notification) -> Bool
+
     init(chatID: String, broker: ChatBroker,
-         typedInput: OrchestratorTypedInputStore) {
+         typedInput: OrchestratorTypedInputStore,
+         restorationGate: SessionRestorationGate? = nil,
+         sessionLookup: ((String) -> PTYSession?)? = nil,
+         tmuxPaneLookup: ((TmuxPaneIdentity) -> PTYSession?)? = nil,
+         scheduleTmuxReattachDeadline: ((TimeInterval, @escaping @MainActor @Sendable () -> Void) -> Void)? = nil,
+         quitWillRestoreSessions: ((Notification) -> Bool)? = nil,
+         quitMayReattachTmuxSession: ((Notification) -> Bool)? = nil) {
         self.chatID = chatID
         self.broker = broker
         self.typedInput = typedInput
+        self.quitWillRestoreSessions = quitWillRestoreSessions ?? { notification in
+            SessionQuitRestoration.sessionWillBeRestoredAfterQuit(notification)
+        }
+        self.quitMayReattachTmuxSession = quitMayReattachTmuxSession ?? { notification in
+            SessionQuitRestoration.tmuxSessionMayReattachAfterQuit(notification)
+        }
+        self.sessionLookup = sessionLookup ?? { reference in
+            iTermController.sharedInstance()?.anySession(forReference: reference)
+        }
+        self.tmuxPaneLookup = tmuxPaneLookup ?? { identity in
+            TmuxControllerRegistry.sharedInstance()
+                .tmuxController(withSessionGUID: identity.tmuxSessionGUID)?
+                .session(forWindowPane: identity.pane)
+        }
+        self.scheduleTmuxReattachDeadline = scheduleTmuxReattachDeadline ?? { delay, block in
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                MainActor.assumeIsolated {
+                    block()
+                }
+            }
+        }
         let listModel = broker.listModel
         self.claimedScopes = listModel.claimedScopes(forChatID: chatID)
         self.watchers = listModel.watchers(forChatID: chatID)
@@ -222,9 +311,17 @@ final class OrchestratorDispatcher {
         // Restart reconciliation: if any persisted watchers target
         // a session GUID that no longer exists (restoration off,
         // partial restore, etc.), surface that to the agent and
-        // drop the watcher.
-        MainActor.assumeIsolated {
-            self.reconcilePersistedWatchers()
+        // drop the watcher. Deferred until window restoration has
+        // finished creating sessions: at launch a dispatcher can be built
+        // before then (the timer re-arm runs in applicationDidFinishLaunching),
+        // and reconciling early would drop every watch whose session simply
+        // hasn't been restored yet. Only the watchers persisted at init are
+        // reconciled; one registered while waiting was armed and seeded by
+        // its register path.
+        let persistedWatcherIDs = Set(watchers.map { $0.watcherID })
+        (restorationGate ?? .shared).whenReady { [weak self] in
+            guard let self, !self.tornDown else { return }
+            self.reconcilePersistedWatchers(ids: persistedWatcherIDs)
         }
     }
 
@@ -253,6 +350,7 @@ final class OrchestratorDispatcher {
             NotificationCenter.default.removeObserver(termObs)
             sessionWillTerminateObserver = nil
         }
+        stopObservingTmuxReattach()
         for (_, task) in pendingClaimTasks {
             task.cancel()
         }
@@ -301,6 +399,7 @@ final class OrchestratorDispatcher {
         nonisolated(unsafe) let sub = brokerSubscription
         nonisolated(unsafe) let tabObs = tabStatusObserver
         nonisolated(unsafe) let termObs = sessionWillTerminateObserver
+        nonisolated(unsafe) let tmuxObs = tmuxObservers
         let prompts = pendingPermissionPrompts
         DispatchQueue.main.async {
             sub?.unsubscribe()
@@ -309,6 +408,9 @@ final class OrchestratorDispatcher {
             }
             if let termObs {
                 NotificationCenter.default.removeObserver(termObs)
+            }
+            for observer in tmuxObs {
+                NotificationCenter.default.removeObserver(observer)
             }
             for (_, cont) in prompts {
                 cont.resume(returning: false)
@@ -371,8 +473,7 @@ final class OrchestratorDispatcher {
             // everything to stop. Also resume any parked permission prompt (e.g. a
             // watch consent bubble) so a suspended awaitPermission doesn't outlive
             // the stopped turn.
-            cancelAllWatchers()
-            resumePendingPermissionPrompts()
+            userDidStop()
         case .enableOrchestrationResponse, .revokeOrchestrationPermission:
             // Consumed elsewhere (ChatAgent / OrchestratorClient via their own
             // broker subscriptions). Not the dispatcher's concern.
@@ -413,8 +514,11 @@ final class OrchestratorDispatcher {
         // The notification fires for every session in the app (object: nil),
         // not just sessions we watch; with no watchers there is nothing to do.
         guard !watchers.isEmpty else { return }
+        // Under the administrator lockout a fire would wake the agent (an LLM
+        // request). Ignore transitions so matching watchers stay persisted.
+        guard Self.generativeAIAllowed else { return }
         let guid = status.sessionID
-        let session = iTermController.sharedInstance()?.anySession(forReference: guid)
+        let session = sessionByGUID(guid)
         let stableID = session?.stableID
         // Key history by the session's stableID (fall back to the raw guid only
         // when the session can't be resolved) so transition detection also
@@ -423,6 +527,7 @@ final class OrchestratorDispatcher {
         // doStartCodeReview seed history before appending a watcher, so a
         // watcher's first matching notification always finds a non-nil previous.
         let historyKey = stableID ?? guid
+        guard reconciled || sessionStateHistory[historyKey] != nil else { return }
         guard watchers.contains(where: { $0.targets(stableID: stableID, guid: guid) }) else {
             return
         }
@@ -474,6 +579,13 @@ final class OrchestratorDispatcher {
     private func handleSessionWillTerminate(_ notification: Notification) {
         if tornDown { return }
         guard let session = notification.object as? PTYSession else { return }
+        // A quit that window restoration will undo is not a real close: the
+        // session comes back at the next launch with the same stableID, and
+        // its watches are reconciled against it then. Leave everything as is.
+        if quitWillRestoreSessions(notification) {
+            DLog("Session \(session.stableID) terminating for a restorable quit; keeping watchers for chat \(chatID)")
+            return
+        }
         let guid = session.guid
         // If a session-bound chat's LINKED session is terminating while its watch
         // consent prompt is up, that continuation would strand the same way an
@@ -497,7 +609,22 @@ final class OrchestratorDispatcher {
         // A shell reload posts PTYSessionTerminated (not this notification) and
         // keeps the stableID, so this fires only on a genuine teardown. Drop
         // watchers on the gone session, matched by stableID or legacy guid.
-        let dropped = watchers.filter { $0.targets(stableID: session.stableID, guid: guid) }
+        var dropped = watchers.filter { $0.targets(stableID: session.stableID, guid: guid) }
+        // A tmux pane closing for a quit that restores windows may come back
+        // when the restored gateway reattaches tmux. An orchestration chat's
+        // watch that recorded the pane's tmux identity is held for that and
+        // re-bound at the next launch (see holdForTmuxReattach), so keep it.
+        // A session-bound chat's watches are never re-bound (its link still
+        // names the old pane session), so they are dropped as before.
+        if !dropped.isEmpty,
+           broker?.listModel.chat(id: chatID)?.orchestrationEnabled ?? false,
+           quitMayReattachTmuxSession(notification) {
+            let kept = dropped.filter { $0.tmuxPane != nil }
+            if !kept.isEmpty {
+                DLog("tmux session \(session.stableID) terminating for a restorable quit; keeping \(kept.count) watcher(s) with a tmux identity for chat \(chatID)")
+                dropped.removeAll { $0.tmuxPane != nil }
+            }
+        }
         guard !dropped.isEmpty else { return }
         let droppedIDs = Set(dropped.map { $0.watcherID })
         watchers.removeAll { droppedIDs.contains($0.watcherID) }
@@ -512,7 +639,8 @@ final class OrchestratorDispatcher {
         }
     }
 
-    // Re-check every persisted watcher at init: if the session GUID
+    // Re-check every watcher persisted at init, once launch-time session
+    // restoration is done (see SessionRestorationGate): if the session GUID
     // still resolves, leave it in place (the live tab-status
     // subscription will fire it normally). If not, the session is
     // gone (restoration off, partial restore, terminated mid-quit)
@@ -526,12 +654,24 @@ final class OrchestratorDispatcher {
     // previous always counts as a transition, which would fire every
     // surviving watcher on the first tabStatus event after launch.
     @MainActor
-    private func reconcilePersistedWatchers() {
+    private func reconcilePersistedWatchers(ids: Set<String>) {
+        reconciled = true
         // Timers target no session, so the missing-session drop never applies to
         // them -- they are re-armed below regardless of any session state.
-        let dropped = watchers.filter {
+        let missing = watchers.filter {
+            ids.contains($0.watcherID) &&
             $0.effectiveMode != .timer && sessionByGUID($0.sessionGUID) == nil
         }
+        // A tmux pane's session isn't restored; tmux recreates it when the
+        // restored gateway reattaches, which can be after this runs. Hold those
+        // watchers for the reattach rather than dropping them now. Only in an
+        // orchestration chat: a session-bound chat's link still names the old
+        // pane session, so a watch re-bound to the new one would read a session
+        // the chat isn't linked to, under the old session's permissions.
+        let orchestrationEnabled = broker?.listModel.chat(id: chatID)?.orchestrationEnabled ?? false
+        let held = orchestrationEnabled ? missing.filter { $0.tmuxPane != nil } : []
+        let heldIDs = Set(held.map { $0.watcherID })
+        let dropped = missing.filter { !heldIDs.contains($0.watcherID) }
         let droppedIDs = Set(dropped.map { $0.watcherID })
         if !droppedIDs.isEmpty {
             watchers.removeAll { droppedIDs.contains($0.watcherID) }
@@ -544,27 +684,36 @@ final class OrchestratorDispatcher {
                     detail: "Watch dropped after iTerm2 restart: the session for \(Self.watcherTargetLabel(role: watcher.roleName, workgroup: watcher.workgroupName, workgroupID: watcher.workgroupID)) could not be restored.")
             }
         }
-        // Seed history for every surviving watcher's session. Use the
-        // same normalization the notification handler uses (nil tabStatus
-        // would compute .unknown, but the handler's fallback is .idle —
-        // matching that prevents a spurious .unknown → .idle transition).
-        // Seed history keyed by each surviving watcher's session stableID (the
-        // same key the tab-status handler uses), skipping already-seeded ones.
-        for watcher in watchers {
+        rearmRestoredWatchers(watchers.filter { ids.contains($0.watcherID) && !heldIDs.contains($0.watcherID) })
+        holdForTmuxReattach(watcherIDs: heldIDs)
+    }
+
+    // Seed state history for, and re-arm the mechanism of, persisted watchers
+    // whose session is back after a relaunch.
+    //
+    // Seed history keyed by each watcher's session stableID (the same key the
+    // tab-status handler uses), skipping already-seeded ones. Use the same
+    // normalization the notification handler uses (nil tabStatus would compute
+    // .unknown, but the handler's fallback is .idle -- matching that prevents a
+    // spurious .unknown → .idle transition).
+    //
+    // Re-arm each watcher's mechanism, or drop it if a read it requires was
+    // revoked while shut down (else it would sit armed-but-dead, or fire and
+    // leak a state/screen the user has denied). One policy via
+    // watcherReadDenial: a .screenPoll watcher restarts its poller (deadline
+    // counts from now); a .tabStatus watcher re-arms its escalation backstop
+    // (armScreenEscalation self-guards on screen permission, so a chat without
+    // View Contents keeps only its screen-free tab-status trigger).
+    @MainActor
+    private func rearmRestoredWatchers(_ restored: [WorkgroupWatcher]) {
+        for watcher in restored {
             guard let session = sessionByGUID(watcher.sessionGUID) else { continue }
             if sessionStateHistory[session.stableID] == nil {
                 sessionStateHistory[session.stableID] = Self.seedState(for: session)
             }
         }
-        // Re-arm each surviving watcher's mechanism, or drop it if a read it
-        // requires was revoked while shut down (else it would sit armed-but-dead,
-        // or fire and leak a state/screen the user has denied). One policy via
-        // watcherReadDenial: a .screenPoll watcher restarts its poller (deadline
-        // counts from now); a .tabStatus watcher re-arms its escalation backstop
-        // (armScreenEscalation self-guards on screen permission, so a chat without
-        // View Contents keeps only its screen-free tab-status trigger).
         var revoked = [WorkgroupWatcher]()
-        for watcher in watchers {
+        for watcher in restored {
             if watcherReadDenial(watcher) != nil {
                 revoked.append(watcher)
                 continue
@@ -583,6 +732,158 @@ final class OrchestratorDispatcher {
         dropWatchers(revoked) { self.revokedReadDetail($0, afterRestart: true) }
     }
 
+    // MARK: - tmux pane reattach
+
+    // Wait for the panes of held tmux watchers to reattach. Each attempt to
+    // re-bind runs when tmux opens a window; the watchers are dropped if their
+    // tmux session detaches or the deadline passes first.
+    @MainActor
+    private func holdForTmuxReattach(watcherIDs: Set<String>) {
+        guard !watcherIDs.isEmpty else { return }
+        pendingTmuxWatcherIDs = watcherIDs
+        rebindReattachedTmuxWatchers()
+        guard !pendingTmuxWatcherIDs.isEmpty else { return }
+        RLog("[Orchestrator \(chatID)] holding \(pendingTmuxWatcherIDs.count) tmux pane watcher(s) until their panes reattach")
+        let center = NotificationCenter.default
+        tmuxObservers.append(center.addObserver(forName: NSNotification.Name(kTmuxControllerWindowDidOpen),
+                                                object: nil,
+                                                queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.rebindReattachedTmuxWatchers()
+            }
+        })
+        tmuxObservers.append(center.addObserver(forName: .tmuxControllerDetached,
+                                                object: nil,
+                                                queue: .main) { [weak self] notification in
+            let guid = notification.userInfo?[kTmuxControllerDetachedSessionGuidKey] as? String
+            MainActor.assumeIsolated {
+                self?.tmuxSessionDetached(guid)
+            }
+        })
+        scheduleTmuxReattachDeadline(Self.tmuxReattachDeadline) { [weak self] in
+            self?.tmuxReattachDeadlinePassed()
+        }
+    }
+
+    // The name a re-bound tmux watcher takes from its reattached pane, unless
+    // the pane doesn't have a real name yet.
+    nonisolated static func reboundName(_ name: String, previous: String) -> String {
+        if name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return previous
+        }
+        return name
+    }
+
+    @MainActor
+    private func pendingTmuxWatchers() -> [WorkgroupWatcher] {
+        return watchers.filter { pendingTmuxWatcherIDs.contains($0.watcherID) }
+    }
+
+    // Re-bind each held watcher whose pane now has a session to that session.
+    @MainActor
+    private func rebindReattachedTmuxWatchers() {
+        if tornDown { return }
+        var rebound = [WorkgroupWatcher]()
+        for i in watchers.indices where pendingTmuxWatcherIDs.contains(watchers[i].watcherID) {
+            guard let identity = watchers[i].tmuxPane,
+                  let session = tmuxPaneLookup(identity) else {
+                continue
+            }
+            watchers[i].sessionGUID = Self.watcherKey(for: session)
+            // A standalone pane's workgroup ID ("session:<stableID>") and its
+            // workgroup and role names derive from the old session, so they
+            // name a workgroup the snapshot no longer lists. Take them from the
+            // new session, as list_workgroups does, so list_watches and
+            // status_update match what the model sees. The pane's window
+            // opens before the pane has its name (it is a blank " " until
+            // tmux reports the title), so keep the old names over a blank one.
+            if let context = WorkgroupIntrospection.context(for: session) {
+                watchers[i].workgroupID = context.workgroupID
+                watchers[i].workgroupName = Self.reboundName(context.workgroupName,
+                                                             previous: watchers[i].workgroupName)
+                watchers[i].roleID = context.roleID
+                watchers[i].roleName = Self.reboundName(context.roleName,
+                                                        previous: watchers[i].roleName)
+            }
+            // Seed from the session itself rather than a lookup by its new
+            // stableID, so the first status it posts is never a transition. A
+            // reattached pane has no tab status until its program reports
+            // again, so this seeds .idle even if that program was working.
+            if sessionStateHistory[session.stableID] == nil {
+                sessionStateHistory[session.stableID] = Self.seedState(for: session)
+            }
+            rebound.append(watchers[i])
+        }
+        let reboundIDs = Set(rebound.map { $0.watcherID })
+        pendingTmuxWatcherIDs = Set(pendingTmuxWatchers().map { $0.watcherID }).subtracting(reboundIDs)
+        // While held, a watcher can't be found by register_watch's dedup (its
+        // sessionGUID is stale), so the agent may have registered the same watch
+        // on the reattached pane. Keep that one and quietly discard the held
+        // copy rather than fire twice.
+        let duplicates = rebound.filter { held in
+            watchers.contains { live in
+                !reboundIDs.contains(live.watcherID)
+                    && live.targets(stableID: held.sessionGUID, guid: held.sessionGUID)
+                    && live.effectiveMode == held.effectiveMode
+                    && live.targetState == held.targetState
+                    && live.condition == held.condition
+            }
+        }
+        if !duplicates.isEmpty {
+            let duplicateIDs = Set(duplicates.map { $0.watcherID })
+            watchers.removeAll { duplicateIDs.contains($0.watcherID) }
+            for id in duplicateIDs {
+                removeWatcherAuxiliaries(watcherID: id)
+            }
+            rebound.removeAll { duplicateIDs.contains($0.watcherID) }
+            RLog("[Orchestrator \(chatID)] discarded \(duplicates.count) re-bound tmux pane watcher(s) already registered again on the reattached pane")
+        }
+        if !rebound.isEmpty || !duplicates.isEmpty {
+            persistWatchers()
+        }
+        if !rebound.isEmpty {
+            RLog("[Orchestrator \(chatID)] re-bound \(rebound.count) tmux pane watcher(s) to their reattached sessions")
+            rearmRestoredWatchers(rebound)
+        }
+        if pendingTmuxWatcherIDs.isEmpty {
+            stopObservingTmuxReattach()
+        }
+    }
+
+    @MainActor
+    private func tmuxSessionDetached(_ tmuxSessionGUID: String?) {
+        if tornDown { return }
+        guard let tmuxSessionGUID else { return }
+        let detached = pendingTmuxWatchers().filter { $0.tmuxPane?.tmuxSessionGUID == tmuxSessionGUID }
+        guard !detached.isEmpty else { return }
+        pendingTmuxWatcherIDs.subtract(detached.map { $0.watcherID })
+        dropWatchers(detached) { watcher in
+            "Watch dropped after iTerm2 restart: the tmux session showing \(Self.watcherTargetLabel(role: watcher.roleName, workgroup: watcher.workgroupName, workgroupID: watcher.workgroupID)) detached before its pane was restored."
+        }
+        if pendingTmuxWatcherIDs.isEmpty {
+            stopObservingTmuxReattach()
+        }
+    }
+
+    @MainActor
+    private func tmuxReattachDeadlinePassed() {
+        if tornDown { return }
+        let expired = pendingTmuxWatchers()
+        pendingTmuxWatcherIDs.removeAll()
+        stopObservingTmuxReattach()
+        dropWatchers(expired) { watcher in
+            "Watch dropped after iTerm2 restart: the tmux pane for \(Self.watcherTargetLabel(role: watcher.roleName, workgroup: watcher.workgroupName, workgroupID: watcher.workgroupID)) did not reattach."
+        }
+    }
+
+    @MainActor
+    private func stopObservingTmuxReattach() {
+        for observer in tmuxObservers {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        tmuxObservers.removeAll()
+    }
+
     // Compute the seed value for sessionStateHistory. state(for:) returns
     // .unknown when session.tabStatus is nil; the notification handler
     // always computes via state(forTabStatus:), which falls back to .idle
@@ -594,6 +895,13 @@ final class OrchestratorDispatcher {
     private static func seedState(for session: PTYSession) -> SessionState {
         let state = WorkgroupIntrospection.state(for: session)
         return state == .unknown ? .idle : state
+    }
+
+    // The administrator lockout (GenerativeAIAllowed). Every watcher event
+    // starts an agent turn that sends the chat to the LLM, so nothing that
+    // fires a watcher may wake the agent while it is off.
+    private static var generativeAIAllowed: Bool {
+        iTermAdvancedSettingsModel.generativeAIAllowed()
     }
 
     @MainActor
@@ -628,6 +936,16 @@ final class OrchestratorDispatcher {
             } else {
                 pushed = false
             }
+        }
+        // Under the administrator lockout nothing may wake the agent. Callers
+        // whose fire could happen later (timers, tab-status and screen-poll
+        // results) keep their watcher dormant and never get here, so no push
+        // goes out for them either; it is sent when the watcher fires once AI
+        // is allowed again. Events that end a watch for good (a session
+        // ending, a watch dropped at restart) are lost.
+        guard Self.generativeAIAllowed else {
+            RLog("[Orchestrator \(chatID)] status_update \(reason) for watcher \(watcher.watcherID) not published: generative AI is disallowed by the administrator")
+            return
         }
         // Screen age at fire time: lets the agent distinguish a fresh
         // transition (screen changed seconds ago, likely mid-workflow)
@@ -670,6 +988,11 @@ final class OrchestratorDispatcher {
         // the permission may since have been revoked. Fail closed: don't read.
         guard watcherReadsPermitted(watcher) else {
             RLog("[Orchestrator \(chatID)] screen-poll watcher \(watcher.watcherID) not started: a required read is not permitted for this chat")
+            return
+        }
+        // The poller judges the screen with an LLM.
+        guard Self.generativeAIAllowed else {
+            RLog("[Orchestrator \(chatID)] screen-poll watcher \(watcher.watcherID) not started: generative AI is disallowed by the administrator")
             return
         }
         let id = watcher.watcherID
@@ -735,6 +1058,10 @@ final class OrchestratorDispatcher {
         // Covers both the register path and reconcile re-arm.
         guard mayReadScreen(for: watcher) else { return }
         let id = watcher.watcherID
+        // A watcher held for its tmux pane to reattach has no session yet; its
+        // escalation task would exit at once yet keep its slot, and the re-arm
+        // after rebind would then be refused. Rebinding arms it.
+        guard !pendingTmuxWatcherIDs.contains(id) else { return }
         guard escalationTimers[id] == nil else { return }
         escalationTimers[id] = Task { @MainActor [weak self] in
             await self?.runScreenEscalation(watcherID: id)
@@ -789,6 +1116,13 @@ final class OrchestratorDispatcher {
                 try? await Task.sleep(nanoseconds: interval)
                 continue
             }
+            // The check asks an LLM. Under the administrator lockout, wait
+            // without recording this screen as judged, so it is checked once
+            // AI is allowed again.
+            guard Self.generativeAIAllowed else {
+                try? await Task.sleep(nanoseconds: interval)
+                continue
+            }
             DLog("Orchestrator dispatcher: tab-status watcher \(id) "
                  + "(\(watcher.roleName) in \(watcher.workgroupName)) has had a "
                  + "quiet screen for \(Int(quiet))s without a status transition; "
@@ -821,6 +1155,10 @@ final class OrchestratorDispatcher {
     // watch fires or is dropped mid-check.
     @MainActor
     private func runSingleScreenCheck(for watcher: WorkgroupWatcher) async -> Bool {
+        // The check asks an LLM to judge the screen.
+        guard Self.generativeAIAllowed else {
+            return false
+        }
         let id = watcher.watcherID
         let guid = watcher.sessionGUID
         let poller = ScreenWatchPoller(
@@ -901,11 +1239,33 @@ final class OrchestratorDispatcher {
         }
     }
 
+    // Test seam: the fire task armed for a timer, so a test can await it
+    // instead of waiting on a clock.
+    @MainActor
+    func timerTaskForTesting(watcherID: String) -> Task<Void, Never>? {
+        timerTasks[watcherID]
+    }
+
+    // Test seam: whether a tab-status watcher's screen-escalation backstop is armed.
+    @MainActor
+    func escalationTimerForTesting(watcherID: String) -> Task<Void, Never>? {
+        escalationTimers[watcherID]
+    }
+
     // A timer reached its fire time: drop it, persist, and publish the
     // timerFired status_update that wakes an agent turn.
     @MainActor
     private func fireTimer(watcherID id: String) {
         guard let watcher = watchers.first(where: { $0.watcherID == id }) else { return }
+        // An administrator disabled generative AI (GenerativeAIAllowed) after
+        // the timer was registered. Firing would send the chat to the LLM, so
+        // leave the timer persisted but dormant instead of deleting it; the
+        // next launch re-arms it and it fires then if AI is allowed again.
+        guard Self.generativeAIAllowed else {
+            RLog("[Orchestrator \(chatID)] timer \(id) not fired: generative AI is disallowed by the administrator")
+            timerTasks.removeValue(forKey: id)
+            return
+        }
         watchers.removeAll { $0.watcherID == id }
         persistWatchers()
         removeWatcherAuxiliaries(watcherID: id)
@@ -1000,6 +1360,16 @@ final class OrchestratorDispatcher {
     @MainActor
     private func screenPollFinished(watcherID: String, timedOut: Bool) {
         screenPollers.removeValue(forKey: watcherID)
+        // Reporting the result would wake the agent (an LLM request). Keep the
+        // watcher persisted but dormant; the next launch restarts its poller.
+        guard Self.generativeAIAllowed else {
+            RLog("[Orchestrator \(chatID)] screen-poll watcher \(watcherID) result not reported: generative AI is disallowed by the administrator")
+            // An escalation task that called us is ending; clear its slot so
+            // the backstop can be armed again. Not cancelled: it may be the
+            // caller.
+            escalationTimers.removeValue(forKey: watcherID)
+            return
+        }
         guard let watcher = watchers.first(where: { $0.watcherID == watcherID }) else {
             return
         }
@@ -1080,7 +1450,7 @@ final class OrchestratorDispatcher {
         // roles in seedState (firing every idle watcher on first tabStatus).
         // Because watchers persist the session's stableID (see watcherKey),
         // resolving by reference is what lets a watcher survive a shell reload.
-        return iTermController.sharedInstance()?.anySession(forReference: reference)
+        return sessionLookup(reference)
     }
 
     // The reload-durable key a watcher is registered under: the session's
@@ -2126,7 +2496,8 @@ final class OrchestratorDispatcher {
                 // Records the one-time Ask consent (true) so the poller may keep
                 // reading under Ask; nil under Always/Never (no standing consent),
                 // which stops the reads if View Contents is later downgraded to Ask.
-                screenReadConsented: screenReadConsented ? true : nil)
+                screenReadConsented: screenReadConsented ? true : nil,
+                tmuxPane: orchestrationEnabled ? Self.tmuxPaneIdentity(for: session) : nil)
             watchers.append(watcher)
             persistWatchers()
             startScreenPoll(for: watcher)
@@ -2194,7 +2565,8 @@ final class OrchestratorDispatcher {
             roleName: resolved.roleName,
             targetState: args.targetState,
             registeredAt: Date(),
-            notifyUser: args.notifyUser)
+            notifyUser: args.notifyUser,
+            tmuxPane: orchestrationEnabled ? Self.tmuxPaneIdentity(for: session) : nil)
         watchers.append(watcher)
         persistWatchers()
         // Tab-status watcher: arm the screen-observation backstop so a
@@ -2316,11 +2688,30 @@ final class OrchestratorDispatcher {
     @MainActor
     private func promptForWatchScreenRead(
         resolved: WorkgroupIntrospection.ResolvedTarget) async -> Bool {
-        let summary = "This watch reads \(Self.watcherTargetLabel(role: resolved.roleName, workgroup: resolved.workgroupName, workgroupID: resolved.workgroupID))'s screen repeatedly while it waits. View Contents is set to Ask for this session, so allow this background reading until the watch finishes?"
+        let summary = Self.watchScreenReadConsentText(role: resolved.roleName,
+                                                      workgroup: resolved.workgroupName,
+                                                      workgroupID: resolved.workgroupID)
         return await awaitPermission(
             workgroupID: WorkgroupIntrospection.watchApprovalWorkgroupID,
             workgroupName: resolved.workgroupName,
             summary: summary)
+    }
+
+    // The body of the watch screen-read consent prompt. A standalone session is
+    // named by its role alone; a session in a real workgroup also names the
+    // workgroup (the same distinction watcherTargetLabel draws), each as a
+    // complete sentence so translators can reorder it.
+    nonisolated static func watchScreenReadConsentText(role: String,
+                                                       workgroup: String,
+                                                       workgroupID: String) -> String {
+        if isSyntheticWorkgroup(id: workgroupID) {
+            return String(localized: "OrchestratorDispatcher.WatchScreenReadConsent",
+                          defaultValue: "This watch reads \(role)’s screen repeatedly while it waits. View Contents is set to Ask for this session, so allow this background reading until the watch finishes?",
+                          comment: "Body of a prompt asking the user to let an AI chat’s watch read a terminal session’s screen on a timer. The placeholder is the session’s name, such as -zsh. View Contents and Ask are the names of a setting and its value.")
+        }
+        return String(localized: "OrchestratorDispatcher.WatchScreenReadConsentInWorkgroup",
+                      defaultValue: "This watch reads the screen of \(role) in \(workgroup) repeatedly while it waits. View Contents is set to Ask for this session, so allow this background reading until the watch finishes?",
+                      comment: "Body of a prompt asking the user to let an AI chat’s watch read a terminal session’s screen on a timer. The first placeholder is the session’s role name and the second is the name of the workgroup it belongs to. View Contents and Ask are the names of a setting and its value.")
     }
 
     // Whether this chat may currently READ THE SCREEN for a specific watcher.
@@ -2430,16 +2821,80 @@ final class OrchestratorDispatcher {
         return .ack
     }
 
-    // Cancel and forget every watcher on this chat, tearing down each one's
-    // escalation timer and screen poller. Called when the user presses Stop:
-    // combined with ChatService cancelling the in-flight turn and clearing the
-    // queued backlog, dropping the watchers means a later status transition
-    // can't fire a watcherEvent that restarts the loop. No status_update is
-    // published (the user asked to stop, not to be notified); watches they
-    // still want can be re-registered by asking the agent again.
+    // The user pressed Stop. Internal (not private) so tests can drive it
+    // without the broker's asynchronous main-actor hop.
     @MainActor
-    private func cancelAllWatchers() {
-        guard !watchers.isEmpty else { return }
+    func userDidStop() {
+        if tornDown { return }
+        let cancelled = cancelAllWatchers()
+        // The model isn't told (Stop means no later event should wake it), but
+        // the user is, so they don't keep waiting on a timer or watch that
+        // will never fire.
+        Self.publishCancelledWatchersNotice(broker: broker,
+                                            chatID: chatID,
+                                            cancelled: cancelled,
+                                            cause: .stop)
+        resumePendingPermissionPrompts()
+    }
+
+    enum WatcherCancellationCause {
+        case stop
+        case disableOrchestration
+    }
+
+    // The chat notice telling the user which pending timers and watches were
+    // cancelled, or nil when nothing was. User-facing only: it is published as
+    // a client-local notice, which never reaches the model or starts a turn.
+    static func cancelledWatchersNotice(_ cancelled: [WorkgroupWatcher],
+                                        cause: WatcherCancellationCause) -> String? {
+        let timers = cancelled.filter { $0.effectiveMode == .timer }.count
+        let watches = cancelled.count - timers
+        switch (cause, timers > 0, watches > 0) {
+        case (_, false, false):
+            return nil
+        case (.stop, true, false):
+            return String(localized: "OrchestratorDispatcher.StopCancelledTimers", defaultValue: "Stop cancelled \(timers) pending timers.", comment: "Chat notice shown after the user presses Stop in an AI chat. The placeholder is the number of pending timers (scheduled agent wake-ups) that were cancelled.")
+        case (.stop, false, true):
+            return String(localized: "OrchestratorDispatcher.StopCancelledWatches", defaultValue: "Stop cancelled \(watches) pending watches.", comment: "Chat notice shown after the user presses Stop in an AI chat. The placeholder is the number of pending watches (requests to wake the agent when a terminal session changes) that were cancelled.")
+        case (.stop, true, true):
+            return String(localized: "OrchestratorDispatcher.StopCancelledTimersAndWatches", defaultValue: "Stop cancelled \(timers) pending timers and \(watches) watches.", comment: "Chat notice shown after the user presses Stop in an AI chat. The first placeholder is the number of pending timers (scheduled agent wake-ups) that were cancelled; the second is the number of pending watches (requests to wake the agent when a terminal session changes) that were cancelled.")
+        case (.disableOrchestration, true, false):
+            return String(localized: "OrchestratorDispatcher.DisableCancelledTimers", defaultValue: "Disabling orchestration cancelled \(timers) pending timers.", comment: "Chat notice shown after the user turns off orchestration mode in an AI chat. The placeholder is the number of pending timers (scheduled agent wake-ups) that were cancelled.")
+        case (.disableOrchestration, false, true):
+            return String(localized: "OrchestratorDispatcher.DisableCancelledWatches", defaultValue: "Disabling orchestration cancelled \(watches) pending watches.", comment: "Chat notice shown after the user turns off orchestration mode in an AI chat. The placeholder is the number of pending watches (requests to wake the agent when a terminal session changes) that were cancelled.")
+        case (.disableOrchestration, true, true):
+            return String(localized: "OrchestratorDispatcher.DisableCancelledTimersAndWatches", defaultValue: "Disabling orchestration cancelled \(timers) pending timers and \(watches) watches.", comment: "Chat notice shown after the user turns off orchestration mode in an AI chat. The first placeholder is the number of pending timers (scheduled agent wake-ups) that were cancelled; the second is the number of pending watches (requests to wake the agent when a terminal session changes) that were cancelled.")
+        }
+    }
+
+    // Publish cancelledWatchersNotice as a chat notice, if there is one.
+    @MainActor
+    static func publishCancelledWatchersNotice(broker: ChatBroker?,
+                                               chatID: String,
+                                               cancelled: [WorkgroupWatcher],
+                                               cause: WatcherCancellationCause) {
+        guard let notice = cancelledWatchersNotice(cancelled, cause: cause) else {
+            return
+        }
+        do {
+            try broker?.publishNotice(chatID: chatID, notice: notice)
+        } catch {
+            RLog("Orchestrator dispatcher: failed to publish cancelled-watchers notice: \(error)")
+        }
+    }
+
+    // Cancel and forget every watcher on this chat, tearing down each one's
+    // escalation timer and screen poller, and return what was cancelled.
+    // Called when the user presses Stop: combined with ChatService cancelling
+    // the in-flight turn and clearing the queued backlog, dropping the watchers
+    // means a later status transition can't fire a watcherEvent that restarts
+    // the loop. No status_update is published (the user asked to stop, not to
+    // be notified); watches they still want can be re-registered by asking the
+    // agent again.
+    @MainActor
+    private func cancelAllWatchers() -> [WorkgroupWatcher] {
+        guard !watchers.isEmpty else { return [] }
+        let cancelled = watchers
         let ids = watchers.map { $0.watcherID }
         watchers.removeAll()
         for id in ids {
@@ -2451,17 +2906,38 @@ final class OrchestratorDispatcher {
         sessionStateHistory.removeAll()
         persistWatchers()
         RLog("[Orchestrator \(chatID)] Stop: cancelled \(ids.count) watcher(s)")
+        return cancelled
     }
 
-    // Cancel all of this chat's watchers without publishing status_updates.
+    // The watchers a chat keeps when it is unlinked from its terminal session.
+    // A timer targets no session (the register_timer contract), so it survives
+    // the unlink; every other watcher observed the now-detached session and is
+    // orphaned. Shared with OrchestratorClient's no-dispatcher unlink path.
+    static func watchersKeptOnUnlink(_ watchers: [WorkgroupWatcher]) -> [WorkgroupWatcher] {
+        return watchers.filter { $0.effectiveMode == .timer }
+    }
+
+    // Cancel this chat's session watchers without publishing status_updates.
     // Called when the chat is unlinked from its terminal session while staying
-    // session-bound: the watchers observed the now-detached session, so they're
-    // orphaned. Same teardown as Stop's cancel (pollers/timers dropped, the
-    // persisted set cleared). Public so OrchestratorClient can drive it from the
-    // unlink action.
+    // session-bound (including when the linked session closes): the watches
+    // observed the now-detached session, so they're orphaned. Timers target no
+    // session and stay armed. Public so OrchestratorClient can drive it from
+    // the unlink action.
     @MainActor
     func cancelWatchersOnUnlink() {
-        cancelAllWatchers()
+        let keptIDs = Set(Self.watchersKeptOnUnlink(watchers).map { $0.watcherID })
+        let ids = watchers.map { $0.watcherID }.filter { !keptIDs.contains($0) }
+        if !ids.isEmpty {
+            watchers.removeAll { !keptIDs.contains($0.watcherID) }
+            for id in ids {
+                removeWatcherAuxiliaries(watcherID: id)
+            }
+            // Transition history serves only session watches; timers never
+            // read it, and none of those remain.
+            sessionStateHistory.removeAll()
+            persistWatchers()
+            RLog("[Orchestrator \(chatID)] Unlink: cancelled \(ids.count) watcher(s), kept \(keptIDs.count) timer(s)")
+        }
         // An in-flight register_watch may be suspended on the "Allow repeated
         // screen reads?" consent prompt for the session we just unlinked. Its
         // Approve/Deny buttons grey out once the unlink notice becomes the last
@@ -3220,8 +3696,9 @@ final class OrchestratorDispatcher {
                 throw OrchestratorError.unsupported(reason: "Target \(resolved.roleName) in \(resolved.workgroupName) is busy (status: \(sessionState.rawValue)). Wait until it returns to idle before starting a review.")
             }
             // Reloading kills+relaunches the session, which requires a
-            // restartable session and the cached review command template.
-            guard resolved.session.isRestartable(),
+            // restartable session (or a tmux member, whose pane is
+            // respawned) and the cached review command template.
+            guard resolved.session.canRelaunchWorkgroupMember,
                   resolved.session.codeReviewRawCommand != nil else {
                 throw OrchestratorError.unsupported(reason: "Target \(resolved.roleName) in \(resolved.workgroupName) can't be reloaded to start a fresh review.")
             }

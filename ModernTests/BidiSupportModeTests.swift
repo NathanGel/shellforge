@@ -108,7 +108,7 @@ final class BidiSupportModeTests: XCTestCase {
         harness.screen.performBlock(joinedThreads: { _, mutableState, _ in
             mutableState.inject(data)
         })
-        harness.screen.performBlock(joinedThreads: { _, _, _ in })
+        harness.screen.waitForQueuedTokensForTesting()
     }
 
     // A reset pauses token execution until a side effect on the main queue
@@ -123,7 +123,7 @@ final class BidiSupportModeTests: XCTestCase {
             RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
         }
         XCTAssertTrue(sentinelRan, "main queue never drained", file: file, line: line)
-        harness.screen.performBlock(joinedThreads: { _, _, _ in })
+        harness.screen.waitForQueuedTokensForTesting()
     }
 
     // Populates RTL state the way the per-frame sync does before every draw.
@@ -376,17 +376,26 @@ final class BidiSupportModeTests: XCTestCase {
     // The analysis pass itself must reset the cells when it drops a line's
     // bidi info, whatever cleared the flag. Clear the flag behind its back so
     // the write-time reset is not what makes this pass.
+    // Everything happens in one join: the end of a join syncs, which would reset the cells first.
     func testAnalysisPassResetsCellStatusWhenItDropsBidiInfo() {
         let harness = harnessWithAnalyzedHebrewOnLine0()
         harness.screen.performBlock(joinedThreads: { _, mutableState, _ in
             let grid = mutableState.currentGrid
             grid.lineInfo(atLineNumber: 0).setRTLFound(false)
             grid.markLineDidChange(0)
+            XCTAssertTrue(Self.hasRTLCell(grid, line: 0), "precondition: only the flag was cleared")
+            mutableState.populateRTLStateIfNeeded()
+            XCTAssertNil(grid.bidiInfo(forLine: 0))
+            XCTAssertFalse(Self.hasRTLCell(grid, line: 0), "stale per-cell RTL status")
         })
-        XCTAssertTrue(gridHasRTLCell(harness, line: 0), "precondition: only the flag was cleared")
-        populate(harness)
-        XCTAssertNil(gridBidiInfo(harness, line: 0))
-        XCTAssertFalse(gridHasRTLCell(harness, line: 0), "stale per-cell RTL status")
+    }
+
+    private static func hasRTLCell(_ grid: VT100Grid, line: Int32) -> Bool {
+        guard let sca = grid.screenCharArray(atLine: line) else {
+            return false
+        }
+        let cells = sca.line
+        return (0..<Int(sca.length)).contains { cells[$0].rtlStatus == .RTL }
     }
 
     // Control: in implicit mode an ASCII overwrite must NOT clear the flag,

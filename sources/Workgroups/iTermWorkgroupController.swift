@@ -46,6 +46,11 @@ enum iTermWorkgroupEntryMechanism: Int {
 final class iTermWorkgroupController: NSObject {
     @objc static let instance = iTermWorkgroupController()
 
+    /// Posted after a session enters a workgroup. The object is the session; the user info holds
+    /// the workgroup's unique identifier under workgroupIDKey.
+    static let didEnterNotification = Notification.Name("iTermWorkgroupControllerDidEnter")
+    static let workgroupIDKey = "workgroupID"
+
     // Active workgroup instances keyed by instanceUniqueIdentifier.
     // The key is a stable string minted at entry time, so an entry
     // stays reachable no matter what happens to its sessions: exit
@@ -102,6 +107,12 @@ final class iTermWorkgroupController: NSObject {
                 RLog("iTermWorkgroupController.enter: refusing to switch workgroups on \(session.guid), a non-leader member of \(member.instanceUniqueIdentifier)")
             case .floatingPane:
                 RLog("iTermWorkgroupController.enter: refusing; session \(session.guid) is a floating pane")
+            case .tmuxTooOld:
+                RLog("iTermWorkgroupController.enter: refusing; session \(session.guid) is a pane of a tmux older than 3.2")
+                // Say why when the user asked; a trigger fires on its own, maybe often.
+                if mechanism == .menu || mechanism == .onboarding, let explanation = refusal.explanation {
+                    Self.showRefusal(explanation)
+                }
             }
             return false
         case .proceed(let existing, let workgroup):
@@ -132,6 +143,9 @@ final class iTermWorkgroupController: NSObject {
             instances[instance.instanceUniqueIdentifier] = instance
             session.delegate?.sessionDidChangeDesiredToolbarItems(session)
             checkConsistency()
+            NotificationCenter.default.post(name: Self.didEnterNotification,
+                                            object: session,
+                                            userInfo: [Self.workgroupIDKey: workgroup.uniqueIdentifier])
             return true
         }
     }
@@ -177,12 +191,31 @@ final class iTermWorkgroupController: NSObject {
         // `session` is a floating pane. A workgroup adds peers and split
         // children around its leader, and a float holds one session.
         case floatingPane
+        // `session` is a pane of a tmux server too old to keep a workgroup (before tmux 3.2,
+        // which has format subscriptions; see TmuxWorkgroupBinding). Native splits and tabs
+        // can't stand in: tmux's next layout change would remove them.
+        case tmuxTooOld
+
+        /// Why the user can't enter a workgroup, for refusals worth explaining.
+        var explanation: String? {
+            switch self {
+            case .tmuxTooOld:
+                return String(localized: "Workgroup.TmuxTooOld",
+                              defaultValue: "Workgroups in a tmux Integration session need tmux 3.2 or later. Update tmux, or enter the workgroup in a session that isn’t using tmux Integration.",
+                              comment: "Shown when the user tries to enter a workgroup in a tmux Integration session whose tmux is older than 3.2")
+            case .restoring, .unusableWorkgroup, .nonLeaderMember, .floatingPane:
+                return nil
+            }
+        }
     }
 
     func enterDisposition(workgroupUniqueIdentifier identifier: String,
                           on session: PTYSession) -> EnterDisposition {
         if session.delegate?.sessionIsFloating(session) == true {
             return .refused(.floatingPane)
+        }
+        if session.isTmuxClient, session.tmuxController?.gateway?.supportsSubscriptions() != true {
+            return .refused(.tmuxTooOld)
         }
         let existing = registeredInstance(on: session)
         if let existing {
@@ -208,6 +241,17 @@ final class iTermWorkgroupController: NSObject {
             return .refused(.unusableWorkgroup)
         }
         return .proceed(existing: existing, workgroup: workgroup)
+    }
+
+    private static func showRefusal(_ explanation: String) {
+        let warning = iTermWarning()
+        warning.title = explanation
+        warning.heading = String(localized: "Workgroup.CannotEnterHeading",
+                                 defaultValue: "Can’t Enter Workgroup",
+                                 comment: "Heading of the alert explaining why a workgroup can't be entered")
+        warning.actionLabels = [iTermLocalizedOK()]
+        warning.warningType = .kiTermWarningTypePersistent
+        _ = warning.runModal()
     }
 
     func enterRefusal(workgroupUniqueIdentifier identifier: String,
@@ -258,6 +302,8 @@ final class iTermWorkgroupController: NSObject {
                gitBase: String,
                peerSessionsByConfigID: [String: PTYSession],
                nonPeerSessionsByConfigID: [String: PTYSession],
+               tmuxBinding: TmuxWorkgroupBinding? = nil,
+               nestedActiveIdentifiers: [String: String] = [:],
                spawner: WorkgroupSessionSpawner = DefaultWorkgroupSessionSpawner()) -> iTermWorkgroupInstance? {
         if let existing = registeredInstance(on: leader) {
             return existing
@@ -272,16 +318,6 @@ final class iTermWorkgroupController: NSObject {
         // built on distinct sessions, so give it a fresh identity; the
         // next save re-reads the ID from the live instance, so
         // re-saving stays consistent.
-        //
-        // Known limitation: reattached members' shells still carry
-        // ITERM_WORKGROUP_ID=<persisted id> — the env var is injected
-        // only at launch and a running shell's environment can't be
-        // rewritten — so after the rename an external tool reading it
-        // from an adopted member resolves to the OTHER live instance
-        // (the one that kept the persisted ID). Freshly spawned peers
-        // in the adopted copy get the new ID. Tolerated: colliding
-        // restores are rare and the alternative (evicting the live
-        // instance) strands sessions.
         let resolvedID: String
         if instances[instanceUniqueIdentifier] != nil {
             resolvedID = iTermWorkgroupInstance.mintInstanceUniqueIdentifier()
@@ -297,6 +333,8 @@ final class iTermWorkgroupController: NSObject {
             gitBase: gitBase,
             peerSessionsByConfigID: peerSessionsByConfigID,
             nonPeerSessionsByConfigID: nonPeerSessionsByConfigID,
+            tmuxBinding: tmuxBinding,
+            nestedActiveIdentifiers: nestedActiveIdentifiers,
             spawner: spawner) else {
             RLog("iTermWorkgroupController: failed to adopt \(workgroup.uniqueIdentifier)")
             return nil

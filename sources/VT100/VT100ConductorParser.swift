@@ -9,9 +9,16 @@ import Foundation
 
 @objc
 class VT100ConductorParser: NSObject, VT100DCSParserHook {
+    /// Under nested SSH Integration, when the outer framer sent the frame whose contents are
+    /// being parsed, if it was flow controlled; otherwise 0. Frames that begin in it take it.
+    @objc var carrierSendMilliseconds: Int64 = 0
     private var recoveryMode = false
     private var line = Data()
     private let uniqueID: String
+    // The it2ssh client's unique ID, from the SSH_INIT line. it2ssh prints
+    // OSC 1337;EndSSH=<this ID> after its ssh process exits. In recovery mode it
+    // comes from the restored conductor, and is nil when that is unknown.
+    private var clientUniqueID: String?
     private enum State {
         case initial
         case ground
@@ -43,9 +50,11 @@ class VT100ConductorParser: NSObject, VT100DCSParserHook {
         self.uniqueID = uniqueID
     }
 
-    @objc static func newRecoveryModeInstance(uniqueID: String) -> VT100ConductorParser {
+    @objc static func newRecoveryModeInstance(uniqueID: String,
+                                              clientUniqueID: String?) -> VT100ConductorParser {
         let instance = VT100ConductorParser(uniqueID: uniqueID)
         instance.recoveryMode = true
+        instance.clientUniqueID = clientUniqueID
         instance.state = .ground
         return instance
     }
@@ -77,12 +86,32 @@ class VT100ConductorParser: NSObject, VT100DCSParserHook {
             case .notOSC: "notOSC"
             case .osc(let n, let param): "osc(\(n), \(param))"
             case .blocked: "blocked"
+            case .endSSH(let id, _): "endSSH(\(id))"
             }
         }
         case notOSC
         case osc(Int, String)
         case blocked
+        // The local it2ssh's OSC 1337;EndSSH=<id>, which it prints after ssh exits.
+        // `start` is the offset of the OSC's ESC. The OSC is consumed; to unhook, back
+        // up to `start` so the regular parser can execute it.
+        case endSSH(String, start: Int)
     }
+
+    private static let endSSHPrefix = "EndSSH="
+    private static let iTermOSC = 1337
+
+    // it2ssh terminates its OSCs with BEL, which the framer never does, so this is
+    // recognized with either terminator.
+    private func endSSHResult(code: Int,
+                              payload: String,
+                              start: Int) -> OSCParserResult? {
+        guard code == Self.iTermOSC, payload.hasPrefix(Self.endSSHPrefix) else {
+            return nil
+        }
+        return .endSSH(String(payload.dropFirst(Self.endSSHPrefix.count)), start: start)
+    }
+
     private func parseNextOSC(_ context: UnsafeMutablePointer<iTermParserContext>,
                               skipInitialGarbage: Bool) -> OSCParserResult {
         enum State: CustomDebugStringConvertible {
@@ -91,15 +120,20 @@ class VT100ConductorParser: NSObject, VT100DCSParserHook {
                 case .ground: "ground"
                 case .esc: "esc"
                 case .osc(let param): "osc(\(param))"
-                case .oscParam(let n, let param): "oscParam(\(n), \(param))"
-                case .oscEsc(let n, let param): "oscEsc(\(n), \(param))"
+                case .oscParam(let n, let param): "oscParam(\(n), \(Self.decode(param)))"
+                case .oscEsc(let n, let param): "oscEsc(\(n), \(Self.decode(param)))"
                 }
+            }
+            /// The framer writes its payloads as UTF-8. Anything else is read as Latin-1, as
+            /// every payload once was, so its bytes still come through one character apiece.
+            static func decode(_ bytes: [UInt8]) -> String {
+                return String(bytes: bytes, encoding: .utf8) ?? String(bytes: bytes, encoding: .isoLatin1)!
             }
             case ground
             case esc
             case osc(String)
-            case oscParam(Int, String)
-            case oscEsc(Int, String)
+            case oscParam(Int, [UInt8])
+            case oscEsc(Int, [UInt8])
         }
         let esc = 27
         let closeBracket = Character("]").asciiValue!
@@ -107,6 +141,7 @@ class VT100ConductorParser: NSObject, VT100DCSParserHook {
         let nine = Character("9").asciiValue!
         let semicolon = Character(";").asciiValue!
         let backslash = Character("\\").asciiValue!
+        let bel = UInt8(VT100CC_BEL.rawValue)
         var checkpoint = iTermParserNumberOfBytesConsumed(context)
         var state: State = State.ground {
             didSet {
@@ -151,7 +186,7 @@ class VT100ConductorParser: NSObject, VT100DCSParserHook {
                 if c >= zero && c <= nine {
                     state = .osc(param + String(ascii: c))
                 } else if c == semicolon, let code = Int(param) {
-                    state = .oscParam(code, "")
+                    state = .oscParam(code, [])
                 } else {
                     if !skipInitialGarbage {
                         DLog("backtracking and failing")
@@ -161,17 +196,25 @@ class VT100ConductorParser: NSObject, VT100DCSParserHook {
                     state = .ground
                 }
             case .oscParam(let code, let payload):
+                if c == bel, let result = endSSHResult(code: code, payload: State.decode(payload), start: checkpoint) {
+                    DLog("Returning \(result.debugDescription)")
+                    return result
+                }
                 if c == esc {
                     state = .oscEsc(code, payload)
                 } else {
-                    state = .oscParam(code, payload + String(ascii: c))
+                    state = .oscParam(code, payload + [c])
                 }
             case .oscEsc(let code, let payload):
                 if c == backslash {
+                    if let result = endSSHResult(code: code, payload: State.decode(payload), start: checkpoint) {
+                        DLog("Returning \(result.debugDescription)")
+                        return result
+                    }
                     // Ignore any unrecognized paramters which may come before the colon and then
                     // ignore the colon itself.
                     DLog("Returning osc")
-                    return .osc(code, String(payload.substringAfterFirst(":")))
+                    return .osc(code, String(State.decode(payload).substringAfterFirst(":")))
                 } else {
                     // esc followed by anything but a backslash inside an OSC means the OSC was
                     // interrupted by another OSC. For example (newlines for clarity):
@@ -183,8 +226,10 @@ class VT100ConductorParser: NSObject, VT100DCSParserHook {
                         iTermParserBacktrack(context, offset: checkpoint)
                         return .notOSC
                     }
-                    // Move back one character and re-parse the preceding OSC.
-                    iTermParserBacktrackBy(context, 1)
+                    // Move back to the esc and re-parse the OSC it begins. This always
+                    // makes progress because the interrupted OSC's opening esc ] was
+                    // consumed.
+                    iTermParserBacktrackBy(context, 2)
                     state = .ground
                 }
             }
@@ -228,6 +273,10 @@ class VT100ConductorParser: NSObject, VT100DCSParserHook {
         DLog("In initial state. Accept line as SSH_INIT. line=\(line)")
         token.type = SSH_INIT
         token.string = line + " " + uniqueID
+        let fields = line.components(separatedBy: " ")
+        if fields.count >= 2 {
+            clientUniqueID = fields[1]
+        }
         state = .ground
         return .canReadAgain
     }
@@ -249,6 +298,9 @@ class VT100ConductorParser: NSObject, VT100DCSParserHook {
         if string == "unhook" {
             DLog("In ground state: Found valid unhook token")
             token.type = SSH_UNHOOK
+            // Names the hook, so a late unhook of a connection that already ended can be told
+            // from one of the connection it was nested in (F-787).
+            token.string = uniqueID
             return .unhook
         }
         DLog("In ground state: Found unrecognized token")
@@ -281,6 +333,7 @@ class VT100ConductorParser: NSObject, VT100DCSParserHook {
                 }
             }
             DLog("create builder with identifier \(builder.identifier)")
+            builder.carrierSendMilliseconds = carrierSendMilliseconds
             state = .output(builder: builder)
             return .canReadAgain
         }
@@ -313,6 +366,7 @@ class VT100ConductorParser: NSObject, VT100DCSParserHook {
         DLog("%it2 \(payload.semiVerboseDescription)")
         token.type = SSH_IT2
         token.string = payload
+        token.sshCarrierSendMilliseconds = carrierSendMilliseconds
         return .canReadAgain
     }
 
@@ -410,6 +464,13 @@ class VT100ConductorParser: NSObject, VT100DCSParserHook {
                 return parsePreFramerPayload(payload, into: result)
             case .blocked:
                 return .blocked
+            case .endSSH(let id, let start) where isEndSSHForThisConnection(id):
+                // The local it2ssh says ssh exited without the framer sending its
+                // unhook (e.g., the connection dropped).
+                DLog("it2ssh ended (\(id)) while hooked in ground state. Unhook.")
+                return unhookForEndSSH(context, start: start, token: result)
+            case .endSSH(let id, _):
+                DLog("Ignore EndSSH for another connection (\(id))")
             case .notOSC:
                 it_fatalError()
             case .osc(let code, let payload):
@@ -418,6 +479,27 @@ class VT100ConductorParser: NSObject, VT100DCSParserHook {
             }
         }
         return .canReadAgain
+    }
+
+    // Outside a frame any EndSSH would do, since the remote end only writes framed
+    // output, but checking the ID guards against stray bytes on the remote tty. In
+    // recovery mode the ID may be unknown, and then any EndSSH is accepted there.
+    private func isEndSSHForThisConnection(_ id: String) -> Bool {
+        guard let clientUniqueID else {
+            return true
+        }
+        return id == clientUniqueID
+    }
+
+    // Do what the framer's unhook would have done. The EndSSH OSC is left unconsumed so
+    // that, once unhooked, the regular parser executes it and tears down the conductor.
+    private func unhookForEndSSH(_ context: UnsafeMutablePointer<iTermParserContext>,
+                                 start: Int,
+                                 token: VT100Token) -> VT100DCSParserHookResult {
+        iTermParserBacktrack(context, offset: start)
+        token.type = SSH_UNHOOK
+        token.string = uniqueID
+        return .unhook
     }
 
     private func parseBody(_ context: UnsafeMutablePointer<iTermParserContext>,
@@ -445,7 +527,10 @@ class VT100ConductorParser: NSObject, VT100DCSParserHook {
             result.type = SSH_LINE
             result.string = payload
             return .canReadAgain
-        case .osc(_, _), .notOSC:
+        case .endSSH(let id, let start) where isEndSSHForThisConnection(id):
+            DLog("it2ssh ended (\(id)) while hooked in body state. Unhook.")
+            return unhookForEndSSH(context, start: start, token: result)
+        case .osc(_, _), .notOSC, .endSSH(_, _):
             DLog("non-OSC 134/135 output: \(context.dump)")
             peek.backtrack()
             return .unhook
@@ -477,7 +562,13 @@ class VT100ConductorParser: NSObject, VT100DCSParserHook {
             DLog("blocked")
             peek.backtrack()
             return .blocked
-        case .notOSC, .osc(_, _):
+        case .endSSH(let id, let start) where id == clientUniqueID:
+            // Output is relayed from the remote, so only an EndSSH for this very
+            // connection's it2ssh counts: the frame was cut off by the connection dying.
+            // In recovery mode without a known clientUniqueID, this never matches.
+            DLog("it2ssh ended (\(id)) while hooked in output state. Unhook.")
+            return unhookForEndSSH(context, start: start, token: token)
+        case .notOSC, .osc(_, _), .endSSH(_, _):
             DLog("backtracking")
             peek.backtrack()
             switch consumeUntilStartOfNextOSCOrEnd(context) {
@@ -528,6 +619,12 @@ private class SSHOutputTokenBuilder {
     let depth: Int
     let string: String
     let flavor: Flavor
+    /// Under flow control: the framer's clock when it sent the frame, and its flow flags.
+    private(set) var sendMilliseconds: Int64?
+    private(set) var flowFlags: Int32 = 0
+    /// See VT100ConductorParser.carrierSendMilliseconds: taken when the frame's first line was
+    /// parsed.
+    var carrierSendMilliseconds: Int64 = 0
 
     enum Flavor: String {
         case output = "%output"
@@ -554,6 +651,11 @@ private class SSHOutputTokenBuilder {
             self.pid = pid
             self.channel = channel
             self.depth = depth
+            // A framer with flow control on adds `<send-ms> <flags>`; older ones do not.
+            if parts.count >= 7, let sendMilliseconds = Int64(parts[5]), let flags = Int32(parts[6]) {
+                self.sendMilliseconds = sendMilliseconds
+                self.flowFlags = flags
+            }
         case .autopoll:
             guard parts.count >= 2 else {
                 return nil
@@ -595,6 +697,12 @@ private class SSHOutputTokenBuilder {
         token.csi.pointee.count = 2
         token.savedData = data
         token.type = SSH_OUTPUT
+        if let sendMilliseconds {
+            token.sshFlowControlled = true
+            token.sshSendMilliseconds = sendMilliseconds
+            token.sshFlowFlags = flowFlags
+            token.sshCarrierSendMilliseconds = carrierSendMilliseconds
+        }
         return true
     }
 }

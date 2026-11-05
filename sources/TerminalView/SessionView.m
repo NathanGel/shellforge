@@ -125,6 +125,9 @@ NSString *const SessionViewWasSelectedForInspectionNotification = @"SessionViewW
 @implementation SessionView {
     // The pane drag over this view will place a float rather than split this view.
     BOOL _dragPlacesFloatingPane;
+    // A tab drag entered while locked to its tab bar, so it was refused. It is let
+    // in once it unlocks.
+    BOOL _tabDragEntryDeferred;
     // Whether the pointer is over a part of this view that nothing covers, as far as entered, exited
     // and moved events tell. Tracking areas ignore floating panes, so crossing a float's edge inside
     // this view's tracking area produces no event of its own.
@@ -422,12 +425,17 @@ NSString *const SessionViewWasSelectedForInspectionNotification = @"SessionViewW
     if (_showBottomStatusBar && _genericStatusBarContainer) {
         [decorations addObject:_genericStatusBarContainer];
     }
+    [decorations addObjectsFromArray:self.browserClickableDecorationViews];
     return [decorations anyWithBlock:^BOOL(NSView *view) {
         if (!view.window || view.isHiddenOrHasHiddenAncestor) {
             return NO;
         }
         return NSIntersectsRect([view convertRect:view.bounds toView:nil], rect);
     }];
+}
+
+- (NSArray<NSView *> *)browserClickableDecorationViews {
+    return _browserViewController.clickableDecorationViews ?: @[];
 }
 
 - (void)updateToolbarFrame {
@@ -1229,12 +1237,17 @@ NSString *const SessionViewWasSelectedForInspectionNotification = @"SessionViewW
 - (void)updateSessionSelectorButton {
     NSString *reason = iTermSessionSelector.currentReason;
     const BOOL isTerminal = !self.isBrowser;
-    if (reason != nil && _sessionSelectorButton.superview == nil && iTermSessionSelector.wantsTerminal == isTerminal) {
+    const BOOL wanted = [iTermSessionSelector wantsSessionOfKindTerminal:isTerminal];
+    if (reason != nil && _sessionSelectorButton.superview == nil && wanted) {
         [self addSessionSelectorButtonWithReason:reason];
-    } else if ((!iTermSessionSelector.isActive || iTermSessionSelector.wantsTerminal != isTerminal) &&
-               _sessionSelectorButton.superview != nil) {
+    } else if (!wanted && _sessionSelectorButton.superview != nil) {
         [_sessionSelectorButton removeFromSuperview];
         _sessionSelectorButton = nil;
+    } else if (reason != nil && _sessionSelectorButton != nil) {
+        // A different request may now be on top of the stack.
+        _sessionSelectorButton.title = reason;
+        _sessionSelectorButton.onRevealClicked = iTermSessionSelector.currentRevealAction;
+        [self updateSessionSelectorButtonFrame];
     }
 }
 
@@ -1244,6 +1257,7 @@ NSString *const SessionViewWasSelectedForInspectionNotification = @"SessionViewW
     _sessionSelectorButton.onButtonClicked = ^{
         [weakSelf didSelectThisSession:nil];
     };
+    _sessionSelectorButton.onRevealClicked = iTermSessionSelector.currentRevealAction;
     [self addSubview:_sessionSelectorButton];
     [self updateSessionSelectorButtonFrame];
 }
@@ -1251,7 +1265,14 @@ NSString *const SessionViewWasSelectedForInspectionNotification = @"SessionViewW
 - (void)updateSessionSelectorButtonFrame {
     [_sessionSelectorButton sizeToFit];
     NSRect frame = _sessionSelectorButton.frame;
-    frame.origin.x = (self.bounds.size.width - frame.size.width) / 2;
+    // Center over the terminal content, not over a right gutter panel such as
+    // an inline AI chat (which may be the very chat asking for a session).
+    // When the terminal area is too narrow for it, fall back to the full width.
+    CGFloat availableWidth = self.bounds.size.width - self.actualPanelReservation;
+    if (availableWidth < frame.size.width) {
+        availableWidth = self.bounds.size.width;
+    }
+    frame.origin.x = MAX(0, (availableWidth - frame.size.width) / 2);
     frame.origin.y = (self.bounds.size.height - frame.size.height) / 2;
     _sessionSelectorButton.frame = frame;
 }
@@ -2053,6 +2074,13 @@ typedef struct {
     return [[sender draggingPasteboard] availableTypeFromArray:@[ PSMTabDragIsGroupPasteboardType ]] != nil;
 }
 
+// A tab drag still locked to its tab bar can only reorder, so it must not split
+// this pane.
+- (BOOL)draggingIsLockedTab:(id<NSDraggingInfo>)sender {
+    return [[sender draggingPasteboard] availableTypeFromArray:@[ @"com.iterm2.psm.controlitem" ]] != nil &&
+           [[PSMTabDragAssistant sharedDragAssistant] dragIsLockedToSourceTabBar];
+}
+
 - (BOOL)isInFloatingPane {
     for (NSView *view = self.superview; view; view = view.superview) {
         if ([view isKindOfClass:[iTermFloatingPaneView class]]) {
@@ -2075,6 +2103,10 @@ typedef struct {
     if ([self draggingIsWholeTabGroup:sender]) {
         return NSDragOperationNone;
     }
+    if ([self draggingIsLockedTab:sender]) {
+        _tabDragEntryDeferred = YES;
+        return NSDragOperationNone;
+    }
     _dragPlacesFloatingPane = [self dragPlacesFloatingPane:sender];
     if (_dragPlacesFloatingPane) {
         return NSDragOperationMove;
@@ -2087,6 +2119,11 @@ typedef struct {
 }
 
 - (void)draggingExited:(id<NSDraggingInfo>)sender {
+    if (_tabDragEntryDeferred) {
+        // It was never let in, so there is nothing to exit.
+        _tabDragEntryDeferred = NO;
+        return;
+    }
     [_delegate sessionViewDraggingExited:sender];
     [_splitSelectionView removeFromSuperview];
     _splitSelectionView = nil;
@@ -2095,6 +2132,13 @@ typedef struct {
 - (NSDragOperation)draggingUpdated:(id<NSDraggingInfo>)sender {
     if ([self draggingIsWholeTabGroup:sender]) {
         return NSDragOperationNone;
+    }
+    if (_tabDragEntryDeferred) {
+        if ([self draggingIsLockedTab:sender]) {
+            return NSDragOperationNone;
+        }
+        _tabDragEntryDeferred = NO;
+        return [self draggingEntered:sender];
     }
     // Pressing or releasing Control mid-drag switches between placing a float and docking it.
     const BOOL placesFloatingPane = [self dragPlacesFloatingPane:sender];
@@ -2128,7 +2172,7 @@ typedef struct {
 
 - (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
     RLog(@"performDragOperation: %@", sender);
-    if ([self draggingIsWholeTabGroup:sender]) {
+    if ([self draggingIsWholeTabGroup:sender] || [self draggingIsLockedTab:sender]) {
         return NO;
     }
     if ([self dragPlacesFloatingPane:sender]) {
@@ -2145,7 +2189,7 @@ typedef struct {
 }
 
 - (BOOL)prepareForDragOperation:(id<NSDraggingInfo>)sender {
-    return ![self draggingIsWholeTabGroup:sender];
+    return ![self draggingIsWholeTabGroup:sender] && ![self draggingIsLockedTab:sender];
 }
 
 - (BOOL)wantsPeriodicDraggingUpdates {
@@ -3095,6 +3139,10 @@ extendResultsAcrossSoftBoundaries:(BOOL)extendResultsAcrossSoftBoundaries {
     return [self backgroundColorForDecorativeSubviews];
 }
 
+- (id<PaneFocusFollowsMousePane>)genericStatusBarContainerFocusFollowsMousePane {
+    return self;
+}
+
 #pragma mark - SplitSelectionViewDelegate
 
 - (void)didSelectDestinationSession:(PTYSession *)session half:(SplitSessionHalf)half {
@@ -3205,6 +3253,8 @@ extendResultsAcrossSoftBoundaries:(BOOL)extendResultsAcrossSoftBoundaries {
 
 - (void)hideSessionNoteIfEmpty {
     if (_sessionNoteView && !_sessionNoteView.hasContent) {
+        // This runs when the emptied note loses focus, which is already on its way to wherever
+        // the user put it, so unlike -hideSessionNote it must not move focus.
         _sessionNoteView.model.isVisible = NO;
         [_sessionNoteView removeFromSuperview];
         _sessionNoteView = nil;
@@ -3212,11 +3262,26 @@ extendResultsAcrossSoftBoundaries:(BOOL)extendResultsAcrossSoftBoundaries {
 }
 
 - (void)hideSessionNote {
-    if (_sessionNoteView) {
-        _sessionNoteView.model.isVisible = NO;
-        [_sessionNoteView syncModelFrame];
-        [_sessionNoteView removeFromSuperview];
-        _sessionNoteView = nil;
+    if (!_sessionNoteView) {
+        return;
+    }
+    _sessionNoteView.model.isVisible = NO;
+    [_sessionNoteView syncModelFrame];
+
+    // Removing the note while it has keyboard focus would leave the window with no first
+    // responder, silently dropping keystrokes until the user clicks somewhere. Give focus back to
+    // the terminal, as collapsing a focused note does.
+    NSResponder *firstResponder = self.window.firstResponder;
+    iTermSessionNoteView *noteView = _sessionNoteView;
+    const BOOL noteHadFocus = ([firstResponder isKindOfClass:[NSView class]] &&
+                               [(NSView *)firstResponder isDescendantOf:noteView]);
+    // Clear the ivar first: removing a focused text view ends editing, which can call back into
+    // -hideSessionNoteIfEmpty.
+    _sessionNoteView = nil;
+    [noteView removeFromSuperview];
+    if (noteHadFocus) {
+        DLog(@"Session note had keyboard focus when hidden; returning it to the session");
+        [self.delegate sessionViewBecomeFirstResponder];
     }
 }
 

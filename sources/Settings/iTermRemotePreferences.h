@@ -6,6 +6,10 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+// Posted on the main thread after the saved copy of the custom folder's prefs (what local prefs are
+// compared against to decide whether there are unsaved changes) is replaced, as by Save Now.
+extern NSString *const iTermRemotePreferencesSavedPrefsDidChangeNotification;
+
 @interface iTermRemotePreferences : NSObject
 
 // These properties are backed to user defaults.
@@ -36,6 +40,21 @@ NS_ASSUME_NONNULL_BEGIN
 
 // Shellforge: whether `key` travels with the settings a custom folder or URL syncs; tests read it.
 - (BOOL)preferenceKeyIsSyncable:(NSString *)key;
+
+// Returns remotePrefs as it would be had the migration described by before and after (see
+// iTermUserDefaultsDidMigrateKeysNotification) run on it too. A key whose remote value is the one
+// the migration started from takes the migrated value; any other key is left alone, so a value the
+// user had already changed locally still counts as a difference. Exposed for testing.
++ (NSDictionary *)remotePrefs:(NSDictionary *)remotePrefs
+    byApplyingMigrationFromValues:(NSDictionary<NSString *, id> *)before
+                         toValues:(NSDictionary<NSString *, id> *)after;
+
+// Whether any syncable key has a different value in localPrefs than in remotePrefs. Keys in
+// preservedKeys are not synced and are ignored. Exposed for testing.
++ (BOOL)localPrefs:(NSDictionary *)localPrefs
+    differFromRemotePrefs:(NSDictionary *)remotePrefs
+            preservedKeys:(NSArray<NSString *> *)preservedKeys
+       respectingDefaults:(BOOL)respectDefaults;
 
 @end
 

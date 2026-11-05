@@ -1437,7 +1437,7 @@ static NSRange NSRangeFromBounds(NSInteger lowerBound, NSInteger upperBound) {
 #pragma mark - Double Buffer
 
 - (iTermTemporaryDoubleBufferedGridController *)temporaryDoubleBuffer {
-    if (!self.config.reduceFlicker && !_temporaryDoubleBuffer.explicit) {
+    if (!self.config.reduceFlicker && !_temporaryDoubleBuffer.appliesWithoutReduceFlicker) {
         return nil;
     }
     return _temporaryDoubleBuffer;
@@ -1730,9 +1730,6 @@ static NSRange NSRangeFromBounds(NSInteger lowerBound, NSInteger upperBound) {
 
 - (iTermUnicodeNormalization)gridUnicodeNormalizationForm {
     return self.normalization;
-}
-
-- (void)gridCursorDidMove {
 }
 
 - (void)gridCursorDidChangeLineFrom:(int)previous {

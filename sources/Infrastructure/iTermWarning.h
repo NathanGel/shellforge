@@ -298,8 +298,8 @@ typedef void(^iTermWarningActionBlock)(iTermWarningSelection);
 
 // Whether the paired companion app may see this warning and press one of its buttons while it is
 // showing (see iTermModalAlertRegistry). Defaults to YES, so every warning is answerable from the
-// phone unless its call site sets this to NO. No call site does yet. Set it to NO for a warning
-// that must be answered at this Mac.
+// phone unless its call site sets this to NO. Set it to NO for a warning that must be answered at
+// this Mac, such as the passphrase prompts for exported passwords (see PasswordArchiveController).
 //
 // The accessory view itself is never sent. If it holds controls whose values matter to the answer,
 // describe them in remoteInputs so the phone can show and set them. Otherwise the phone is told
@@ -334,6 +334,10 @@ typedef void(^iTermWarningActionBlock)(iTermWarningSelection);
 
 // Modally show the alert. Returns the selection.
 - (iTermWarningSelection)runModal;
+// With a window, shows a sheet and returns at once; the completion runs on a later pass of the
+// main queue after the sheet has fully ended, so it may show another sheet on the same window.
+// If the window closes first, the completion never runs. Without a window, or when the warning is
+// silenced, the completion runs before this returns.
 - (void)runModalAsync:(void (^)(iTermWarningSelection result, iTermWarning *warning))completion;
 
 // How this warning would be described to iTermModalAlertRegistry if it were shown now. Builds the

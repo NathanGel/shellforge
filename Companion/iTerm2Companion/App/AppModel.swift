@@ -580,6 +580,16 @@ final class AppModel {
     /// Whether the session reports mouse-wheel events, from the latest config. With
     /// altScreen, the phone translates scroll gestures into reportScrollWheel.
     private(set) var activeStreamScrollWheelReporting = false
+    /// Whether the active stream shows a web browser session, from the latest
+    /// config. Taps and scrolls then go to the page (see browserInputActive).
+    private(set) var activeStreamIsBrowser = false
+    /// Whether a text field on the browser stream's page has keyboard focus, from
+    /// the mac's browserEditingChanged events. The keyboard follows it.
+    private(set) var activeStreamBrowserEditing = false
+    /// The browser stream page's address, title, and history state, from the mac's
+    /// browserNavigationChanged events. Drives the browser controls; nil until the
+    /// mac reports it.
+    private(set) var activeStreamBrowserNavigation: CompanionBrowserNavigationState?
     private var activeStreamGeneration: UInt32 = 0
     /// Rendered scrollback tiles keyed by the tile's first absolute line, with the
     /// fetches in flight so scroll events do not duplicate them.
@@ -1575,7 +1585,7 @@ final class AppModel {
                     pairingStatus = "Loading chats"
                     companionLog("Pairing succeeded; loading home")
                     try await loadHome()
-                    companionLog("Home loaded")
+                    companionLog(phase == .home ? "Home loaded" : "Pairing finished without loading home (phase: \(phase))")
                     storePairing(code)
                     reportPushStatus()
                 } catch is CancellationError {
@@ -2093,11 +2103,15 @@ final class AppModel {
         // the channel is up and the Mac is authenticated. Race .hello against a
         // timeout and keep the outcomes distinct:
         //   - TIMED OUT: the Mac is present but never answers .hello at all - an
-        //     older Mac that predates the handshake. (A network drop in the very
-        //     next operation after a clean establish is far less likely; the Retry
-        //     button recovers that rare false positive.) Treat it as "the Mac must
+        //     older Mac that predates the handshake. Treat it as "the Mac must
         //     upgrade" so a phone-first updater gets a clear panel, not a silent
-        //     reconnect loop.
+        //     reconnect loop. But first confirm the Mac is still there with a ping,
+        //     which every Mac answers off its main thread: a timer can also elapse
+        //     because the connection died, or because iOS suspended the app while
+        //     it waited and the deadline passed during the suspension. Then the
+        //     ping fails with a TransportError and takes the retry path below.
+        //     Replies arrive in order, so a hello reply that was on its way
+        //     reaches the handshake child before the ping's reply does.
         //   - FAILED with a CompanionError: the Mac RESPONDED but with a rejection
         //     or a reply we can't make sense of (an older Mac that forward-compat-
         //     decodes .hello as .unsupported and replies .error, or any unexpected
@@ -2116,6 +2130,9 @@ final class AppModel {
                     // throws CancellationError instead, so a teardown is never
                     // mistaken for a timeout.
                     try await Task.sleep(nanoseconds: 15 * 1_000_000_000)
+                    try await withTimeout(5, "Liveness check after hello timeout") {
+                        try await client.ping()
+                    }
                     throw HelloHandshakeTimedOut()
                 }
                 defer { group.cancelAll() }
@@ -2127,7 +2144,7 @@ final class AppModel {
                 return result
             }
         } catch is HelloHandshakeTimedOut {
-            companionLog("Version handshake timed out after a successful establish; assuming the Mac app must upgrade")
+            companionLog("Version handshake timed out after a successful establish, but the Mac answers pings; assuming the Mac app must upgrade")
             phase = .needsUpgrade(.mac)
             return
         } catch let error as CompanionError {
@@ -3984,25 +4001,46 @@ final class AppModel {
             companionLog("Push relay registration skipped: no secret")
             return
         }
-        var request = URLRequest(url: CompanionPushRelay.registerURL)
+        let secretHash = SHA256.hash(data: secret).map { String(format: "%02x", $0) }.joined()
+        let body: Data
+        do {
+            body = try JSONEncoder().encode(
+                Registration(token: token.map { String(format: "%02x", $0) }.joined(),
+                             secretHash: secretHash,
+                             sandbox: Self.pushSandbox))
+        } catch {
+            companionLog("Push relay registration failed: \(String(describing: error))")
+            return
+        }
+        // Register with the first relay instance that answers; it passes the
+        // registration on to the others. If none does, this runs again on the
+        // next connection to the Mac.
+        // A 429 here is one instance's per-IP limit, so try the next on it too.
+        _ = await CompanionPushRelay.tryInOrder(CompanionPushRelay.registerURLs, finalStatuses: [400]) { url in
+            await Self.register(body: body, url: url)
+        }
+    }
+
+    private static func register(body: Data, url: URL) async -> CompanionPushRelay.AttemptResult {
+        let host = url.host ?? url.absoluteString
+        var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(CompanionUserAgent.value, forHTTPHeaderField: "User-Agent")
         request.timeoutInterval = 15
-        let secretHash = SHA256.hash(data: secret).map { String(format: "%02x", $0) }.joined()
+        request.httpBody = body
         do {
-            request.httpBody = try JSONEncoder().encode(
-                Registration(token: token.map { String(format: "%02x", $0) }.joined(),
-                             secretHash: secretHash,
-                             sandbox: Self.pushSandbox))
             let (data, response) = try await CompanionURLSession.shared.data(for: request)
-            if let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) {
-                companionLog("Registered with push relay")
-            } else {
-                companionLog("Push relay registration rejected: \(String(data: data, encoding: .utf8) ?? "")")
+            let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            if (200..<300).contains(status) {
+                companionLog("Registered with push relay \(host)")
+                return .succeeded
             }
+            companionLog("Push relay \(host) registration rejected (HTTP \(status)): \(String(data: data, encoding: .utf8) ?? "")")
+            return .failed(status: status, relayAnswered: CompanionPushRelay.isRelayError(data))
         } catch {
-            companionLog("Push relay registration failed: \(String(describing: error))")
+            companionLog("Push relay \(host) registration failed: \(String(describing: error))")
+            return .failed(status: nil, relayAnswered: false)
         }
     }
 
@@ -4341,6 +4379,9 @@ final class AppModel {
                 // scroll-to-wheel, exactly as before this feature.
                 activeStreamAltScreen = config.altScreen
                 activeStreamScrollWheelReporting = config.scrollWheelReporting
+                // Absent (older mac) decodes as false: the stream is treated as a
+                // terminal, as before browser input existed.
+                activeStreamIsBrowser = config.isBrowser
                 // A new generation re-renders everything; stale tiles must not show.
                 if config.generationId != activeStreamGeneration {
                     // Not the first config for this stream = a mid-stream geometry
@@ -4388,6 +4429,14 @@ final class AppModel {
             if streamID == activeStreamID {
                 activeSelectionRange = range
             }
+        case .browserEditingChanged(let streamID, let editing):
+            if streamID == activeStreamID {
+                activeStreamBrowserEditing = editing
+            }
+        case .browserNavigationChanged(let streamID, let state):
+            if streamID == activeStreamID {
+                activeStreamBrowserNavigation = state
+            }
         case .streamEnded(let streamID, let reason):
             if streamID == activeStreamID {
                 // A host-side end is a stream transition like the others: neutralize the
@@ -4396,6 +4445,8 @@ final class AppModel {
                 neutralizeDeadStream()
                 activeStreamGeometry = nil
                 activeSelectionRange = nil
+                activeStreamBrowserEditing = false
+                activeStreamBrowserNavigation = nil
                 // A host-side end is terminal: drop the intent so it does not
                 // restart, and tell the view (which shows it only for reasons
                 // worth surfacing, e.g. the session closed).
@@ -4495,6 +4546,9 @@ final class AppModel {
         activeStreamCanResize = true
         activeStreamAltScreen = false
         activeStreamScrollWheelReporting = false
+        activeStreamIsBrowser = false
+        activeStreamBrowserEditing = false
+        activeStreamBrowserNavigation = nil
         activeStreamGeneration = 0
         activeSelectionRange = nil
         onStreamConfig = onConfig
@@ -4610,6 +4664,61 @@ final class AppModel {
     func sendScrollWheel(up: Bool, lines: Int) {
         guard lines > 0, let client, let streamID = activeStreamID else { return }
         Task { try? await client.reportScrollWheel(streamID: streamID, up: up, lines: lines) }
+    }
+
+    /// Whether the connected Mac accepts taps, scrolls, and keys for a streamed web
+    /// browser session. Below this revision a browser stream is view-only.
+    var browserInputSupported: Bool {
+        macRevision >= CompanionProtocolVersion.browserInputRevision
+    }
+
+    /// Whether taps and scrolls on the live view go to a web page rather than
+    /// driving terminal selection and scrollback.
+    var browserInputActive: Bool {
+        activeStreamIsBrowser && browserInputSupported
+    }
+
+    /// Click the browser stream's page at an encoded-image pixel.
+    func sendBrowserTap(imagePoint: CGPoint) {
+        guard browserInputActive, let client, let streamID = activeStreamID else { return }
+        Task { try? await client.browserTap(streamID: streamID, imagePoint: imagePoint) }
+    }
+
+    /// Scroll the browser stream's page under an encoded-image pixel, moving its
+    /// content by `delta` encoded-image pixels (positive is right / down).
+    func sendBrowserScroll(imagePoint: CGPoint, delta: CGVector) {
+        guard browserInputActive, let client, let streamID = activeStreamID else { return }
+        Task { try? await client.browserScroll(streamID: streamID, imagePoint: imagePoint, delta: delta) }
+    }
+
+    /// The browser controls, which act on the browser stream's page.
+    func browserGoBack() {
+        sendBrowserNavigation { client, streamID in try await client.browserGoBack(streamID: streamID) }
+    }
+
+    func browserGoForward() {
+        sendBrowserNavigation { client, streamID in try await client.browserGoForward(streamID: streamID) }
+    }
+
+    func browserReload() {
+        sendBrowserNavigation { client, streamID in try await client.browserReload(streamID: streamID) }
+    }
+
+    func browserStopLoading() {
+        sendBrowserNavigation { client, streamID in try await client.browserStopLoading(streamID: streamID) }
+    }
+
+    /// Load what the user typed in the address field: the mac opens it if it
+    /// looks like a URL and otherwise searches for it.
+    func browserLoad(text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        sendBrowserNavigation { client, streamID in try await client.browserLoad(streamID: streamID, text: trimmed) }
+    }
+
+    private func sendBrowserNavigation(_ send: @escaping @Sendable (CompanionClient, UInt32) async throws -> Void) {
+        guard browserInputActive, let client, let streamID = activeStreamID else { return }
+        Task { try? await send(client, streamID) }
     }
 
     /// Report flow-control feedback for the active stream.
@@ -5288,6 +5397,8 @@ extension AppModel {
         watchState.install(chatID: chatID, subscribedHere: false, token: token)
     }
     func testSetMacRevision(_ revision: Int) { macRevision = revision }
+    /// Make `streamID` the stream being watched, as a streamStarted reply would.
+    func testSetActiveStreamID(_ streamID: UInt32?) { activeStreamID = streamID }
     func testNoteTyping(isTyping: Bool, chatID: String) {
         noteWatchedTypingStatus(isTyping: isTyping, chatID: chatID)
     }

@@ -110,6 +110,10 @@ struct AIConversation {
     // (AIMetadata.instance.models) at request time. Use this when the catalog's
     // own endpoint is what you want.
     var model: String?
+    // The vendor the chat that owns this conversation is pinned to (Chat.modelVendor),
+    // nil when unknown. `model` is resolved only within this vendor, so a pinned
+    // model that no longer resolves never routes to a different vendor.
+    var modelVendor: iTermAIVendor?
     // A fully-specified model to use instead of `model`/the configured provider.
     // Unlike `model` (a name that gets re-resolved to the catalog's public
     // endpoint), this is used verbatim, so it preserves a custom url/api/auth.
@@ -303,6 +307,18 @@ struct AIConversation {
         delegate.addFilesToVectorStoreCompletion = nil
     }
 
+    // The provider override for a turn pinned to `modelName` within `vendor` (the
+    // chat's pinned vendor, nil when unknown). Success(nil) means the name did not
+    // resolve and the global default applies, which only happens for a pin with no
+    // known vendor. A pinned Ollama model with no local model available is a
+    // failure rather than nil, so a local-model chat never falls through to a
+    // (possibly cloud) global default. See LLMMetadata.resolvePinnedModel.
+    static func pinnedProviderOverride(modelName: String,
+                                       vendor: iTermAIVendor? = nil) -> Result<LLMProvider?, AIError> {
+        return LLMMetadata.resolvePinnedModel(named: modelName, vendor: vendor)
+            .map { $0.map { LLMProvider(model: $0) } }
+    }
+
     func prepare(completion: @escaping (Error?) -> ()) {
         if delegate.busy {
             cancel()
@@ -410,8 +426,22 @@ struct AIConversation {
             // Ollama tags, not just the built-in catalog. Without the discovered set,
             // a chat pinned to a local Ollama tag would fall through to the global
             // (possibly cloud) default and be sent there instead of the local server.
-            let pinnedModel = LLMMetadata.model(named: modelName)
-            controller.providerOverride = pinnedModel.map { LLMProvider(model: $0) }
+            switch Self.pinnedProviderOverride(modelName: modelName, vendor: modelVendor) {
+            case .success(let provider):
+                controller.providerOverride = provider
+            case .failure(let error):
+                // Fail the turn before prepare() so no request is made and no
+                // vendor's key sheet is opened.
+                RLog("AIConversation: not sending a turn pinned to unavailable model \(modelName): \(error)")
+                if delegate.busy {
+                    cancel()
+                }
+                controller.providerOverride = nil
+                DispatchQueue.main.async {
+                    completion(.failure(error))
+                }
+                return
+            }
         } else {
             controller.providerOverride = nil
         }

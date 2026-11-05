@@ -20,6 +20,9 @@ class ConductorFileTransfer: TransferrableFile {
     weak var delegate: ConductorFileTransferDelegate?
     private var _error = ""
     private var _localPath: String?
+    // Whether this is a download, which stays true once it ends. The Downloads menu and Clear
+    // All go by this (F-714).
+    private var isDownload = false
     let data: Data?
 
     private enum State {
@@ -43,11 +46,14 @@ class ConductorFileTransfer: TransferrableFile {
     }
 
     override func displayName() -> String? {
+        let username = path.username ?? String(localized: "ConductorFileTransfer.UnknownUserName",
+                                                defaultValue: "(unknown)",
+                                                comment: "Shown in place of the user name in an SSH Integration file transfer description when the user name is not known")
         return String(localized: "ConductorFileTransfer.DisplayName", defaultValue: """
         iTerm2 SSH Integration Protocol
-        User name: \(path.username ?? "(unknown)")")
+        User name: \(username)
         Host: \(path.hostname!)
-        File: \(path.path!)"
+        File: \(path.path!)
         """, comment: "Multi-line description of an SSH Integration file transfer")
     }
 
@@ -72,6 +78,13 @@ class ConductorFileTransfer: TransferrableFile {
 
     private var chunked = false
 
+    // The hidden file in the Downloads folder that a download() saves to until it finishes
+    // and is renamed. It is removed if the download fails or is stopped first (F-724).
+    private var temporaryDownloadPath: String?
+
+    // Tests save downloads somewhere other than the Downloads folder.
+    static var temporaryDirectoryForTesting: String?
+
     func downloadChunked() -> Bool {
         chunked = true
         download()
@@ -79,10 +92,16 @@ class ConductorFileTransfer: TransferrableFile {
     }
 
     override func download() {
+        isDownload = true
         state = .downloading
         status = .starting
         do {
-            _localPath = try temporaryFilePath()
+            let temporaryPath = try temporaryFilePath()
+            _localPath = temporaryPath
+            if !chunked {
+                // The delegate creates it. A chunked download's caller saves the file itself.
+                temporaryDownloadPath = temporaryPath
+            }
             FileTransferManager.sharedInstance().files.add(self)
             FileTransferManager.sharedInstance().transferrableFileDidStartTransfer(self)
             status = .transferring
@@ -95,7 +114,7 @@ class ConductorFileTransfer: TransferrableFile {
     }
 
     private func temporaryFilePath() throws -> String {
-        guard let downloads = FileManager.default.downloadsDirectory() else {
+        guard let downloads = Self.temporaryDirectoryForTesting ?? FileManager.default.downloadsDirectory() else {
             throw ConductorFileTransferError("Unable to find Downloads folder")
         }
         let tempFileName = ".iTerm2.\(UUID().uuidString)"
@@ -119,19 +138,54 @@ class ConductorFileTransfer: TransferrableFile {
         }
     }
 
+    private func removeTemporaryDownload() {
+        guard let temporaryDownloadPath else {
+            return
+        }
+        self.temporaryDownloadPath = nil
+        try? FileManager.default.removeItem(atPath: temporaryDownloadPath)
+    }
+
     func fail(reason: String) {
+        removeTemporaryDownload()
+        guard !reportedStop else {
+            // It was already reported as stopped. A failure that comes later, such as from a
+            // reply that arrived after Stop, doesn't change that.
+            DLog("Ignoring failure after stop: \(reason)")
+            return
+        }
         _error = reason
         FileTransferManager.sharedInstance().transferrableFile(self, didFinishTransmissionWithError: ConductorFileTransferError(reason))
         state = .failed
     }
 
-    private var url: URL {
+    // Registers the transfer so a failure found before uploading starts, such as a folder that
+    // couldn't be archived or a file that's gone, shows in the Uploads menu.
+    func failBeforeUpload(reason: String) {
+        state = .uploading
+        status = .starting
+        FileTransferManager.sharedInstance().files.add(self)
+        FileTransferManager.sharedInstance().transferrableFileDidStartTransfer(self)
+        // Fail on a later turn, like a transfer that fails partway through, so a caller starting a
+        // batch of files finishes starting them before any completion runs.
+        DispatchQueue.main.async {
+            self.fail(reason: reason)
+        }
+    }
+
+    // The source URL recorded when the file is quarantined. Nil if the host or path can't be
+    // put in a URL, in which case the file is quarantined without one (F-920).
+    private var url: URL? {
         let components = NSURLComponents()
         components.host = path.hostname
         components.user = path.username
         components.path = path.path
         components.scheme = "ssh"
-        return components.url!
+        let result = components.url
+        if result == nil {
+            DLog("Can't make a URL for host=\(path.hostname.d) user=\(path.username.d) path=\(path.path.d)")
+        }
+        return result
     }
 
     @MainActor
@@ -142,22 +196,65 @@ class ConductorFileTransfer: TransferrableFile {
         }
     }
 
+    // Whether the transfer has been reported as stopped. A download() reports it as soon as
+    // Stop is chosen rather than when its task next wakes up, which might be never if the
+    // connection stalled (F-728). The task's own report when it does wake up is ignored.
+    private var reportedStop = false
+
+    // Set by the download task for a download(). Called once when Stop is chosen, to cancel
+    // the requests it has outstanding.
+    var stopHandler: (() -> Void)?
+
     @MainActor
     func abort() {
+        removeTemporaryDownload()
+        guard !reportedStop else {
+            return
+        }
+        reportedStop = true
         FileTransferManager.sharedInstance().transferrableFileDidStopTransfer(self)
+    }
+
+    /// A chunked download (see downloadChunked()) whose caller saved the file to `destination`
+    /// itself finished. Without this it would stay listed as downloading (F-714).
+    @MainActor
+    func didFinishChunkedDownload(to destination: URL) {
+        guard state == .downloading else {
+            return
+        }
+        if !quarantine(destination.path, sourceURL: url) {
+            DLog("Failed to quarantine \(destination.path)")
+        }
+        let attributes = try? FileManager.default.attributesOfItem(atPath: destination.path)
+        if let size = attributes?[FileAttributeKey.size] as? UInt {
+            bytesTransferred = size
+            fileSize = Int(size)
+        }
+        _localPath = destination.path
+        state = .downloadComplete
+        FileTransferManager.sharedInstance().transferrableFile(self, didFinishTransmissionWithError: nil)
     }
 
     @MainActor
     func didFinishSuccessfully() {
         if state == .downloading {
+            // These failures end the transfer as failed so it doesn't stay listed as
+            // downloading with Stop available (T-186). fail(reason:) removes the hidden file.
             if !quarantine(_localPath, sourceURL: url) {
-                _error = String(localized: "ConductorFileTransfer.FailedToQuarantine", defaultValue: "Failed to quarantine", comment: "Error shown when a downloaded file cannot be quarantined")
-                FileTransferManager.sharedInstance().transferrableFile(self, didFinishTransmissionWithError: ConductorFileTransferError(_error))
+                // Like SCP and inline file downloads, a file that couldn't be quarantined is
+                // deleted rather than kept, and the user is warned if it can't be deleted.
+                let unquarantinedPath = _localPath!
+                fail(reason: String(localized: "ConductorFileTransfer.FailedToQuarantine", defaultValue: "Failed to quarantine", comment: "Error shown when a downloaded file cannot be quarantined"))
+                if FileManager.default.fileExists(atPath: unquarantinedPath) {
+                    // Avoid a modal alert as a side effect of finishing the transfer.
+                    DispatchQueue.main.async {
+                        self.failedToRemoveUnquarantinedFile(at: unquarantinedPath)
+                    }
+                }
                 return
             }
             guard let attributes = try? FileManager.default.attributesOfItem(atPath: _localPath!) else {
-                _error = String(localized: "ConductorFileTransfer.CouldNotGetAttributes", defaultValue: "Could not get attributes of \(_localPath!)", comment: "Error shown when file attributes of a downloaded file cannot be read")
-                FileTransferManager.sharedInstance().transferrableFile(self, didFinishTransmissionWithError: ConductorFileTransferError(_error))
+                fail(reason: String(localized: "ConductorFileTransfer.CouldNotGetAttributes", defaultValue: "Could not get attributes of \(_localPath!)", comment: "Error shown when file attributes of a downloaded file cannot be read"))
                 return
             }
             let size = attributes[FileAttributeKey.size] as? UInt ?? 0
@@ -179,9 +276,15 @@ class ConductorFileTransfer: TransferrableFile {
                                                      to: URL(fileURLWithPath: finalDestination))
                 }
             } catch {
-                _error = error.localizedDescription
+                // Don't say it was saved when it wasn't (T-180). fail(reason:) also removes the
+                // hidden file so it isn't left behind.
+                DLog("Failed to move \(_localPath!) to \(finalDestination): \(error)")
+                fail(reason: String(localized: "ConductorFileTransfer.CouldNotMoveIntoPlace",
+                                    defaultValue: "The download finished but couldn’t be saved as “\(finalDestination)”: \(error.localizedDescription)",
+                                    comment: "Error shown when a finished SSH Integration download cannot be moved to its final location. The first argument is the destination path and the second is the system’s description of the error."))
+                return
             }
-            try? FileManager.default.removeItem(at: URL(fileURLWithPath: _localPath!))
+            temporaryDownloadPath = nil
             _localPath = finalDestination
             state = .downloadComplete
             FileTransferManager.sharedInstance().transferrableFile(
@@ -208,36 +311,34 @@ class ConductorFileTransfer: TransferrableFile {
         }
     }
 
-    private func sizeToUpload() -> Int? {
+    // Returns the size to upload, or an error message if it can't be determined.
+    private func sizeToUpload() -> Result<Int, ConductorFileTransferError> {
         if let data {
-            return data.count
+            return .success(data.count)
         }
         let path = localPath()!
         do {
             let attrs = try FileManager.default.attributesOfItem(atPath: path)
             guard let size = attrs[FileAttributeKey.size] as? Int else {
-                _error = String(localized: "ConductorFileTransfer.CouldNotGetSize", defaultValue: "Could not get size of file: \(path)", comment: "Error shown when the size of a file to upload cannot be determined")
-                state = .failed
-                FileTransferManager.sharedInstance().transferrableFile(self, didFinishTransmissionWithError: ConductorFileTransferError(_error))
-                return nil
+                return .failure(ConductorFileTransferError(String(localized: "ConductorFileTransfer.CouldNotGetSize", defaultValue: "Could not get size of file: \(path)", comment: "Error shown when the size of a file to upload cannot be determined")))
             }
-            return size
+            return .success(size)
         } catch {
-            _error = String(localized: "ConductorFileTransfer.NoSuchFile", defaultValue: "No such file: \(path)", comment: "Error shown when a file to upload does not exist")
-            FileTransferManager.sharedInstance().transferrableFile(self, didFinishTransmissionWithError: error)
-            state = .failed
-            return nil
+            return .failure(ConductorFileTransferError(String(localized: "ConductorFileTransfer.NoSuchFile", defaultValue: "No such file: \(path)", comment: "Error shown when a file to upload does not exist")))
         }
     }
 
     override func upload() {
-        state = .uploading
-        status = .starting
-        if let size = sizeToUpload() {
+        switch sizeToUpload() {
+        case .success(let size):
             fileSize = size
-        } else {
+        case .failure(let error):
+            // Register the transfer so the failure shows in the Uploads menu.
+            failBeforeUpload(reason: error.description)
             return
         }
+        state = .uploading
+        status = .starting
         FileTransferManager.sharedInstance().files.add(self)
         FileTransferManager.sharedInstance().transferrableFileDidStartTransfer(self)
         status = .transferring
@@ -245,7 +346,7 @@ class ConductorFileTransfer: TransferrableFile {
     }
 
     override func isDownloading() -> Bool {
-        return state == .downloading
+        return isDownload
     }
 
     var isStopped: Bool {
@@ -261,6 +362,15 @@ class ConductorFileTransfer: TransferrableFile {
         guard !isStopped else { return }
         FileTransferManager.sharedInstance().transferrableFileWillStop(self)
         state = .failed
+        if isDownload && !chunked {
+            // Don't wait for the download task to notice: it may be waiting for a reply that
+            // never comes because the connection stalled. Remove the partial file and report
+            // the stop now; anything that arrives later is ignored (F-728).
+            abort()
+            let stopHandler = self.stopHandler
+            self.stopHandler = nil
+            stopHandler?()
+        }
     }
 
     override func error() -> String? {

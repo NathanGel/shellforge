@@ -7,9 +7,15 @@
 
 #import "iTermTmuxJobManager.h"
 
-@implementation iTermTmuxJobManager
+#import "DebugLogging.h"
+#import "iTerm2SharedARC-Swift.h"
 
-@synthesize fd = _fd;
+@implementation iTermTmuxJobManager {
+    // The task closed its end of the input queue. The session closing the queue only ends the
+    // input, which the task must still read to find out about, like a pipe's write end closing.
+    BOOL _inputQueueClosedByTask;
+}
+
 @synthesize tty = _tty;
 @synthesize queue = _queue;
 
@@ -20,14 +26,22 @@
 - (instancetype)initWithQueue:(dispatch_queue_t)queue {
     self = [super init];
     if (self) {
-        _fd = -1;
+        // Never nil, so messaging it never returns 0 for "no descriptor".
+        _ownedFileDescriptor = [[iTermOwnedFileDescriptor alloc] initWithFileDescriptor:-1];
     }
     return self;
 }
 
 - (NSString *)description {
-    return [NSString stringWithFormat:@"<%@: %p read-only-fd=%d tty=%@>",
-            NSStringFromClass([self class]), self, _fd, _tty];
+    return [NSString stringWithFormat:@"<%@: %p read-only-fd=%@ inputQueue=%@ tty=%@>",
+            NSStringFromClass([self class]), self, self.ownedFileDescriptor, self.inputQueue, _tty];
+}
+
+// Ties the descriptor's lifetime to this object's rather than to whoever else holds the wrapper.
+// A lease (such as a task I/O monitor's) still keeps it open until it is released.
+- (void)dealloc {
+    [self.ownedFileDescriptor close];
+    [self.inputQueue close];
 }
 
 - (pid_t)serverPid {
@@ -48,11 +62,19 @@
 
 - (BOOL)closeFileDescriptor {
     @synchronized (self) {
-        if (self.fd == -1) {
+        iTermTaskInputQueue *inputQueue = self.inputQueue;
+        if (inputQueue) {
+            if (_inputQueueClosedByTask) {
+                return NO;
+            }
+            _inputQueueClosedByTask = YES;
+            [inputQueue close];
+            return YES;
+        }
+        if (self.ownedFileDescriptor.isClosed) {
             return NO;
         }
-        close(self.fd);
-        self.fd = -1;
+        [self.ownedFileDescriptor close];
         return YES;
     }
 }
@@ -94,7 +116,10 @@
 
 - (BOOL)ioAllowed {
     @synchronized (self) {
-        return self.fd >= 0;
+        if (self.inputQueue) {
+            return !_inputQueueClosedByTask;
+        }
+        return !self.ownedFileDescriptor.isClosed;
     }
 }
 

@@ -10,10 +10,13 @@
 NS_ASSUME_NONNULL_BEGIN
 
 @class NSWindow;
+@class iTermAnnouncementSuppression;
 
 extern NSString *const kTurnOffBracketedPasteOnHostChangeUserDefaultsKey;
 extern NSString *const kRestoreIconAndWindowNameOnHostChangeUserDefaultsKey;
 extern NSString *const kTurnOffBracketedPasteOnHostChangeAnnouncementIdentifier;
+// The Session Ended announcement.
+extern NSString *const iTermNaggingControllerReopenSessionAfterBrokenPipeIdentifier;
 
 @protocol iTermNaggingControllerDelegate<NSObject>
 - (BOOL)naggingControllerCanShowMessageWithIdentifier:(NSString *)identifier;
@@ -88,6 +91,10 @@ extern NSString *const kTurnOffBracketedPasteOnHostChangeAnnouncementIdentifier;
 - (void)didDetectMouseReportingFrustration;
 
 - (void)offerToTurnOffBracketedPasteOnHostChange;
+// The saved Always/Never choices for these offers. Use savedAlwaysOrNeverChoice to decide whether
+// to show them.
+- (iTermAnnouncementSuppression *)bracketedPasteOfferSuppression;
+- (iTermAnnouncementSuppression *)restoreIconNameOfferSuppression;
 // Returns YES if caller should reset key reporting mode immediately.
 // Returns NO if user chose "Never" or if a nag is being shown.
 - (BOOL)shouldResetKeyReportingMode;
@@ -96,7 +103,11 @@ extern NSString *const kTurnOffBracketedPasteOnHostChangeAnnouncementIdentifier;
 - (void)offerToRestoreIconName:(NSString *)iconName windowName:(NSString *)windowName;
 
 - (BOOL)shouldAskAboutClearingScrollbackHistory;
-- (void)askAboutClearingScrollbackHistory;
+// Call after a control sequence’s request to clear scrollback is allowed or denied. Asks whether
+// to allow it in the future unless a saved choice decided the request, in which case it is listed
+// in the Suppressed Alerts panel instead (but still asked if remembered alerts are being shown).
+// Rate limited, since some apps clear scrollback on every redraw.
+- (void)didHandleRequestToClearScrollbackHistoryAllowed:(BOOL)allowed;
 - (BOOL)terminalCanChangeProfile;
 - (BOOL)tmuxWindowsShouldCloseAfterDetach;
 - (void)arrangementWithName:(NSString *)arrangementName

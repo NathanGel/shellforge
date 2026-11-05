@@ -42,9 +42,11 @@
 #import "TmuxWindowOpener.h"
 #import "TSVParser.h"
 
+NSNotificationName const kTmuxControllerServerLocalityDidBecomeKnown = @"kTmuxControllerServerLocalityDidBecomeKnown";
 NSString *const kTmuxControllerSessionsWillChange = @"kTmuxControllerSessionsWillChange";
 NSString *const kTmuxControllerSessionsDidChange = @"kTmuxControllerSessionsDidChange";
 NSString *const kTmuxControllerDetachedNotification = @"kTmuxControllerDetachedNotification";
+NSString *const kTmuxControllerDetachedSessionGuidKey = @"sessionGuid";
 NSString *const kTmuxControllerWindowsChangeNotification = @"kTmuxControllerWindowsChangeNotification";
 NSString *const kTmuxControllerWindowWasRenamed = @"kTmuxControllerWindowWasRenamed";
 NSString *const kTmuxControllerWindowDidOpen = @"kTmuxControllerWindowDidOpen";
@@ -133,6 +135,9 @@ static NSString *const kAggressiveResize = @"aggressive-resize";
 static const NSTimeInterval kTmuxServerLocalityRetryWindow = 10;
 
 @implementation TmuxController {
+    // The client size to set once the initial list-windows has told us the windows' sizes, or nil.
+    // See -openWindowsOfSize:.
+    NSValue *_deferredInitialClientSize;
     // Backs the serverIsLocal property, which has a hand-written getter below.
     BOOL _serverIsLocal;
     // Whether the serverIsLocal lookup has ever produced an answer, as opposed to failing. See
@@ -172,6 +177,9 @@ static const NSTimeInterval kTmuxServerLocalityRetryWindow = 10;
     NSMutableSet<NSNumber *> *_paneIDs;  // existing pane IDs
     // Remembers control sequences in output for panes about to get a session. See issue 13006.
     iTermTmuxDroppedOutputTracker *_droppedOutputTracker;
+    // pane -> (user variable -> value, or NSNull if unset) for variables a buried session's shell
+    // set while its pane's state was being fetched. See -buriedPanesDidOpen:.
+    NSMutableDictionary<NSNumber *, NSMutableDictionary<NSString *, id> *> *_userVarsSetInOpeningBuriedPanes;
     NSMutableDictionary<NSNumber *, NSString *> *_tabColors;
 
     // Have we guessed the server version? Don't try to open windows until this is true, because
@@ -189,6 +197,13 @@ static const NSTimeInterval kTmuxServerLocalityRetryWindow = 10;
     BOOL _manualOpenRequested;
     BOOL _allInitialWindowsAdded;
     BOOL _haveOpenedInitialWindows;
+    // Adopts the workgroups already on the server once the initial windows are open.
+    iTermTmuxWorkgroupAttacher *_workgroupAttacher;
+    // Windows holding parked workgroup peers. tmux never reuses a window ID, so entries for closed
+    // windows are harmless.
+    NSMutableSet<NSNumber *> *_parkedWindows;
+    // Sessions for panes in parked windows, by pane. See -registerBuriedSession:withPane:.
+    NSMutableDictionary<NSNumber *, PTYSession<iTermTmuxControllerSession> *> *_buriedSessions;
     ProfileModel *_profileModel;
     // Maps the window ID of an about to be opened window to a completion block to invoke when it opens.
     NSMutableDictionary<NSNumber *, iTermTmuxPendingWindow *> *_pendingWindows;
@@ -201,7 +216,10 @@ static const NSTimeInterval kTmuxServerLocalityRetryWindow = 10;
     int _tmuxCurrentWindowID;
     // Pane -> (Key -> Value)
     NSMutableDictionary<NSNumber *, NSMutableDictionary<NSString *, NSString *> *> *_userVars;
-    NSMutableDictionary<NSNumber *, void (^)(PTYSession<iTermTmuxControllerSession> *)> *_when;
+    // Blocks waiting for a pane's session, several per pane (each caller adds its own).
+    NSMutableDictionary<NSNumber *, NSMutableArray<void (^)(PTYSession<iTermTmuxControllerSession> *)> *> *_when;
+    // Blocks waiting for whichever pane's session is registered next.
+    NSMutableArray<void (^)(PTYSession<iTermTmuxControllerSession> *)> *_whenAny;
     NSMutableArray *_listWindowsQueue;
     // If nonnegative, make this pane active after it comes in to being. If negative, invalid.
     int _paneToActivateWhenCreated;
@@ -216,6 +234,8 @@ static const NSTimeInterval kTmuxServerLocalityRetryWindow = 10;
     // Panes with pane-border-lines none, kept current by a subscription once the server shows it
     // has floating panes.
     NSMutableSet<NSNumber *> *_borderlessPanes;
+    // Every pane in a window layout learned so far. See -paneIsInKnownLayout:.
+    NSMutableSet<NSNumber *> *_panesInLayouts;
     iTermTmuxSubscriptionHandle *_paneBorderLinesSubscription;
     BOOL _versionDetected;
     // terminal guid -> [(tmux window id, tab index), ...]
@@ -309,12 +329,15 @@ static NSDictionary *iTermTmuxControllerDefaultFontOverridesFromProfile(Profile 
         gateway_ = gateway;
         _paneIDs = [[NSMutableSet alloc] init];
         _droppedOutputTracker = [[iTermTmuxDroppedOutputTracker alloc] init];
+        _userVarsSetInOpeningBuriedPanes = [[NSMutableDictionary alloc] init];
         windowPanes_ = [[NSMutableDictionary alloc] init];
         _windowStates = [[NSMutableDictionary alloc] init];
         windowPositions_ = [[NSMutableDictionary alloc] init];
         origins_ = [[NSMutableDictionary alloc] init];
         pendingWindowOpens_ = [[NSMutableSet alloc] init];
         hiddenWindows_ = [[NSMutableSet alloc] init];
+        _parkedWindows = [[NSMutableSet alloc] init];
+        _buriedSessions = [[NSMutableDictionary alloc] init];
         _hotkeys = [[NSMutableDictionary alloc] init];
         _tabColors = [[NSMutableDictionary alloc] init];
         self.clientName = [[TmuxControllerRegistry sharedInstance] uniqueClientNameBasedOn:clientName];
@@ -325,6 +348,7 @@ static NSDictionary *iTermTmuxControllerDefaultFontOverridesFromProfile(Profile 
         _tmuxCurrentWindowID = -1;
         _userVars = [[NSMutableDictionary alloc] init];
         _when = [[NSMutableDictionary alloc] init];
+        _whenAny = [[NSMutableArray alloc] init];
         [[TmuxControllerRegistry sharedInstance] setController:self forClient:_clientName];
         _listWindowsQueue = [[NSMutableArray alloc] init];
         _paneToActivateWhenCreated = -1;
@@ -345,6 +369,7 @@ static NSDictionary *iTermTmuxControllerDefaultFontOverridesFromProfile(Profile 
         _windowSizes = [[NSMutableDictionary alloc] init];
         _paneBorderStatusByWindow = [[NSMutableDictionary alloc] init];
         _borderlessPanes = [[NSMutableSet alloc] init];
+        _panesInLayouts = [[NSMutableSet alloc] init];
         RLog(@"Create %@ with gateway=%@", self, gateway_);
     }
     return self;
@@ -617,7 +642,27 @@ static NSDictionary *iTermTmuxControllerDefaultFontOverridesFromProfile(Profile 
     if ([self versionAtLeastDecimalNumberWithString:@"2.4"]) {
         result = [result arrayByAddingObject:@"pane_border_status"];
     }
+    if ([self versionAtLeastDecimalNumberWithString:@"3.2"]) {
+        result = [result arrayByAddingObject:@"iterm2_wg_parked"];
+    }
     return result;
+}
+
+// Records whether a list-windows record is a window holding a parked workgroup peer.
+- (BOOL)recordParkedWindowFromDoc:(TSVDocument *)doc
+                           record:(NSArray *)record
+                         windowId:(int)wid {
+    if (![iTermTmuxWorkgroupAttacher isParkedWindowTag:[doc valueInRecord:record forField:@"iterm2_wg_parked"]]) {
+        return NO;
+    }
+    DLog(@"Window %d holds a parked workgroup peer", wid);
+    [_parkedWindows addObject:@(wid)];
+    [self openBuriedSessionsForParkedWindow:wid layout:[doc valueInRecord:record forField:@"window_layout"]];
+    return YES;
+}
+
+- (BOOL)isParkedWindow:(int)windowId {
+    return [_parkedWindows containsObject:@(windowId)];
 }
 
 // Records the pane-border-status option for a window from a list-windows record,
@@ -636,6 +681,57 @@ static NSDictionary *iTermTmuxControllerDefaultFontOverridesFromProfile(Profile 
     return [affinities_ valuesEqualTo:value];
 }
 
+// Whether to give each window its own size before setting the client size on attach. Needs
+// refresh-client -C @window:size (3.4) and only matters where floating panes exist (3.8).
+- (BOOL)canPinWindowSizes {
+    return _variableWindowSize && [self versionAtLeastDecimalNumberWithString:@"3.8"];
+}
+
+// Sends the client size deferred by -openWindowsOfSize:, after giving every listed window (hidden
+// ones too) its current size for this client, so the client size only sizes windows made later.
+// tmux recalculates window sizes after each refresh-client. Once this client has sized any window,
+// the windows it has not sized yet take its client size, which until now is tmux's default. So the
+// client size is first set to the largest window size, which can only grow a window and never
+// clamps a floating pane, then each window is pinned at its own size. Windows iTerm2 does not open
+// (hidden ones, for example) stay pinned, so they keep their size instead of following this client's.
+- (void)pinWindowSizesThenSetDeferredClientSizeForInitialListing:(TSVDocument *)doc {
+    if (!_deferredInitialClientSize) {
+        return;
+    }
+    const NSSize clientSize = _deferredInitialClientSize.sizeValue;
+    _deferredInitialClientSize = nil;
+    NSMutableArray<iTermTuple<NSString *, NSValue *> *> *windowSizes = [NSMutableArray array];
+    NSSize largest = NSZeroSize;
+    for (NSArray *record in doc.records) {
+        const int wid = [self windowIdFromString:[doc valueInRecord:record forField:@"window_id"]];
+        const NSSize size = NSMakeSize([[doc valueInRecord:record forField:@"window_width"] intValue],
+                                       [[doc valueInRecord:record forField:@"window_height"] intValue]);
+        if (wid < 0 || size.width < 1 || size.height < 1) {
+            continue;
+        }
+        largest.width = MAX(largest.width, size.width);
+        largest.height = MAX(largest.height, size.height);
+        [windowSizes addObject:[iTermTuple tupleWithObject:[NSString stringWithInt:wid]
+                                                 andObject:[NSValue valueWithSize:size]]];
+    }
+    DLog(@"Pin window sizes %@ then set client size to %@", windowSizes, NSStringFromSize(clientSize));
+    NSMutableArray<NSDictionary *> *commands = [NSMutableArray array];
+    NSDictionary *(^setClientSize)(NSSize) = ^NSDictionary *(NSSize size) {
+        return [self->gateway_ dictionaryForCommand:[NSString stringWithFormat:@"refresh-client -C %d,%d",
+                                                     (int)size.width, (int)size.height]
+                                     responseTarget:nil
+                                   responseSelector:nil
+                                     responseObject:nil
+                                              flags:kTmuxGatewayCommandShouldTolerateErrors];
+    };
+    if (windowSizes.count > 0) {
+        [commands addObject:setClientSize(largest)];
+        [commands addObjectsFromArray:[self commandListToSetWindowSizes:windowSizes]];
+    }
+    [commands addObject:setClientSize(clientSize)];
+    [gateway_ sendCommandList:commands];
+}
+
 - (void)initialListWindowsResponse:(NSString *)response {
     RLog(@"initialListWindowsResponse called");
     TSVDocument *doc = [response tsvDocumentWithFields:[self listWindowFields] workAroundTabBug:_shouldWorkAroundTabBug];
@@ -644,6 +740,7 @@ static NSDictionary *iTermTmuxControllerDefaultFontOverridesFromProfile(Profile 
         [gateway_ abortWithErrorMessage:[NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"TmuxController.BadInitialListWindowsResponse", nil, [NSBundle mainBundle], @"Bad response for initial list windows request: %@", @"Error shown when tmux returns an unparseable response to the initial list-windows request; %@ is the raw response"), response]];
         return;
     }
+    [self pinWindowSizesThenSetDeferredClientSizeForInitialListing:doc];
     NSMutableArray<NSArray *> *windowsToOpen = [NSMutableArray array];
     BOOL haveHidden = NO;
     NSNumber *newWindowAffinity = nil;
@@ -654,6 +751,10 @@ static NSDictionary *iTermTmuxControllerDefaultFontOverridesFromProfile(Profile 
         DLog(@"Consider record %@", record);
         const int wid = [self windowIdFromString:[doc valueInRecord:record forField:@"window_id"]];
         [self didLearnLayout:[doc valueInRecord:record forField:@"window_layout"] forWindow:wid];
+        if ([self recordParkedWindowFromDoc:doc record:record windowId:wid]) {
+            DLog(@"Don't open window %d because it holds a parked workgroup peer.", wid);
+            continue;
+        }
         if (hiddenWindows_ && [hiddenWindows_ containsObject:[NSNumber numberWithInt:wid]]) {
             DLog(@"Don't open window %d because it was saved hidden.", wid);
             haveHidden = YES;
@@ -777,6 +878,12 @@ static NSDictionary *iTermTmuxControllerDefaultFontOverridesFromProfile(Profile 
     // Set the size so that newly created windows will take the size of the profile.
     NSString *setSizeCommand = [NSString stringWithFormat:@"refresh-client -C %d,%d",
                                 size.width, size.height];
+    // With per-window sizes, the client size also sizes every existing window this client has not
+    // given a size of its own. Setting it now would shrink the windows being attached to, and tmux
+    // clamps floating panes into the shrunken window, where they stay when it grows back. Instead,
+    // wait for the initial list-windows and pin each window at its current size first.
+    const BOOL deferSetSize = [self canPinWindowSizes];
+    _deferredInitialClientSize = deferSetSize ? [NSValue valueWithSize:NSMakeSize(size.width, size.height)] : nil;
     NSString *listWindowsCommand = [NSString stringWithFormat:@"list-windows -F %@", [self listWindowsDetailedFormat]];
     NSString *listSessionsCommand = @"list-sessions -F \"#{session_id} #{session_name}\"";
     NSString *getAffinitiesCommand = [NSString stringWithFormat:@"show -v -q -t $%d @affinities", sessionId_];
@@ -793,11 +900,11 @@ static NSDictionary *iTermTmuxControllerDefaultFontOverridesFromProfile(Profile 
                                          responseSelector:@selector(getSessionGuidResponse:)
                                            responseObject:nil
                                                     flags:0],
-                           [gateway_ dictionaryForCommand:setSizeCommand
-                                           responseTarget:nil
-                                         responseSelector:nil
-                                           responseObject:nil
-                                                    flags:kTmuxGatewayCommandShouldTolerateErrors],
+                           deferSetSize ? [NSNull null] : [gateway_ dictionaryForCommand:setSizeCommand
+                                                                          responseTarget:nil
+                                                                        responseSelector:nil
+                                                                          responseObject:nil
+                                                                                   flags:kTmuxGatewayCommandShouldTolerateErrors],
                            [gateway_ dictionaryForCommand:getHiddenWindowsCommand
                                            responseTarget:self
                                          responseSelector:@selector(getHiddenWindowsResponse:)
@@ -905,7 +1012,7 @@ static NSDictionary *iTermTmuxControllerDefaultFontOverridesFromProfile(Profile 
 
 - (PTYSession<iTermTmuxControllerSession> *)sessionForWindowPane:(int)windowPane
 {
-    return [windowPanes_ objectForKey:[self _keyForWindowPane:windowPane]];
+    return [windowPanes_ objectForKey:[self _keyForWindowPane:windowPane]] ?: _buriedSessions[@(windowPane)];
 }
 
 - (void)registerSession:(PTYSession<iTermTmuxControllerSession> *)aSession
@@ -916,14 +1023,24 @@ static NSDictionary *iTermTmuxControllerDefaultFontOverridesFromProfile(Profile 
                     aSession, aSession.delegate, aSession.delegate.realParentWindow);
     if (tab) {
         [self retainWindow:window withTab:tab];
+        PTYSession<iTermTmuxControllerSession> *buried = _buriedSessions[@(windowPane)];
+        if (buried && buried != aSession) {
+            // The pane got a session in a tab some other way than adopting its buried one.
+            RLog(@"Pane %d has a new session in a tab; terminating its buried session %@", windowPane, buried);
+            [_buriedSessions removeObjectForKey:@(windowPane)];
+            [buried terminate];
+        }
         [windowPanes_ setObject:aSession forKey:[self _keyForWindowPane:windowPane]];
         [_droppedOutputTracker forgetPane:windowPane];
-        void (^call)(PTYSession<iTermTmuxControllerSession> *) = _when[@(windowPane)];
-        if (call) {
+        [aSession updateInferredTmuxHost];
+        NSArray<void (^)(PTYSession<iTermTmuxControllerSession> *)> *calls =
+            [_when[@(windowPane)] arrayByAddingObjectsFromArray:_whenAny] ?: [_whenAny copy];
+        [_when removeObjectForKey:@(windowPane)];
+        [_whenAny removeAllObjects];
+        for (void (^call)(PTYSession<iTermTmuxControllerSession> *) in calls) {
             dispatch_async(dispatch_get_main_queue(), ^{
                 call(aSession);
             });
-            [_when removeObjectForKey:@(windowPane)];
         }
         if (_paneToActivateWhenCreated == windowPane) {
             [aSession revealIfTabSelected];
@@ -951,16 +1068,28 @@ static NSDictionary *iTermTmuxControllerDefaultFontOverridesFromProfile(Profile 
     // The session these are for doesn't have a tmux controller when it executes them, and it
     // copies its user variables from here once it gets one. Apply them now so they win over the
     // @uservars fetched while opening, and so they're saved in tmux.
+    [self applyUserVariablesInDeferredTokens:tokens pane:wp];
+    return tokens;
+}
+
++ (iTermUserVariableAssignment *)userVariableAssignmentInToken:(VT100Token *)token {
+    if (token.type != XTERMCC_SET_KVP || ![token.kvpKey isEqualToString:@"SetUserVar"]) {
+        return nil;
+    }
+    return [[iTermUserVariableAssignment alloc] initWithPayload:token.kvpValue ?: @""];
+}
+
++ (NSString *)userVariableNameSetByToken:(VT100Token *)token {
+    return [self userVariableAssignmentInToken:token].name;
+}
+
+- (void)applyUserVariablesInDeferredTokens:(NSArray<VT100Token *> *)tokens pane:(int)wp {
     for (VT100Token *token in tokens) {
-        if (token.type != XTERMCC_SET_KVP || ![token.kvpKey isEqualToString:@"SetUserVar"]) {
-            continue;
-        }
-        iTermUserVariableAssignment *assignment = [[iTermUserVariableAssignment alloc] initWithPayload:token.kvpValue ?: @""];
+        iTermUserVariableAssignment *assignment = [TmuxController userVariableAssignmentInToken:token];
         if (assignment) {
             [self setUserVariableWithKey:assignment.name value:assignment.value pane:wp];
         }
     }
-    return tokens;
 }
 
 - (void)willOpenPane:(int)wp {
@@ -982,8 +1111,13 @@ static NSDictionary *iTermTmuxControllerDefaultFontOverridesFromProfile(Profile 
     if (!parseTree) {
         return;
     }
-    [_droppedOutputTracker didLearnPanes:[[TmuxLayoutParser sharedInstance] windowPanesInParseTree:parseTree]
-                                  window:windowId];
+    NSArray<NSNumber *> *panes = [[TmuxLayoutParser sharedInstance] windowPanesInParseTree:parseTree];
+    [_panesInLayouts addObjectsFromArray:panes];
+    [_droppedOutputTracker didLearnPanes:panes window:windowId];
+}
+
+- (BOOL)paneIsInKnownLayout:(int)wp {
+    return [_panesInLayouts containsObject:@(wp)];
 }
 
 - (BOOL)paneIsBorderless:(int)wp {
@@ -1024,6 +1158,221 @@ static NSDictionary *iTermTmuxControllerDefaultFontOverridesFromProfile(Profile 
     [[self window:window] tmuxPaneBordersDidChange];
 }
 
+- (void)registerBuriedSession:(PTYSession<iTermTmuxControllerSession> *)session withPane:(int)windowPane {
+    RLog(@"Register buried session %@ for pane %d", session, windowPane);
+    _buriedSessions[@(windowPane)] = session;
+    NSArray<void (^)(PTYSession<iTermTmuxControllerSession> *)> *calls = [_when[@(windowPane)] copy];
+    [_when removeObjectForKey:@(windowPane)];
+    for (void (^call)(PTYSession<iTermTmuxControllerSession> *) in calls) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            call(session);
+        });
+    }
+}
+
+- (void)deregisterBuriedSession:(PTYSession<iTermTmuxControllerSession> *)session withPane:(int)windowPane {
+    if (_buriedSessions[@(windowPane)] == session) {
+        RLog(@"Deregister buried session %@ for pane %d", session, windowPane);
+        [_buriedSessions removeObjectForKey:@(windowPane)];
+    }
+}
+
+- (PTYSession<iTermTmuxControllerSession> *)takeBuriedSessionForPane:(int)windowPane {
+    PTYSession<iTermTmuxControllerSession> *session = _buriedSessions[@(windowPane)];
+    [_buriedSessions removeObjectForKey:@(windowPane)];
+    return session;
+}
+
+- (NSArray<PTYSession<iTermTmuxControllerSession> *> *)buriedSessions {
+    return _buriedSessions.allValues;
+}
+
+// Gives each pane of a parked window that has no session a buried one: created from the window's
+// layout with the window's profile, then filled with the pane's history and state as an unpaused
+// pane is.
+- (void)openBuriedSessionsForParkedWindow:(int)windowId layout:(NSString *)layout {
+    if (detached_ || _detaching || !gateway_) {
+        // A layout change can arrive while detaching, when there is no gateway to fetch history with.
+        DLog(@"Not opening buried sessions for parked window %d: detached=%@ detaching=%@ gateway=%@",
+             windowId, @(detached_), @(_detaching), gateway_);
+        return;
+    }
+    NSMutableDictionary *parseTree = [[TmuxLayoutParser sharedInstance] parsedLayoutFromString:layout];
+    if (!parseTree) {
+        RLog(@"Could not parse the layout of parked window %d: %@", windowId, layout);
+        return;
+    }
+    Profile *profile = [self profileForWindow:windowId];
+    const NSSize cellSize = [PTYTab cellSizeForBookmark:profile];
+    NSMutableArray<NSNumber *> *created = [NSMutableArray array];
+    [self enumerateLeavesOfParseTree:parseTree block:^(NSDictionary *leaf) {
+        const int pane = [leaf[kLayoutDictWindowPaneKey] intValue];
+        if ([self sessionForWindowPane:pane]) {
+            return;
+        }
+        const int width = [leaf[kLayoutDictWidthKey] intValue];
+        const int height = [leaf[kLayoutDictHeightKey] intValue];
+        NSDictionary *arrangement = [PTYSession arrangementFromTmuxParsedLayout:leaf
+                                                                       bookmark:profile
+                                                                 tmuxController:self
+                                                                         window:windowId];
+        SessionView *view = [[SessionView alloc] initWithFrame:NSMakeRect(0, 0,
+                                                                          width * cellSize.width,
+                                                                          height * cellSize.height)];
+        PTYSession *session = [PTYSession sessionFromArrangement:arrangement
+                                                           named:nil
+                                                          inView:view
+                                                    withDelegate:nil
+                                                   forObjectType:iTermPaneObject
+                                              partialAttachments:nil
+                                                         options:nil];
+        if (!session) {
+            RLog(@"Could not create a buried session for pane %d", pane);
+            return;
+        }
+        [session setTmuxController:self];
+        [session setSize:VT100GridSizeMake(width, height)];
+        [session markTmuxBuried];
+        [self registerBuriedSession:(PTYSession<iTermTmuxControllerSession> *)session withPane:pane];
+        [created addObject:@(pane)];
+    }];
+    if (!created.count) {
+        return;
+    }
+    // Output that arrived before the pane had this session, such as a new peer's first prompt,
+    // was dropped. Keep what was captured from it until the pane's state is fetched (see
+    // -buriedPanesDidOpen:).
+    for (NSNumber *pane in created) {
+        [self willOpenPane:pane.intValue];
+        _userVarsSetInOpeningBuriedPanes[pane] = [NSMutableDictionary dictionary];
+    }
+    TmuxWindowOpener *windowOpener = [TmuxWindowOpener windowOpener];
+    windowOpener.ambiguousIsDoubleWidth = ambiguousIsDoubleWidth_;
+    windowOpener.unicodeVersion = self.unicodeVersion;
+    windowOpener.maxHistory = MAX([[gateway_ delegate] tmuxClientSize].height,
+                                  [[gateway_ delegate] tmuxNumberOfLinesOfScrollbackHistory]);
+    windowOpener.controller = self;
+    windowOpener.gateway = gateway_;
+    windowOpener.target = self;
+    windowOpener.selector = @selector(buriedPanesDidOpen:);
+    windowOpener.shouldWorkAroundTabBug = _shouldWorkAroundTabBug;
+    windowOpener.minimumServerVersion = self.gateway.minimumServerVersion;
+    [windowOpener unpauseWindowPanes:created];
+}
+
+// Like -panesDidUnpause:, but the panes' sessions are new, so the control sequences captured from
+// output dropped before they existed are executed too, as for a window being opened (see
+// -[TmuxWindowOpener addDeferredTokensToStates]). Unlike there, the session got the pane's output
+// while the state was fetched, so a user variable its shell set then is newer than what was
+// captured before and than the @uservars the opener fetched. It is kept.
+- (void)buriedPanesDidOpen:(TmuxWindowOpener *)opener {
+    NSArray<NSNumber *> *panes = opener.unpausingWindowPanes;
+    for (NSNumber *wp in panes) {
+        PTYSession<iTermTmuxControllerSession> *session = [self sessionForWindowPane:wp.intValue];
+        NSDictionary *state = [opener stateForWindowPane:wp.intValue];
+        NSDictionary<NSString *, id> *liveUserVars = [_userVarsSetInOpeningBuriedPanes[wp] copy] ?: @{};
+        [_userVarsSetInOpeningBuriedPanes removeObjectForKey:wp];
+        NSArray<VT100Token *> *tokens = [[_droppedOutputTracker takeTokensForPane:wp.intValue] filteredArrayUsingBlock:^BOOL(VT100Token *token) {
+            NSString *name = [TmuxController userVariableNameSetByToken:token];
+            return !name || !liveUserVars[name];
+        }];
+        [self applyUserVariablesInDeferredTokens:tokens pane:wp.intValue];
+        [liveUserVars enumerateKeysAndObjectsUsingBlock:^(NSString *name, id value, BOOL *stop) {
+            [self setUserVariableWithKey:name value:[NSString castFrom:value] pane:wp.intValue];
+        }];
+        if (tokens.count) {
+            DLog(@"Buried pane %@ has %@ deferred tokens", wp, @(tokens.count));
+            NSMutableDictionary *amended = [state mutableCopy] ?: [NSMutableDictionary dictionary];
+            amended[kTmuxWindowOpenerStateDeferredTokens] = tokens;
+            state = amended;
+        }
+        [session setTmuxHistory:[opener historyLinesForWindowPane:wp.intValue alternateScreen:NO]
+                     altHistory:[opener historyLinesForWindowPane:wp.intValue alternateScreen:YES]
+                          state:state];
+    }
+    [self didFinishOpeningPanes:panes];
+}
+
+// A parked window's layout changed, e.g. it was pinned to a new slot size: keep its buried
+// sessions the same size as their panes. A pane that arrived (a workgroup member replaced in place)
+// gets a buried session of its own. Returns NO if the window is not parked.
+- (BOOL)parkedWindow:(int)windowId layoutDidChange:(NSString *)layout {
+    if (![self isParkedWindow:windowId]) {
+        return NO;
+    }
+    NSMutableDictionary *parseTree = [[TmuxLayoutParser sharedInstance] parsedLayoutFromString:layout];
+    [self enumerateLeavesOfParseTree:parseTree block:^(NSDictionary *leaf) {
+        PTYSession *session = self->_buriedSessions[leaf[kLayoutDictWindowPaneKey]];
+        if (session) {
+            [session setSize:VT100GridSizeMake([leaf[kLayoutDictWidthKey] intValue],
+                                               [leaf[kLayoutDictHeightKey] intValue])];
+        }
+    }];
+    [self openBuriedSessionsForParkedWindow:windowId layout:layout];
+    // A pane may have left it by ending.
+    [self endBuriedSessionsWhosePanesAreGone];
+    return YES;
+}
+
+- (void)parkedWindowDidClose:(int)windowId {
+    DLog(@"Parked window %d closed", windowId);
+    [self endBuriedSessionsWhosePanesAreGone];
+}
+
+// tmux says nothing about panes in parked windows, which have no tab, ending: those the user
+// stopped, killed, or that exited. Ends the buried sessions of those that are gone from the server.
+// A workgroup member's session ending ends its workgroup, as closing a member does locally; a
+// member whose program merely exited keeps its pane (remain-on-exit) and is not gone.
+- (void)endBuriedSessionsWhosePanesAreGone {
+    if (detached_ || _detaching || !gateway_) {
+        return;
+    }
+    NSArray<NSNumber *> *candidates = _buriedSessions.allKeys;
+    if (!candidates.count) {
+        return;
+    }
+    // A pane buried before this is sent existed then, so if tmux doesn't list it, it has ended.
+    [gateway_ sendCommand:@"list-panes -a -F '#{pane_id}'"
+           responseTarget:self
+         responseSelector:@selector(didListPanes:forBuriedPanes:)
+           responseObject:candidates
+                    flags:kTmuxGatewayCommandShouldTolerateErrors];
+}
+
+- (void)didListPanes:(NSString *)response forBuriedPanes:(NSArray<NSNumber *> *)candidates {
+    if (!response) {
+        return;
+    }
+    NSMutableSet<NSNumber *> *existing = [NSMutableSet set];
+    for (NSString *line in [response componentsSeparatedByString:@"\n"]) {
+        if ([line hasPrefix:@"%"]) {
+            [existing addObject:@([[line substringFromIndex:1] intValue])];
+        }
+    }
+    for (NSNumber *pane in candidates) {
+        PTYSession<iTermTmuxControllerSession> *session = _buriedSessions[pane];
+        if (!session || [existing containsObject:pane]) {
+            continue;
+        }
+        RLog(@"Pane %@ of buried session %@ is gone; ending the session", pane, session);
+        [_buriedSessions removeObjectForKey:pane];
+        [session terminate];
+    }
+}
+
+- (void)enumerateLeavesOfParseTree:(NSDictionary *)node block:(void (^)(NSDictionary *leaf))block {
+    NSArray *children = node[kLayoutDictChildrenKey];
+    if (!children) {
+        if (node[kLayoutDictWindowPaneKey]) {
+            block(node);
+        }
+        return;
+    }
+    for (NSDictionary *child in children) {
+        [self enumerateLeavesOfParseTree:child block:block];
+    }
+}
+
 - (void)whenPaneRegistered:(int)wp call:(void (^)(PTYSession<iTermTmuxControllerSession> *))block {
     PTYSession<iTermTmuxControllerSession> *already = [self sessionForWindowPane:wp];
     if (already) {
@@ -1033,7 +1382,16 @@ static NSDictionary *iTermTmuxControllerDefaultFontOverridesFromProfile(Profile 
         return;
     }
 
-    _when[@(wp)] = [block copy];
+    NSMutableArray *blocks = _when[@(wp)];
+    if (!blocks) {
+        blocks = [NSMutableArray array];
+        _when[@(wp)] = blocks;
+    }
+    [blocks addObject:[block copy]];
+}
+
+- (void)whenAnyPaneRegisteredCall:(void (^)(PTYSession<iTermTmuxControllerSession> *))block {
+    [_whenAny addObject:[block copy]];
 }
 
 - (PTYTab *)window:(int)window {
@@ -1055,6 +1413,8 @@ static NSDictionary *iTermTmuxControllerDefaultFontOverridesFromProfile(Profile 
             [self.gateway forceDetach];
         }
     } else {
+        // Before the detach goes out, as -[PTYSession tmuxDetach] does, so the record leaves with us.
+        [self withdrawIT2ClientRecord];
         [self.gateway detach];
     }
 }
@@ -1062,6 +1422,7 @@ static NSDictionary *iTermTmuxControllerDefaultFontOverridesFromProfile(Profile 
 - (void)detach {
     RLog(@"%@: detach", self);
     _phonyCommandOutstanding = NO;
+    NSString *detachedSessionGuid = [_sessionGuid copy];
     self.sessionGuid = nil;
     [listSessionsTimer_ invalidate];
     listSessionsTimer_ = nil;
@@ -1073,13 +1434,23 @@ static NSDictionary *iTermTmuxControllerDefaultFontOverridesFromProfile(Profile 
     [_windowOpensAwaitingVersion removeAllObjects];
     [self closeAllPanes];
     gateway_ = nil;
-    [_when enumerateKeysAndObjectsUsingBlock:^(NSNumber * _Nonnull key, void (^ _Nonnull obj)(PTYSession<iTermTmuxControllerSession> *), BOOL * _Nonnull stop) {
-        obj(nil);
+    [_when enumerateKeysAndObjectsUsingBlock:^(NSNumber * _Nonnull key,
+                                               NSMutableArray<void (^)(PTYSession<iTermTmuxControllerSession> *)> * _Nonnull blocks,
+                                               BOOL * _Nonnull stop) {
+        for (void (^block)(PTYSession<iTermTmuxControllerSession> *) in blocks) {
+            block(nil);
+        }
     }];
     [_when removeAllObjects];
     [_droppedOutputTracker reset];
+    [_userVarsSetInOpeningBuriedPanes removeAllObjects];
+    for (void (^block)(PTYSession<iTermTmuxControllerSession> *) in _whenAny) {
+        block(nil);
+    }
+    [_whenAny removeAllObjects];
     [[NSNotificationCenter defaultCenter] postNotificationName:kTmuxControllerDetachedNotification
-                                                        object:self];
+                                                        object:self
+                                                      userInfo:detachedSessionGuid ? @{ kTmuxControllerDetachedSessionGuidKey: detachedSessionGuid } : nil];
     [[TmuxControllerRegistry sharedInstance] setController:nil
                                                  forClient:self.clientName];
 }
@@ -1481,6 +1852,10 @@ static NSDictionary *iTermTmuxControllerDefaultFontOverridesFromProfile(Profile 
         RLog(@"Tmux server pid %@ resolved on attempt %@: isLocal=%@",
              @(_serverPid), @(_serverLocalityAttempts), @(_serverIsLocal));
     }
+    // Pane sessions that became clients before this settled skipped their pane pid fetch and
+    // never ask again on their own (see -[PTYSession loadTmuxProcessID]).
+    [[NSNotificationCenter defaultCenter] postNotificationName:kTmuxControllerServerLocalityDidBecomeKnown
+                                                        object:self];
 }
 
 - (void)refreshServerLocalityIfUnknown {
@@ -2218,6 +2593,7 @@ static NSDictionary *iTermTmuxControllerDefaultFontOverridesFromProfile(Profile 
 
 - (void)clientDetached:(NSString *)clientName {
     [_clientTracker handleClientDetached:clientName];
+    [_workgroupAttacher clientDetached];
     // Prune the departed client's it2 record, whether it was another iTerm2 that crashed or lost
     // its ssh connection, or a plain client that never had one (unsetting a missing user option
     // is tolerated). Our own name never arrives here: by the time tmux announces our detach we
@@ -2414,6 +2790,56 @@ static NSDictionary *iTermTmuxControllerDefaultFontOverridesFromProfile(Profile 
     [gateway_ sendCommandList:commands];
 }
 
+// Ask tmux for the current layouts and apply them. Used when a resize could not be expressed as a
+// resize-pane command and the UI must be put back to what tmux actually has.
+- (void)refreshLayoutsFromTmux {
+    if (detached_ || !gateway_) {
+        // Windows can outlive a detach. There is no tmux to ask.
+        DLog(@"Not refreshing layouts because detached");
+        return;
+    }
+    NSArray *commands = @[ [gateway_ dictionaryForCommand:[self commandToListWindows]
+                                           responseTarget:self
+                                         responseSelector:@selector(listWindowsResponse:)
+                                           responseObject:nil
+                                                    flags:kTmuxGatewayCommandShouldTolerateErrors] ];
+    ++numOutstandingWindowResizes_;
+    [gateway_ sendCommandList:commands];
+}
+
+- (void)setLayoutInWindow:(int)window toLayoutWithMovedDivider:(NSString *)layout {
+    if (detached_ || !gateway_) {
+        // Windows can outlive a detach. There is no tmux to tell.
+        DLog(@"Not setting layout of window @%d to %@ because detached", window, layout);
+        return;
+    }
+    // select-layout can fail, for example if the panes changed since the layout was made. A failed
+    // command in a list fails the rest of the list, so both tolerate errors.
+    NSArray *commands = @[ [gateway_ dictionaryForCommand:[self commandToSelectLayout:layout inWindow:window]
+                                           responseTarget:self
+                                         responseSelector:@selector(didSetLayoutWithMovedDivider:)
+                                           responseObject:nil
+                                                    flags:(kTmuxGatewayCommandShouldTolerateErrors |
+                                                           kTmuxGatewayCommandReportMalformedCommandErrors)],
+                           [gateway_ dictionaryForCommand:[self commandToListWindows]
+                                           responseTarget:self
+                                         responseSelector:@selector(listWindowsResponse:)
+                                           responseObject:nil
+                                                    flags:kTmuxGatewayCommandShouldTolerateErrors] ];
+    ++numOutstandingWindowResizes_;
+    [gateway_ sendCommandList:commands];
+}
+
+- (void)didSetLayoutWithMovedDivider:(NSString *)response {
+    if (response) {
+        return;
+    }
+    // The UI still shows the divider where it was dropped. The list-windows after the layout
+    // failed with it, so ask again to put the UI back to what tmux has.
+    DLog(@"select-layout for a moved divider failed; re-syncing layout from tmux");
+    [self refreshLayoutsFromTmux];
+}
+
 // The splitVertically parameter uses the iTerm2 conventions.
 - (void)splitWindowPane:(int)wp
              vertically:(BOOL)splitVertically
@@ -2430,6 +2856,14 @@ static NSDictionary *iTermTmuxControllerDefaultFontOverridesFromProfile(Profile 
      ^(NSString *command) {
         __strong __typeof(self) strongSelf = weakSelf;
         if (!strongSelf) {
+            return;
+        }
+        if (strongSelf->detached_ || !strongSelf->gateway_) {
+            // Windows can outlive a detach. There is no tmux to tell.
+            DLog(@"Not splitting pane %%%d because detached", wp);
+            if (completion) {
+                completion(-1);
+            }
             return;
         }
         TmuxGateway *gateway = strongSelf->gateway_;
@@ -2522,6 +2956,11 @@ static NSDictionary *iTermTmuxControllerDefaultFontOverridesFromProfile(Profile 
 }
 
 - (void)didCreateWindowWithCommand:(NSString *)command {
+    if (detached_ || !gateway_) {
+        // Windows can outlive a detach. There is no tmux to tell.
+        DLog(@"Not creating a window with %@ because detached", command);
+        return;
+    }
     NSMutableArray *commands = [NSMutableArray array];
     if (_variableWindowSize) {
         Profile *profile = self.sharedProfile;
@@ -3360,6 +3799,10 @@ static NSDictionary *iTermTmuxControllerDefaultFontOverridesFromProfile(Profile 
         // #{E:...} came later still. See issue 12925.
         parts = [parts arrayByAddingObject:@"#{pane-border-status}"];
     }
+    if ([self versionAtLeastDecimalNumberWithString:@"3.2"]) {
+        // Keep in sync with -listWindowFields. Workgroups in tmux need 3.2.
+        parts = [parts arrayByAddingObject:[NSString stringWithFormat:@"#{%@}", [iTermTmuxWorkgroupAttacher parkedOptionName]]];
+    }
     return [NSString stringWithFormat:@"\"%@\"", [parts componentsJoinedByString:@"\t"]];
 }
 
@@ -3370,13 +3813,27 @@ static NSDictionary *iTermTmuxControllerDefaultFontOverridesFromProfile(Profile 
     // window_flags field (background windows), or the trailing fields are dropped.
     // The authoritative cache is seeded from the tab-separated detailed format on
     // attach/reconnect; this path is a secondary refresh. See issue 12925.
+    return [@"list-windows -F " stringByAppendingString:[self listWindowsLayoutFormat]];
+}
+
+// The -F argument for -commandToListWindows, quoted.
+- (NSString *)listWindowsLayoutFormat {
     if ([self versionAtLeastDecimalNumberWithString:@"2.4"]) {
-        return @"list-windows -F \"#{window_id} #{window_layout} #{window_flags} #{window_visible_layout} #{pane-border-status}\"";
+        return @"\"#{window_id} #{window_layout} #{window_flags} #{window_visible_layout} #{pane-border-status}\"";
     } else if ([self versionAtLeastDecimalNumberWithString:@"2.2"]) {
-        return @"list-windows -F \"#{window_id} #{window_layout} #{window_flags} #{window_visible_layout}\"";
+        return @"\"#{window_id} #{window_layout} #{window_flags} #{window_visible_layout}\"";
     } else {
-        return @"list-windows -F \"#{window_id} #{window_layout} #{window_flags}\"";
+        return @"\"#{window_id} #{window_layout} #{window_flags}\"";
     }
+}
+
+- (void)refreshLayoutOfWindow:(int)windowId {
+    DLog(@"Refresh the layout of window %d", windowId);
+    [gateway_ sendCommand:[NSString stringWithFormat:@"display -p -t @%d -F %@", windowId, [self listWindowsLayoutFormat]]
+           responseTarget:self
+         responseSelector:@selector(parseListWindowsResponseAndUpdateLayouts:)
+           responseObject:nil
+                    flags:kTmuxGatewayCommandShouldTolerateErrors];
 }
 
 - (NSString *)commandToListWindowsForSession:(int)session {
@@ -3384,6 +3841,11 @@ static NSDictionary *iTermTmuxControllerDefaultFontOverridesFromProfile(Profile 
 }
 
 - (void)swapPane:(int)pane1 withPane:(int)pane2 {
+    if (detached_ || !gateway_) {
+        // Windows can outlive a detach. There is no tmux to tell.
+        DLog(@"Not swapping panes %%%d and %%%d because detached", pane1, pane2);
+        return;
+    }
     NSString *swapPaneCommand = [NSString stringWithFormat:@"swap-pane -s \"%%%d\" -t \"%%%d\"",
                                  pane1, pane2];
 
@@ -3435,6 +3897,11 @@ static NSString *iTermTmuxRelativeFlags(int columns, int rows, NSString *right, 
                        rows:(int)dy
             growingByColumns:(int)dw
                        rows:(int)dh {
+    if (detached_ || !gateway_) {
+        // Windows can outlive a detach. There is no tmux to tell.
+        DLog(@"Not resizing floating pane %%%d because detached", wp);
+        return;
+    }
     NSMutableArray<NSDictionary *> *commands = [NSMutableArray array];
     if (dx || dy) {
         [commands addObject:[gateway_ dictionaryForCommand:[NSString stringWithFormat:@"move-pane -t \"%%%d\" %@",
@@ -3512,6 +3979,11 @@ static NSString *iTermTmuxRelativeFlags(int columns, int rows, NSString *right, 
 }
 
 - (void)toggleZoomForPane:(int)pane {
+    if (detached_ || !gateway_) {
+        // Windows can outlive a detach. There is no tmux to tell.
+        DLog(@"Not toggling zoom for pane %%%d because detached", pane);
+        return;
+    }
     NSArray *commands = @[ [gateway_ dictionaryForCommand:[NSString stringWithFormat:@"resize-pane -Z -t \"%%%d\"", pane]
                                            responseTarget:nil
                                          responseSelector:NULL
@@ -3537,13 +4009,24 @@ static NSString *iTermTmuxRelativeFlags(int columns, int rows, NSString *right, 
     _sharedFontOverrides = dict;
 }
 
+// A layout has braces, which tmux's command parser takes for a command block unless quoted.
+- (NSString *)commandToSelectLayout:(NSString *)layout inWindow:(int)window {
+    return [NSString stringWithFormat:@"select-layout -t @%@ \"%@\"",
+            @(window), [layout stringByEscapingForTmux]];
+}
+
 - (void)setLayoutInWindow:(int)window toLayout:(NSString *)layout {
-    NSArray *commands = @[ [gateway_ dictionaryForCommand:[NSString stringWithFormat:@"select-layout -t @%@ %@",
-                                                           @(window), layout]
+    if (detached_ || !gateway_) {
+        // Windows can outlive a detach. There is no tmux to tell.
+        DLog(@"Not setting layout of window @%d to %@ because detached", window, layout);
+        return;
+    }
+    NSArray *commands = @[ [gateway_ dictionaryForCommand:[self commandToSelectLayout:layout inWindow:window]
                                            responseTarget:self
                                          responseSelector:@selector(didSetLayout:)
                                            responseObject:nil
-                                                    flags:kTmuxGatewayCommandShouldTolerateErrors],
+                                                    flags:(kTmuxGatewayCommandShouldTolerateErrors |
+                                                           kTmuxGatewayCommandReportMalformedCommandErrors)],
                            [gateway_ dictionaryForCommand:[self commandToListWindowsForSession:sessionId_]
                                            responseTarget:self
                                          responseSelector:@selector(didListWindowsSubsequentToSettingLayout:)
@@ -3983,6 +4466,16 @@ static NSString *iTermTmuxRelativeFlags(int columns, int rows, NSString *right, 
     for (NSArray *record in doc.records) {
         NSString *recordWindowId = [doc valueInRecord:record forField:@"window_id"];
         if ([self windowIdFromString:recordWindowId] == [windowId intValue]) {
+            if ([self recordParkedWindowFromDoc:doc record:record windowId:[windowId intValue]]) {
+                RLog(@"Not opening window %@: it holds a parked workgroup peer", windowId);
+                // Its buried sessions' panes are still scanned (see
+                // -openBuriedSessionsForParkedWindow:layout:), so the window no longer awaits its
+                // layout.
+                [_droppedOutputTracker windowDidStopAwaitingLayout:windowId.intValue];
+                [self didLearnLayout:[doc valueInRecord:record forField:@"window_layout"] forWindow:windowId.intValue];
+                [_workgroupAttacher parkedWindowAppeared];
+                return;
+            }
             [self cachePaneBorderStatusFromDoc:doc record:record windowId:[windowId intValue]];
             [self updateTmuxCurrentWindowFromDoc:doc record:record windowId:[windowId intValue]];
             [self openWindowWithIndex:[self windowIdFromString:[doc valueInRecord:record forField:@"window_id"]]
@@ -4071,6 +4564,10 @@ static NSString *iTermTmuxRelativeFlags(int columns, int rows, NSString *right, 
                                 forWindow:window];
             }
             PTYTab *tab = [self window:window];
+            if (!tab && [self parkedWindow:window layoutDidChange:layout]) {
+                // A parked window has no tab, only buried sessions.
+                continue;
+            }
             if (tab) {
                 [tabs addObject:tab];
                 NSNumber *zoomed = components.count > 3 ? @([components[3] containsString:@"Z"]) : nil;
@@ -4157,9 +4654,14 @@ static NSString *iTermTmuxRelativeFlags(int columns, int rows, NSString *right, 
         PTYSession<iTermTmuxControllerSession> *session = [windowPanes_ objectForKey:key];
         [session tmuxDidDisconnect];
     }
+    // Buried sessions have no tab to close, so they end with the connection.
+    for (PTYSession<iTermTmuxControllerSession> *session in [_buriedSessions.allValues copy]) {
+        [session terminate];
+    }
 
     // Clean up all state to avoid trying to reuse it.
     [windowPanes_ removeAllObjects];
+    [_buriedSessions removeAllObjects];
 }
 
 - (void)windowDidOpen:(TmuxWindowOpener *)windowOpener {
@@ -4195,6 +4697,8 @@ static NSString *iTermTmuxRelativeFlags(int columns, int rows, NSString *right, 
     if (!_haveOpenedInitialWindows) {
         [gateway_.delegate tmuxDidOpenInitialWindows];
         _haveOpenedInitialWindows = YES;
+        _workgroupAttacher = [[iTermTmuxWorkgroupAttacher alloc] initWithController:self];
+        [_workgroupAttacher start];
     }
 }
 
@@ -4260,8 +4764,18 @@ static NSString *iTermTmuxRelativeFlags(int columns, int rows, NSString *right, 
 
 - (void)setCurrentWindow:(int)windowId {
     _currentWindowID = windowId;
+    if (!gateway_) {
+        // Detached: there is no tmux to tell, and the command list below can't hold nil.
+        DLog(@"Not sending select-window -t @%d because there is no gateway", windowId);
+        return;
+    }
     if (_suppressActivityChanges) {
         DLog(@"Not sending select-window -t %%%d because activity changes are suppressed", windowId);
+        return;
+    }
+    if (detached_ || !gateway_) {
+        // Windows can outlive a detach and still become key. There is no tmux to tell.
+        DLog(@"Not sending select-window -t %%%d because detached", windowId);
         return;
     }
     // tmux sends no %session-window-changed when the window is already current, so only expect
@@ -4269,31 +4783,58 @@ static NSString *iTermTmuxRelativeFlags(int columns, int rows, NSString *right, 
     // in the same command list as the select-window: tmux runs a client's command list without
     // running other clients' commands in between. The echo always arrives after both responses
     // because tmux holds back notifications until the command list's output is written.
+    //
+    // The window may be gone already: a native tab outlives its tmux window until %window-close
+    // arrives and can become current in between, as when a workgroup's teardown kills a member's
+    // window and then closes the tab before it. Errors are tolerated so that doesn't end the
+    // connection. Both replies share `selection` so a failed select-window can take back the echo
+    // it no longer causes.
+    NSMutableDictionary *selection = [@{ @"window": @(windowId) } mutableCopy];
     NSArray *commands = @[
         [gateway_ dictionaryForCommand:@"display -p \"#{window_id}\""
                         responseTarget:self
-                      responseSelector:@selector(didGetCurrentWindow:beforeSelectingWindow:)
-                        responseObject:@(windowId)
-                                 flags:0],
+                      responseSelector:@selector(didGetCurrentWindow:beforeSelecting:)
+                        responseObject:selection
+                                 flags:kTmuxGatewayCommandShouldTolerateErrors],
         [gateway_ dictionaryForCommand:[NSString stringWithFormat:@"select-window -t @%d", windowId]
-                        responseTarget:nil
-                      responseSelector:nil
-                        responseObject:nil
-                                 flags:0]
+                        responseTarget:self
+                      responseSelector:@selector(didSelectWindow:selection:)
+                        responseObject:selection
+                                 flags:kTmuxGatewayCommandShouldTolerateErrors]
     ];
     [gateway_ sendCommandList:commands];
 }
 
-// A failed command aborts the connection, so if this runs then the select-window will run too.
-- (void)didGetCurrentWindow:(NSString *)response beforeSelectingWindow:(NSNumber *)windowId {
+// If this fails, the select-window after it in the list is skipped.
+- (void)didGetCurrentWindow:(NSString *)response beforeSelecting:(NSMutableDictionary *)selection {
+    NSString *target = [NSString stringWithFormat:@"@%d", [selection[@"window"] intValue]];
+    if (!response) {
+        DLog(@"Could not read the current window before selecting %@", target);
+        return;
+    }
     NSString *current = [response stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-    NSString *target = [NSString stringWithFormat:@"@%d", windowId.intValue];
     if ([current isEqualToString:target]) {
         DLog(@"%@ is already current. Expect no session-window-changed.", target);
         return;
     }
     DLog(@"Current window is %@. Expect session-window-changed for %@.", current, target);
     _ignoreWindowChangeNotificationCount++;
+    selection[@"expectsEcho"] = @YES;
+}
+
+// tmux sends no %session-window-changed for a select-window that failed.
+- (void)didSelectWindow:(NSString *)response selection:(NSMutableDictionary *)selection {
+    if (response) {
+        return;
+    }
+    DLog(@"Could not select window @%@. It is probably gone.", selection[@"window"]);
+    if (_currentWindowID == [selection[@"window"] intValue]) {
+        // Reordering tabs selects the current window again (-setPartialWindowIdOrder:).
+        _currentWindowID = -1;
+    }
+    if ([selection[@"expectsEcho"] boolValue] && _ignoreWindowChangeNotificationCount > 0) {
+        _ignoreWindowChangeNotificationCount--;
+    }
 }
 
 - (NSString *)userVarsString:(int)paneID {
@@ -4342,6 +4883,8 @@ static NSString *iTermTmuxRelativeFlags(int columns, int rows, NSString *right, 
 - (void)setUserVariableWithKey:(NSString *)key
                          value:(NSString *)value
                           pane:(int)paneID {
+    // Kept for -buriedPanesDidOpen:, which runs after the opener's @uservars overwrite these.
+    _userVarsSetInOpeningBuriedPanes[@(paneID)][key] = value ?: [NSNull null];
     if (![self versionAtLeastDecimalNumberWithString:@"3.1"]) {
         return;
     }

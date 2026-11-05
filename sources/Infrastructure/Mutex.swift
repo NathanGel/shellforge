@@ -29,10 +29,46 @@ class Mutex {
         os_unfair_lock_unlock(unfairLock)
     }
 
+    // Crashes unless the calling thread holds the lock.
+    func assertOwned() {
+        os_unfair_lock_assert_owner(unfairLock)
+    }
+
     func sync<T>(_ closure: () throws -> T) rethrows -> T {
         lock()
         defer {
             unlock()
+        }
+        return try closure()
+    }
+}
+
+// A mutex that can be acquired with a timeout. Use it when a caller (typically
+// the main thread) must not wait indefinitely for a holder that might block.
+//
+// Unlike Mutex, which uses os_unfair_lock, waiters do not donate their priority
+// to the holder and unlocking is not checked against the owning thread. Prefer
+// Mutex unless you need the timeout.
+final class TimedMutex {
+    struct Timeout: Error {}
+
+    private let semaphore = DispatchSemaphore(value: 1)
+
+    func sync<T>(_ closure: () throws -> T) rethrows -> T {
+        semaphore.wait()
+        defer {
+            semaphore.signal()
+        }
+        return try closure()
+    }
+
+    // Throws Timeout if the lock can't be acquired within `timeout` seconds.
+    func sync<T>(timeout: TimeInterval, _ closure: () throws -> T) throws -> T {
+        guard semaphore.wait(timeout: .now() + timeout) == .success else {
+            throw Timeout()
+        }
+        defer {
+            semaphore.signal()
         }
         return try closure()
     }

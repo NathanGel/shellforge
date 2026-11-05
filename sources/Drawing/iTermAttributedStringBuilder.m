@@ -10,6 +10,7 @@
 #import "NSDictionary+iTerm.h"
 #import "NSObject+iTerm.h"
 #import "iTerm2SharedARC-Swift.h"
+#import "iTermAdvancedSettingsModel.h"
 #import "iTermBackgroundColorRun.h"
 #import "iTermBoxDrawingBezierCurveFactory.h"
 #import "iTermCharacterSets.h"
@@ -20,11 +21,21 @@
 #define likely(x) __builtin_expect(!!(x), 1)
 #define unlikely(x) __builtin_expect(!!(x), 0)
 
+// The per-cell precise timers cost two mach_absolute_time() calls per cell, which
+// showed up as ~17% of legacy-renderer drawRect time. Only pay for them when
+// drawing performance logging (the only consumer of these stats) is on.
+#define iTermASBTimerStart(stats) do { if (unlikely(_timersEnabled)) { iTermPreciseTimerStatsStartTimer(stats); } } while (0)
+#define iTermASBTimerAccumulate(stats) do { if (unlikely(_timersEnabled)) { iTermPreciseTimerStatsMeasureAndAccumulate(stats); } } while (0)
+
 typedef struct iTermTextColorContext {
     NSColor *lastUnprocessedColor;
     CGFloat dimmingAmount;
     CGFloat mutingAmount;
     BOOL hasSelectedText;
+    // Logical columns that are selected. When non-nil, selection and find-match
+    // highlighting are decided per cell rather than for the whole range, so one
+    // call can span a selection boundary (see -attributedStringsForLine:).
+    NSIndexSet *selectedIndexes;
     iTermColorMap *colorMap;
     id<iTermAttributedStringBuilderDelegate> delegate;
     NSData *findMatches;
@@ -157,6 +168,40 @@ static inline BOOL iTermCharacterAttributesUnderlineColorEqual(iTermCharacterAtt
            a->blueDark == b->blueDark;
 }
 
+static inline BOOL iTermTextColorContextCellIsSelected(const iTermTextColorContext *context, int index) {
+    return context->hasSelectedText || (context->selectedIndexes != nil && index >= 0 && [context->selectedIndexes containsIndex:index]);
+}
+
+static inline BOOL iTermTextColorContextCellIsMatch(const iTermTextColorContext *context, int index) {
+    if (!context->findMatches || index < 0) {
+        return NO;
+    }
+    // Test if this is a highlighted match from a find.
+    const int theIndex = index / 8;
+    const int mask = 1 << (index & 7);
+    const char *matchBytes = context->findMatches.bytes;
+    return theIndex < [context->findMatches length] && (matchBytes[theIndex] & mask);
+}
+
+// Selection and find-match highlighting change a cell's text color without
+// changing its screen_char_t, so two cells that are otherwise equivalent can
+// still need different attributes. This is only possible when highlighting is
+// decided per cell.
+static inline BOOL iTermTextColorContextCellsHaveSameHighlight(const iTermTextColorContext *context, int i, int j) {
+    if (!context->selectedIndexes) {
+        return YES;
+    }
+    if (j < 0) {
+        // No cell's attributes have been computed yet.
+        return NO;
+    }
+    const BOOL iSelected = iTermTextColorContextCellIsSelected(context, i);
+    if (iSelected != iTermTextColorContextCellIsSelected(context, j)) {
+        return NO;
+    }
+    return iSelected || iTermTextColorContextCellIsMatch(context, i) == iTermTextColorContextCellIsMatch(context, j);
+}
+
 static NSColor *iTermTextDrawingHelperGetTextColor(screen_char_t *c,
                                                    iTermExternalAttribute *ea,
                                                    BOOL inUnderlinedRange,
@@ -166,6 +211,7 @@ static NSColor *iTermTextDrawingHelperGetTextColor(screen_char_t *c,
                                                    BOOL disableMinimumContrast) {
     NSColor *rawColor = nil;
     BOOL isMatch = NO;
+    const BOOL selected = iTermTextColorContextCellIsSelected(context, index);
     if (c->faint && colorRun && !context->backgroundColor) {
         context->backgroundColor = [context->delegate unprocessedColorForBackgroundRun:colorRun
                                                            enableBlending:YES];
@@ -175,14 +221,8 @@ static NSColor *iTermTextDrawingHelperGetTextColor(screen_char_t *c,
                                                               context->mutingAmount > 0.001 ||
                                                               c->faint);  // faint implies alpha<1 and is faster than getting the alpha component
 
-    if (context->findMatches && !context->hasSelectedText) {
-        // Test if this is a highlighted match from a find.
-        int theIndex = index / 8;
-        int mask = 1 << (index & 7);
-        const char *matchBytes = context->findMatches.bytes;
-        if (theIndex < [context->findMatches length] && (matchBytes[theIndex] & mask)) {
-            isMatch = YES;
-        }
+    if (!selected) {
+        isMatch = iTermTextColorContextCellIsMatch(context, index);
     }
 
     if (isMatch) {
@@ -196,7 +236,7 @@ static NSColor *iTermTextDrawingHelperGetTextColor(screen_char_t *c,
         rawColor = [context->colorMap colorForKey:kColorMapLink];
         assert(rawColor);
         context->havePreviousCharacterAttributes = NO;
-    } else if (context->hasSelectedText && context->delegate.useSelectedTextColor) {
+    } else if (selected && context->delegate.useSelectedTextColor) {
         // Selected text.
         rawColor = [context->colorMap colorForKey:kColorMapSelectedText];
         assert(rawColor);
@@ -306,6 +346,7 @@ enum {
     NSInteger _dictCacheLookups;
     NSInteger _dictCacheHits;
     BOOL _dictCacheDisabled;  // Set when the hit rate is too low to be worth the overhead.
+    BOOL _timersEnabled;  // Snapshot of logDrawingPerformance, taken per line.
 }
 
 - (instancetype)initWithStats:(iTermAttributedStringBuilderStatsPointers)stats {
@@ -375,6 +416,33 @@ preferSpeedToFullLigatureSupport:(BOOL)preferSpeedToFullLigatureSupport
                                                      findMatches:(NSData *)findMatches
                                                  underlinedRange:(NSRange)underlinedRange
                                                        positions:(CTVector(CGFloat) *)positions {
+    return [self attributedStringsForLine:line
+                                 bidiInfo:bidiInfo
+                       externalAttributes:eaIndex
+                                    range:indexRange
+                          hasSelectedText:hasSelectedText
+                          selectedIndexes:nil
+                          backgroundColor:backgroundColor
+                           forceTextColor:forceTextColor
+                                 colorRun:colorRun
+                              findMatches:findMatches
+                          underlinedRange:underlinedRange
+                                positions:positions];
+}
+
+- (NSArray<id<iTermAttributedString>> *)attributedStringsForLine:(const screen_char_t *)line
+                                                        bidiInfo:(iTermBidiDisplayInfo *)bidiInfo
+                                              externalAttributes:(id<iTermExternalAttributeIndexReading>)eaIndex
+                                                           range:(NSRange)indexRange
+                                                 hasSelectedText:(BOOL)hasSelectedText
+                                                 selectedIndexes:(NSIndexSet *)selectedIndexes
+                                                 backgroundColor:(NSColor *)backgroundColor
+                                                  forceTextColor:(NSColor *)forceTextColor
+                                                        colorRun:(const iTermBackgroundColorRun *)colorRun
+                                                     findMatches:(NSData *)findMatches
+                                                 underlinedRange:(NSRange)underlinedRange
+                                                       positions:(CTVector(CGFloat) *)positions {
+    _timersEnabled = [iTermAdvancedSettingsModel logDrawingPerformance];
     NSMutableArray<id<iTermAttributedString>> *attributedStrings = [NSMutableArray array];
     iTermColorMap *colorMap = self.colorMap;
     iTermTextColorContext textColorContext = {
@@ -382,6 +450,7 @@ preferSpeedToFullLigatureSupport:(BOOL)preferSpeedToFullLigatureSupport
         .dimmingAmount = colorMap.dimmingAmount,
         .mutingAmount = colorMap.mutingAmount,
         .hasSelectedText = hasSelectedText,
+        .selectedIndexes = selectedIndexes,
         .colorMap = self.colorMap,
         .delegate = _delegate,
         .findMatches = findMatches,
@@ -408,6 +477,8 @@ preferSpeedToFullLigatureSupport:(BOOL)preferSpeedToFullLigatureSupport
     screen_char_t predecessor = { 0 };
     BOOL lastCharacterImpartsEmojiPresentation = NO;
     iTermExternalAttribute *prevEa = nil;
+    // The cell whose attributes are in characterAttributes.
+    int attributesIndex = -1;
     iTermKittyUnicodePlaceholderState kittyPlaceholderState;
     iTermKittyUnicodePlaceholderStateInit(&kittyPlaceholderState);
 
@@ -421,7 +492,7 @@ preferSpeedToFullLigatureSupport:(BOOL)preferSpeedToFullLigatureSupport
     const BOOL nonAsciiLigatures = _nonAsciiLigatures;
 
     for (int i = indexRange.location; i < NSMaxRange(indexRange); i++) {
-        iTermPreciseTimerStatsStartTimer(_stats.attrsForChar);
+        iTermASBTimerStart(_stats.attrsForChar);
         screen_char_t c = line[i];
         if (ScreenCharIsDWL_SPACER(c)) {
             // DWL_SPACERs are structural placeholders on double-width lines.
@@ -559,9 +630,10 @@ preferSpeedToFullLigatureSupport:(BOOL)preferSpeedToFullLigatureSupport
         if (likely(underlinedRange.length == 0) &&
             likely(drawable == previousDrawable) &&
             likely(i > indexRange.location) &&
-            [self character:&c withExtendedAttributes:ea isEquivalentToCharacter:&line[i-1] withExtendedAttributes:prevEa]) {
+            [self character:&c withExtendedAttributes:ea isEquivalentToCharacter:&line[i-1] withExtendedAttributes:prevEa] &&
+            iTermTextColorContextCellsHaveSameHighlight(&textColorContext, i, attributesIndex)) {
             ++segmentLength;
-            iTermPreciseTimerStatsMeasureAndAccumulate(_stats.attrsForChar);
+            iTermASBTimerAccumulate(_stats.attrsForChar);
             if (drawable ||
                 ((characterAttributes.underlineType ||
                   characterAttributes.strikethrough ||
@@ -590,6 +662,7 @@ preferSpeedToFullLigatureSupport:(BOOL)preferSpeedToFullLigatureSupport
                        textColorContext:&textColorContext
                              attributes:&characterAttributes
                                remapped:&remapped];
+        attributesIndex = i;
         prevEa = ea;
         if (!c.image && remapped) {
             if (c.complexChar) {
@@ -600,9 +673,9 @@ preferSpeedToFullLigatureSupport:(BOOL)preferSpeedToFullLigatureSupport
                 charAsString = [NSString stringWithLongCharacter:remapped];
             }
         }
-        iTermPreciseTimerStatsMeasureAndAccumulate(_stats.attrsForChar);
+        iTermASBTimerAccumulate(_stats.attrsForChar);
 
-        iTermPreciseTimerStatsStartTimer(_stats.shouldSegment);
+        iTermASBTimerStart(_stats.shouldSegment);
 
         NSDictionary *imageAttributes = [self imageAttributesForCharacter:&c
                                                        externalAttributes:ea
@@ -620,7 +693,7 @@ preferSpeedToFullLigatureSupport:(BOOL)preferSpeedToFullLigatureSupport
                       previousImageAttributes:previousImageAttributes
                         mergeColorOnlyChanges:(bidiInfo != nil)
                      combinedAttributesChanged:&combinedAttributesChanged]) {
-            iTermPreciseTimerStatsStartTimer(_stats.buildMutableAttributedString);
+            iTermASBTimerStart(_stats.buildMutableAttributedString);
             builder.endColumn = i;
             id<iTermAttributedString> builtString = builder.attributedString;
             if (previousCharacterAttributes.underlineType ||
@@ -630,7 +703,7 @@ preferSpeedToFullLigatureSupport:(BOOL)preferSpeedToFullLigatureSupport
                                     value:@(segmentLength)];
             }
             segmentLength = 0;
-            iTermPreciseTimerStatsMeasureAndAccumulate(_stats.buildMutableAttributedString);
+            iTermASBTimerAccumulate(_stats.buildMutableAttributedString);
 
             if (builtString.length > 0) {
                 [attributedStrings addObject:builtString];
@@ -645,9 +718,9 @@ preferSpeedToFullLigatureSupport:(BOOL)preferSpeedToFullLigatureSupport
         ++segmentLength;
         previousCharacterAttributes = characterAttributes;
         previousImageAttributes = [imageAttributes copy];
-        iTermPreciseTimerStatsMeasureAndAccumulate(_stats.shouldSegment);
+        iTermASBTimerAccumulate(_stats.shouldSegment);
 
-        iTermPreciseTimerStatsStartTimer(_stats.combineAttributes);
+        iTermASBTimerStart(_stats.combineAttributes);
         if (combinedAttributesChanged) {  // This implies that we segmented
             NSDictionary *combinedAttributes = [self dictionaryForCharacterAttributes:&characterAttributes];
             if (imageAttributes) {
@@ -667,7 +740,7 @@ preferSpeedToFullLigatureSupport:(BOOL)preferSpeedToFullLigatureSupport
                 }
             }
         }
-        iTermPreciseTimerStatsMeasureAndAccumulate(_stats.combineAttributes);
+        iTermASBTimerAccumulate(_stats.combineAttributes);
 
         if (drawable || ((characterAttributes.underlineType ||
                           characterAttributes.strikethrough ||
@@ -686,7 +759,7 @@ preferSpeedToFullLigatureSupport:(BOOL)preferSpeedToFullLigatureSupport
         }
     }
     if (builder.length) {
-        iTermPreciseTimerStatsStartTimer(_stats.buildMutableAttributedString);
+        iTermASBTimerStart(_stats.buildMutableAttributedString);
         builder.endColumn = NSMaxRange(indexRange);
         id<iTermAttributedString> builtString = builder.attributedString;
         if (previousCharacterAttributes.underlineType ||
@@ -695,7 +768,7 @@ preferSpeedToFullLigatureSupport:(BOOL)preferSpeedToFullLigatureSupport
             [builtString addAttribute:iTermUnderlineLengthAttribute
                                             value:@(segmentLength)];
         }
-        iTermPreciseTimerStatsMeasureAndAccumulate(_stats.buildMutableAttributedString);
+        iTermASBTimerAccumulate(_stats.buildMutableAttributedString);
 
         if (builtString.length > 0) {
             [attributedStrings addObject:builtString];
@@ -713,7 +786,7 @@ preferSpeedToFullLigatureSupport:(BOOL)preferSpeedToFullLigatureSupport
                offset:(CGFloat)offset
            sourceCell:(int)sourceCell
            drawInCell:(int)drawInCell {
-    iTermPreciseTimerStatsStartTimer(_stats.updateBuilder);
+    iTermASBTimerStart(_stats.updateBuilder);
     NSUInteger length;
     if (string) {
         [builder appendString:string rtl:rtl sourceCell:sourceCell drawInCell:drawInCell];
@@ -722,14 +795,14 @@ preferSpeedToFullLigatureSupport:(BOOL)preferSpeedToFullLigatureSupport
         [builder appendCharacter:code rtl:rtl sourceCell:sourceCell drawInCell:drawInCell];
         length = 1;
     }
-    iTermPreciseTimerStatsMeasureAndAccumulate(_stats.updateBuilder);
+    iTermASBTimerAccumulate(_stats.updateBuilder);
 
-    iTermPreciseTimerStatsStartTimer(_stats.advances);
+    iTermASBTimerStart(_stats.advances);
     // Append to positions.
     for (NSUInteger j = 0; j < length; j++) {
         CTVectorAppend(positions, offset);
     }
-    iTermPreciseTimerStatsMeasureAndAccumulate(_stats.advances);
+    iTermASBTimerAccumulate(_stats.advances);
 }
 
 - (void)getAttributesForCharacter:(screen_char_t *)c
@@ -753,9 +826,12 @@ preferSpeedToFullLigatureSupport:(BOOL)preferSpeedToFullLigatureSupport
     const unichar code = c->code;
 
     const UTF32Char longCode = isComplex ? BaseCharacterForComplexChar(code) : code;
-    attributes->boxDrawing = [[iTermBoxDrawingBezierCurveFactory boxDrawingCharactersWithBezierPathsIncludingPowerline:_useNativePowerlineGlyphs] longCharacterIsMember:longCode];
+    attributes->boxDrawing = (longCode >= iTermBoxDrawingCharacterLowerBound &&
+                              [[iTermBoxDrawingBezierCurveFactory boxDrawingCharactersWithBezierPathsIncludingPowerline:_useNativePowerlineGlyphs] longCharacterIsMember:longCode]);
 
-    attributes->contrastIneligible = !isComplex && [[iTermBoxDrawingBezierCurveFactory blockDrawingCharacters] characterIsMember:code];
+    attributes->contrastIneligible = (!isComplex &&
+                                      code >= iTermBoxDrawingCharacterLowerBound &&
+                                      [[iTermBoxDrawingBezierCurveFactory blockDrawingCharacters] characterIsMember:code]);
 
     if (forceTextColor) {
         attributes->foregroundColor = forceTextColor;
@@ -792,6 +868,15 @@ preferSpeedToFullLigatureSupport:(BOOL)preferSpeedToFullLigatureSupport
             if (!_nonAsciiLigatures) {
                 attributes->ligatureLevel = 0;
             }
+        }
+    } else {
+        // Without the fast path every run is shaped by CoreText, so honor a
+        // disabled ligature setting here. Otherwise fonts with a standard "fi"
+        // ligature draw it in one cell and leave a gap. Issue 13133.
+        const BOOL isAscii = !c->complexChar && c->code < 128;
+        const BOOL ligaturesEnabled = isAscii ? (_asciiLigaturesAvailable && _asciiLigatures) : _nonAsciiLigatures;
+        if (!ligaturesEnabled) {
+            attributes->ligatureLevel = 0;
         }
     }
     if (c->underline) {
@@ -1095,8 +1180,8 @@ withExtendedAttributes:(iTermExternalAttribute *)ea2 {
         dispatch_once(&onceToken, ^{
             boxSet = [iTermBoxDrawingBezierCurveFactory boxDrawingCharactersWithBezierPathsIncludingPowerline:_useNativePowerlineGlyphs];
         });
-        BOOL box = [boxSet characterIsMember:c->code];
-        BOOL pcBox = [boxSet characterIsMember:pc->code];
+        BOOL box = c->code >= iTermBoxDrawingCharacterLowerBound && [boxSet characterIsMember:c->code];
+        BOOL pcBox = pc->code >= iTermBoxDrawingCharacterLowerBound && [boxSet characterIsMember:pc->code];
         if (box != pcBox) {
             return NO;
         }

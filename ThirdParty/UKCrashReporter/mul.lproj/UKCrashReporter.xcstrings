@@ -23,6 +23,12 @@
             "value" : "説明"
           }
         },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "설명"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
@@ -65,6 +71,12 @@
             "value" : "クラッシュログ"
           }
         },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "충돌 로그"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
@@ -105,6 +117,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "クラッシュレポーター"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "충돌 리포터"
           }
         },
         "pt-BR" : {
@@ -185,6 +203,12 @@
             "value" : "後で通知"
           }
         },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "나중에 알림"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
@@ -225,6 +249,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "破棄"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "버리기"
           }
         },
         "pt-BR" : {

@@ -9,7 +9,10 @@
 #import "TaskNotifier.h"
 #import "Coprocess.h"
 #import "DebugLogging.h"
+#import "iTerm2SharedARC-Swift.h"
+#import "iTermAdvancedSettingsModel.h"
 
+#include <stdatomic.h>
 #include <sys/time.h>
 #include <sys/select.h>
 
@@ -17,11 +20,42 @@
 
 NSString *const kCoprocessStatusChangeNotification = @"kCoprocessStatusChangeNotification";
 
-static int unblockPipeR;
-static int unblockPipeW;
+// The shared instance's unblock pipe's write end. UnblockTaskNotifier() reads it from a signal
+// handler, so it is a plain int that is written once.
+static volatile int gSharedUnblockPipeW = -1;
+static TaskNotifier *gSharedInstance;
+
+// The select loop is the only user of raw descriptor numbers. Everything else does I/O through
+// iTermOwnedFileDescriptor, which can't be closed out from under it.
+static int iTermUnsafeFileDescriptor(iTermOwnedFileDescriptor *owned) {
+    return owned ? owned.unsafeFileDescriptor : -1;
+}
+
+static int iTermTaskUnsafeFileDescriptor(id<iTermTask> task) {
+    return iTermUnsafeFileDescriptor(task.ownedFileDescriptor);
+}
 
 @implementation TaskNotifier
 {
+    int _unblockPipeR;
+    int _unblockPipeW;
+
+    // Testing only. When nil, select(2) is called directly.
+    iTermTaskNotifierSelect _select;
+    // Testing only. When nil, coprocess changes are posted on the main thread.
+    void (^_coprocessChangeHandler)(void);
+    // When nil, pids to reap go in `deadpool`.
+    void (^_reaper)(pid_t);
+    // When set, tasks are serviced by task I/O monitors instead of the select loop, which does not
+    // run.
+    iTermTaskIOMonitorRegistry *_monitors;
+    // Set to stop the run loop. Only test instances are ever stopped.
+    atomic_bool _stopped;
+    // Signaled when -run returns.
+    dispatch_semaphore_t _didStop;
+    // Testing only. Set by -startForTesting.
+    BOOL _startedForTesting;
+
     NSMutableArray<id<iTermTask>> *_tasks;
     // Set to true when an element of '_tasks' was modified
     BOOL tasksChanged;
@@ -34,20 +68,50 @@ static int unblockPipeW;
 
 
 + (instancetype)sharedInstance {
-    static id instance;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
-        instance = [[self alloc] init];
-        [NSThread detachNewThreadSelector:@selector(run)
-                                 toTarget:instance
-                               withObject:nil];
+        TaskNotifier *notifier = [[self alloc] init];
+        if ([self usesTaskIOMonitors]) {
+            [notifier useTaskIOMonitorsWithCoprocessChangeHandler:^{
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    [[NSNotificationCenter defaultCenter] postNotificationName:kCoprocessStatusChangeNotification
+                                                                        object:nil];
+                });
+            } reaper:^(pid_t pid) {
+                [[iTermChildReaper sharedInstance] reapProcessWithID:pid];
+            }];
+            // No SIGCHLD handler is installed on this path. Log the signals so a debug log shows
+            // whether they still arrive.
+            [iTermSIGCHLDObserver startLogging];
+        }
+        gSharedUnblockPipeW = notifier->_unblockPipeW;
+        gSharedInstance = notifier;
+        if (!notifier->_monitors) {
+            [NSThread detachNewThreadSelector:@selector(run)
+                                     toTarget:gSharedInstance
+                                   withObject:nil];
+        }
     });
-    return instance;
+    return gSharedInstance;
+}
+
++ (BOOL)usesTaskIOMonitors {
+    static BOOL value;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        value = [iTermAdvancedSettingsModel useTaskIOMonitors];
+        RLog(@"useTaskIOMonitors=%@", value ? @"YES" : @"NO");
+    });
+    return value;
 }
 
 - (instancetype)init {
     self = [super init];
     if (self) {
+        _unblockPipeR = -1;
+        _unblockPipeW = -1;
+        atomic_init(&_stopped, false);
+        _didStop = dispatch_semaphore_create(0);
         deadpool = [[NSMutableSet alloc] init];
         _tasks = [[NSMutableArray alloc] init];
         tasksLock = [[NSRecursiveLock alloc] init];
@@ -65,24 +129,137 @@ static int unblockPipeW;
             fcntl(unblockPipe[i], F_SETFD, flags | FD_CLOEXEC);
             fcntl(unblockPipe[i], F_SETFL, O_NONBLOCK);
         }
-        unblockPipeR = unblockPipe[0];
-        unblockPipeW = unblockPipe[1];
+        _unblockPipeR = unblockPipe[0];
+        _unblockPipeW = unblockPipe[1];
     }
     return self;
 }
 
+- (instancetype)initForTestingWithSelect:(iTermTaskNotifierSelect)select
+                  coprocessChangeHandler:(void (^)(void))coprocessChangeHandler
+                                  reaper:(void (^)(pid_t))reaper {
+    self = [self init];
+    if (self) {
+        _select = [select copy];
+        _coprocessChangeHandler = [coprocessChangeHandler copy];
+        _reaper = [reaper copy];
+    }
+    return self;
+}
+
+- (instancetype)initForTestingWithTaskIOMonitorsAndCoprocessChangeHandler:(void (^)(void))coprocessChangeHandler
+                                                                    reaper:(void (^)(pid_t))reaper {
+    self = [self init];
+    if (self) {
+        [self useTaskIOMonitorsWithCoprocessChangeHandler:coprocessChangeHandler reaper:reaper];
+    }
+    return self;
+}
+
+- (void)useTaskIOMonitorsWithCoprocessChangeHandler:(void (^)(void))coprocessChangeHandler
+                                             reaper:(void (^)(pid_t))reaper {
+    ITAssertWithMessage(reaper != nil, @"Task I/O monitors need a reaper");
+    _reaper = [reaper copy];
+    _monitors = [[iTermTaskIOMonitorRegistry alloc] initWithReaper:reaper
+                                            coprocessChangeHandler:coprocessChangeHandler];
+}
+
 - (void)dealloc {
+    [_monitors release];
     [_tasks release];
     [tasksLock release];
     [deadpool release];
-    close(unblockPipeR);
-    close(unblockPipeW);
+    [_select release];
+    [_coprocessChangeHandler release];
+    [_reaper release];
+    dispatch_release(_didStop);
+    [self closeUnblockPipe];
     [super dealloc];
 }
 
+- (void)closeUnblockPipe {
+    // gSharedUnblockPipeW must stay valid forever. Clearing it first would not help because a
+    // signal handler may already have loaded it, and the closed fd could then be reused.
+    ITAssertWithMessage(self != gSharedInstance, @"The shared instance's unblock pipe must never be closed");
+    if (_unblockPipeR >= 0) {
+        close(_unblockPipeR);
+        _unblockPipeR = -1;
+    }
+    if (_unblockPipeW >= 0) {
+        close(_unblockPipeW);
+        _unblockPipeW = -1;
+    }
+}
+
+- (void)startForTesting {
+    ITAssertWithMessage(self != gSharedInstance, @"Only test instances may be started this way");
+    ITAssertWithMessage(!_startedForTesting, @"Already started");
+    _startedForTesting = YES;
+    if (_monitors) {
+        return;
+    }
+    NSThread *thread = [[NSThread alloc] initWithTarget:self selector:@selector(run) object:nil];
+    // Tests wait on this thread from main. Match main's QoS to avoid a priority inversion.
+    thread.qualityOfService = NSQualityOfServiceUserInteractive;
+    [thread start];
+    [thread release];
+}
+
+- (BOOL)stopForTestingWithTimeout:(NSTimeInterval)timeout {
+    ITAssertWithMessage(_startedForTesting, @"Not started for testing");
+    ITAssertWithMessage(!atomic_load(&_stopped), @"Already stopped");
+    if (_monitors) {
+        atomic_store(&_stopped, true);
+        return [self flushForTestingWithTimeout:timeout];
+    }
+    // Set the flag before writing to the pipe. The pipe stays readable until the loop drains it,
+    // so a stop that arrives between the loop's check of the flag and select() is not lost.
+    atomic_store_explicit(&_stopped, true, memory_order_release);
+    [self unblock];
+    const long result = dispatch_semaphore_wait(_didStop,
+                                                dispatch_time(DISPATCH_TIME_NOW,
+                                                              (int64_t)(timeout * NSEC_PER_SEC)));
+    if (result != 0) {
+        return NO;
+    }
+    [self closeUnblockPipe];
+    return YES;
+}
+
+- (BOOL)flushForTestingWithTimeout:(NSTimeInterval)timeout {
+    ITAssertWithMessage(_monitors != nil, @"Only task I/O monitors can be flushed");
+    return [_monitors flushForTestingWithTimeout:timeout];
+}
+
+- (BOOL)flushTaskForTesting:(id<iTermTask>)task timeout:(NSTimeInterval)timeout {
+    ITAssertWithMessage(_monitors != nil, @"Only task I/O monitors can be flushed");
+    return [_monitors flushTaskForTesting:task timeout:timeout];
+}
+
 - (void)registerTask:(id<iTermTask>)task {
+    if (_monitors) {
+        switch ([_monitors registerTask:task]) {
+            case iTermTaskIOMonitorRegistrationRegistered:
+                [self dispatchDidRegister:task];
+                return;
+            case iTermTaskIOMonitorRegistrationAlreadyRegistered:
+                return;
+            case iTermTaskIOMonitorRegistrationNoFileDescriptor:
+                // The select loop deregisters such a task, reaping its processes, on its next
+                // iteration.
+                RLog(@"Deregister %@, which has no file descriptor", task);
+                [self dispatchDidRegister:task];
+                [self deregisterTask:task];
+                return;
+        }
+    }
     PtyTaskDebugLog(@"registerTask: lock\n");
     [tasksLock lock];
+    if ([_tasks containsObject:task]) {
+        DLog(@"Ignore redundant registration of %@", task);
+        [tasksLock unlock];
+        return;
+    }
     PtyTaskDebugLog(@"Add task at %p\n", (void*)task);
     [_tasks addObject:task];
     PtyTaskDebugLog(@"There are now %lu tasks\n", (unsigned long)_tasks.count);
@@ -90,7 +267,10 @@ static int unblockPipeW;
     PtyTaskDebugLog(@"registerTask: unlock\n");
     [tasksLock unlock];
     [self unblock];
+    [self dispatchDidRegister:task];
+}
 
+- (void)dispatchDidRegister:(id<iTermTask>)task {
     __weak __typeof(task) weakTask = task;
     dispatch_async(dispatch_get_main_queue(), ^{
         [weakTask didRegister];
@@ -103,11 +283,20 @@ static int unblockPipeW;
     PtyTaskDebugLog(@"Begin remove task %p\n", (void*)task);
     PtyTaskDebugLog(@"Add %d to deadpool", [task pid]);
     pid_t pidToWaitOn = task.pidToWaitOn;
+    if (_monitors) {
+        [self reapPid:pidToWaitOn onceForTask:task];
+        if ([task hasCoprocess]) {
+            [self reapPid:[[task coprocess] pid] onceForTask:task];
+        }
+        [_monitors deregisterTask:task];
+        [tasksLock unlock];
+        return;
+    }
     if (pidToWaitOn > 0) {
-        [deadpool addObject:@(pidToWaitOn)];
+        [self reapPid:pidToWaitOn];
     }
     if ([task hasCoprocess]) {
-        [deadpool addObject:@([[task coprocess] pid])];
+        [self reapPid:[[task coprocess] pid]];
     }
     [_tasks removeObject:task];
     tasksChanged = YES;
@@ -119,23 +308,80 @@ static int unblockPipeW;
     [self unblock];
 }
 
-// NB: This is currently used for coprocesses.
+- (void)deregisterTask:(id<iTermTask>)task completion:(void (^)(void))completion {
+    [self deregisterTask:task];
+    if (_monitors) {
+        [_monitors notifyWhenTaskStops:task completion:completion];
+        return;
+    }
+    // The select loop may still be servicing the task. Nothing waits for that today.
+    dispatch_async(dispatch_get_main_queue(), completion);
+}
+
 - (void)waitForPid:(pid_t)pid {
     [tasksLock lock];
-    [deadpool addObject:@(pid)];
+    [self reapPid:pid];
     [tasksLock unlock];
     [self unblock];
 }
 
+// Call with tasksLock held. This runs from -[PTYTask dealloc], so the record lives in the task: a
+// weak reference to it can't be formed or loaded there.
+- (void)reapPid:(pid_t)pid onceForTask:(id<iTermTask>)task {
+    if (pid <= 0) {
+        return;
+    }
+    if (![task markPidHandedToReaper:pid]) {
+        DLog(@"pid %@ of %@ was already handed to the reaper", @(pid), task);
+        return;
+    }
+    [self reapPid:pid];
+}
+
+// Call with tasksLock held.
+- (void)reapPid:(pid_t)pid {
+    if (pid <= 0) {
+        // waitpid treats 0 and negative pids as process groups, which would reap other code's
+        // children.
+        DLog(@"Ignore request to reap pid %@", @(pid));
+        return;
+    }
+    if (_reaper) {
+        _reaper(pid);
+    } else {
+        [deadpool addObject:@(pid)];
+    }
+}
+
 - (void)unblock {
-    UnblockTaskNotifier();
+    if (_monitors) {
+        // Nothing reads the pipe.
+        return;
+    }
+    char dummy = 0;
+    write(_unblockPipeW, &dummy, 1);
+}
+
+- (void)unblockTask:(id<iTermTask>)task {
+    if (_monitors) {
+        [_monitors unblockTask:task];
+    } else {
+        [self unblock];
+    }
 }
 
 void UnblockTaskNotifier(void) {
     // This is called in a signal handler and must only call functions listed
-    // as safe in sigaction(2)'s man page.
+    // as safe in sigaction(2)'s man page. It must also preserve errno, since write() may set it
+    // (e.g., EAGAIN when the pipe is full) while the interrupted code is about to read it.
+    const int fd = gSharedUnblockPipeW;
+    if (fd < 0) {
+        return;
+    }
+    const int savedErrno = errno;
     char dummy = 0;
-    write(unblockPipeW, &dummy, 1);
+    write(fd, &dummy, 1);
+    errno = savedErrno;
 }
 
 - (BOOL)handleReadOnFileDescriptor:(int)fd task:(id<iTermTask>)task fdSet:(fd_set *)fdSet {
@@ -231,15 +477,15 @@ void UnblockTaskNotifier(void) {
     NSAutoreleasePool *autoreleasePool = [[NSAutoreleasePool alloc] init];
 
     // FIXME: replace this with something better...
-    for(;;) {
+    while (!atomic_load_explicit(&_stopped, memory_order_acquire)) {
 
         FD_ZERO(&rfds);
         FD_ZERO(&wfds);
         FD_ZERO(&efds);
 
         // Unblock pipe to interrupt select() whenever a PTYTask register/unregisters
-        highfd = unblockPipeR;
-        FD_SET(unblockPipeR, &rfds);
+        highfd = _unblockPipeR;
+        FD_SET(_unblockPipeR, &rfds);
         NSMutableSet *handledFds = [[NSMutableSet alloc] initWithCapacity:256];
 
         // Add all the PTYTask pipes
@@ -248,7 +494,7 @@ void UnblockTaskNotifier(void) {
         PtyTaskDebugLog(@"Begin cleaning out dead tasks");
         NSMutableArray<id<iTermTask>> *tasksToDeregister = [NSMutableArray array];
         for (id<iTermTask> theTask in _tasks) {
-            if ([theTask fd] < 0) {
+            if (iTermTaskUnsafeFileDescriptor(theTask) < 0) {
                 PtyTaskDebugLog(@"Deregister dead task %@\n", theTask);
                 [tasksToDeregister addObject:theTask];
             }
@@ -287,7 +533,7 @@ void UnblockTaskNotifier(void) {
         PtyTaskDebugLog(@"Begin enumeration over %lu tasks\n", (unsigned long)[_tasks count]);
         for (id<iTermTask> task in _tasks) {
             PtyTaskDebugLog(@"Got task %@\n", task);
-            int fd = [task fd];
+            int fd = iTermTaskUnsafeFileDescriptor(task);
             if (fd < 0) {
                 PtyTaskDebugLog(@"Task has fd of %d\n", fd);
             } else {
@@ -308,21 +554,21 @@ void UnblockTaskNotifier(void) {
                 Coprocess *coprocess = [task coprocess];
                 if (coprocess) {
                     if ([coprocess wantToRead] && [task writeBufferHasRoom]) {
-                        int rfd = [coprocess readFileDescriptor];
+                        int rfd = iTermUnsafeFileDescriptor(coprocess.ownedReadFileDescriptor);
                         if (rfd > highfd) {
                             highfd = rfd;
                         }
                         FD_SET(rfd, &rfds);
                     }
                     if ([coprocess wantToWrite]) {
-                        int wfd = [coprocess writeFileDescriptor];
+                        int wfd = iTermUnsafeFileDescriptor(coprocess.ownedWriteFileDescriptor);
                         if (wfd > highfd) {
                             highfd = wfd;
                         }
                         FD_SET(wfd, &wfds);
                     }
                     if (![coprocess eof]) {
-                        int rfd = [coprocess readFileDescriptor];
+                        int rfd = iTermUnsafeFileDescriptor(coprocess.ownedReadFileDescriptor);
                         if (rfd > highfd) {
                             highfd = rfd;
                         }
@@ -339,7 +585,13 @@ void UnblockTaskNotifier(void) {
         autoreleasePool = [[NSAutoreleasePool alloc] init];
 
         // Poll...
-        if (select(highfd+1, &rfds, &wfds, &efds, NULL) <= 0) {
+        int selectResult;
+        if (_select) {
+            selectResult = _select(highfd+1, &rfds, &wfds, &efds, NULL);
+        } else {
+            selectResult = select(highfd+1, &rfds, &wfds, &efds, NULL);
+        }
+        if (selectResult <= 0) {
             switch(errno) {
                 case EAGAIN:
                 case EINTR:
@@ -350,10 +602,10 @@ void UnblockTaskNotifier(void) {
         }
 
         // Interrupted?
-        if (FD_ISSET(unblockPipeR, &rfds)) {
+        if (FD_ISSET(_unblockPipeR, &rfds)) {
             char dummy[32];
             do {
-                read(unblockPipeR, dummy, sizeof(dummy));
+                read(_unblockPipeR, dummy, sizeof(dummy));
             } while (errno != EAGAIN);
         }
 
@@ -367,7 +619,7 @@ void UnblockTaskNotifier(void) {
         id<iTermTask> task;
         while ((task = [iter nextObject])) {
             PtyTaskDebugLog(@"Got task %@\n", task);
-            int fd = [task fd];
+            int fd = iTermTaskUnsafeFileDescriptor(task);
 
             if (fd >= 0) {
                 // This is mostly paranoia, but if two threads
@@ -392,11 +644,11 @@ void UnblockTaskNotifier(void) {
                     iter = [_tasks objectEnumerator];
                 }
                 // Move input around between coprocess and main process.
-                if ([task fd] >= 0 && ![task hasBrokenPipe]) {  // Make sure the pipe wasn't just broken.
+                if (iTermTaskUnsafeFileDescriptor(task) >= 0 && ![task hasBrokenPipe]) {  // Make sure the pipe wasn't just broken.
                     @synchronized (task) {
                         Coprocess *coprocess = [task coprocess];
                         if (coprocess) {
-                            fd = [coprocess readFileDescriptor];
+                            fd = iTermUnsafeFileDescriptor(coprocess.ownedReadFileDescriptor);
                             if ([handledFds containsObject:@(fd)]) {
                                 NSLog(@"Duplicate fd %d", fd);
                                 continue;
@@ -407,7 +659,7 @@ void UnblockTaskNotifier(void) {
                             [self handleErrorOnFileDescriptor:fd withCoprocess:coprocess fdSet:&efds];
 
                             // Handle writes
-                            int coprocessWriteFd = [coprocess writeFileDescriptor];
+                            int coprocessWriteFd = iTermUnsafeFileDescriptor(coprocess.ownedWriteFileDescriptor);
                             if ([handledFds containsObject:@(coprocessWriteFd)]) {
                                 NSLog(@"Duplicate fd %d", coprocessWriteFd);
                                 continue;
@@ -416,8 +668,10 @@ void UnblockTaskNotifier(void) {
                             [self handleWriteOnFileDescriptor:coprocessWriteFd withCoprocess:coprocess fdSet:&wfds];
 
                             if ([coprocess eof]) {
-                                [deadpool addObject:@([coprocess pid])];
+                                // terminate signals the pid, so reap it only afterwards.
+                                const pid_t coprocessPid = [coprocess pid];
                                 [coprocess terminate];
+                                [self reapPid:coprocessPid];
                                 [task setCoprocess:nil];
                                 notifyOfCoprocessChange = YES;
                             }
@@ -430,9 +684,15 @@ void UnblockTaskNotifier(void) {
         PtyTaskDebugLog(@"run3: unlock");
         [tasksLock unlock];
         if (notifyOfCoprocessChange) {
-            [self performSelectorOnMainThread:@selector(notifyCoprocessChange)
-                                   withObject:nil
-                                waitUntilDone:YES];
+            if (_coprocessChangeHandler) {
+                _coprocessChangeHandler();
+            } else {
+                // Don't wait: the observers only redraw, and waiting would stall every
+                // session's I/O until main is free.
+                [self performSelectorOnMainThread:@selector(notifyCoprocessChange)
+                                       withObject:nil
+                                    waitUntilDone:NO];
+            }
         }
 
     breakloop:
@@ -440,21 +700,15 @@ void UnblockTaskNotifier(void) {
         [autoreleasePool drain];
         autoreleasePool = [[NSAutoreleasePool alloc] init];
     }
-    assert(false);  // Must never get here or the autorelease pool would leak.
+    // Only test instances get here.
+    [autoreleasePool drain];
+    dispatch_semaphore_signal(_didStop);
 }
 
 // This is run in the main thread.
 - (void)notifyCoprocessChange {
     [[NSNotificationCenter defaultCenter] postNotificationName:kCoprocessStatusChangeNotification
                                                         object:nil];
-}
-
-- (void)lock {
-    [tasksLock lock];
-}
-
-- (void)unlock {
-    [tasksLock unlock];
 }
 
 @end

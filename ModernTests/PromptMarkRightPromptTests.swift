@@ -339,6 +339,160 @@ final class PromptMarkRightPromptTests: XCTestCase {
         XCTAssertEqual(mark.firstLineOfCommand, "echo hi")
     }
 
+    // MARK: - Right prompt hidden or redrawn while typing
+
+    /// zsh erases RPROMPT (EL) once the typed text reaches it and draws the
+    /// command over those cells. The right prompt's exclusion no longer
+    /// describes what is on screen, so it must not cut characters out of the
+    /// command. Modeled on a capture of zsh with powerlevel10k’s markers.
+    func test_p10k_rightPromptHiddenByLongCommand_recordsWholeCommand() {
+        let harness = makeHarness()
+        let column = zshRightPromptColumn(indent: 1)
+        let command = "echo " + String(repeating: "x", count: 70)
+
+        var bytes = p10kPaint(buffer: "", rightPromptColumn: column)
+        bytes += hideRightPromptWhileTyping(command, rightPromptColumn: column)
+        bytes += Array("\r\n".utf8)
+        bytes += osc133("C")
+        bytes += Array("ok\r\n".utf8)
+        bytes += osc133("D;0")
+        harness.feedEscapeSequence(bytes)
+        harness.sync()
+
+        guard let mark = onlyPromptMark(in: harness) else {
+            return
+        }
+        XCTAssertEqual(mark.fullCommand, command)
+        XCTAssertEqual(mark.excludedSubranges?.count ?? 0, 0,
+                       "The hidden right prompt's exclusion is stale")
+    }
+
+    /// fish redraws its right prompt after every keystroke. With the right
+    /// prompt marked, each redraw closes another P;k=r over the same cells.
+    /// Only one exclusion should remain for them.
+    func test_fish_rightPromptRedrawnEachKeystroke_keepsOneExclusion() {
+        let harness = makeHarness()
+        let column = zshRightPromptColumn(indent: 1)
+
+        harness.feedEscapeSequence(fishTyping("echo hi", rightPromptColumn: column))
+        harness.sync()
+
+        guard let mark = onlyPromptMark(in: harness) else {
+            return
+        }
+        XCTAssertEqual(mark.excludedSubranges?.count, 1)
+        XCTAssertEqual(currentCommandText(in: harness, mark: mark), "echo hi")
+    }
+
+    /// The fish redraw, then Return: the visible right prompt is still
+    /// subtracted, with a single exclusion.
+    func test_fish_rightPromptRedrawnEachKeystroke_fullCycle_recordsCommandWithoutRightPrompt() {
+        let harness = makeHarness()
+        let column = zshRightPromptColumn(indent: 1)
+
+        var bytes = fishTyping("echo hi", rightPromptColumn: column)
+        bytes += Array("\r\n".utf8)
+        bytes += osc133("C")
+        bytes += Array("hi\r\n".utf8)
+        bytes += osc133("D;0")
+        harness.feedEscapeSequence(bytes)
+        harness.sync()
+
+        guard let mark = onlyPromptMark(in: harness) else {
+            return
+        }
+        XCTAssertEqual(mark.fullCommand, "echo hi")
+        XCTAssertEqual(mark.excludedSubranges?.count, 1)
+    }
+
+    /// fish redraws the right prompt on each keystroke until the typed text
+    /// reaches it, then erases it (EL) and keeps typing over its cells.
+    func test_fish_rightPromptHiddenByLongCommand_recordsWholeCommand() {
+        let harness = makeHarness()
+        let column = zshRightPromptColumn(indent: 1)
+        let command = "echo " + String(repeating: "x", count: 70)
+        let visiblePart = String(command.prefix(column - 2))
+
+        var bytes = fishTyping(visiblePart, rightPromptColumn: column)
+        bytes += hideRightPromptWhileTyping(command,
+                                            rightPromptColumn: column,
+                                            alreadyTyped: visiblePart.count)
+        bytes += Array("\r\n".utf8)
+        bytes += osc133("C")
+        bytes += Array("ok\r\n".utf8)
+        bytes += osc133("D;0")
+        harness.feedEscapeSequence(bytes)
+        harness.sync()
+
+        guard let mark = onlyPromptMark(in: harness) else {
+            return
+        }
+        XCTAssertEqual(mark.fullCommand, command)
+        XCTAssertEqual(mark.excludedSubranges?.count ?? 0, 0)
+    }
+
+    /// zsh with TRANSIENT_RPROMPT erases the marked right prompt before the
+    /// newline. The command is unaffected, and the exclusion over the erased
+    /// cells is dropped.
+    func test_p10k_transientRightPrompt_dropsExclusion() {
+        let harness = makeHarness()
+        let column = zshRightPromptColumn(indent: 1)
+
+        var bytes = p10kPaint(buffer: "echo hi", rightPromptColumn: column)
+        bytes += csi("K")
+        bytes += Array("\r\n".utf8)
+        bytes += osc133("C")
+        bytes += Array("hi\r\n".utf8)
+        bytes += osc133("D;0")
+        harness.feedEscapeSequence(bytes)
+        harness.sync()
+
+        guard let mark = onlyPromptMark(in: harness) else {
+            return
+        }
+        XCTAssertEqual(mark.fullCommand, "echo hi")
+        XCTAssertEqual(mark.excludedSubranges?.count ?? 0, 0)
+    }
+
+    // MARK: - zsh RPROMPT without P;k=r (iTerm2's own zsh integration)
+
+    /// iTerm2's zsh integration doesn't mark RPROMPT, so there is no excluded
+    /// subrange. zsh leaves RPROMPT on screen after Return (unless
+    /// TRANSIENT_RPROMPT is set) and C arrives from preexec after the newline,
+    /// so the command range covers the whole line. The blank cells between the
+    /// typed text and RPROMPT must end the command, as they did before
+    /// excludedSubranges was introduced. Otherwise the right prompt is recorded
+    /// in the mark and in command history. Issue 13168.
+    func test_zsh_unmarkedRightPrompt_isNotRecordedInCommand() {
+        let harness = makeHarness()
+
+        harness.feedEscapeSequence(zshUnmarkedRightPromptCycle(buffer: "echo hi",
+                                                               rightPromptColumn: zshRightPromptColumn(indent: 1)))
+        harness.sync()
+
+        guard let mark = onlyPromptMark(in: harness) else {
+            return
+        }
+        XCTAssertNil(mark.excludedSubranges, "Precondition: nothing marks the right prompt")
+        XCTAssertEqual(mark.fullCommand, "echo hi")
+        XCTAssertEqual(mark.firstLineOfCommand, "echo hi")
+    }
+
+    /// Same, with the multi-word command from the report.
+    func test_zsh_unmarkedRightPrompt_longCommand_isNotRecordedInCommand() {
+        let harness = makeHarness()
+        let command = "aws sso login --profile=athena-dev"
+
+        harness.feedEscapeSequence(zshUnmarkedRightPromptCycle(buffer: command,
+                                                               rightPromptColumn: zshRightPromptColumn(indent: 1)))
+        harness.sync()
+
+        guard let mark = onlyPromptMark(in: harness) else {
+            return
+        }
+        XCTAssertEqual(mark.fullCommand, command)
+    }
+
     // MARK: - P;k=i (Ghostty and WezTerm bash/zsh)
 
     /// Ghostty's and WezTerm's bash integrations send A once, then wrap PS1 in
@@ -479,6 +633,68 @@ final class PromptMarkRightPromptTests: XCTestCase {
     /// A p10k paint followed by Return, C, output, and D;0.
     private func p10kCycle(buffer: String, rightPromptColumn: Int) -> [UInt8] {
         var bytes = p10kPaint(buffer: buffer, rightPromptColumn: rightPromptColumn)
+        bytes += Array("\r\n".utf8)
+        bytes += osc133("C")
+        bytes += Array("hi\r\n".utf8)
+        bytes += osc133("D;0")
+        return bytes
+    }
+
+    /// Typing the rest of `command` after `alreadyTyped` characters, as zsh and
+    /// fish do once the text reaches the right prompt: at the right prompt's
+    /// column they erase to the end of the line, then keep writing.
+    private func hideRightPromptWhileTyping(_ command: String,
+                                            rightPromptColumn: Int,
+                                            alreadyTyped: Int = 0) -> [UInt8] {
+        let promptWidth = 2
+        var bytes = moveToPromptRow(column: promptWidth + alreadyTyped)
+        for (i, ch) in command.enumerated() where i >= alreadyTyped {
+            if promptWidth + i == rightPromptColumn {
+                bytes += csi("K")
+            }
+            bytes += Array(String(ch).utf8)
+        }
+        return bytes
+    }
+
+    /// fish's prompt with a marked right prompt, typing `buffer` one
+    /// character at a time. As captured from fish 3.7 through 4.9: after each
+    /// character fish returns to column 0, moves right to the right prompt,
+    /// draws it, and moves back to the end of the typed text.
+    private func fishTyping(_ buffer: String, rightPromptColumn: Int) -> [UInt8] {
+        let promptWidth = 2
+        var bytes = osc133("A")
+        bytes += Array("$ ".utf8)
+        bytes += osc133("B")
+        var typed = 0
+        func drawRightPrompt() {
+            bytes += Array("\r".utf8) + csi("\(rightPromptColumn)C")
+            bytes += osc133("P;k=r")
+            bytes += Array(rightPrompt.utf8)
+            bytes += osc133("B")
+            bytes += Array("\r".utf8) + csi("\(promptWidth + typed)C")
+        }
+        drawRightPrompt()
+        for ch in buffer {
+            bytes += Array(String(ch).utf8)
+            typed += 1
+            drawRightPrompt()
+        }
+        return bytes
+    }
+
+    /// A full cycle as iTerm2's zsh integration sends it with an RPROMPT set:
+    /// PS1 is wrapped in A … B, but RPROMPT is not marked. zsh draws the left
+    /// prompt and buffer, moves right to draw RPROMPT, and moves back. On
+    /// Return it prints the newline, then preexec sends C.
+    private func zshUnmarkedRightPromptCycle(buffer: String, rightPromptColumn: Int) -> [UInt8] {
+        var bytes = osc133("A")
+        bytes += Array("$ ".utf8)
+        bytes += osc133("B")
+        bytes += Array(buffer.utf8)
+        bytes += moveToPromptRow(column: rightPromptColumn)
+        bytes += Array(rightPrompt.utf8)
+        bytes += moveToPromptRow(column: 2 + buffer.count)
         bytes += Array("\r\n".utf8)
         bytes += osc133("C")
         bytes += Array("hi\r\n".utf8)

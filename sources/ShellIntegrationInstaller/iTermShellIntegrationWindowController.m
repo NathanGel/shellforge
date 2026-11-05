@@ -7,6 +7,7 @@
 
 #import "iTermShellIntegrationWindowController.h"
 
+#import "DebugLogging.h"
 #import "iTermClickableTextField.h"
 #import "iTermExpect.h"
 #import "NSArray+iTerm.h"
@@ -50,13 +51,130 @@ BOOL iTermShellIntegrationShellLoadsScriptAutomatically(iTermShellIntegrationShe
     return NO;
 }
 
-// Asks nu where it autoloads per-user scripts from and keeps the answer in the helper shell.
-// nushell 0.102 and later read $nu.user-autoload-dirs; 0.100 and 0.101 only read the vendor
-// directories, so there the per-user one under the data directory is used, which later versions
-// read too. The website installers run the same query. Exported because catString:to: writes
-// the file from a nested helper shell.
+// Asks nu where it autoloads per-user scripts from, keeps the answer in the helper shell, and
+// creates that directory. nushell 0.102 and later read $nu.user-autoload-dirs; 0.100 and 0.101
+// only read the vendor directories, so there the per-user one under the data directory is used,
+// which later versions read too. The website installers run the same query. The command ends by
+// printing a line that iTermShellIntegrationNuAutoloadDirReadyRegex matches. The empty quotes
+// keep the echo of the typed command from matching it. nu need not be $SHELL (discovery goes by
+// the shell reading the commands), so it is looked up in PATH unless $SHELL is nu.
 static NSString *const iTermShellIntegrationNuAutoloadDirCommand =
-    @"IT2_NU_AUTOLOAD_DIR=$(\"$SHELL\" --no-config-file -c 'print ($nu.user-autoload-dirs? | default [($nu.data-dir | path join vendor autoload)] | first)'); export IT2_NU_AUTOLOAD_DIR\n";
+    @"IT2_NU_AUTOLOAD_DIR=$(case \"${SHELL##*/}\" in (nu) IT2_NU=\"$SHELL\";; (*) IT2_NU=$(command -v nu);; esac; \"$IT2_NU\" --no-config-file -c 'print ($nu.user-autoload-dirs? | default [($nu.data-dir | path join vendor autoload)] | first)'); mkdir -p \"$IT2_NU_AUTOLOAD_DIR\"; echo iTerm2-nu-autoload-dir-\"\"ready\n";
+static NSString *const iTermShellIntegrationNuAutoloadDirReadyRegex = @"^iTerm2-nu-autoload-dir-ready$";
+
+// Files go to the helper sh base64-encoded, in short lines, which a read loop in sh takes from the
+// tty into a file (see receiveText:withCommand:name:resultRegex:success:expectation:completion:).
+// These are the pieces of the commands that do that. OpenBSD has no base64 command, but it has
+// b64decode. The loop stops at a line that is just EOF, which base64 never produces (its lines are
+// multiples of four characters).
+#define iTermShellIntegrationChooseBase64Decoder \
+    @"if command -v base64 >/dev/null 2>&1; then IT2_B64D='base64 -d'; else IT2_B64D='b64decode -r'; fi; "
+#define iTermShellIntegrationReadLinesUntilEOF \
+    @"while IFS= read -r IT2_LINE && test \"$IT2_LINE\" != EOF; do printf '%s\\n' \"$IT2_LINE\"; done; "
+
+// Typed into the helper sh in the utilities folder. Reads the base64 archive from the tty up to
+// a line that is just EOF into a file (with read, so not through a line editor), decodes it
+// into a second file, extracts that, and removes both files.
+//
+// It prints it2-receiving-utilities only once the file the archive goes into is open, so the
+// archive can't be typed into sh's prompt. The redirection is on the group that prints it, so
+// if the file can't be created (say the folder isn't writable) the group doesn't run and sh
+// prints it2-cannot-receive-utilities instead. fd 3 is sh's own stdout, since the group's goes
+// to the file.
+//
+// Then it prints it2-utilities-installed only if decoding succeeded, tar succeeded, and a file
+// from the archive is there; otherwise it2-utilities-failed. Each step's status is checked
+// separately because there is no pipefail in POSIX sh, and tar given no input at all succeeds.
+// tar reads the whole archive once before extracting anything, which checks gzip's CRC, so a
+// damaged or partial archive (as when Cancel stops typing it) doesn't overwrite any utility
+// with part of a file.
+//
+// The archive also carries iTerm2's Python it2 in it2-files: the wrapper for ~/.iterm2/bin/it2
+// and the interpreter it names. Those belong in $HOME's .iterm2 even when the utilities go under
+// $ZDOTDIR, because the shell-integration scripts, Claude Code hooks and the wrapper look there.
+// They get no alias (see utilities-manifest.txt): the wrapper itself decides between them and the
+// native it2 on this Mac. Copying them is part of the same command, so the installer's sequence of
+// expected output is unchanged, and a failed copy reports the install as failed.
+//
+// The empty quotes keep the echo of the command from matching any of these.
+static NSString *const iTermShellIntegrationReceiveUtilitiesCommand =
+    iTermShellIntegrationChooseBase64Decoder
+    @"if { echo it2-\"\"receiving-utilities >&3; "
+    iTermShellIntegrationReadLinesUntilEOF @"} 3>&1 > .it2-utilities.b64; then "
+    @"if $IT2_B64D < .it2-utilities.b64 > .it2-utilities.tgz && tar tfz .it2-utilities.tgz > /dev/null && "
+    @"tar xfz .it2-utilities.tgz && test -s it2check && "
+    @"mkdir -p ~/.iterm2/bin && cp -p it2-files/bin/it2 ~/.iterm2/bin/it2 && cp -p it2-files/it2.*.py ~/.iterm2/; "
+    @"then echo it2-\"\"utilities-installed; else echo it2-\"\"utilities-failed; fi; "
+    @"else echo it2-\"\"cannot-receive-utilities; fi; "
+    @"rm -f .it2-utilities.b64 .it2-utilities.tgz; rm -rf it2-files\n";
+
+// Typed into the helper sh to write the shell integration script to the path {path} (IT2_F, so
+// the command stays short with a long path), the way the utilities archive is received: the
+// script is typed base64-encoded after sh says it is reading it into $IT2_F.it2-b64, with the
+// same answers but for “script” in place of “utilities”. sh then decodes it into $IT2_F.it2-new,
+// and only if that is the whole script, as POSIX cksum (whose first two words, without the blanks
+// and file name some versions print, must be {cksum}) says, copies it over $IT2_F (through a symlink, keeping
+// its owner) and makes that executable. It prints it2-script-written if all of that succeeded and
+// it2-script-failed otherwise, so a script cut short, as by Cancel, never replaces the one there.
+// Both temporary files are removed.
+static NSString *const iTermShellIntegrationReceiveScriptCommandTemplate =
+    @"IT2_F={path}; "
+    iTermShellIntegrationChooseBase64Decoder
+    @"if { echo it2-\"\"receiving-script >&3; "
+    iTermShellIntegrationReadLinesUntilEOF @"} 3>&1 > \"$IT2_F.it2-b64\"; then "
+    @"if $IT2_B64D < \"$IT2_F.it2-b64\" > \"$IT2_F.it2-new\" && set -- $(cksum < \"$IT2_F.it2-new\") && test \"$1 $2\" = '{cksum}' && "
+    @"cat \"$IT2_F.it2-new\" > \"$IT2_F\" && chmod +x \"$IT2_F\"; "
+    @"then echo it2-\"\"script-written; else echo it2-\"\"script-failed; fi; "
+    @"else echo it2-\"\"cannot-receive-script; fi; "
+    @"rm -f \"$IT2_F.it2-b64\" \"$IT2_F.it2-new\"\n";
+
+// The prompt of the helper sh (PS1 in launchHelperShellString), at the start of a row or right
+// after iTermShellIntegrationHelpersReadyMarker, which the launch prints with no newline right
+// before the helper's first prompt. That one is what shows the helper started, and it follows
+// the marker even where a row doesn't start with it. A line editor that breaks the echo of a long
+// command line can start a row with the >> in PS1=">> ", which must not count.
+#define iTermShellIntegrationHelpersReadyMarker @"it2-helpers-ready "
+static NSString *const iTermShellIntegrationHelperPromptRegex = @"(?:^|" iTermShellIntegrationHelpersReadyMarker @")>> (?![\"'])";
+
+// Typed into the helper sh to learn when it reads commands again. The answer includes
+// the helper's PS1, so if the helpers were somehow gone the user's shell would not give it. The
+// empty quotes keep the echo of the command from matching iTermShellIntegrationHelpersIdleRegex.
+static NSString *const iTermShellIntegrationHelpersIdleCommand = @"echo \"it2-\"\"helpers-$PS1-idle\"\n";
+static NSString *const iTermShellIntegrationHelpersIdleRegex = @"it2-helpers->> -idle";
+
+// How long to wait after a cancel for helpers whose launch was typed to prompt, so they can be
+// exited. They prompt once the user's shell has run the line that starts them, which can take a
+// while: a heavy preexec hook or a busy machine delays it by seconds, not minutes. The longer
+// the wait, the likelier a “>> ” at the start of a row comes from something else the user does
+// after they are back at their own shell, and exits typed then would end it, so it is not much
+// longer than that. Waiting less only means the helpers are left running, as if never awaited.
+static const NSTimeInterval iTermShellIntegrationCanceledHelperLaunchTimeout = 30;
+
+// Asks a shell how many helper sh it is nested in (IT2_INSTALLER_HELPER, which each helper
+// launchHelperShellString starts sets one higher than its parent's). The empty quotes keep the
+// echo of the command from matching iTermShellIntegrationHelperDepthRegex. Typed into a shell
+// other than sh, it prints something else or an error.
+static NSString *const iTermShellIntegrationHelperDepthCommand = @"echo \"it2-\"\"helper-depth-${IT2_INSTALLER_HELPER:-0}-\"\n";
+static NSString *const iTermShellIntegrationHelperDepthRegex = @"it2-helper-depth-([0-9]+)-";
+
+// What iTerm2 knows about the helper sh processes the installer starts in the session. It is
+// updated from their output, never just from what was typed, because exit typed into the user's
+// own shell would end it. Text typed into a helper after a single-line command is read as the
+// next command, so the helpers are idle until something that reads more than one line is typed.
+typedef NS_ENUM(NSUInteger, iTermShellIntegrationHelperState) {
+    // No helper is running, as far as the installer knows: what is typed goes to the user's shell.
+    iTermShellIntegrationHelperStateNone,
+    // The helpers were launched and have not prompted yet.
+    iTermShellIntegrationHelperStateLaunching,
+    // The helper is running and reads the next line as a command.
+    iTermShellIntegrationHelperStateIdle,
+    // The helper is in its loop that reads the utilities archive or the shell
+    // integration script.
+    iTermShellIntegrationHelperStateReceivingFile,
+    // Something was typed whose end won't be, such as part of an if statement whose remaining
+    // lines were canceled, or nothing is known.
+    iTermShellIntegrationHelperStateUnknown,
+};
 
 typedef NS_ENUM(NSUInteger, iTermShellIntegrationInstallationState) {
     iTermShellIntegrationInstallationStateFirstPage,
@@ -66,7 +184,7 @@ typedef NS_ENUM(NSUInteger, iTermShellIntegrationInstallationState) {
     iTermShellIntegrationInstallationStateConfirmation
 };
 
-@interface iTermShellIntegrationWindowController ()<iTermShellIntegrationInstallerDelegate>
+@interface iTermShellIntegrationWindowController ()
 @property (nonatomic, strong) IBOutlet NSView *containerView;
 
 @property (nonatomic, strong) IBOutlet NSView *header;
@@ -85,6 +203,42 @@ typedef NS_ENUM(NSUInteger, iTermShellIntegrationInstallationState) {
 
 @implementation iTermShellIntegrationWindowController {
     NSMutableArray<iTermExpectation *> *_pendingExpectations;
+    // Incremented by cancelAllExpectations, so a command whose typing was already queued when
+    // its expectation was canceled is not typed.
+    NSUInteger _cancellationGeneration;
+    iTermShellIntegrationHelperState _helperState;
+    // Completes once the helper reads commands again, when that is awaited after a
+    // cancel. Steps sent in the meantime are chained after it. It is not canceled with the
+    // installer's other expectations, since what it types is what makes the helpers usable.
+    iTermExpectation *_helpersIdleExpectation;
+    // Exit the helpers when _helpersIdleExpectation completes, as after Cancel.
+    BOOL _exitHelpersWhenIdle;
+    // Run once _helpersIdleExpectation has typed the exits, to type into the user's shell.
+    void (^_afterHelpersExit)(void);
+    // How many texts the installer has typed. See typeText:.
+    NSUInteger _typedTextCount;
+    // The last text typed was one whose expectation's match shows the helpers read commands, so
+    // when the next command's expectation becomes active (which happens only on that match) they
+    // are idle, even if the match's completion has not run yet.
+    BOOL _lastTextIsIdleOnMatch;
+    // An installer for the same session that this one replaced, while it may still have helper
+    // shells to exit. See takeOverHelperShellsFromInstaller:.
+    iTermShellIntegrationWindowController *_previousInstaller;
+    // Identifies the current wait of awaitCanceledHelperLaunchTypingNewline:, for its timer.
+    NSUInteger _canceledHelperLaunchWaitID;
+    // See cancelHelpersIdleExpectation.
+    NSUInteger _helpersIdleExpectationGeneration;
+    // While the helper receives a file, whether typing the file itself (rather than the command
+    // that receives it) has begun. See helpersIdleExpectation.
+    BOOL _receivedTextTyped;
+}
+
+- (instancetype)initWithWindow:(NSWindow *)window {
+    self = [super initWithWindow:window];
+    if (self) {
+        _canceledHelperLaunchTimeout = iTermShellIntegrationCanceledHelperLaunchTimeout;
+    }
+    return self;
 }
 
 #pragma mark - NSWindowController
@@ -157,6 +311,9 @@ typedef NS_ENUM(NSUInteger, iTermShellIntegrationInstallationState) {
 
 - (void)setState:(iTermShellIntegrationInstallationState)state {
     [self cancelAllExpectations];
+    if (state != iTermShellIntegrationInstallationStateSendShellCommandsConfirm) {
+        [self exitHelperShellsWhenPossible];
+    }
     _state = state;
     [self.currentViewController.view removeFromSuperview];
     self.currentViewController = [self viewControllerForState:state];
@@ -169,6 +326,10 @@ typedef NS_ENUM(NSUInteger, iTermShellIntegrationInstallationState) {
     frame.origin.y = self.containerView.bounds.size.height - frame.size.height;
     self.currentViewController.view.frame = frame;
     self.downloadAndRunViewController.installUtilities = self.installUtilities;
+    [self fitWindowToCurrentView];
+}
+
+- (void)fitWindowToCurrentView {
     NSRect rect = self.window.frame;
     const CGFloat originalMaxY = NSMaxY(rect);
     rect.size = self.currentViewController.view.bounds.size;
@@ -179,6 +340,41 @@ typedef NS_ENUM(NSUInteger, iTermShellIntegrationInstallationState) {
 }
 
 #pragma mark - Accessors
+
+- (int)sendShellCommandsStage {
+    return self.sendShellCommandsViewController.stage;
+}
+
+- (NSTextField *)sendShellCommandsStepListField {
+    return self.sendShellCommandsViewController.stepListField;
+}
+
+- (BOOL)sendShellCommandsWriteFailed {
+    return self.sendShellCommandsViewController.writeFailed;
+}
+
++ (NSString *)receiveUtilitiesCommand {
+    return iTermShellIntegrationReceiveUtilitiesCommand;
+}
+
++ (NSString *)helperPromptRegex {
+    return iTermShellIntegrationHelperPromptRegex;
+}
+
+// The archive is unpacked in the current directory, so the answer says whether cd worked (it
+// fails when ~/.iterm2 is a file, for example). The empty quotes keep the echo of the command
+// from looking like either answer.
++ (NSString *)commandToEnterUtilitiesFolder:(NSString *)folder {
+    return [NSString stringWithFormat:@"cd %@ && echo it2-\"\"cd-done || echo it2-\"\"cd-failed\n", folder];
+}
+
+- (BOOL)showingDownloadAndRunPage {
+    return self.state == iTermShellIntegrationInstallationStateDownloadAndRunConfirm;
+}
+
+- (BOOL)showingSendShellCommandsPage {
+    return self.state == iTermShellIntegrationInstallationStateSendShellCommandsConfirm;
+}
 
 - (void)setShell:(iTermShellIntegrationShell)shell {
     _shell = shell;
@@ -210,20 +406,82 @@ typedef NS_ENUM(NSUInteger, iTermShellIntegrationInstallationState) {
             afterRegex:(NSString *)regex
            expectation:(inout iTermExpectation **)expectation
             completion:(void (^)(NSArray<NSString *> *))completion {
+    return [self sendText:text
+               reallySend:reallySend
+               afterRegex:regex
+              expectation:expectation
+                  didSend:nil
+               completion:completion];
+}
+
+// didSend is called right after text is typed.
+- (NSString *)sendText:(NSString *)text
+            reallySend:(BOOL)reallySend
+            afterRegex:(NSString *)regex
+           expectation:(inout iTermExpectation **)expectation
+               didSend:(void (^)(void))didSend
+            completion:(void (^)(NSArray<NSString *> *))completion {
+    return [self sendText:text
+               reallySend:reallySend
+               afterRegex:regex
+              expectation:expectation
+                  didSend:didSend
+              idleOnMatch:NO
+               completion:completion];
+}
+
+// If idleOnMatch, a match of regex shows the helpers read commands. That is recorded only if
+// nothing was typed since text: the completion can run after the next text in the chain was
+// typed (iTermExpect may run it after the successor's callback), and that text, such as the start
+// of a here-document, may have made them busy again.
+- (NSString *)sendText:(NSString *)text
+            reallySend:(BOOL)reallySend
+            afterRegex:(NSString *)regex
+           expectation:(inout iTermExpectation **)expectation
+               didSend:(void (^)(void))didSend
+           idleOnMatch:(BOOL)idleOnMatch
+            completion:(void (^)(NSArray<NSString *> *))completion {
     if (!reallySend) {
         return text;
     }
-    
+
     __weak __typeof(self) weakSelf = self;
+    const NSUInteger generation = _cancellationGeneration;
+    // How many texts had been typed once this one was, or NSNotFound before it is typed.
+    __block NSUInteger typedCount = NSNotFound;
     iTermExpectation *newExpectation =
     [self expectRegularExpression:regex
                             after:(*expectation).lastExpectation
                        willExpect:^{
+        __strong __typeof(self) strongSelf = weakSelf;
+        if (!strongSelf || strongSelf->_cancellationGeneration != generation) {
+            DLog(@"Not sending text for a canceled expectation");
+            return;
+        }
+        if (strongSelf->_lastTextIsIdleOnMatch) {
+            [strongSelf helperShellsBecameIdle];
+        }
+        strongSelf->_lastTextIsIdleOnMatch = NO;
         if (text) {
-            [weakSelf.delegate shellIntegrationWindowControllerSendText:text];
+            [strongSelf typeText:text];
+        }
+        if (didSend) {
+            didSend();
+        }
+        typedCount = strongSelf->_typedTextCount;
+        if (idleOnMatch) {
+            strongSelf->_lastTextIsIdleOnMatch = YES;
         }
     }
-                       completion:completion];
+                       completion:^(NSArray<NSString *> *captures) {
+        __strong __typeof(self) strongSelf = weakSelf;
+        if (idleOnMatch && strongSelf && strongSelf->_typedTextCount == typedCount) {
+            [strongSelf helperShellsBecameIdle];
+        }
+        if (completion) {
+            completion(captures);
+        }
+    }];
     if (!*expectation) {
         *expectation = newExpectation;
     }
@@ -270,17 +528,405 @@ typedef NS_ENUM(NSUInteger, iTermShellIntegrationInstallationState) {
 }
 
 - (void)cancelAllExpectations {
+    _cancellationGeneration += 1;
     [_pendingExpectations enumerateObjectsUsingBlock:^(iTermExpectation * _Nonnull obj, NSUInteger idx, BOOL * _Nonnull stop) {
         [[self.delegate shellIntegrationExpect] cancelExpectation:obj];
     }];
     [_pendingExpectations removeAllObjects];
+    _afterHelpersExit = nil;
+    _lastTextIsIdleOnMatch = NO;
+    if (_helperState == iTermShellIntegrationHelperStateReceivingFile) {
+        // Stops typing the file and ends sh's read loop. See helpersIdleExpectation.
+        [self helpersIdleExpectation];
+    }
     [self.currentViewController setBusy:NO];
+}
+
+#pragma mark - Helper Shells
+
+// The helper was seen reading commands.
+- (void)helperShellsBecameIdle {
+    _receivedTextTyped = NO;
+    _helperState = iTermShellIntegrationHelperStateIdle;
+    DLog(@"Helper shell is idle");
+}
+
+// Types the exit that ends the helper, back at the user's shell. Only valid while the helper is
+// known to be idle.
+- (void)exitIdleHelperShells {
+    if (_helperState != iTermShellIntegrationHelperStateIdle) {
+        DLog(@"Not exiting helper shells in state %@", @(_helperState));
+        return;
+    }
+    DLog(@"Exit the helper shell");
+    _helperState = iTermShellIntegrationHelperStateNone;
+    // Control-U first erases whatever the user typed on the helper's line since it last read
+    // one, as after Cancel, which would otherwise run together with exit (F-883). The tty does
+    // this for an sh without a line editor, and it is the line editors' default binding, too.
+    [self typeText:[@"\025" stringByAppendingString:self.exitHelperShellString]];
+}
+
+// An expectation that completes once the helpers, which are running but busy, read commands
+// again, or nil when that can't be awaited. It types what it takes to get there:
+// - While they launch, an empty line, so a prompt follows even if their first one went by.
+// - While sh reads the utilities archive (which takes a minute or more to type) or the shell
+//   integration script, typing it stops and the line that ends sh's read loop is typed, as the
+//   file would have ended. Otherwise sh would keep taking whatever is typed next into its file.
+//   The newline first ends a line the stop may have cut. sh then finds that what it got is not
+//   the whole file, removes its temporary files, and prompts. This is safe because sh checks the
+//   whole archive before unpacking any of it, and the script's checksum before writing it, so a
+//   partial one installs nothing. If sh has not read the receive command yet, its loop reads
+//   just these lines and ends the same way.
+// Then a command whose answer shows the helper reads commands, typed only once this expectation
+// is in place so the answer can't go by unseen.
+- (iTermExpectation *)helpersIdleExpectation {
+    if (_helpersIdleExpectation) {
+        return _helpersIdleExpectation;
+    }
+    NSString *text = nil;
+    NSString *regex = iTermShellIntegrationHelpersIdleRegex;
+    switch (_helperState) {
+        case iTermShellIntegrationHelperStateNone:
+        case iTermShellIntegrationHelperStateIdle:
+        case iTermShellIntegrationHelperStateUnknown:
+            return nil;
+        case iTermShellIntegrationHelperStateLaunching:
+            text = @"\n";
+            regex = iTermShellIntegrationHelperPromptRegex;
+            break;
+        case iTermShellIntegrationHelperStateReceivingFile:
+            // Typing is stopped only once the file is being typed. Before that, what is still
+            // being typed is the receive command, and stopping it partway could leave sh waiting
+            // for the rest of an if statement or a quoted string. Typed whole, it is followed by
+            // the lines below, which end its loop. Control-U then erases anything the user typed
+            // after Cancel, so it can't run together with the command that follows (F-883).
+            if (_receivedTextTyped) {
+                [self.delegate shellIntegrationWindowControllerStopSendingText];
+            }
+            text = [@"\nEOF\n\025" stringByAppendingString:iTermShellIntegrationHelpersIdleCommand];
+            break;
+    }
+    DLog(@"Wait for helper shells to become idle in state %@", @(_helperState));
+    __weak __typeof(self) weakSelf = self;
+    __block NSUInteger typedCount = NSNotFound;
+    const NSUInteger expectationGeneration = _helpersIdleExpectationGeneration;
+    _helpersIdleExpectation =
+    [[self.delegate shellIntegrationExpect] expectRegularExpression:regex
+                                                              after:nil
+                                                           deadline:nil
+                                                         willExpect:^{
+        __strong __typeof(self) strongSelf = weakSelf;
+        if (!strongSelf || strongSelf->_helpersIdleExpectationGeneration != expectationGeneration) {
+            return;
+        }
+        [strongSelf typeText:text];
+        typedCount = strongSelf->_typedTextCount;
+        // A step chained after this expectation runs only once it matched.
+        strongSelf->_lastTextIsIdleOnMatch = YES;
+    }
+                                                         completion:^(NSArray<NSString *> * _Nonnull captureGroups) {
+        __strong __typeof(self) strongSelf = weakSelf;
+        if (!strongSelf) {
+            return;
+        }
+        strongSelf->_helpersIdleExpectation = nil;
+        if (strongSelf->_typedTextCount != typedCount) {
+            // A step chained after this one already typed into the helpers (this completion
+            // can run after its callback), so they may be busy again. Its own commands track
+            // them from here.
+            DLog(@"Text was typed since the helpers became idle");
+            strongSelf->_exitHelpersWhenIdle = NO;
+            [strongSelf runAfterHelpersExit];
+            return;
+        }
+        [strongSelf helperShellsBecameIdleAfterWaiting];
+    }];
+    return _helpersIdleExpectation;
+}
+
+// The helpers, which were awaited, read commands. Exit them if that is what was awaited.
+- (void)helperShellsBecameIdleAfterWaiting {
+    [self helperShellsBecameIdle];
+    if (!_exitHelpersWhenIdle) {
+        return;
+    }
+    _exitHelpersWhenIdle = NO;
+    [self exitIdleHelperShells];
+    [self runAfterHelpersExit];
+}
+
+// Leaves the helpers for the user's shell when it is known to be safe: right away if they are
+// idle, or once they are if that can be awaited. Otherwise nothing is typed, since an exit
+// that reached the user's shell would end it.
+- (void)exitHelperShellsWhenPossible {
+    if (_helperState == iTermShellIntegrationHelperStateIdle) {
+        [self exitIdleHelperShells];
+        return;
+    }
+    if (_helperState == iTermShellIntegrationHelperStateLaunching) {
+        // Their launch was not confirmed, so they may not be running. Wait (for a while) to find
+        // out instead. A wait a step started for them (as for Send Again) has no time limit, so
+        // it is replaced. Its prompt may have gone by, so the new wait asks for another with an
+        // empty line, as that one did; that is harmless in the user's shell, too.
+        _exitHelpersWhenIdle = YES;
+        if (!_waitingForCanceledHelperLaunch) {
+            const BOOL replacing = (_helpersIdleExpectation != nil);
+            [self cancelHelpersIdleExpectation];
+            [self awaitCanceledHelperLaunchTypingNewline:replacing];
+        }
+        return;
+    }
+    if ([self helpersIdleExpectation]) {
+        _exitHelpersWhenIdle = YES;
+    }
+}
+
+// Waits for helpers whose launch was typed but whose prompt has not been seen, as when Cancel is
+// clicked while the user's shell is slow to start them, so they can be exited. A “>> ” prompt
+// alone doesn't show that the helper runs: it could be the user's own prompt. So once a prompt
+// shows up, the shell that printed it is asked how many helpers it is nested in
+// (IT2_INSTALLER_HELPER, see launchHelperShellString), and the exit is typed only if it is the
+// one helper that was launched. Asking is safe: in the user's shell the command prints
+// something else, or an error.
+// After canceledHelperLaunchTimeout the wait ends without typing anything more. The timeout only
+// limits how long a prompt is trusted, so a slow machine can at worst leave the helpers running,
+// as if they had not been awaited.
+// If typeNewline, an empty line is typed once the wait is in place, to get a fresh prompt.
+- (void)awaitCanceledHelperLaunchTypingNewline:(BOOL)typeNewline {
+    DLog(@"Wait for the prompt of helper shells whose launch was canceled");
+    _canceledHelperLaunchWaitID += 1;
+    const NSUInteger waitID = _canceledHelperLaunchWaitID;
+    __weak __typeof(self) weakSelf = self;
+    // NSNotFound until the empty line, if any, is typed.
+    __block NSUInteger typedCount = typeNewline ? NSNotFound : _typedTextCount;
+    const NSUInteger expectationGeneration = _helpersIdleExpectationGeneration;
+    _helpersIdleExpectation =
+    [[self.delegate shellIntegrationExpect] expectRegularExpression:iTermShellIntegrationHelperPromptRegex
+                                                              after:nil
+                                                           deadline:nil
+                                                         willExpect:^{
+        __strong __typeof(self) strongSelf = weakSelf;
+        if (!typeNewline ||
+            !strongSelf ||
+            strongSelf->_helpersIdleExpectationGeneration != expectationGeneration) {
+            return;
+        }
+        [strongSelf typeText:@"\n"];
+        typedCount = strongSelf->_typedTextCount;
+    }
+                                                         completion:^(NSArray<NSString *> * _Nonnull captureGroups) {
+        __strong __typeof(self) strongSelf = weakSelf;
+        if (!strongSelf) {
+            return;
+        }
+        if (strongSelf->_typedTextCount != typedCount) {
+            // Nothing else is typed while this waits, but if something was, the prompt says
+            // nothing about where the helpers are now.
+            DLog(@"Text was typed while waiting for canceled helper shells to prompt");
+            [strongSelf endCanceledHelperLaunchWait];
+            return;
+        }
+        [strongSelf askCanceledHelpersForTheirDepth];
+    }];
+    _waitingForCanceledHelperLaunch = YES;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(_canceledHelperLaunchTimeout * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        __strong __typeof(self) strongSelf = weakSelf;
+        if (!strongSelf ||
+            !strongSelf->_waitingForCanceledHelperLaunch ||
+            strongSelf->_canceledHelperLaunchWaitID != waitID) {
+            // It ended, or a step took over the wait.
+            return;
+        }
+        DLog(@"Stop waiting for canceled helper shells");
+        [strongSelf endCanceledHelperLaunchWait];
+    });
+}
+
+// The second part of awaitCanceledHelperLaunchTypingNewline:, once a prompt was seen.
+- (void)askCanceledHelpersForTheirDepth {
+    DLog(@"Ask the shell that prompted how many helper shells it is in");
+    __weak __typeof(self) weakSelf = self;
+    // Typed only once the expectation is in place, so a fast answer can't go by unseen.
+    __block NSUInteger typedCount = NSNotFound;
+    const NSUInteger expectationGeneration = _helpersIdleExpectationGeneration;
+    _helpersIdleExpectation =
+    [[self.delegate shellIntegrationExpect] expectRegularExpression:iTermShellIntegrationHelperDepthRegex
+                                                              after:nil
+                                                           deadline:nil
+                                                         willExpect:^{
+        __strong __typeof(self) strongSelf = weakSelf;
+        if (!strongSelf || strongSelf->_helpersIdleExpectationGeneration != expectationGeneration) {
+            return;
+        }
+        [strongSelf typeText:iTermShellIntegrationHelperDepthCommand];
+        typedCount = strongSelf->_typedTextCount;
+    }
+                                                         completion:^(NSArray<NSString *> * _Nonnull captureGroups) {
+        __strong __typeof(self) strongSelf = weakSelf;
+        if (!strongSelf) {
+            return;
+        }
+        const NSInteger depth = captureGroups.count > 1 ? [captureGroups[1] integerValue] : 0;
+        if (strongSelf->_typedTextCount != typedCount || depth != 1) {
+            DLog(@"Not exiting canceled helper shells: depth %@, typed since: %@",
+                 @(depth), @(strongSelf->_typedTextCount != typedCount));
+            [strongSelf endCanceledHelperLaunchWait];
+            return;
+        }
+        strongSelf->_helpersIdleExpectation = nil;
+        strongSelf->_waitingForCanceledHelperLaunch = NO;
+        [strongSelf helperShellsBecameIdleAfterWaiting];
+    }];
+}
+
+// Ends the wait of awaitCanceledHelperLaunchTypingNewline: without knowing about the helpers, typing nothing
+// more, and runs what waited for them to exit (such as discovery, which then finds out itself
+// whether it runs in one).
+- (void)endCanceledHelperLaunchWait {
+    [self cancelHelpersIdleExpectation];
+    _waitingForCanceledHelperLaunch = NO;
+    _helperState = iTermShellIntegrationHelperStateUnknown;
+    _exitHelpersWhenIdle = NO;
+    [self runAfterHelpersExit];
+}
+
+- (void)runAfterHelpersExit {
+    void (^afterExit)(void) = _afterHelpersExit;
+    _afterHelpersExit = nil;
+    if (afterExit) {
+        afterExit();
+    }
+}
+
+// Ends the wait of awaitCanceledHelperLaunchTypingNewline: so a step can take over: it waits for the helpers as
+// for any launch in progress, which types a line to get a fresh prompt.
+- (void)takeOverCanceledHelperLaunchWait {
+    if (!_waitingForCanceledHelperLaunch) {
+        return;
+    }
+    DLog(@"A step takes over the wait for canceled helper shells");
+    [self cancelHelpersIdleExpectation];
+    _waitingForCanceledHelperLaunch = NO;
+}
+
+// Cancels _helpersIdleExpectation. Its willExpect callback may already be queued, so callbacks
+// check _helpersIdleExpectationGeneration and do nothing once it changed.
+- (void)cancelHelpersIdleExpectation {
+    _helpersIdleExpectationGeneration += 1;
+    if (_helpersIdleExpectation) {
+        [[self.delegate shellIntegrationExpect] cancelExpectation:_helpersIdleExpectation];
+        _helpersIdleExpectation = nil;
+    }
+}
+
+// Called by an installer that replaced this one when it stops waiting for this one's helpers:
+// this one gives up on them without typing anything more, so it can't type exits later, when
+// another installer may be using the session.
+- (void)abandonHelperShells {
+    DLog(@"Abandon helper shells");
+    [self cancelHelpersIdleExpectation];
+    _waitingForCanceledHelperLaunch = NO;
+    _exitHelpersWhenIdle = NO;
+    _afterHelpersExit = nil;
+    _helperState = iTermShellIntegrationHelperStateUnknown;
+    [_previousInstaller abandonHelperShells];
+    _previousInstaller = nil;
+}
+
+// An installer, this one or one it replaced, that is waiting to exit helper shells, or nil.
+- (iTermShellIntegrationWindowController *)installerAwaitingHelperShellExit {
+    if (_helpersIdleExpectation && _exitHelpersWhenIdle) {
+        return self;
+    }
+    return [_previousInstaller installerAwaitingHelperShellExit];
+}
+
+- (void)takeOverHelperShellsFromInstaller:(iTermShellIntegrationWindowController *)previous {
+    _previousInstaller = [previous installerAwaitingHelperShellExit];
+}
+
+// Runs block once the helpers this installer waits to exit have exited or it stops waiting.
+- (void)performAfterHelperShellsExit:(void (^)(void))block {
+    _afterHelpersExit = [block copy];
+}
+
+// Starts the helper sh for a step, or reuses the one already running. Text sent after this goes
+// to the helper.
+- (NSString *)enterHelperShell:(BOOL)reallySend
+                   expectation:(inout iTermExpectation **)expectation {
+    if (!reallySend) {
+        return self.launchHelperShellString;
+    }
+    _exitHelpersWhenIdle = NO;
+    _afterHelpersExit = nil;
+    [self takeOverCanceledHelperLaunchWait];
+    if (_helperState == iTermShellIntegrationHelperStateIdle) {
+        DLog(@"Reuse idle helper shells");
+        return @"";
+    }
+    iTermExpectation *idle = [self helpersIdleExpectation];
+    if (idle) {
+        // As after Send Again while the helpers were busy: wait for them rather than start
+        // more, which the step's exits would not end.
+        DLog(@"Reuse helper shells once they are idle");
+        ITAssertWithMessage(*expectation == nil, @"The helpers must be entered first");
+        *expectation = idle;
+        return @"";
+    }
+    // Nothing more is typed until the helper prompts, since typeahead can be read by the user's
+    // shell instead (see launchHelperShellString).
+    return [self sendText:self.launchHelperShellString
+               reallySend:YES
+               afterRegex:iTermShellIntegrationHelperPromptRegex
+              expectation:expectation
+                  didSend:[self setHelperStateWhenSent:iTermShellIntegrationHelperStateLaunching]
+              idleOnMatch:YES
+               completion:nil];
+}
+
+// Types the exits that end a step. It must follow a command whose regex matches the helper's
+// prompt: this runs once that matched, so the helpers read commands, even if that command's
+// completion has not run yet.
+- (NSString *)exitHelperShells:(BOOL)reallySend
+                    afterRegex:(NSString *)regex
+                   expectation:(inout iTermExpectation **)expectation
+                    completion:(void (^)(NSArray<NSString *> *))completion {
+    NSString *preview = self.exitHelperShellString;
+    if (!reallySend) {
+        return preview;
+    }
+    __weak __typeof(self) weakSelf = self;
+    [self sendText:nil
+        reallySend:YES
+        afterRegex:regex
+       expectation:expectation
+           didSend:^{
+        [weakSelf helperShellsBecameIdle];
+        [weakSelf exitIdleHelperShells];
+    }
+        completion:completion];
+    return preview;
+}
+
+// A didSend block that records the helpers' state once text that changes it has been typed.
+- (void (^)(void))setHelperStateWhenSent:(iTermShellIntegrationHelperState)state {
+    __weak __typeof(self) weakSelf = self;
+    return ^{
+        __strong __typeof(self) strongSelf = weakSelf;
+        if (!strongSelf) {
+            return;
+        }
+        strongSelf->_helperState = state;
+        strongSelf->_receivedTextTyped = NO;
+    };
 }
 
 #pragma mark - Actions
 
 - (IBAction)cancel:(id)sender {
     [self cancelAllExpectations];
+    [self exitHelperShellsWhenPossible];
     [self close];
 }
 
@@ -300,8 +946,8 @@ typedef NS_ENUM(NSUInteger, iTermShellIntegrationInstallationState) {
         return @"~/.config/xonsh/rc.d/iterm2.xsh";
     }
     if (self.shell == iTermShellIntegrationShellNu) {
-        // nushell sources the script from its autoload directory, which catToScript:completion:
-        // asks nu for. Quoted because on macOS it is under ~/Library/Application Support.
+        // nushell sources the script from its autoload directory, which
+        // catToNuScript:reallySend:completion: asks nu for. Quoted because on macOS it is under ~/Library/Application Support.
         return @"\"$IT2_NU_AUTOLOAD_DIR/iterm2_shell_integration.nu\"";
     }
     return [NSString stringWithFormat:@"%@/.iterm2_shell_integration.%@",
@@ -393,27 +1039,142 @@ typedef NS_ENUM(NSUInteger, iTermShellIntegrationInstallationState) {
 
 #pragma mark - Text Sending
 
++ (NSDictionary<NSString *, NSNumber *> *)shellsByName {
+    return @{ @"tcsh": @(iTermShellIntegrationShellTcsh),
+              @"bash": @(iTermShellIntegrationShellBash),
+              @"zsh": @(iTermShellIntegrationShellZsh),
+              @"fish": @(iTermShellIntegrationShellFish),
+              @"xonsh": @(iTermShellIntegrationShellXonsh),
+              @"nu": @(iTermShellIntegrationShellNu) };
+}
+
+// A process name as ps prints it, or nil if it isn't a shell the installer supports.
++ (NSString *)supportedShellNameForProcessName:(NSString *)processName {
+    NSString *name = [[processName stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]] lastPathComponent];
+    if ([name hasPrefix:@"-"]) {
+        // A login shell's argv[0] starts with "-".
+        name = [name substringFromIndex:1];
+    }
+    if ([name isEqualToString:@"csh"]) {
+        // macOS's /bin/csh is tcsh.
+        name = @"tcsh";
+    }
+    if (name.length > 0 && self.shellsByName[name]) {
+        return name;
+    }
+    return nil;
+}
+
+// The parent process is the shell actually reading the installer's commands, so it wins when
+// it is one the installer supports. parentProcess is its executable name (ucomm) followed by its
+// argv[0] (comm), or comm alone where ps lacks ucomm. ucomm comes first because tcsh overwrites
+// the first character of its argv[0] with "-", so `tcsh` shows up as "-csh" and `csh` as "-sh".
+// comm is next because xonsh runs under python but names itself in its process title, which
+// also carries its arguments, so comm's first word is tried too. Otherwise (ps is unavailable,
+// or the shell is an interpreter without a title) fall back to $SHELL.
++ (NSString *)shellNameForParentProcess:(NSString *)parentProcess shell:(NSString *)shell {
+    NSCharacterSet *whitespace = [NSCharacterSet whitespaceCharacterSet];
+    NSString *trimmed = [parentProcess stringByTrimmingCharactersInSet:whitespace];
+    const NSRange space = [trimmed rangeOfCharacterFromSet:whitespace];
+    NSString *ucomm = space.location == NSNotFound ? trimmed : [trimmed substringToIndex:space.location];
+    NSString *comm = space.location == NSNotFound ? @"" : [trimmed substringFromIndex:NSMaxRange(space)];
+    NSString *commFirstWord = [comm componentsSeparatedByCharactersInSet:whitespace].firstObject ?: @"";
+    NSString *name = ([self supportedShellNameForProcessName:ucomm] ?:
+                      [self supportedShellNameForProcessName:comm] ?:
+                      [self supportedShellNameForProcessName:commFirstWord]);
+    if (name) {
+        return name;
+    }
+    return [[shell stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]] lastPathComponent];
+}
+
 - (NSString *)discoverShell:(BOOL)reallySend completion:(void (^)(NSString *shell, NSString *dotdir))completion {
     iTermExpectation *expectation = nil;
+    if (reallySend) {
+        // An installer this one replaced may still be waiting to exit its helpers.
+        iTermShellIntegrationWindowController *previous = [_previousInstaller installerAwaitingHelperShellExit];
+        _previousInstaller = previous;
+        if (previous) {
+            DLog(@"Discover once the previous installer's helper shells exit");
+            __weak __typeof(self) weakSelf = self;
+            const NSUInteger generation = _cancellationGeneration;
+            __block BOOL done = NO;
+            // Runs once, when the previous installer is done or after a while, whichever comes
+            // first: its wait may be one with no time limit, for helpers that are gone. If they
+            // aren't, discovery says so.
+            void (^discover)(BOOL) = ^(BOOL timedOut) {
+                __strong __typeof(self) strongSelf = weakSelf;
+                if (done || !strongSelf || strongSelf->_cancellationGeneration != generation) {
+                    return;
+                }
+                done = YES;
+                if (timedOut) {
+                    DLog(@"Stop waiting for the previous installer");
+                }
+                [strongSelf->_previousInstaller abandonHelperShells];
+                strongSelf->_previousInstaller = nil;
+                [strongSelf discoverShell:YES completion:completion];
+            };
+            [previous performAfterHelperShellsExit:^{
+                discover(NO);
+            }];
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(_canceledHelperLaunchTimeout * NSEC_PER_SEC)),
+                           dispatch_get_main_queue(), ^{
+                discover(YES);
+            });
+            [self.currentViewController setBusy:YES];
+            return @"";
+        }
+        // Discovery asks the user's shell, so first leave any helpers a canceled step left
+        // running, once that is known to be safe.
+        [self exitHelperShellsWhenPossible];
+        if (_exitHelpersWhenIdle) {
+            __weak __typeof(self) weakSelf = self;
+            _afterHelpersExit = ^{
+                [weakSelf discoverShell:YES completion:completion];
+            };
+            [self.currentViewController setBusy:YES];
+            return @"";
+        }
+    }
     // Through sh rather than a bare echo: nushell keeps the environment under $env and has no
     // $SHELL, so echo would be a parse error there, while sh is what the rest of the installer
     // runs its commands in anyway.
-    NSString *result = @"sh -c 'echo My shell is $SHELL'\n";
+    // The shell the commands are typed into is sh's parent, which need not be $SHELL (say, tcsh
+    // started from a zsh login shell), so report its executable name and argv[0] too, or just
+    // argv[0] where ps lacks ucomm. The line ends in a marker so a partially received line can't
+    // match. It also says whether it runs in helper shells the installer started (see
+    // launchHelperShellString), as a canceled step can leave behind: their parent is sh, which
+    // on macOS is bash, so it would be taken for the user's shell.
+    NSString *result = @"sh -c 'echo My shell is $(ps -o ucomm=,comm= -p $PPID 2>/dev/null || ps -o comm= -p $PPID 2>/dev/null) or $SHELL, ${IT2_INSTALLER_HELPER:+in an installer helper shell, }end'\n";
     [self sendText:result
         reallySend:reallySend
-        afterRegex:@"^My shell is (.+)"
+        afterRegex:@"^My shell is (.*) or (.*?), (in an installer helper shell, )?end$"
        expectation:&expectation
         completion:^(NSArray<NSString *> *captures) {
-        NSString *shell = [captures[1] lastPathComponent];
+        NSString *helperMarker = captures.count > 3 ? captures[3] : nil;
+        if ([helperMarker isKindOfClass:[NSString class]] && helperMarker.length > 0) {
+            DLog(@"Discovery ran in an installer helper shell");
+            self.shell = iTermShellIntegrationShellUnknown;
+            self.sendShellCommandsViewController.discoveryFoundHelperShell = YES;
+            return;
+        }
+        NSString *shell = [iTermShellIntegrationWindowController shellNameForParentProcess:captures[1]
+                                                                                     shell:captures[2]];
         if ([shell isEqualToString:@"zsh"]) {
-            [self sendText:@"echo My dotfiles go in ${ZDOTDIR:-$HOME}\n" reallySend:reallySend];
+            // Send the command only once the expectation is in place. Sending it first loses a
+            // race with a fast shell: its output gets checked before the expectation exists.
+            // The regex has no space before the capture because an empty value leaves none.
+            // The line ends in a marker so one received only up to “go in” (on a slow link)
+            // isn't taken for an empty directory.
             iTermExpectation *expectation = nil;
-            [self sendText:nil
+            [self sendText:@"echo My dotfiles go in ${ZDOTDIR:-$HOME}, end\n"
                 reallySend:reallySend
-                afterRegex:@"^My dotfiles go in (.*)"
+                afterRegex:@"^My dotfiles go in(.*), end$"
                expectation:&expectation
                 completion:^(NSArray<NSString *> *dotdirCaptures) {
-                completion(shell, dotdirCaptures[1]);
+                NSString *dotdir = [dotdirCaptures[1] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+                completion(shell, dotdir.length > 0 ? dotdir : @"$HOME");
             }];
         } else if ([shell isEqualToString:@"fish"]) {
             completion(shell, @"$HOME");
@@ -428,11 +1189,7 @@ typedef NS_ENUM(NSUInteger, iTermShellIntegrationInstallationState) {
                                completion:(void (^)(void))completion {
     const BOOL reallySend = (completion != nil);
     NSMutableArray<NSString *> *strings = [NSMutableArray array];
-    NSArray<NSString *> *parts = [[[self launchHelperShellString] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] componentsSeparatedByString:@"\n"];
-    parts = [parts mapWithBlock:^id(NSString *anObject) {
-        return [anObject stringByAppendingString:@"\n"];
-    }];
-    [strings addObjectsFromArray:parts];
+    NSString *launch = [self enterHelperShell:reallySend expectation:expectation];
 
     NSString *script = nil;
     switch (self.shell) {
@@ -462,14 +1219,22 @@ typedef NS_ENUM(NSUInteger, iTermShellIntegrationInstallationState) {
         case iTermShellIntegrationShellUnknown:
             assert(NO);
     }
-    [self sendText:[strings componentsJoinedByString:@""] reallySend:reallySend];
-    NSString *joined = [strings componentsJoinedByString:@""];
+    // The commands before the if statement go with its first line. Once that is typed the helper
+    // reads the if statement until its fi, so it is not known to read commands until the prompt
+    // after fi.
+    NSString *prefix = [strings componentsJoinedByString:@""];
     [strings removeAllObjects];
+    NSString *ifLine = [NSString stringWithFormat:@"if ! grep iterm2_shell_integration %@  > /dev/null 2>&1; then\n", script];
+    // Without a prefix, what matches is the if line's echo after the helper prompt, which follows
+    // the ready marker on its row when the helpers were just launched.
+    [self sendText:[prefix stringByAppendingString:ifLine]
+        reallySend:reallySend
+        afterRegex:iTermShellIntegrationHelperPromptRegex
+       expectation:expectation
+           didSend:[self setHelperStateWhenSent:iTermShellIntegrationHelperStateUnknown]
+        completion:nil];
+    NSString *joined = [[launch stringByAppendingString:prefix] stringByAppendingString:ifLine];
 
-    [strings addObject:[self sendText:[NSString stringWithFormat:@"if ! grep iterm2_shell_integration %@  > /dev/null 2>&1; then\n", script]
-                           reallySend:reallySend
-                           afterRegex:@"^>> "
-                          expectation:expectation]];
     [strings addObject:[self sendText:[NSString stringWithFormat:@"    cat <<-EOF >> %@\n\n", script]
                            reallySend:reallySend
                            afterRegex:@"^> "
@@ -482,15 +1247,19 @@ typedef NS_ENUM(NSUInteger, iTermShellIntegrationInstallationState) {
                            reallySend:reallySend
                            afterRegex:@"^> "
                           expectation:expectation]];
-    [strings addObject:[self sendText:@"fi\n"
+    // The answer shows sh read fi. Its prompt after fi may not start a row in dash, after
+    // prompts for the lines before it that it prints only once the tty echoed this line.
+    [strings addObject:[self sendText:@"fi; echo it2-\"\"dotfile-done\n"
                            reallySend:reallySend
-                           afterRegex:@"^>> "
-                          expectation:expectation]];
-    [strings addObject:[self sendText:self.exitHelperShellString
-                           reallySend:reallySend
-                           afterRegex:@"^>> "
+                           afterRegex:@"it2-dotfile-done"
                           expectation:expectation
-                           completion:^(NSArray<NSString *> *captures) {
+                              didSend:nil
+                          idleOnMatch:YES
+                           completion:nil]];
+    [strings addObject:[self exitHelperShells:reallySend
+                                   afterRegex:@"^>> "
+                                  expectation:expectation
+                                   completion:^(NSArray<NSString *> *captures) {
         if (completion) {
             completion();
         }
@@ -503,85 +1272,141 @@ typedef NS_ENUM(NSUInteger, iTermShellIntegrationInstallationState) {
 // shell. Use sh, not bash, because bash is not installed by default on BSDs. If the helper
 // shell fails to launch, the heredocs run in the user's shell, and tcsh never terminates
 // <<'EOF' on a plain EOF line.
+//
+// It is one line, which every supported shell parses the same way, so nothing is typed ahead of
+// the helper. Typeahead is not safe: nushell reads it in bulk, and Linux hands everything queued
+// while the user's line editor had the tty in raw mode to the first read() after it, so a shell
+// the launch starts could read lines meant for one it starts after that (F-882). The sh -c
+// sets ENV, which an interactive sh would source, and the prompts, then becomes the helper. It
+// prints iTermShellIntegrationHelpersReadyMarker (with empty quotes, so the echo of this line
+// doesn't contain it) right before the helper's first prompt. It is printed just before the
+// exec, so if that failed (it practically can't) the next prompt would be the user's. See
+// iTermShellIntegrationHelperPromptRegex. IT2_INSTALLER_HELPER says how many helpers deep a
+// shell is. It lets discovery tell that it runs in one (see discoverShell:completion:) and
+// awaitCanceledHelperLaunchTypingNewline: whether the shell that prompted is the helper.
 - (NSString *)launchHelperShellString {
-    if (self.shell == iTermShellIntegrationShellXonsh || self.shell == iTermShellIntegrationShellNu) {
-        // For xonsh, use sh -c to set PS1/PS2 properly (env would include literal quotes).
-        // The -c command sets prompts then runs an interactive sh.
-        // nushell needs the single line for another reason: reedline reads typeahead in bulk,
-        // so of the three lines below only `sh` would reach sh and the other two would run in
-        // nushell once sh exits. bash and zsh read a byte at a time and don't have this problem.
-        return @"sh -c 'ENV=/dev/null INPUTRC=/dev/null PS1=\">> \" PS2=\"> \" sh'\n";
-    }
-    // The first sh gives a known syntax for setting ENV, which an interactive sh would source.
-    return @"sh\nENV=/dev/null INPUTRC=/dev/null sh\n PS1='>> '; PS2='> '\n";
+    return @"sh -c 'printf \"it2-\"\"helpers-ready \"; exec env ENV=/dev/null INPUTRC=/dev/null IT2_INSTALLER_HELPER=$((${IT2_INSTALLER_HELPER:-0}+1)) PS1=\">> \" PS2=\"> \" sh'\n";
 }
 
+// The exit that ends the helper launchHelperShellString starts.
 - (NSString *)exitHelperShellString {
-    if (self.shell == iTermShellIntegrationShellXonsh || self.shell == iTermShellIntegrationShellNu) {
-        // Only one sh for xonsh and nushell (see launchHelperShellString)
-        return @"exit\n";
+    return @"exit\n";
+}
+
+// The checksum POSIX cksum prints for data, followed by its length, as in “4294967295 0”.
++ (NSString *)posixChecksumOfData:(NSData *)data {
+    __block uint32_t crc = 0;
+    void (^add)(uint8_t) = ^(uint8_t byte) {
+        crc ^= (uint32_t)byte << 24;
+        for (int i = 0; i < 8; i++) {
+            crc = (crc & 0x80000000) ? (crc << 1) ^ 0x04C11DB7 : (crc << 1);
+        }
+    };
+    const uint8_t *bytes = data.bytes;
+    for (NSUInteger i = 0; i < data.length; i++) {
+        add(bytes[i]);
     }
-    return @"exit\nexit\n";
+    // Then the length, least significant byte first, in as few bytes as it takes.
+    for (unsigned long long length = data.length; length > 0; length >>= 8) {
+        add(length & 0xff);
+    }
+    return [NSString stringWithFormat:@"%u %@", (unsigned int)~crc, @(data.length)];
 }
 
-- (NSString *)switchToHelperShell:(BOOL)reallySend
-                      expectation:(inout iTermExpectation **)expectation {
-    return [self sendText:self.launchHelperShellString
-               reallySend:reallySend
-               afterRegex:@"."
-              expectation:expectation];
+// data as the installer types it to a read loop in the helper sh: base64 in lines of 76
+// characters, far shorter than any tty keeps in canonical mode (1024 bytes on macOS and BSD,
+// 4096 on Linux), followed by the line that ends the loop.
++ (NSString *)textToSendData:(NSData *)data {
+    NSString *encoded = [data base64EncodedStringWithOptions:(NSDataBase64Encoding76CharacterLineLength | NSDataBase64EncodingEndLineWithLineFeed)];
+    return [encoded stringByAppendingString:@"\nEOF\n"];
 }
 
++ (NSData *)scriptDataForString:(NSString *)string {
+    // The script ends with a newline after string, as when it was written with a here-document.
+    return [[string stringByAppendingString:@"\n"] dataUsingEncoding:NSUTF8StringEncoding];
+}
+
++ (NSString *)commandToReceiveScriptData:(NSData *)data atPath:(NSString *)path {
+    // Not a format string, since the command has a printf format of its own. The checksum goes
+    // in first, so a path can't add to what is replaced.
+    NSString *command = [iTermShellIntegrationReceiveScriptCommandTemplate stringByReplacingOccurrencesOfString:@"{cksum}"
+                                                                                                    withString:[self posixChecksumOfData:data]];
+    return [command stringByReplacingOccurrencesOfString:@"{path}" withString:path];
+}
+
+// Writes string to path from the helper sh and then exits the helpers, as the utilities archive
+// is received (see receiveText:withCommand:name:resultRegex:success:expectation:completion:),
+// rather than in a here-document: some lines of the scripts are longer than a tty in canonical
+// mode keeps, which is how sh reads a here-document when it has no line editor (as dash, the sh
+// of Debian and Ubuntu), so their ends would be lost. completion says whether the whole script
+// was written.
+// expectation is inout, not out: ARC passes an out parameter a nil temporary, so the commands
+// here would start a chain of their own and be typed alongside the caller's instead of after them.
 - (NSString *)catString:(NSString *)string
                      to:(NSString *)path
              reallySend:(BOOL)reallySend
-            expectation:(out iTermExpectation **)expectation {
+            expectation:(inout iTermExpectation **)expectation
+             completion:(void (^)(BOOL written))completion {
+    NSData *data = [iTermShellIntegrationWindowController scriptDataForString:string];
+    NSString *command = [iTermShellIntegrationWindowController commandToReceiveScriptData:data atPath:path];
+    NSString *text = [iTermShellIntegrationWindowController textToSendData:data];
+    if (!reallySend) {
+        return [[command stringByAppendingString:text] stringByAppendingString:self.exitHelperShellString];
+    }
+    [self receiveText:text
+          withCommand:command
+                 name:@"script"
+          resultRegex:@"it2-script-(written|failed)"
+              success:@"written"
+          expectation:expectation
+           completion:completion];
+    return command;
+}
+
+// nushell sources every .nu file in its autoload directories at startup, after config.nu, so the
+// script goes there and no dotfile is touched. The directory is asked from nu rather than
+// guessed: it differs between macOS and Linux, honors XDG_CONFIG_HOME, and depends on the
+// nushell version.
+//
+// Each command is sent only once output shows the previous one ran in the helper sh. nushell
+// reads typeahead in bulk, so text typed before sh is reading would go to nushell. completion
+// reports whether the file was written.
+- (NSString *)catToNuScript:(NSString *)script
+                 reallySend:(BOOL)reallySend
+                 completion:(void (^)(BOOL written))completion {
     NSMutableString *result = [NSMutableString string];
-    [result appendString:[self switchToHelperShell:reallySend expectation:expectation]];
-    [result appendString:[self sendText:[NSString stringWithFormat:@"cat <<'EOF' > %@\n", path]
+    iTermExpectation *expectation = nil;
+    // Each text below is typed when the regex of the one before it matches.
+    // The helper sh has prompted.
+    [result appendString:[self enterHelperShell:reallySend expectation:&expectation]];
+    // The autoload directory was created (or mkdir said why not).
+    [result appendString:[self sendText:iTermShellIntegrationNuAutoloadDirCommand
                              reallySend:reallySend
-                             afterRegex:@"."
-                            expectation:expectation]];
-    [result appendString:[self sendText:string
-                             reallySend:reallySend
-                             afterRegex:@"^> "
-                            expectation:expectation]];
-    [result appendString:[self sendText:@"\nEOF\n"
-                             reallySend:reallySend
-                          afterRegex:@"."
-                            expectation:expectation]];
-    [result appendString:[self sendText:self.exitHelperShellString
-                             reallySend:reallySend
-                          afterRegex:@"> EOF"
-                            expectation:expectation]];
+                             afterRegex:iTermShellIntegrationNuAutoloadDirReadyRegex
+                            expectation:&expectation]];
+    [result appendString:[self catString:script
+                                      to:[self shellIntegrationPath]
+                              reallySend:reallySend
+                             expectation:&expectation
+                              completion:completion]];
     return result;
 }
 
 - (NSString *)catToScript:(BOOL)reallySend
-               completion:(void (^)(void))completion {
+               completion:(void (^)(BOOL written))completion {
     NSString *scriptForShell = [self scriptForCurrentShell];
     if (!scriptForShell) {
         return @"# Error: your shell could not be determined or is unsupported.";
     }
+    if (self.shell == iTermShellIntegrationShellNu) {
+        return [self catToNuScript:scriptForShell reallySend:reallySend completion:completion];
+    }
     NSMutableString *result = [NSMutableString string];
     iTermExpectation *expectation = nil;
-    [result appendString:[self switchToHelperShell:reallySend expectation:&expectation]];
+    [result appendString:[self enterHelperShell:reallySend expectation:&expectation]];
     if (self.shell == iTermShellIntegrationShellXonsh) {
         // Create the rc.d directory for xonsh (scripts there are auto-loaded)
         [result appendString:[self sendText:@"mkdir -p ~/.config/xonsh/rc.d\n"
-                                 reallySend:reallySend
-                                 afterRegex:@"^>> "
-                                expectation:&expectation]];
-    } else if (self.shell == iTermShellIntegrationShellNu) {
-        // nushell sources every .nu file in its autoload directories at startup, after config.nu,
-        // so the script goes there and no dotfile is touched. The directory is asked from nu
-        // rather than guessed: it differs between macOS and Linux, honors XDG_CONFIG_HOME, and
-        // depends on the nushell version.
-        [result appendString:[self sendText:iTermShellIntegrationNuAutoloadDirCommand
-                                 reallySend:reallySend
-                                 afterRegex:@"^>> "
-                                expectation:&expectation]];
-        [result appendString:[self sendText:@"mkdir -p \"$IT2_NU_AUTOLOAD_DIR\"\n"
                                  reallySend:reallySend
                                  afterRegex:@"^>> "
                                 expectation:&expectation]];
@@ -589,72 +1414,168 @@ typedef NS_ENUM(NSUInteger, iTermShellIntegrationInstallationState) {
     [result appendString:[self catString:scriptForShell
                                       to:[self shellIntegrationPath]
                               reallySend:reallySend
-                             expectation:&expectation]];
-    [result appendString:[self sendText:[NSString stringWithFormat:@"chmod +x %@\n", [self shellIntegrationPath]]
-                             reallySend:reallySend
-                             afterRegex:@"^>> "
-                            expectation:&expectation]];
-    [result appendString:[self sendText:self.exitHelperShellString
-                             reallySend:reallySend
-                          afterRegex:@"^>> "
-                            expectation:&expectation
-                             completion:^(NSArray<NSString *> *captures) {
-        if (completion) {
-            completion();
-        }
-    }]];
+                             expectation:&expectation
+                              completion:completion]];
     return result;
 }
 
 - (NSString *)sendText:(NSString *)text reallySend:(BOOL)reallySend {
     if (reallySend) {
-        [self.delegate shellIntegrationWindowControllerSendText:text];
+        [self typeText:text];
     }
     return text;
 }
 
+// All text the installer types goes through here, so _typedTextCount says whether anything was
+// typed since a given point.
+- (void)typeText:(NSString *)text {
+    _typedTextCount += 1;
+    _lastTextIsIdleOnMatch = NO;
+    [self.delegate shellIntegrationWindowControllerSendText:text];
+}
+
 - (NSString *)catToUtilities:(BOOL)reallySend
-                 expectation:(out iTermExpectation **)expectation
-                  completion:(void (^)(void))completion {
+                 expectation:(inout iTermExpectation **)expectation
+                  completion:(void (^)(BOOL installed))completion {
     NSMutableString *result = [NSMutableString string];
     NSString *folder = [self.dotdir stringByAppendingPathComponent:@".iterm2"];
-    [result appendString:[self switchToHelperShell:reallySend expectation:expectation]];
-    [result appendString:[self sendText:[NSString stringWithFormat:@"mkdir %@; echo ok\n", folder]
+    [result appendString:[self enterHelperShell:reallySend expectation:expectation]];
+    // Each command waits for its own answer before the next is typed. The answers differ, and the
+    // empty quotes keep the echo of a command from looking like its answer. Output a command
+    // prints after the next line is typed can land in the middle of that line's echo, so an
+    // answer is matched anywhere in a row, not only as a whole line.
+    [result appendString:[self sendText:[NSString stringWithFormat:@"mkdir %@; echo it2-\"\"mkdir-done\n", folder]
                              reallySend:reallySend
-                             afterRegex:@"."
-                            expectation:expectation]];
-    [result appendString:[self sendText:[NSString stringWithFormat:@"cd %@; echo ok\n", folder]
-                             reallySend:reallySend
-                             afterRegex:@"^ok$"
-                            expectation:expectation]];
-    // OpenBSD has no base64 command, but it has b64decode.
-    [result appendString:[self sendText:@"if command -v base64 >/dev/null 2>&1; then base64 -d; else b64decode -r; fi <<'EOF'| tar xfz -\n"
-                             reallySend:reallySend
-                             afterRegex:@"^ok$"
+                             afterRegex:@"it2-mkdir-done"
                             expectation:expectation]];
     NSURL *url = [[NSBundle bundleForClass:self.class] URLForResource:@"utilities" withExtension:@"tgz"];
+    // If cd fails, nothing more may be typed but the exits.
+    NSString *cdCommand = [iTermShellIntegrationWindowController commandToEnterUtilitiesFolder:folder];
     if (!url) {
-        completion();
-        return nil;
+        completion(NO);
+        return result;
     }
-    NSData *data = [NSData dataWithContentsOfURL:url];
-    NSString *encoded = [data base64EncodedStringWithOptions:(NSDataBase64Encoding76CharacterLineLength | NSDataBase64EncodingEndLineWithLineFeed)];
-    [result appendString:[self sendText:encoded
-                             reallySend:reallySend
-                             afterRegex:@"^> "
-                            expectation:expectation]];
-    [result appendString:[self sendText:@"\nEOF\n"
-                             reallySend:reallySend
-                             afterRegex:@"."
-                            expectation:expectation]];
-    [result appendString:[self sendText:self.exitHelperShellString
-                             reallySend:reallySend
-                             afterRegex:@"> EOF"
+    if (!reallySend) {
+        [result appendString:cdCommand];
+        [result appendString:iTermShellIntegrationReceiveUtilitiesCommand];
+        [result appendString:[self encodedUtilitiesArchiveFromURL:url]];
+        [result appendString:self.exitHelperShellString];
+        return result;
+    }
+    // Whether to go on depends on sh's answer, so the rest is not chained after the command like
+    // the other texts: the answer's completion types it, or gives up.
+    __weak __typeof(self) weakSelf = self;
+    const NSUInteger generation = _cancellationGeneration;
+    [result appendString:[self sendText:cdCommand
+                             reallySend:YES
+                             afterRegex:@"it2-cd-(done|failed)"
                             expectation:expectation
+                                didSend:nil
                              completion:^(NSArray<NSString *> *captures) {
-        completion();
+        __strong __typeof(self) strongSelf = weakSelf;
+        if (!strongSelf || strongSelf->_cancellationGeneration != generation) {
+            DLog(@"Not answering the utilities cd command after a cancel");
+            return;
+        }
+        if (![captures[1] isEqualToString:@"done"]) {
+            DLog(@"cd to the utilities folder failed");
+            // sh printed the answer, so it is reading commands.
+            [strongSelf helperShellsBecameIdle];
+            [strongSelf exitIdleHelperShells];
+            completion(NO);
+            return;
+        }
+        [strongSelf receiveUtilitiesArchiveFromURL:url completion:completion];
     }]];
     return result;
+}
+
+- (NSString *)encodedUtilitiesArchiveFromURL:(NSURL *)url {
+    return [iTermShellIntegrationWindowController textToSendData:[NSData dataWithContentsOfURL:url]];
+}
+
+// Typed into the helper sh once it is in the utilities folder.
+- (void)receiveUtilitiesArchiveFromURL:(NSURL *)url
+                            completion:(void (^)(BOOL installed))completion {
+    // tar's exit status says whether the archive arrived intact, since gzip checks a CRC.
+    iTermExpectation *expectation = nil;
+    [self receiveText:[self encodedUtilitiesArchiveFromURL:url]
+          withCommand:iTermShellIntegrationReceiveUtilitiesCommand
+                 name:@"utilities"
+          resultRegex:@"it2-utilities-(installed|failed)"
+              success:@"installed"
+          expectation:&expectation
+           completion:completion];
+}
+
+// Types command, which makes the helper sh read lines from the tty up to one that is just EOF
+// into a file and then use it, and then text, the lines it reads, followed by that EOF line.
+// command prints it2-receiving-<name> once the file is open, or it2-cannot-receive-<name> if it
+// can't be created, and then an answer that resultRegex matches, whose first capture is success
+// if the file was used. Then the helpers exit, and completion says whether it was.
+//
+// Text typed into a here-document goes through sh's line editor, which switches the tty between
+// raw and canonical mode for every line, and on a busy system lines got lost or spliced, most
+// likely where input queued across a switch overflowed the tty's input buffer. An sh without a
+// line editor, such as dash, reads it in canonical mode, where the tty drops what goes past its
+// limit on a line. So a read loop in sh takes short lines instead: no line editor, and the tty
+// stays in canonical mode, where a full input buffer makes the writer wait instead of dropping
+// input. text is typed only once sh says the loop is reading into a file it created, so none of
+// it can reach sh's prompt and run as a command.
+- (void)receiveText:(NSString *)text
+        withCommand:(NSString *)command
+               name:(NSString *)name
+        resultRegex:(NSString *)resultRegex
+            success:(NSString *)success
+        expectation:(inout iTermExpectation **)expectation
+         completion:(void (^)(BOOL succeeded))completion {
+    // Whether to type text depends on sh's answer, so it is not chained after the command like
+    // the other texts: the answer's completion types it, or gives up.
+    __weak __typeof(self) weakSelf = self;
+    const NSUInteger generation = _cancellationGeneration;
+    [self sendText:command
+        reallySend:YES
+        afterRegex:[NSString stringWithFormat:@"it2-(receiving|cannot-receive)-%@", name]
+       expectation:expectation
+           didSend:[self setHelperStateWhenSent:iTermShellIntegrationHelperStateReceivingFile]
+        completion:^(NSArray<NSString *> *captures) {
+        __strong __typeof(self) strongSelf = weakSelf;
+        if (!strongSelf || strongSelf->_cancellationGeneration != generation) {
+            DLog(@"Not answering the %@ receive command after a cancel", name);
+            return;
+        }
+        if (![captures[1] isEqualToString:@"receiving"]) {
+            DLog(@"sh could not create the file to receive the %@ into", name);
+            // It is reading commands.
+            [strongSelf helperShellsBecameIdle];
+            [strongSelf exitIdleHelperShells];
+            if (completion) {
+                completion(NO);
+            }
+            return;
+        }
+        iTermExpectation *textExpectation = nil;
+        [strongSelf sendText:text
+                  reallySend:YES
+                  afterRegex:resultRegex
+                 expectation:&textExpectation
+                     didSend:^{
+            __strong __typeof(self) innerSelf = weakSelf;
+            if (innerSelf) {
+                innerSelf->_receivedTextTyped = YES;
+            }
+        }
+                  completion:^(NSArray<NSString *> *captures) {
+            __strong __typeof(self) innerSelf = weakSelf;
+            // sh printed the result, so it is reading commands again.
+            [innerSelf helperShellsBecameIdle];
+            [innerSelf exitIdleHelperShells];
+            DLog(@"Receiving the %@ ended with %@", name, captures[1]);
+            if (completion) {
+                completion([captures[1] isEqualToString:success]);
+            }
+        }];
+    }];
 }
 
 #pragma mark - Orchestration
@@ -667,13 +1588,7 @@ typedef NS_ENUM(NSUInteger, iTermShellIntegrationInstallationState) {
 }
 
 - (void)didDiscoverShell:(NSString *)shell dotdir:(NSString *)dotdir {
-    NSDictionary<NSString *, NSNumber *> *map = @{ @"tcsh": @(iTermShellIntegrationShellTcsh),
-                                                   @"bash": @(iTermShellIntegrationShellBash),
-                                                   @"zsh": @(iTermShellIntegrationShellZsh),
-                                                   @"fish": @(iTermShellIntegrationShellFish),
-                                                   @"xonsh": @(iTermShellIntegrationShellXonsh),
-                                                   @"nu": @(iTermShellIntegrationShellNu) };
-    NSNumber *number = map[shell ?: @""];
+    NSNumber *number = [iTermShellIntegrationWindowController shellsByName][shell ?: @""];
     self.dotdir = dotdir;
     if (number) {
         self.shell = number.integerValue;
@@ -685,9 +1600,14 @@ typedef NS_ENUM(NSUInteger, iTermShellIntegrationInstallationState) {
 
 - (NSString *)addScriptFiles:(BOOL)reallySend {
     __weak __typeof(self) weakSelf = self;
-    NSString *result = [self catToScript:reallySend completion:^{
-        if (reallySend) {
+    NSString *result = [self catToScript:reallySend completion:^(BOOL written) {
+        if (!reallySend) {
+            return;
+        }
+        if (written) {
             weakSelf.sendShellCommandsViewController.stage = 2;
+        } else {
+            weakSelf.sendShellCommandsViewController.writeFailed = YES;
         }
     }];
     return result;
@@ -699,10 +1619,15 @@ typedef NS_ENUM(NSUInteger, iTermShellIntegrationInstallationState) {
     __weak __typeof(self) weakSelf = self;
     [result appendString:[self catToUtilities:reallySend
                                   expectation:&expectation
-                                   completion:^{
-        if (reallySend) {
-            [weakSelf.sendShellCommandsViewController setBusy:NO];
+                                   completion:^(BOOL installed) {
+        if (!reallySend) {
+            return;
+        }
+        [weakSelf.sendShellCommandsViewController setBusy:NO];
+        if (installed) {
             weakSelf.sendShellCommandsViewController.stage = 3;
+        } else {
+            weakSelf.sendShellCommandsViewController.writeFailed = YES;
         }
     }]];
     if (reallySend) {
@@ -739,16 +1664,31 @@ typedef NS_ENUM(NSUInteger, iTermShellIntegrationInstallationState) {
     [self setState:iTermShellIntegrationInstallationStateDownloadAndRunConfirm];
 }
 
+// The install script served by iterm2.com is deployed separately from the app and may not yet
+// support every shell the app's bundled scripts do. nushell support was added to the app before
+// the website's installer, so when the website rejects nu, use the Internet-free installer.
++ (BOOL)internetFreeInstallerSupportsShellRejectedByWebsite:(NSString *)shell {
+    return [shell isEqualToString:iTermShellIntegrationShellString(iTermShellIntegrationShellNu)];
+}
+
 - (void)shellIntegrationInstallerReallyDownloadAndRun {
     [self.delegate shellIntegrationWindowControllerSendText:[self curlPipeBashCommand]];
     __weak __typeof(self) weakSelf = self;
 
-    [self expectRegularExpression:@"(^Done.$)|(^Your shell, .*, is not supported yet)"
+    [self expectRegularExpression:@"(^Done.$)|(^Your shell, (.*), is not supported yet)"
                             after:nil
                        willExpect:nil
                        completion:^(NSArray<NSString *> * _Nonnull captureGroups) {
         if ([captureGroups[0] hasPrefix:@"Your shell"]) {
-            [self.downloadAndRunViewController showShellUnsupportedError];
+            NSString *unsupportedShell = captureGroups.count > 3 ? captureGroups[3] : @"";
+            DLog(@"Online installer says %@ is unsupported", unsupportedShell);
+            if ([iTermShellIntegrationWindowController internetFreeInstallerSupportsShellRejectedByWebsite:unsupportedShell]) {
+                // The Internet-free installer bundles the script, so it works regardless of
+                // what the website's installer supports.
+                [weakSelf shellIntegrationInstallerSendShellCommands:-1];
+                return;
+            }
+            [weakSelf.downloadAndRunViewController showShellUnsupportedError];
         } else {
             [weakSelf next:nil];
         }
@@ -851,7 +1791,10 @@ typedef NS_ENUM(NSUInteger, iTermShellIntegrationInstallationState) {
 
 - (void)shellIntegrationInstallerSkipStage {
     const int stage = self.sendShellCommandsViewController.stage;
-    
+    if (stage < 1) {
+        // Every later stage needs the shell and dotfile directory that discovery finds.
+        return;
+    }
     const int lastStage = self.installUtilities ? 4 : 3;
     if (stage + 1 > lastStage) {
         return;
@@ -861,6 +1804,13 @@ typedef NS_ENUM(NSUInteger, iTermShellIntegrationInstallationState) {
 
 - (void)shellIntegrationInstallerCancelExpectations {
     [self cancelAllExpectations];
+}
+
+- (void)shellIntegrationInstallerContentSizeDidChange {
+    if (!self.currentViewController || self.currentViewController.view.superview != self.containerView) {
+        return;
+    }
+    [self fitWindowToCurrentView];
 }
 
 @end

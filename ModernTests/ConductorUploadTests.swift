@@ -2,6 +2,64 @@ import XCTest
 @testable import iTerm2SharedARC
 
 @MainActor
+final class ConductorUploadPreparationFailureTests: XCTestCase {
+    private final class Delegate: ConductorFileTransferDelegate {
+        func beginDownload(fileTransfer: ConductorFileTransfer) { XCTFail("Unexpected download") }
+        func beginUpload(fileTransfer: ConductorFileTransfer) { XCTFail("Unexpected upload") }
+    }
+
+    private func makeTransfer(localPath: String, delegate: Delegate) -> ConductorFileTransfer {
+        let path = SCPPath()
+        path.hostname = "example.com"
+        path.path = "/tmp/destination"
+        let transfer = ConductorFileTransfer(path: path, localPath: localPath, data: nil, delegate: delegate)
+        transfer.suppressesAutomaticMenu = true
+        return transfer
+    }
+
+    func testPreparationFailureRegistersNowAndFailsAsynchronously() {
+        let manager = FileTransferManager.sharedInstance()!
+        let delegate = Delegate()
+        let transfer = makeTransfer(localPath: "/tmp/folder", delegate: delegate)
+        let completed = expectation(description: "Completion called")
+        transfer.completionBlock = { success, error in
+            XCTAssertFalse(success)
+            XCTAssertEqual(error, "archive failed")
+            XCTAssertTrue(manager.files.contains(transfer))
+            completed.fulfill()
+        }
+        transfer.failBeforeUpload(reason: "archive failed")
+        // Registered right away, but failing (which can open the menu) waits for the caller to
+        // return.
+        XCTAssertTrue(manager.files.contains(transfer))
+        XCTAssertFalse(transfer.isStopped)
+        wait(for: [completed], timeout: 10)
+        XCTAssertEqual(transfer.error(), "archive failed")
+        XCTAssertTrue(transfer.isStopped)
+        manager.removeAllUploads()
+    }
+
+    func testUploadOfMissingFileRegistersFailedTransfer() {
+        let manager = FileTransferManager.sharedInstance()!
+        let delegate = Delegate()
+        let missing = NSTemporaryDirectory() + "/iTerm2-missing-\(UUID().uuidString)"
+        let transfer = makeTransfer(localPath: missing, delegate: delegate)
+        let completed = expectation(description: "Completion called")
+        transfer.completionBlock = { success, _ in
+            XCTAssertFalse(success)
+            XCTAssertTrue(manager.files.contains(transfer))
+            completed.fulfill()
+        }
+        transfer.upload()
+        XCTAssertTrue(manager.files.contains(transfer))
+        wait(for: [completed], timeout: 10)
+        XCTAssertNotNil(transfer.error())
+        XCTAssertTrue(transfer.isStopped)
+        manager.removeAllUploads()
+    }
+}
+
+@MainActor
 final class ConductorUploadTests: XCTestCase {
     func testScreenshotUsesThirtyOneRequestsAndPreservesBytes() async throws {
         let data = Data((0..<(490 * 1024)).map { UInt8(truncatingIfNeeded: $0) })
@@ -83,5 +141,185 @@ final class ConductorUploadTests: XCTestCase {
         } catch {
             XCTFail("Unexpected error: \(error)")
         }
+    }
+}
+
+@MainActor
+final class ConductorUploadNameReservationsTests: XCTestCase {
+    func testFreeNameIsUsedAsIs() async throws {
+        let reservations = ConductorUploadNameReservations()
+        let name = try await reservations.reserve(base: "/home/u/x.txt") { _ in false }
+        XCTAssertEqual(name, "/home/u/x.txt")
+    }
+
+    func testExistingNameGetsNumberedSuffix() async throws {
+        let reservations = ConductorUploadNameReservations()
+        let name = try await reservations.reserve(base: "/home/u/x.txt") { $0 == "/home/u/x.txt" }
+        XCTAssertEqual(name, "/home/u/x.txt (2)")
+    }
+
+    // Two files with the same basename in one batch: neither is on the remote yet when the names
+    // are chosen, so the second must not reuse the first one's name.
+    func testSameBasenameInOneBatchGetsDistinctNames() async throws {
+        let reservations = ConductorUploadNameReservations()
+        let first = try await reservations.reserve(base: "/home/u/x.txt") { _ in false }
+        let second = try await reservations.reserve(base: "/home/u/x.txt") { _ in false }
+        XCTAssertEqual(first, "/home/u/x.txt")
+        XCTAssertEqual(second, "/home/u/x.txt (2)")
+    }
+
+    func testSameBasenameInOneBatchWhenNameAlreadyExistsRemotely() async throws {
+        let reservations = ConductorUploadNameReservations()
+        let exists: (String) async throws -> Bool = { $0 == "/home/u/x.txt" }
+        let first = try await reservations.reserve(base: "/home/u/x.txt", exists: exists)
+        let second = try await reservations.reserve(base: "/home/u/x.txt", exists: exists)
+        XCTAssertEqual(first, "/home/u/x.txt (2)")
+        XCTAssertEqual(second, "/home/u/x.txt (3)")
+    }
+
+    // Both uploads ask about x.txt before either claims it, as happens when their existence
+    // checks are in flight at the same time. The stub holds every check until both have asked,
+    // so the interleaving does not depend on scheduling.
+    func testConcurrentReservationsWhoseChecksInterleaveGetDistinctNames() async throws {
+        let reservations = ConductorUploadNameReservations()
+        var waiters = [CheckedContinuation<Void, Never>]()
+        var asked = [String]()
+        let exists: (String) async throws -> Bool = { path in
+            asked.append(path)
+            if asked.count < 2 {
+                await withCheckedContinuation { waiters.append($0) }
+            } else {
+                waiters.forEach { $0.resume() }
+                waiters.removeAll()
+            }
+            return false
+        }
+        async let a = reservations.reserve(base: "/home/u/x.txt", exists: exists)
+        async let b = reservations.reserve(base: "/home/u/x.txt", exists: exists)
+        let names = try await [a, b]
+        XCTAssertEqual(asked.prefix(2), ["/home/u/x.txt", "/home/u/x.txt"])
+        XCTAssertEqual(Set(names.compactMap { $0 }), ["/home/u/x.txt", "/home/u/x.txt (2)"])
+    }
+
+    // B's check of x.txt is in flight while A claims x.txt, moves its file into place, and
+    // releases the claim. B's answer of "free" is stale by then, so B must not take x.txt.
+    func testStaleCheckAfterAnotherUploadPlacedTheFileIsRetried() async throws {
+        let reservations = ConductorUploadNameReservations()
+        var placed = Set<String>()
+        var heldCheck: CheckedContinuation<Bool, Never>?
+        var checkStarted: CheckedContinuation<Void, Never>?
+        var holdNextCheck = true
+        let exists: (String) async throws -> Bool = { path in
+            if holdNextCheck {
+                holdNextCheck = false
+                return await withCheckedContinuation { continuation in
+                    heldCheck = continuation
+                    checkStarted?.resume()
+                    checkStarted = nil
+                }
+            }
+            return placed.contains(path)
+        }
+        var b: Task<String?, Error>?
+        await withCheckedContinuation { started in
+            checkStarted = started
+            b = Task { @MainActor in
+                try await reservations.reserve(base: "/home/u/x.txt", exists: exists)
+            }
+        }
+        let a = try await reservations.reserve(base: "/home/u/x.txt", exists: exists)
+        XCTAssertEqual(a, "/home/u/x.txt")
+        placed.insert(a!)
+        reservations.release(a!)
+        // Answer B's held check as it would have been answered when it was sent.
+        heldCheck!.resume(returning: false)
+        let bName = try await b!.value
+        XCTAssertEqual(bName, "/home/u/x.txt (2)")
+    }
+
+    func testReleasedNameCanBeChosenAgain() async throws {
+        let reservations = ConductorUploadNameReservations()
+        let first = try await reservations.reserve(base: "/home/u/x.txt") { _ in false }
+        reservations.release(first!)
+        let second = try await reservations.reserve(base: "/home/u/x.txt") { _ in false }
+        XCTAssertEqual(second, "/home/u/x.txt")
+    }
+
+    func testGivesUpAfterMaxAttempts() async throws {
+        let reservations = ConductorUploadNameReservations()
+        let name = try await reservations.reserve(base: "/home/u/x.txt", maxAttempts: 3) { _ in true }
+        XCTAssertNil(name)
+        XCTAssertTrue(reservations.reserved.isEmpty)
+    }
+}
+
+// Picking an upload's remote name from stat results. Only a definite "not found" may count as a
+// free name; any other failure must stop the upload rather than risk overwriting a file.
+@MainActor
+final class ConductorUploadRemoteNameCheckTests: XCTestCase {
+    private enum FakeRemote {
+        case exists
+        case notFound
+        case failure(Error)
+    }
+
+    private func stat(_ remote: [String: FakeRemote]) -> (String) async throws -> Void {
+        return { path in
+            switch remote[path] ?? .notFound {
+            case .exists:
+                return
+            case .notFound:
+                throw SSHEndpointException.fileNotFound
+            case .failure(let error):
+                throw error
+            }
+        }
+    }
+
+    private func pickName(_ remote: [String: FakeRemote]) async throws -> String? {
+        let reservations = ConductorUploadNameReservations()
+        let stat = stat(remote)
+        return try await reservations.reserve(base: "/home/u/x.txt") { path in
+            try await ConductorUpload.remotePathExists(path, stat: stat)
+        }
+    }
+
+    func testNotFoundIsFree() async throws {
+        let name = try await pickName([:])
+        XCTAssertEqual(name, "/home/u/x.txt")
+    }
+
+    func testExistingFileIsSkipped() async throws {
+        let name = try await pickName(["/home/u/x.txt": .exists])
+        XCTAssertEqual(name, "/home/u/x.txt (2)")
+    }
+
+    func testPermissionErrorFailsInsteadOfChoosingTheName() async throws {
+        do {
+            let name = try await pickName(["/home/u/x.txt": .failure(SSHEndpointException.fileOperationFailed)])
+            XCTFail("Expected an error, got \(String(describing: name))")
+        } catch let error as ConductorUpload.NameCheckFailed {
+            XCTAssertEqual(error.path, "/home/u/x.txt")
+        }
+    }
+
+    func testConnectionErrorFailsInsteadOfChoosingTheName() async throws {
+        do {
+            let name = try await pickName(["/home/u/x.txt": .exists,
+                                           "/home/u/x.txt (2)": .failure(SSHEndpointException.connectionClosed)])
+            XCTFail("Expected an error, got \(String(describing: name))")
+        } catch let error as ConductorUpload.NameCheckFailed {
+            XCTAssertEqual(error.path, "/home/u/x.txt (2)")
+            XCTAssertTrue(error.localizedDescription.contains("x.txt (2)"))
+        }
+    }
+
+    func testFailedCheckLeavesNoReservation() async throws {
+        let reservations = ConductorUploadNameReservations()
+        let stat = stat(["/home/u/x.txt": .failure(SSHEndpointException.connectionClosed)])
+        _ = try? await reservations.reserve(base: "/home/u/x.txt") { path in
+            try await ConductorUpload.remotePathExists(path, stat: stat)
+        }
+        XCTAssertTrue(reservations.reserved.isEmpty)
     }
 }
