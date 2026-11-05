@@ -7,6 +7,22 @@ a patch fixes, a minor adds features, a major changes a saved setup.
 Each version's section is also its GitHub release notes: `Shellforge/scripts/release.sh` publishes
 it and refuses to release a version that has none.
 
+## 0.7.1 — unreleased
+
+### Changed
+
+- **iTerm2 brought up to date** with its latest development version, including its fixes for a
+  crash drawing the cursor on HDR displays, garbled zoomed tmux panes, the hotkey window after a
+  fast user switch, and nushell’s prompt.
+
+### Fixed
+
+- **A window that opens without being brought forward types into its terminal.** Keyboard focus
+  went to the sidebar’s list until you clicked the terminal, and changing the window’s style
+  (Window › Window Style) kept it there.
+- **The sidebar no longer stops a window from shrinking.** Under iTerm2’s newer window layout, the
+  sidebar’s width and the floating sidebar’s margins could become the window’s minimum size.
+
 ## 0.7.0 — 2026-10-28
 
 ### Changed
