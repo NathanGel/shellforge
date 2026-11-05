@@ -38887,7 +38887,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "필요한 파일이 없거나 손상된 것으로 보이지만, 의외로 iTerm2의 코드 서명은 유효합니다. https://iterm2.com/bugs 에서 버그를 보고하십시오."
+            "value" : "필요한 파일이 없거나 손상된 것으로 보이지만, 의외로 iTerm2의 코드 서명은 유효합니다. https://github.com/NathanGel/shellforge/issues/new/choose 에서 버그를 보고하십시오."
           }
         },
         "pt-BR" : {
@@ -83690,7 +83690,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "필요한 파일이 없거나 손상된 것으로 보이지만, 의외로 iTerm2의 코드 서명은 유효합니다. https://iterm2.com/bugs 에서 버그를 보고하십시오."
+            "value" : "필요한 파일이 없거나 손상된 것으로 보이지만, 의외로 iTerm2의 코드 서명은 유효합니다. https://github.com/NathanGel/shellforge/issues/new/choose 에서 버그를 보고하십시오."
           }
         },
         "pt-BR" : {
@@ -85898,7 +85898,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "https://iterm2.com/bugs 에 버그 보고서를 제출하십시오. 의존성을 업그레이드하는 동안 다음 오류가 발생했습니다: %@"
+            "value" : "https://github.com/NathanGel/shellforge/issues/new/choose 에 버그 보고서를 제출하십시오. 의존성을 업그레이드하는 동안 다음 오류가 발생했습니다: %@"
           }
         },
         "pt-BR" : {
@@ -106953,7 +106953,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "버그가 발생했습니다: %@. https://iterm2.com/bugs 에서 보고하십시오."
+            "value" : "버그가 발생했습니다: %@. https://github.com/NathanGel/shellforge/issues/new/choose 에서 보고하십시오."
           }
         },
         "pt-BR" : {
