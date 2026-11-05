@@ -1196,7 +1196,9 @@ typedef struct {
     if (wantsTitleBackgroundView) {
         if (!_titleBackgroundView) {
             _titleBackgroundView = [[iTermLayerBackedSolidColorView alloc] initWithFrame:self.frameForTitleBackgroundView];
-            _titleBackgroundView.autoresizingMask = NSViewWidthSizable | NSViewMinYMargin;
+            // Shellforge: the strip starts after the sidebar, so its left margin flexes too, or the
+            // sidebar's width would become a minimum window width under the layout engine.
+            _titleBackgroundView.autoresizingMask = NSViewWidthSizable | NSViewMinXMargin | NSViewMinYMargin;
         }
         // Shellforge: beside a floating sidebar the strip is the terminal's own colour.
         _titleBackgroundView.color = [_delegate rootTerminalViewShellforgeSurfaceColorForStrip:YES] ?:
