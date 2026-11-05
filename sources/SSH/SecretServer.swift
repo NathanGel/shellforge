@@ -16,6 +16,8 @@ class SecretServer: NSObject {
     }
     private let socketURL: URL
     private let unixSocket: iTermSocket
+    // Accessed from the accept queue and the main thread.
+    private let mutex = Mutex()
     private var secrets = Set<String>()
     private static let defaultURLBase = URL(fileURLWithPath: FileManager.default.homeDirectoryDotDir() ?? NSHomeDirectory())
     private static let defaultURL = defaultURLBase.appendingPathComponents(["sockets", "secrets"])
@@ -51,12 +53,11 @@ class SecretServer: NSObject {
         }
     }
 
-    @objc func check(_ secret: String) -> Bool {
-        if secrets.contains(secret) {
-            secrets.remove(secret)
-            return true
+    // Returns whether the secret is valid. Each secret can be claimed only once.
+    @objc func claim(_ secret: String) -> Bool {
+        return mutex.sync {
+            return secrets.remove(secret) != nil
         }
-        return false
     }
 
     private func didAccept(_ fd: Int32) {
@@ -65,7 +66,9 @@ class SecretServer: NSObject {
             guard let secret = makeSecret() else {
                 return
             }
-            secrets.insert(secret)
+            mutex.sync {
+                _ = secrets.insert(secret)
+            }
             try? ObjCTry {
                 fileHandle.write(secret.data(using: .utf8)!)
             }

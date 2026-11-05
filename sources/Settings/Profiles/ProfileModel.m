@@ -43,6 +43,7 @@ NSString *const kReloadAllProfiles = @"kReloadAllProfiles";
 NSString *const iTermProfileModelNewWindowMenuItemIdentifierPrefix = @"NewWindow:";
 NSString *const iTermProfileModelNewTabMenuItemIdentifierPrefix = @"NewTab:";
 NSString *const iTermProfileDidChange = @"iTermProfileDidChange";
+NSString *const iTermProfileModelDidCreateTmuxProfileNotification = @"iTermProfileModelDidCreateTmuxProfileNotification";
 
 // Set to true if a bookmark was changed automatically due to migration to a new
 // standard.
@@ -189,7 +190,11 @@ static NSInteger gLessLoggingCount;
                          forKey:KEY_SCROLLBACK_LINES];
         [self addBookmark:tmuxProfile];
         [self postChangeNotification];
-        profile = tmuxProfile;
+        NSString *guid = tmuxProfile[KEY_GUID];
+        [[NSNotificationCenter defaultCenter] postNotificationName:iTermProfileModelDidCreateTmuxProfileNotification
+                                                            object:guid];
+        // An observer may have changed it (adding triggers, say), so return what is stored now.
+        profile = [self bookmarkWithGuid:guid] ?: tmuxProfile;
     }
     if (profile.profileIsBrowser) {
         MutableProfile *sanitized = [[profile mutableCopy] autorelease];
@@ -663,17 +668,23 @@ static NSInteger gLessLoggingCount;
     if (needJournal) {
         [journal_ addObject:[BookmarkJournalEntry journalWithAction:JOURNAL_REMOVE bookmark:[bookmarks_ objectAtIndex:i] model:self identifier:nil]];
     }
-    if (gLessLoggingCount > 0) {
+    // The stack trace exists to diagnose profiles landing in the wrong ProfileModel, which only
+    // happens when the GUID changes. Replacing a profile with a new version of itself (as escape
+    // sequences that change colors do, possibly many times per second) does not need one, and
+    // symbolicating the trace is expensive. Issue 13192.
+    NSString *beforeGuid = bookmarks_[i][KEY_GUID];
+    const BOOL guidChanged = ![NSObject object:beforeGuid isEqualToObject:bookmark[KEY_GUID]];
+    if (gLessLoggingCount > 0 || !guidChanged) {
         [ProfileModel log:[NSString stringWithFormat:@"%@: Replace bookmark at index %@ (%@) with %@",
                            self,
                            @(i),
-                           bookmarks_[i][KEY_GUID],
+                           beforeGuid,
                            bookmark[KEY_GUID]]];
     } else {
         [ProfileModel log:[NSString stringWithFormat:@"%@: Replace bookmark at index %@ (%@) with %@\n%@",
                            self,
                            @(i),
-                           bookmarks_[i][KEY_GUID],
+                           beforeGuid,
                            bookmark[KEY_GUID],
                            [NSThread callStackSymbols]]];
     }

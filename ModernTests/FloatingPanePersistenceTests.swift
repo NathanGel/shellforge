@@ -99,7 +99,7 @@ final class FloatingPanePersistenceTests: XCTestCase {
     /// Builds a new tab from this tab's arrangement and puts it in the window. With `revive`, the
     /// tab's own sessions are matched up as undo close does; without, new sessions are made from the
     /// arrangement as Duplicate Tab and restoring an arrangement do.
-    private func roundTrip(revive: Bool = true) -> PTYTab {
+    private func roundTrip(revive: Bool = true, named arrangementName: String? = nil) -> PTYTab {
         guard let arrangement = tab.arrangement(), let sessions = tab.sessions() else {
             it_fatalError("No arrangement")
         }
@@ -113,7 +113,7 @@ final class FloatingPanePersistenceTests: XCTestCase {
             sessionMap = nil
         }
         guard let restored = PTYTab(arrangement: arrangement,
-                                    named: nil,
+                                    named: arrangementName,
                                     inTerminal: fixture.terminal,
                                     hasFlexibleView: false,
                                     viewMap: nil,
@@ -191,6 +191,33 @@ final class FloatingPanePersistenceTests: XCTestCase {
         XCTAssertEqual(copy.columns, 30)
         XCTAssertEqual(copy.rows, 8)
         XCTAssertEqual(copyPane.outlineFrame, frame)
+    }
+
+    /// QA finding F-053: a float restored from a saved arrangement knows which arrangement it came
+    /// from, as a tiled pane does, so Change Profile in Arrangement works for it.
+    func testFloatsFromASavedArrangementKnowItsName() {
+        _ = fixture.addFloat(frame: NSRect(x: 40, y: 40, width: 300, height: 200))
+        let restored = roundTrip(revive: false, named: "Saved")
+        guard let copy = restored.floatingSessions()?.first, let tiled = restored.tiledSessions()?.first else {
+            XCTFail("No restored sessions")
+            return
+        }
+        // Each session records the name once its job has launched.
+        func name(_ session: PTYSession) -> String? {
+            return session.value(forKey: "_originatingArrangementName") as? String
+        }
+        let launched = expectation(description: "both sessions launched")
+        func check() {
+            if name(tiled) != nil && name(copy) != nil {
+                launched.fulfill()
+            } else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: check)
+            }
+        }
+        check()
+        wait(for: [launched], timeout: 30)
+        XCTAssertEqual(name(tiled), "Saved", "test setup: the tiled pane knows")
+        XCTAssertEqual(name(copy), "Saved")
     }
 
     /// Undo close of a tab: the window removes the tab, then adds one made from its arrangement with
@@ -321,6 +348,78 @@ final class FloatingPanePersistenceTests: XCTestCase {
         XCTAssertTrue(tab.activeSession === float)
     }
 
+    /// QA finding F-148: undo close of a live maximized float brings it back maximized, and
+    /// unmaximizing returns it to where it was before it was maximized.
+    func testUndoClosingAMaximizedFloatKeepsItsFrameFromBeforeMaximizing() {
+        let float = fixture.addFloat(frame: NSRect(x: 40, y: 40, width: 300, height: 200))
+        guard let frame = tab.floatingPane(for: float)?.outlineFrame else {
+            XCTFail("No pane")
+            return
+        }
+        tab.setActiveSession(float)
+        fixture.terminal.toggleMaximizeActivePane()
+        guard let arrangement = tab.arrangement() else {
+            XCTFail("No arrangement")
+            return
+        }
+        tab.remove(float)
+
+        fixture.terminal.recreateTab(tab, withArrangement: arrangement, sessions: [float], archives: nil, revive: false)
+
+        guard let pane = tab.floatingPane(for: float) else {
+            XCTFail("No revived pane")
+            return
+        }
+        XCTAssertTrue(pane.isMaximized, "the float comes back maximized")
+        tab.toggleMaximizeSession(float)
+        XCTAssertEqual(pane.outlineFrame, frame, "unmaximizing goes back to the frame from before maximizing")
+    }
+
+    /// QA finding F-428: maximizing a float sends it behind the other floats. Undo Close put it
+    /// back in front of them, so the tab-sized float hid them all.
+    func testUndoClosingAMaximizedFloatPutsItBackBehindTheOtherFloats() {
+        let other = fixture.addFloat(frame: NSRect(x: 40, y: 40, width: 300, height: 200))
+        let maximized = fixture.addFloat(frame: NSRect(x: 200, y: 150, width: 300, height: 200))
+        tab.setActiveSession(maximized)
+        fixture.terminal.toggleMaximizeActivePane()
+        XCTAssertEqual(tab.floatingSessions(), [maximized, other], "maximizing sends it to the back")
+        guard let arrangement = tab.arrangement() else {
+            XCTFail("No arrangement")
+            return
+        }
+        tab.remove(maximized)
+
+        fixture.terminal.recreateTab(tab, withArrangement: arrangement, sessions: [maximized], archives: nil, revive: false)
+
+        XCTAssertEqual(tab.floatingSessions(), [maximized, other], "it goes back behind the other float")
+        XCTAssertEqual(tab.floatingPane(for: maximized)?.isMaximized, true)
+        XCTAssertTrue(tab.activeSession === maximized)
+        guard let pane = tab.floatingPane(for: maximized), let otherPane = tab.floatingPane(for: other),
+              let subviews = pane.superview?.subviews,
+              let paneIndex = subviews.firstIndex(of: pane),
+              let otherIndex = subviews.firstIndex(of: otherPane) else {
+            XCTFail("Floats are not in the container")
+            return
+        }
+        XCTAssertLessThan(paneIndex, otherIndex, "it is drawn behind the other float")
+    }
+
+    /// QA finding F-428: a float closed from the middle of the stack comes back to the middle.
+    func testUndoClosingAFloatRestoresItsPlaceInTheZOrder() {
+        let back = fixture.addFloat(frame: NSRect(x: 40, y: 40, width: 300, height: 200))
+        let middle = fixture.addFloat(frame: NSRect(x: 120, y: 90, width: 300, height: 200))
+        let front = fixture.addFloat(frame: NSRect(x: 200, y: 150, width: 300, height: 200))
+        guard let arrangement = tab.arrangement() else {
+            XCTFail("No arrangement")
+            return
+        }
+        tab.remove(middle)
+
+        fixture.terminal.recreateTab(tab, withArrangement: arrangement, sessions: [middle], archives: nil, revive: false)
+
+        XCTAssertEqual(tab.floatingSessions(), [back, middle, front])
+    }
+
     func testUndoClosingATiledPaneLeavesLiveFloatsAlone() {
         guard let tiled = tab.tiledSessions()?.first else {
             XCTFail("No tiled session")
@@ -339,5 +438,136 @@ final class FloatingPanePersistenceTests: XCTestCase {
         XCTAssertEqual(tab.tiledSessions(), [tiled, second])
         XCTAssertEqual(tab.floatingSessions(), [float])
         XCTAssertTrue(tab.floatingPane(for: float) === pane, "the live float was not rebuilt")
+    }
+
+    // MARK: - Undo close from an archive
+
+    // Writes the archive Archive On Closure writes for `session`, which has already left its tab,
+    // and returns its path.
+    private func writeArchive(of session: PTYSession) throws -> String {
+        let archive = try XCTUnwrap(fixture.terminal.arrangement(with: session) as NSDictionary?)
+        let path = NSTemporaryDirectory() + UUID().uuidString + ".itermarchive"
+        XCTAssertTrue(archive.write(toFile: path, atomically: true))
+        addTeardownBlock { try? FileManager.default.removeItem(atPath: path) }
+        return path
+    }
+
+    // Closes `float` and lets its undo window run out: only its archive is left.
+    private func closeAndArchive(_ float: PTYSession, in tab: PTYTab) throws -> iTermUndoCloseArchives {
+        tab.remove(float)
+        return iTermUndoCloseArchives(pathsBySessionGUID: [float.guid: try writeArchive(of: float)])
+    }
+
+    /// QA finding F-004: a float closed with Archive On Closure on, whose undo window ran out, is
+    /// restored from its archive as a float in its tab, where it was.
+    func testUndoClosingAnArchivedFloatPutsItBackAsAFloat() throws {
+        let target = tab
+        let tiled = try XCTUnwrap(target.tiledSessions()?.first)
+        let float = fixture.addFloat(frame: NSRect(x: 40, y: 40, width: 300, height: 200))
+        let frame = target.floatingPane(for: float)?.outlineFrame
+        let arrangement = try XCTUnwrap(target.arrangement())
+        let archives = try closeAndArchive(float, in: target)
+        let numberOfTabs = fixture.terminal.numberOfTabs()
+
+        fixture.terminal.recreateTab(target, withArrangement: arrangement, sessions: [], archives: archives, revive: true)
+
+        XCTAssertEqual(fixture.terminal.numberOfTabs(), numberOfTabs, "no tab is added for the archive")
+        XCTAssertEqual(target.tiledSessions(), [tiled], "the tiled layout is untouched")
+        XCTAssertEqual(target.floatingSessions()?.count, 1, "the archive comes back as a float")
+        let restored = try XCTUnwrap(target.floatingSessions()?.first)
+        XCTAssertTrue(restored.isArchive)
+        XCTAssertEqual(target.floatingPane(for: restored)?.outlineFrame, frame)
+        XCTAssertTrue(target.activeSession === restored)
+    }
+
+    /// QA finding F-428: an archived maximized float comes back behind the other floats, where
+    /// maximizing put it.
+    func testUndoClosingAnArchivedMaximizedFloatPutsItBackBehindTheOtherFloats() throws {
+        let target = tab
+        let other = fixture.addFloat(frame: NSRect(x: 40, y: 40, width: 300, height: 200))
+        let maximized = fixture.addFloat(frame: NSRect(x: 200, y: 150, width: 300, height: 200))
+        target.setActiveSession(maximized)
+        fixture.terminal.toggleMaximizeActivePane()
+        let arrangement = try XCTUnwrap(target.arrangement())
+        let archives = try closeAndArchive(maximized, in: target)
+
+        fixture.terminal.recreateTab(target, withArrangement: arrangement, sessions: [], archives: archives, revive: true)
+
+        let floats = try XCTUnwrap(target.floatingSessions())
+        XCTAssertEqual(floats.count, 2)
+        XCTAssertTrue(floats.first?.isArchive == true, "the archive comes back behind")
+        XCTAssertTrue(floats.last === other)
+        XCTAssertEqual(target.floatingPane(for: floats[0])?.isMaximized, true)
+        guard let pane = target.floatingPane(for: floats[0]), let otherPane = target.floatingPane(for: other),
+              let subviews = pane.superview?.subviews,
+              let paneIndex = subviews.firstIndex(of: pane),
+              let otherIndex = subviews.firstIndex(of: otherPane) else {
+            XCTFail("Floats are not in the container")
+            return
+        }
+        XCTAssertLessThan(paneIndex, otherIndex, "it is drawn behind the other float")
+    }
+
+    /// Tiled panes added after the float closed are left alone, and the archive is not also given a
+    /// tab of its own.
+    func testUndoClosingAnArchivedFloatLeavesTiledPanesAddedSinceAlone() throws {
+        let target = tab
+        let tiled = try XCTUnwrap(target.tiledSessions()?.first)
+        let float = fixture.addFloat(frame: NSRect(x: 40, y: 40, width: 300, height: 200))
+        let arrangement = try XCTUnwrap(target.arrangement())
+        let archives = try closeAndArchive(float, in: target)
+        let added = fixture.split(tiled, vertically: true)
+        let numberOfTabs = fixture.terminal.numberOfTabs()
+
+        fixture.terminal.recreateTab(target, withArrangement: arrangement, sessions: [], archives: archives, revive: true)
+
+        XCTAssertEqual(target.tiledSessions(), [tiled, added])
+        XCTAssertEqual(target.floatingSessions()?.count, 1, "the archive comes back as a float")
+        XCTAssertEqual(fixture.terminal.numberOfTabs(), numberOfTabs, "no tab is added for the archive")
+    }
+
+    /// An archived float that can't be put back as a float gets a tab of its own rather than being
+    /// lost.
+    func testAnArchivedFloatThatCannotBeRestoredAsAFloatGetsItsOwnTab() throws {
+        let target = tab
+        let tiled = target.tiledSessions()
+        let float = fixture.addFloat(frame: NSRect(x: 40, y: 40, width: 300, height: 200))
+        var arrangement = try XCTUnwrap(target.arrangement())
+        // A float record whose node is not a session view can't be restored as a float. The record
+        // still matches the float's GUID because its session arrangement is kept.
+        var records = try XCTUnwrap(arrangement["Floating Panes"] as? [[AnyHashable: Any]])
+        var node = try XCTUnwrap(records[0]["Node"] as? [AnyHashable: Any])
+        node[TAB_ARRANGEMENT_VIEW_TYPE] = VIEW_TYPE_SPLITTER
+        records[0]["Node"] = node
+        arrangement["Floating Panes"] = records
+        let archives = try closeAndArchive(float, in: target)
+        let numberOfTabs = fixture.terminal.numberOfTabs()
+
+        fixture.terminal.recreateTab(target, withArrangement: arrangement, sessions: [], archives: archives, revive: true)
+
+        XCTAssertEqual(target.floatingSessions()?.count, 0)
+        XCTAssertEqual(target.tiledSessions(), tiled, "the tiled layout is untouched")
+        XCTAssertEqual(fixture.terminal.numberOfTabs(), numberOfTabs + 1)
+        let added = try XCTUnwrap(fixture.terminal.tabs().last)
+        XCTAssertEqual(added.sessions()?.count, 1)
+        XCTAssertTrue(added.sessions()?.first?.isArchive ?? false)
+    }
+
+    /// When the float's tab is gone, the archive gets a tab of its own, as a tiled pane's does.
+    func testAnArchivedFloatWhoseTabIsGoneGetsItsOwnTab() throws {
+        let float = fixture.addFloat(frame: NSRect(x: 40, y: 40, width: 300, height: 200))
+        let closing = tab
+        let arrangement = try XCTUnwrap(closing.arrangement())
+        let archives = try closeAndArchive(float, in: closing)
+        _ = fixture.addTab()
+        fixture.terminal.perform(NSSelectorFromString("removeTab:"), with: closing)
+        let numberOfTabs = fixture.terminal.numberOfTabs()
+
+        fixture.terminal.recreateTab(closing, withArrangement: arrangement, sessions: [], archives: archives, revive: true)
+
+        XCTAssertEqual(fixture.terminal.numberOfTabs(), numberOfTabs + 1)
+        let added = try XCTUnwrap(fixture.terminal.tabs().last)
+        XCTAssertEqual(added.sessions()?.count, 1)
+        XCTAssertTrue(added.sessions()?.first?.isArchive ?? false)
     }
 }

@@ -18,6 +18,8 @@
 #import "iTermAdvancedSettingsModel.h"
 #import "iTermUserDefaultsObserver.h"
 #import <objc/runtime.h>
+#import <os/lock.h>
+#import <stdatomic.h>
 
 
 NSString *const kAdvancedSettingIdentifier = @"kAdvancedSettingIdentifier";
@@ -30,6 +32,35 @@ NSString *const kAdvancedSettingOptions = @"kAdvancedSettingOptions";
 NSString *const kAdvancedSettingCategory = @"kAdvancedSettingCategory";
 
 NSString *const iTermAdvancedSettingsDidChange = @"iTermAdvancedSettingsDidChange";
+
+// Settings are read on every thread (mutation queues, parser threads) and changed on whichever
+// thread reloads them, so each value lives in an atomic slot that readers load without a lock.
+typedef _Atomic(void *) iTermAdvancedSettingSlot;
+
+static id iTermAdvancedSettingLoad(iTermAdvancedSettingSlot *slot) {
+    return (__bridge id)atomic_load_explicit(slot, memory_order_acquire);
+}
+
+// A replaced value is never released: a reader may have loaded it and not retained it yet. Values
+// are swapped only when they change, which happens when someone edits a setting, so few are kept.
+static void iTermAdvancedSettingStore(iTermAdvancedSettingSlot *slot, id value) {
+    static os_unfair_lock lock = OS_UNFAIR_LOCK_INIT;
+    static NSMutableArray *replaced;
+    os_unfair_lock_lock(&lock);
+    id current = iTermAdvancedSettingLoad(slot);
+    if (current == value || [current isEqual:value]) {
+        os_unfair_lock_unlock(&lock);
+        return;
+    }
+    void *old = atomic_exchange_explicit(slot, (__bridge_retained void *)value, memory_order_acq_rel);
+    if (old) {
+        if (!replaced) {
+            replaced = [NSMutableArray array];
+        }
+        [replaced addObject:(__bridge_transfer id)old];
+    }
+    os_unfair_lock_unlock(&lock);
+}
 
 static inline BOOL iTermAdvancedSettingsModelTransformBool(id object) {
     return [object boolValue];
@@ -100,7 +131,7 @@ static inline id iTermAdvancedSettingsModelInverseTransformString(NSString *valu
 // transformation: Name of a function (as a token) that converts podtype to id
 // inverseTransformation: Name of a function (as a token) that converts id to podtype
 #define DEFINE_BOILERPLATE(name, podtype, type, default, category, description, transformation, inverseTransformation) \
-static id sAdvancedSetting_##name; \
+static iTermAdvancedSettingSlot sAdvancedSetting_##name; \
 + (NSDictionary *)advancedSettingsModelDictionary_##name { \
     return @{ kAdvancedSettingIdentifier: [@#name stringByCapitalizingFirstLetter], \
               kAdvancedSettingType: @(type), \
@@ -115,11 +146,11 @@ static id sAdvancedSetting_##name; \
 + (NSString *)load_##name { \
     NSString *key = [self name##UserDefaultsKey]; \
     id valueFromUserDefaults = [[iTermUserDefaults userDefaults] objectForKey:key]; \
-    sAdvancedSetting_##name = valueFromUserDefaults ?: inverseTransformation(default); \
+    iTermAdvancedSettingStore(&sAdvancedSetting_##name, valueFromUserDefaults ?: inverseTransformation(default)); \
     return key; \
 } \
 + (podtype)name { \
-    return transformation(sAdvancedSetting_##name); \
+    return transformation(iTermAdvancedSettingLoad(&sAdvancedSetting_##name)); \
 }
 
 // See DEFINE_BOILERPLATE.
@@ -127,14 +158,15 @@ static id sAdvancedSetting_##name; \
 #define DEFINE_SETTABLE_BOILERPLATE(name, capitalizedName, podtype, type, default, category, description, transformation, inverseTransformation) \
 DEFINE_BOILERPLATE(name, podtype, type, default, category, description, transformation, inverseTransformation) \
 + (void)set##capitalizedName :(podtype)newValue { \
-    sAdvancedSetting_##name = inverseTransformation(newValue); \
-    [[iTermUserDefaults userDefaults] setObject:sAdvancedSetting_##name forKey:@#capitalizedName]; \
+    id object = inverseTransformation(newValue); \
+    iTermAdvancedSettingStore(&sAdvancedSetting_##name, object); \
+    [[iTermUserDefaults userDefaults] setObject:object forKey:@#capitalizedName]; \
 }
 
 #if ITERM2_SHARED_ARC
 
 #define DEFINE_SECURE_BOILERPLATE(name, capitalizedName, podtype, type, category, description, transformation, inverseTransformation) \
-static podtype sAdvancedSetting_##name; \
+static iTermAdvancedSettingSlot sAdvancedSetting_##name; \
 + (NSDictionary *)advancedSettingsModelDictionary_##name { \
     podtype defaultValue = iTermSecureUserDefaults.instance.defaultValue_##name; \
     return @{ kAdvancedSettingIdentifier: [@#name stringByCapitalizingFirstLetter], \
@@ -153,14 +185,14 @@ static podtype sAdvancedSetting_##name; \
 + (NSString *)load_##name { \
     NSString *key = [self name##UserDefaultsKey]; \
     podtype valueFromUserDefaults = [[iTermSecureUserDefaults instance] name]; \
-    sAdvancedSetting_##name = valueFromUserDefaults; \
+    iTermAdvancedSettingStore(&sAdvancedSetting_##name, inverseTransformation(valueFromUserDefaults)); \
     return key; \
 } \
 + (podtype)name { \
-    return sAdvancedSetting_##name; \
+    return transformation(iTermAdvancedSettingLoad(&sAdvancedSetting_##name)); \
 } \
 + (id)object_##name { \
-    return inverseTransformation(sAdvancedSetting_##name); \
+    return iTermAdvancedSettingLoad(&sAdvancedSetting_##name); \
 } \
 + (void)set##capitalizedName :(podtype)newValue { \
     [[iTermSecureUserDefaults instance] set##capitalizedName :newValue]; \
@@ -169,7 +201,7 @@ static podtype sAdvancedSetting_##name; \
 + (id)setFromObject_##capitalizedName :(id)newValue { \
     [[iTermSecureUserDefaults instance] set##capitalizedName :transformation(newValue)]; \
     [self load_##name]; \
-    return inverseTransformation(sAdvancedSetting_##name); \
+    return iTermAdvancedSettingLoad(&sAdvancedSetting_##name); \
 }
 
 
@@ -215,7 +247,7 @@ DEFINE_BOILERPLATE(name, int *, kiTermAdvancedSettingTypeOptionalInteger, theDef
 // stored value is the index of the selected title. Because the value is just an
 // int, a setting that used to be DEFINE_BOOL migrates transparently (NO=0, YES=1).
 #define DEFINE_INT_ENUM(name, theDefault, theOptions, theCategory, theDescription) \
-static id sAdvancedSetting_##name; \
+static iTermAdvancedSettingSlot sAdvancedSetting_##name; \
 + (NSDictionary *)advancedSettingsModelDictionary_##name { \
     return @{ kAdvancedSettingIdentifier: [@#name stringByCapitalizingFirstLetter], \
               kAdvancedSettingType: @(kiTermAdvancedSettingTypeIntEnum), \
@@ -230,11 +262,11 @@ static id sAdvancedSetting_##name; \
 + (NSString *)load_##name { \
     NSString *key = [self name##UserDefaultsKey]; \
     id valueFromUserDefaults = [[iTermUserDefaults userDefaults] objectForKey:key]; \
-    sAdvancedSetting_##name = valueFromUserDefaults ?: @(theDefault); \
+    iTermAdvancedSettingStore(&sAdvancedSetting_##name, valueFromUserDefaults ?: @(theDefault)); \
     return key; \
 } \
 + (int)name { \
-    return [sAdvancedSetting_##name intValue]; \
+    return [iTermAdvancedSettingLoad(&sAdvancedSetting_##name) intValue]; \
 }
 
 #define DEFINE_FLOAT(name, theDefault, theCategory, theDescription) \
@@ -417,7 +449,7 @@ DEFINE_STRING(findUrlsRegex,
 DEFINE_BOOL(findURLsRespectsSoftBoundaries, YES, SECTION_TERMINAL, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.findURLsRespectsSoftBoundaries", nil, [NSBundle mainBundle], @"When using “Find URLs”, extend results across soft boundaries like tmux pane dividers.", @"Advanced setting: findURLsRespectsSoftBoundaries"));
 DEFINE_SETTABLE_FLOAT(echoProbeDuration, EchoProbeDuration, 0.5, SECTION_TERMINAL, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.echoProbeDuration", nil, [NSBundle mainBundle], @"Amount of time to wait while testing if echo is on (seconds).\nThis is used by the password manager to ensure you're at a password prompt. Set to 0 to disable echo probe.", @"Advanced setting: echoProbeDuration"));
 DEFINE_BOOL(disablePasswordManagerAnimations, NO, SECTION_TERMINAL, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.disablePasswordManagerAnimations", nil, [NSBundle mainBundle], @"Disable animations for showing/hiding password manager.", @"Advanced setting: disablePasswordManagerAnimations"));
-DEFINE_BOOL(noSyncSilenceAnnoyingBellAutomatically, NO, SECTION_TERMINAL, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.noSyncSilenceAnnoyingBellAutomatically", nil, [NSBundle mainBundle], @"Automatically silence bell when it rings too much.", @"Advanced setting: noSyncSilenceAnnoyingBellAutomatically"));
+DEFINE_SETTABLE_BOOL(noSyncSilenceAnnoyingBellAutomatically, NoSyncSilenceAnnoyingBellAutomatically, NO, SECTION_TERMINAL, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.noSyncSilenceAnnoyingBellAutomatically", nil, [NSBundle mainBundle], @"Automatically silence bell when it rings too much.", @"Advanced setting: noSyncSilenceAnnoyingBellAutomatically"));
 DEFINE_SETTABLE_STRING(noSyncVariablesToReport, NoSyncVariablesToReport, @"", SECTION_TERMINAL, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.noSyncVariablesToReport", nil, [NSBundle mainBundle], @"Variables to report via control sequence\nThis is a comma-delimited list of variables that can be reported with the OSC 1337 ReportVariable=name control sequence. Each variable name must be prefixed with “allow:” or “deny:”.", @"Advanced setting: noSyncVariablesToReport"));
 DEFINE_BOOL(restoreWindowContents, YES, SECTION_TERMINAL, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.restoreWindowContents", nil, [NSBundle mainBundle], @"Restore window contents at startup.\nThis requires “System Settings > Desktop & Dock > Close windows when quitting an app” to be off.", @"Advanced setting: restoreWindowContents"));
 DEFINE_INT(numberOfLinesForAccessibility, 1000, SECTION_TERMINAL, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.numberOfLinesForAccessibility", nil, [NSBundle mainBundle], @"Maximum number of lines of history to expose to Accessibility.\nAccessibility APIs can make iTerm2 slow. In order to limit the effect, you can restrict the number of lines in each session that are visible to accessibility. The last lines of each session will be made accessible.", @"Advanced setting: numberOfLinesForAccessibility"));
@@ -490,7 +522,7 @@ DEFINE_FLOAT(findDelaySeconds, 1, SECTION_GENERAL, NSLocalizedStringWithDefaultV
 DEFINE_INT(maximumBytesToProvideToServices, 100000, SECTION_GENERAL, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.maximumBytesToProvideToServices", nil, [NSBundle mainBundle], @"Maximum number of bytes of selection to provide to Services.\nA large value here can cause performance issues when you have a big selection.", @"Advanced setting: maximumBytesToProvideToServices"));
 DEFINE_INT(maximumBytesToProvideToPythonAPI, 100, SECTION_GENERAL, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.maximumBytesToProvideToPythonAPI", nil, [NSBundle mainBundle], @"Maximum number of bytes of selection to provide to Python API.\nA large value here can cause performance issues when you have a big selection.", @"Advanced setting: maximumBytesToProvideToPythonAPI"));
 DEFINE_BOOL(useOpenDirectory, YES, SECTION_GENERAL, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.useOpenDirectory", nil, [NSBundle mainBundle], @"Use Open Directory to determine the user shell", @"Advanced setting: useOpenDirectory"));
-DEFINE_SETTABLE_BOOL(disableDECRQCRA, NoSyncDisableDECRQCRA, YES, SECTION_GENERAL, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.disableDECRQCRA", nil, [NSBundle mainBundle], @"Disable DECRQCRA?\nThis control sequence allows an app running in the terminal to read its contents.", @"Advanced setting: disableDECRQCRA"));
+DEFINE_SETTABLE_BOOL(disableDECRQCRA, DisableDECRQCRA, YES, SECTION_GENERAL, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.disableDECRQCRA", nil, [NSBundle mainBundle], @"Disable DECRQCRA?\nThis control sequence allows an app running in the terminal to read its contents.", @"Advanced setting: disableDECRQCRA"));
 DEFINE_BOOL(disablePotentiallyInsecureEscapeSequences, NO, SECTION_GENERAL, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.disablePotentiallyInsecureEscapeSequences", nil, [NSBundle mainBundle], @"Disable potentially insecure escape sequences.\nSome features of iTerm2 expand the surface area for security issues. Consider turning this on when viewing untrusted content. The following custom escape sequences will be disabled: RemoteHost, StealFocus, CurrentDir, SetProfile, CopyToClipboard, EndCopy, File, SetBackgroundImageFile, OSC 6’s proxy icon-changing feature. The following DEC sequences are disabled: DECRQCRA. The following xterm extensions are disabled: Window Title Reporting, Icon Title Reporting. This will break displaying inline images, file download, some shell integration features, and other features.", @"Advanced setting: disablePotentiallyInsecureEscapeSequences"));
 DEFINE_BOOL(performDictionaryLookupOnQuickLook, YES, SECTION_GENERAL, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.performDictionaryLookupOnQuickLook", nil, [NSBundle mainBundle], @"Perform dictionary lookups on force press.\nIf this is NO, force press will still preview the Semantic History action; only dictionary lookups can be disabled.", @"Advanced setting: performDictionaryLookupOnQuickLook"));
 DEFINE_STRING(webUserAgent, @"Mozilla/5.0 (Macintosh; Intel Mac OS X 14_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15", SECTION_GENERAL, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.webUserAgent", nil, [NSBundle mainBundle], @"User agent for web views. Leave empty to use system default.", @"Advanced setting: webUserAgent"));
@@ -583,6 +615,7 @@ DEFINE_BOOL(preferSpeedToFullLigatureSupport, YES, SECTION_DRAWING, NSLocalizedS
 DEFINE_BOOL(enableContextualAlternates, YES, SECTION_DRAWING, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.enableContextualAlternates", nil, [NSBundle mainBundle], @"Enable contextual alternates (calt) for ligature-capable fonts.\nWhen enabled, uses ligature level 2 which activates calt in addition to standard ligatures. Many coding fonts such as Monaspace, Iosevka, and Cascadia Code require this for their ligatures to work.", @"Advanced setting: enableContextualAlternates"));
 DEFINE_BOOL(forceAntialiasingOnRetina, NO, SECTION_DRAWING, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.forceAntialiasingOnRetina", nil, [NSBundle mainBundle], @"Force text to be anti-aliased on Retina displays.\nEnable this to use non-AA text on non-retina displays, which sometimes looks better.", @"Advanced setting: forceAntialiasingOnRetina"));
 DEFINE_BOOL(makeSomePowerlineSymbolsWide, YES, SECTION_DRAWING, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.makeSomePowerlineSymbolsWide", nil, [NSBundle mainBundle], @"Draw certain Powerline symbols double-width?\nThis matches how most “nerd” fonts render them, but your favorite one might not do this. An example code point that is affected is U+E0B8.", @"Advanced setting: makeSomePowerlineSymbolsWide"));
+DEFINE_BOOL(holdScreenDuringPromptRepaint, YES, SECTION_DRAWING, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.holdScreenDuringPromptRepaint", nil, [NSBundle mainBundle], @"Keep showing the screen as it was while the shell redraws its prompt?\nSome line editors, such as nushell’s, redraw the prompt and command line on every keystroke. When enabled, iTerm2 keeps drawing the screen as it was until the redraw finishes so the command doesn’t blink.", @"Advanced setting: holdScreenDuringPromptRepaint"));
 
 #if ENABLE_LOW_POWER_GPU_DETECTION
 DEFINE_BOOL(useLowPowerGPUWhenUnplugged, NO, SECTION_DRAWING, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.useLowPowerGPUWhenUnplugged", nil, [NSBundle mainBundle], @"Metal renderer uses integrated GPU when not connected to power?\nFor this to be effective you must disable “Disable Metal renderer when not connected to power”.", @"Advanced setting: useLowPowerGPUWhenUnplugged"));
@@ -650,6 +683,7 @@ DEFINE_BOOL(logAITabTitleCorpus, NO, SECTION_DEBUGGING, NSLocalizedStringWithDef
 #if DEBUG
 // Localization unneeded
 DEFINE_STRING(alternateSSHIntegrationScript, @"", SECTION_DEBUGGING, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.alternateSSHIntegrationScript", nil, [NSBundle mainBundle], @"Alternate SSH integration python script", @"Advanced setting: alternateSSHIntegrationScript"));
+DEFINE_SETTABLE_BOOL(engageLayoutEngineInTerminalWindows, EngageLayoutEngineInTerminalWindows, NO, SECTION_DEBUGGING, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.engageLayoutEngineInTerminalWindows", nil, [NSBundle mainBundle], @"Engage Auto Layout in new terminal windows.\nAdds a hidden glass effect view (before macOS 26, a view with constraints) to each new terminal window, which turns on AppKit’s layout engine for the whole window. Use it to check that windows still lay out and resize correctly with the engine on. Development builds only.", @"Advanced setting: engageLayoutEngineInTerminalWindows"));
 #endif
 
 #pragma mark - Session
@@ -697,15 +731,13 @@ DEFINE_BOOL(darkThemeHasBlackTitlebar, YES, SECTION_WINDOWS, NSLocalizedStringWi
 DEFINE_BOOL(fontChangeAffectsBroadcastingSessions, NO, SECTION_WINDOWS, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.fontChangeAffectsBroadcastingSessions", nil, [NSBundle mainBundle], @"Should growing or shrinking the font in a session that's broadcasting input affect all session that broadcast input?\nThis only applies to changing the font size with Make Text Bigger, Make Text Normal Size, and Make Text Smaller", @"Advanced setting: fontChangeAffectsBroadcastingSessions"));
 DEFINE_BOOL(serializeOpeningMultipleFullScreenWindows, YES, SECTION_WINDOWS, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.serializeOpeningMultipleFullScreenWindows", nil, [NSBundle mainBundle], @"When opening multiple fullscreen windows, enter fullscreen one window at a time.", @"Advanced setting: serializeOpeningMultipleFullScreenWindows"));
 DEFINE_BOOL(trackingRunloopForLiveResize, YES, SECTION_WINDOWS, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.trackingRunloopForLiveResize", nil, [NSBundle mainBundle], @"Use a tracking runloop for live resizing.\nThis allows the terminal to redraw during a resizing drag.", @"Advanced setting: trackingRunloopForLiveResize"));
-DEFINE_BOOL(disableWindowShadowWhenTransparencyOnMojave, YES, SECTION_WINDOWS, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.disableWindowShadowWhenTransparencyOnMojave", nil, [NSBundle mainBundle], @"Disable the window shadow on Mojave when the window has a transparent session to improve performance.", @"Advanced setting: disableWindowShadowWhenTransparencyOnMojave"));
-DEFINE_BOOL(disableWindowShadowWhenTransparencyPreMojave, YES, SECTION_WINDOWS, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.disableWindowShadowWhenTransparencyPreMojave", nil, [NSBundle mainBundle], @"Disable the window shadow on High Sierra and earlier when the window has a transparent session to prevent text shadows.", @"Advanced setting: disableWindowShadowWhenTransparencyPreMojave"));
 DEFINE_BOOL(restoreWindowsWithinScreens, YES, SECTION_WINDOWS, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.restoreWindowsWithinScreens", nil, [NSBundle mainBundle], @"When restoring a window arrangement, ensure windows are entirely within the bounds of the current displays.", @"Advanced setting: restoreWindowsWithinScreens"))
 DEFINE_FLOAT(extraSpaceBeforeCompactTopTabBar, 0, SECTION_WINDOWS, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.extraSpaceBeforeCompactTopTabBar", nil, [NSBundle mainBundle], @"Amount of extra space (in points) between stoplight buttons and inline tab bar.\nThis only takes effect for the Compact and Minimal themes when the tab bar is visible and located at the top of the window.", @"Advanced setting: extraSpaceBeforeCompactTopTabBar"));
 DEFINE_FLOAT(compactTabBarStoplightButtonsWidth, 75, SECTION_WINDOWS, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.compactTabBarStoplightButtonsWidth", nil, [NSBundle mainBundle], @"Width (in points) reserved for the window buttons (close/minimize/zoom) before the inline tab bar.\nThe default is 75. Reduce it to move tab content closer to the buttons, or increase it for more breathing room. This only takes effect for the Compact and Minimal themes when the tab bar is visible and located at the top of the window. Setting it smaller than the buttons themselves will let tabs overlap them.", @"Advanced setting: compactTabBarStoplightButtonsWidth"));
 DEFINE_BOOL(workAroundMultiDisplayOSBug, YES, SECTION_WINDOWS, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.workAroundMultiDisplayOSBug", nil, [NSBundle mainBundle], @"Work around a macOS bug where the OS moves windows to the first display for no good reason.", @"Advanced setting: workAroundMultiDisplayOSBug"));
 DEFINE_BOOL(disableDocumentedEditedIndicator, NO, SECTION_WINDOWS, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.disableDocumentedEditedIndicator", nil, [NSBundle mainBundle], @"Disable documented edited indicator (black dot in close button)", @"Advanced setting: disableDocumentedEditedIndicator"));
 DEFINE_BOOL(showWindowTitleWhenTabBarInvisible, YES, SECTION_WINDOWS, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.showWindowTitleWhenTabBarInvisible", nil, [NSBundle mainBundle], @"Show window title when the tab bar is not visible?\nWhen disabled, the tab's title will be shown where the window title would normally go.", @"Advanced setting: showWindowTitleWhenTabBarInvisible"));
-DEFINE_INT_ENUM(showWindowNameBesideTabs, iTermWindowNameBesideTabsModeWhenCustom, (@[ NSLocalizedStringWithDefaultValue(@"AdvancedSetting.showWindowNameBesideTabs.Never", nil, [NSBundle mainBundle], @"Never", @"Window-name-beside-tabs option"), NSLocalizedStringWithDefaultValue(@"AdvancedSetting.showWindowNameBesideTabs.WhenCustom", nil, [NSBundle mainBundle], @"When a custom name is set", @"Window-name-beside-tabs option"), NSLocalizedStringWithDefaultValue(@"AdvancedSetting.showWindowNameBesideTabs.Always", nil, [NSBundle mainBundle], @"Always", @"Window-name-beside-tabs option") ]), SECTION_WINDOWS, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.showWindowNameBesideTabs", nil, [NSBundle mainBundle], @"Show the window name beside the tabs in the Compact and Minimal themes?\nThose themes have no title bar, so the window name is otherwise only visible when the tab bar is hidden. “When a custom name is set” (the default) shows it only after you name the window with Window > Edit Window Title, leaving windows you have not named unchanged. “Always” also shows the automatic title. This has no effect in themes that have a title bar.", @"Advanced setting: showWindowNameBesideTabs"));
+DEFINE_INT_ENUM(showWindowNameBesideTabs, iTermWindowNameBesideTabsModeWhenCustom, (@[ NSLocalizedStringWithDefaultValue(@"AdvancedSetting.showWindowNameBesideTabs.Never", nil, [NSBundle mainBundle], @"Never", @"Window-name-beside-tabs option"), NSLocalizedStringWithDefaultValue(@"AdvancedSetting.showWindowNameBesideTabs.WhenCustom", nil, [NSBundle mainBundle], @"When a custom name is set", @"Window-name-beside-tabs option"), NSLocalizedStringWithDefaultValue(@"AdvancedSetting.showWindowNameBesideTabs.Always", nil, [NSBundle mainBundle], @"Always", @"Window-name-beside-tabs option") ]), SECTION_WINDOWS, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.showWindowNameBesideTabs", nil, [NSBundle mainBundle], @"Show the window name beside the tabs in the Compact and Minimal themes?\nThose themes have no title bar, so the window name is otherwise only visible when the tab bar is hidden. “When a custom name is set” (the default) shows it only after you name the window with Window > Edit Window Title, leaving windows you have not named unchanged. “Always” also shows the automatic title. In “When a custom name is set” mode, the automatic title is also shown atop a left tab bar, and atop a right one whenever the window number or proxy icon is, since it takes no room from the tabs there. This has no effect in themes that have a title bar.", @"Advanced setting: showWindowNameBesideTabs"));
 DEFINE_BOOL(squareWindowCorners, NO, SECTION_WINDOWS, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.squareWindowCorners", nil, [NSBundle mainBundle], @"Windows have square corners.\nThis is only for users who have already hacked macOS to remove rounded corners. You must restart iTerm2 after changing this setting for it to take effect.", @"Advanced setting: squareWindowCorners"));
 DEFINE_STRING(windowBorderColor, @"", SECTION_WINDOWS, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.windowBorderColor", nil, [NSBundle mainBundle], @"Border color for focused windows.\nShould be a web-style color, #rrggbb, or #rrggbbaa to also set opacity. You can also use p3#rrggbb or p3#rrggbbaa for p3 color space. Without an alpha component the border is drawn at 75% opacity. Requires “Show border around windows” with no title bar. Leave empty for the default color.", @"Advanced setting: windowBorderColor"));
 DEFINE_STRING(windowBorderColorUnfocused, @"", SECTION_WINDOWS, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.windowBorderColorUnfocused", nil, [NSBundle mainBundle], @"Border color for unfocused windows.\nShould be a web-style color, #rrggbb, or #rrggbbaa to also set opacity. You can also use p3#rrggbb or p3#rrggbbaa for p3 color space. Without an alpha component the border is drawn at 75% opacity. Leave empty to match the focused color.", @"Advanced setting: windowBorderColorUnfocused"));
@@ -745,6 +777,8 @@ DEFINE_BOOL(tmuxWindowsOpenInBackground, NO, SECTION_TMUX, NSLocalizedStringWith
 #define SECTION_SSH @"SSH Integration"
 
 DEFINE_STRING(unameCommand, @"uname -s", SECTION_SSH, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.unameCommand", nil, [NSBundle mainBundle], @"Command used to set the `uname` variable.\nThe main use of this is to use in the AI prompt so the language model knows the operating system.", @"Advanced setting: unameCommand"));
+DEFINE_BOOL(sshFlowControl, YES, SECTION_SSH, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.sshFlowControl", nil, [NSBundle mainBundle], @"Pace output from remote hosts.\nWith SSH Integration, iTerm2 tells the remote host how much output to send, so a program that prints a lot cannot fill the connection’s buffers, and Control-C takes effect at once instead of after the buffered output. Takes effect for new connections.", @"Advanced setting: sshFlowControl"));
+DEFINE_SETTABLE_BOOL(showSSHFlowControlMonitor, ShowSSHFlowControlMonitor, NO, SECTION_SSH, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.showSSHFlowControlMonitor", nil, [NSBundle mainBundle], @"Show a window with SSH Integration’s flow control state.\nFor the current session’s connection and every connection nested in it: the credit outstanding, the measured delays and rates, and charts of the last minute. Closing the window turns this off.", @"Advanced setting: showSSHFlowControlMonitor"));
 DEFINE_STRING(validCharactersInSSHUserNames, @"_-+.", SECTION_SSH, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.validCharactersInSSHUserNames", nil, [NSBundle mainBundle], @"Valid characters in SSH user names\nAlphanumerics are always valid. This specifies other valid characters.", @"Advanced setting: validCharactersInSSHUserNames"));
 
 #pragma mark Warnings
@@ -757,13 +791,13 @@ DEFINE_BOOL(neverWarnAboutOverrides, NO, SECTION_WARNINGS, NSLocalizedStringWith
 DEFINE_BOOL(neverWarnAboutPossibleOverrides, NO, SECTION_WARNINGS, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.neverWarnAboutPossibleOverrides", nil, [NSBundle mainBundle], @"Suppress a warning about a change to a global key that's overridden by a Profile.", @"Advanced setting: neverWarnAboutPossibleOverrides"));
 DEFINE_BOOL(noSyncNeverRemindPrefsChangesLostForUrl, NO, SECTION_WARNINGS, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.noSyncNeverRemindPrefsChangesLostForUrl", nil, [NSBundle mainBundle], @"Suppress changed-setting warning when settings are loaded from a URL.", @"Advanced setting: noSyncNeverRemindPrefsChangesLostForUrl"));
 DEFINE_BOOL(noSyncNeverRemindPrefsChangesLostForFile, NO, SECTION_WARNINGS, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.noSyncNeverRemindPrefsChangesLostForFile", nil, [NSBundle mainBundle], @"Suppress changed-setting warning when settings are loaded from a custom folder.", @"Advanced setting: noSyncNeverRemindPrefsChangesLostForFile"));
-DEFINE_BOOL(noSyncSuppressAnnyoingBellOffer, NO, SECTION_WARNINGS, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.noSyncSuppressAnnyoingBellOffer", nil, [NSBundle mainBundle], @"Suppress offer to silence bell when it rings too much.", @"Advanced setting: noSyncSuppressAnnyoingBellOffer"));
+DEFINE_SETTABLE_BOOL(noSyncSuppressAnnyoingBellOffer, NoSyncSuppressAnnyoingBellOffer, NO, SECTION_WARNINGS, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.noSyncSuppressAnnyoingBellOffer", nil, [NSBundle mainBundle], @"Suppress offer to silence bell when it rings too much.", @"Advanced setting: noSyncSuppressAnnyoingBellOffer"));
 
 DEFINE_BOOL(suppressMultilinePasteWarningWhenPastingOneLineWithTerminalNewline, NO, SECTION_WARNINGS, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.suppressMultilinePasteWarningWhenPastingOneLineWithTerminalNewline", nil, [NSBundle mainBundle], @"Suppress warning about multi-line paste when pasting a single line ending with a newline.\nThis suppresses all multi-line paste warnings when a single line is being pasted.", @"Advanced setting: suppressMultilinePasteWarningWhenPastingOneLineWithTerminalNewline"));
 DEFINE_BOOL(suppressMultilinePasteWarningWhenNotAtShellPrompt, NO, SECTION_WARNINGS, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.suppressMultilinePasteWarningWhenNotAtShellPrompt", nil, [NSBundle mainBundle], @"Suppress warning about multi-line paste when not at prompt.\nRequires Shell Integration to be installed.", @"Advanced setting: suppressMultilinePasteWarningWhenNotAtShellPrompt"));
 DEFINE_BOOL(noSyncSuppressBroadcastInputWarning, NO, SECTION_WARNINGS, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.noSyncSuppressBroadcastInputWarning", nil, [NSBundle mainBundle], @"Suppress warning about broadcasting input.", @"Advanced setting: noSyncSuppressBroadcastInputWarning"));
-DEFINE_BOOL(noSyncSuppressCaptureOutputRequiresShellIntegrationWarning, NO, SECTION_WARNINGS, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.noSyncSuppressCaptureOutputRequiresShellIntegrationWarning", nil, [NSBundle mainBundle], @"Suppress warning “Shell Integration is required for Capture Output.”", @"Advanced setting: noSyncSuppressCaptureOutputRequiresShellIntegrationWarning"));
-DEFINE_BOOL(noSyncSuppressCaptureOutputToolNotVisibleWarning, NO, SECTION_WARNINGS, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.noSyncSuppressCaptureOutputToolNotVisibleWarning", nil, [NSBundle mainBundle], @"Suppress warning that the Captured Output tool is not visible.", @"Advanced setting: noSyncSuppressCaptureOutputToolNotVisibleWarning"));
+DEFINE_SETTABLE_BOOL(noSyncSuppressCaptureOutputRequiresShellIntegrationWarning, NoSyncSuppressCaptureOutputRequiresShellIntegrationWarning, NO, SECTION_WARNINGS, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.noSyncSuppressCaptureOutputRequiresShellIntegrationWarning", nil, [NSBundle mainBundle], @"Suppress warning “Shell Integration is required for Capture Output.”", @"Advanced setting: noSyncSuppressCaptureOutputRequiresShellIntegrationWarning"));
+DEFINE_SETTABLE_BOOL(noSyncSuppressCaptureOutputToolNotVisibleWarning, NoSyncSuppressCaptureOutputToolNotVisibleWarning, NO, SECTION_WARNINGS, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.noSyncSuppressCaptureOutputToolNotVisibleWarning", nil, [NSBundle mainBundle], @"Suppress warning that the Captured Output tool is not visible.", @"Advanced setting: noSyncSuppressCaptureOutputToolNotVisibleWarning"));
 DEFINE_BOOL(closingTmuxWindowKillsTmuxWindows, NO, SECTION_WARNINGS, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.closingTmuxWindowKillsTmuxWindows", nil, [NSBundle mainBundle], @"Suppress kill/hide dialog when closing a tmux window.", @"Advanced setting: closingTmuxWindowKillsTmuxWindows"));
 DEFINE_BOOL(closingTmuxTabKillsTmuxWindows, NO, SECTION_WARNINGS, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.closingTmuxTabKillsTmuxWindows", nil, [NSBundle mainBundle], @"Suppress kill/hide dialog when closing a tmux tab.", @"Advanced setting: closingTmuxTabKillsTmuxWindows"));
 DEFINE_BOOL(aboutToPasteTabsWithCancel, NO, SECTION_WARNINGS, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.aboutToPasteTabsWithCancel", nil, [NSBundle mainBundle], @"Suppress warning when pasting tabs with offer to convert them to spaces or perform advanced paste.", @"Advanced setting: aboutToPasteTabsWithCancel"));
@@ -857,6 +891,10 @@ DEFINE_BOOL(useExperimentalFontMetrics, NO, SECTION_EXPERIMENTAL, NSLocalizedStr
 DEFINE_BOOL(fastForegroundJobUpdates, YES, SECTION_EXPERIMENTAL, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.fastForegroundJobUpdates", nil, [NSBundle mainBundle], @"Enable low-latency updates of the current foreground job", @"Advanced setting: fastForegroundJobUpdates"));
 
 // Experiments currently under test
+DEFINE_BOOL(limitSessionsProcessingOutput, YES, SECTION_EXPERIMENTAL, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.limitSessionsProcessingOutput", nil, [NSBundle mainBundle], @"Limit how many sessions process output at once, as set by “Sessions processing output at once” in Settings > General > Magic?\nTurn this off if you suspect the limit of causing a problem, such as a session that stops updating. This applies only with the new implementation of session input and output. You must restart iTerm2 for this setting to take effect.", @"Advanced setting: limitSessionsProcessingOutput"));
+DEFINE_FLOAT(visibleSessionExecutionWeight, 4, SECTION_EXPERIMENTAL, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.visibleSessionExecutionWeight", nil, [NSBundle mainBundle], @"How many times as much processing time a visible session gets as a hidden one when more sessions have output to process than can run at once.\nThis applies only with the new implementation of session input and output. You must restart iTerm2 for this setting to take effect.", @"Advanced setting: visibleSessionExecutionWeight"));
+DEFINE_FLOAT(tokenExecutionTimeSlice, 0.005, SECTION_EXPERIMENTAL, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.tokenExecutionTimeSlice", nil, [NSBundle mainBundle], @"Seconds a session processes output before letting a waiting session take a turn.\nThis applies only with the new implementation of session input and output, when more sessions have output to process than can run at once. You must restart iTerm2 for this setting to take effect.", @"Advanced setting: tokenExecutionTimeSlice"));
+DEFINE_BOOL(useTaskIOMonitors, YES_IF_BETA_ELSE_NO, SECTION_EXPERIMENTAL, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.useTaskIOMonitors", nil, [NSBundle mainBundle], @"Use the new implementation of session input and output, which keeps sessions with heavy output from slowing down typing in other sessions?\nTurn this off if you suspect it of causing a problem. You must restart iTerm2 for this setting to take effect.", @"Advanced setting: useTaskIOMonitors"));
 DEFINE_BOOL(tmuxVariableWindowSizesSupported, YES, SECTION_EXPERIMENTAL, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.tmuxVariableWindowSizesSupported", nil, [NSBundle mainBundle], @"Allow variable window sizes in tmux integration.\nRequres tmux version 2.9 or later.", @"Advanced setting: tmuxVariableWindowSizesSupported"));
 DEFINE_BOOL(aggressiveBaseCharacterDetection, YES, SECTION_EXPERIMENTAL, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.aggressiveBaseCharacterDetection", nil, [NSBundle mainBundle], @"Detect base unicode characters with lookup table.\nApple's algorithm for segmenting composed characters makes bad choices, such as for Tamil. Enable this to reduce text overlapping.", @"Advanced setting: aggressiveBaseCharacterDetection"));
 DEFINE_BOOL(escapeWithQuotes, NO, SECTION_EXPERIMENTAL, NSLocalizedStringWithDefaultValue(@"AdvancedSetting.escapeWithQuotes", nil, [NSBundle mainBundle], @"Escape file names with single quotes instead of backslashes.\nThis is intended for users of xonsh, which does not accept backslash escaping.", @"Advanced setting: escapeWithQuotes"));
@@ -999,11 +1037,36 @@ DEFINE_SETTABLE_BOOL(setIT2AppPath, SetIT2AppPath, NO, SECTION_SCRIPTING, NSLoca
     if (oldValue == nil) {
         return;
     }
-    if (![oldValue boolValue] &&
-        [userDefaults objectForKey:@"DisableBidiInAlternateScreen"] == nil) {
-        [userDefaults setObject:@YES forKey:@"DisableBidiInAlternateScreen"];
+    // Report the change so a custom settings folder that still holds the old key does not count
+    // it as an unsaved edit at quit.
+    [iTermUserDefaults migrateKeys:@[ @"AlternateScreenBidi", @"DisableBidiInAlternateScreen" ]
+                    inUserDefaults:userDefaults
+                             block:^{
+        if (![oldValue boolValue] &&
+            [userDefaults objectForKey:@"DisableBidiInAlternateScreen"] == nil) {
+            [userDefaults setObject:@YES forKey:@"DisableBidiInAlternateScreen"];
+        }
+        [userDefaults removeObjectForKey:@"AlternateScreenBidi"];
+    }];
+}
+
++ (void)migrateDECRQCRASettingInUserDefaults:(NSUserDefaults *)userDefaults {
+    // Answering the DECRQCRA announcement used to save the choice under NoSyncDisableDECRQCRA
+    // while the setting itself was read from DisableDECRQCRA, so the choice was lost on restart.
+    // Both now use DisableDECRQCRA. Carry the saved choice over so it takes effect and the user
+    // isn't asked again.
+    id oldValue = [userDefaults objectForKey:@"NoSyncDisableDECRQCRA"];
+    if (oldValue == nil) {
+        return;
     }
-    [userDefaults removeObjectForKey:@"AlternateScreenBidi"];
+    [iTermUserDefaults migrateKeys:@[ @"NoSyncDisableDECRQCRA", @"DisableDECRQCRA" ]
+                    inUserDefaults:userDefaults
+                             block:^{
+        if ([userDefaults objectForKey:@"DisableDECRQCRA"] == nil) {
+            [userDefaults setObject:@([oldValue boolValue]) forKey:@"DisableDECRQCRA"];
+        }
+        [userDefaults removeObjectForKey:@"NoSyncDisableDECRQCRA"];
+    }];
 }
 
 + (void)initialize {
@@ -1032,7 +1095,7 @@ DEFINE_SETTABLE_BOOL(setIT2AppPath, SetIT2AppPath, NO, SECTION_SCRIPTING, NSLoca
 
 + (void)updateSettingsForUnitTestsIfNeeded {
     if ([NSApp isRunningUnitTests]) {
-        sAdvancedSetting_runJobsInServers = @NO;
+        iTermAdvancedSettingStore(&sAdvancedSetting_runJobsInServers, @NO);
     }
 }
 

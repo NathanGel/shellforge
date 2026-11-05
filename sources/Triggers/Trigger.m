@@ -77,9 +77,19 @@ NSString * const kTriggerVariableValueRegexKey = @"variableValueRegex";
         return nil;
     }
     Trigger *trigger = [[class alloc] init];
-    trigger.regex = [NSString castFrom:dict[kTriggerRegexKey]];
+    // Event triggers don't use a regex, so hand-written ones (e.g., in Dynamic Profiles) often
+    // omit it. A nil pattern would make NSRegularExpression throw. Settings stores an empty
+    // regex as "", so treat a missing or non-string value the same way.
+    trigger.regex = [NSString castFrom:dict[kTriggerRegexKey]] ?: @"";
     trigger.contentRegex = [NSString castFrom:dict[kTriggerContentRegexKey]];
-    trigger.param = dict[kTriggerParameterKey];
+    // Every trigger's parameter is a string or a number (a popup's tag). Anything else is
+    // malformed input that would crash code calling -intValue or string methods on it.
+    id param = dict[kTriggerParameterKey];
+    if ([param isKindOfClass:[NSString class]] || [param isKindOfClass:[NSNumber class]]) {
+        trigger.param = param;
+    } else if (param) {
+        RLog(@"Ignoring trigger parameter of unexpected class %@", NSStringFromClass([param class]));
+    }
     trigger.partialLine = [[NSNumber coerceFrom:dict[kTriggerPartialLineKey]] boolValue];
     trigger.disabled = [[NSNumber coerceFrom:dict[kTriggerDisabledKey]] boolValue];
     trigger->_matchType = [[NSNumber coerceFrom:dict[kTriggerMatchTypeKey]] unsignedIntegerValue];
@@ -385,7 +395,8 @@ NSString * const kTriggerVariableValueRegexKey = @"variableValueRegex";
                                                                 absLine:(long long)absLine
                                                                   scope:(id<iTermTriggerScopeProvider>)scopeProvider
                                                        useInterpolation:(BOOL)useInterpolation {
-    NSString *p = [NSString castFrom:self.param] ?: @"";
+    // A hand-written trigger may give a number where a string is expected.
+    NSString *p = [NSString castFrom:self.param] ?: [[NSNumber castFrom:self.param] stringValue] ?: @"";
     return [self promisedValueOfInterpolatedString:p
               withBackreferencesReplacedWithValues:stringArray
                                            absLine:absLine
@@ -398,7 +409,18 @@ NSString * const kTriggerVariableValueRegexKey = @"variableValueRegex";
                                                         absLine:(long long)absLine
                                                           scope:(id<iTermTriggerScopeProvider>)scopeProvider
                                                useInterpolation:(BOOL)useInterpolation {
-    if (useInterpolation && [p interpolatedStringContainsNonliteral]) {
+    iTermTriggerInterpolatedParameter *parameter = useInterpolation ? [iTermTriggerInterpolatedParameter parameterWithString:p] : nil;
+    if (parameter.kind == iTermTriggerInterpolatedParameterKindTriggerLocal) {
+        // Evaluate without the session's scope so that token execution need not pause.
+        NSString *value = [parameter valueWithMatches:stringArray absLine:absLine];
+        if (value) {
+            return [iTermPromise promise:^(id<iTermPromiseSeal>  _Nonnull seal) {
+                [seal fulfill:value];
+            }];
+        }
+        DLog(@"Trigger-local evaluation of %@ failed. Falling back to evaluating with scope.", p);
+    }
+    if (parameter && parameter.kind != iTermTriggerInterpolatedParameterKindLiteral) {
         return [iTermPromise promise:^(id<iTermPromiseSeal>  _Nonnull seal) {
             [scopeProvider performBlockWithScope:^(iTermVariableScope * _Nonnull scope, id<iTermObject> _Nonnull object) {
                 assert([NSThread isMainThread]);

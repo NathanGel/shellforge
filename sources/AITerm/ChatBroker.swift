@@ -75,6 +75,27 @@ class ChatBroker {
 
     // MARK: - Chat creation
 
+    // A new chat pinned to `modelName`, with the pin's vendor stamped the way
+    // ChatListModel.setModel stamps it. Without the stamp, an empty chat pinned to
+    // a manual model on a local server would, once that model was removed or
+    // renamed, send its first message to a cloud vendor instead of failing (see
+    // LLMMetadata.manualModelPinVendor).
+    static func makeChat(title: String,
+                         terminalSessionGuid: String?,
+                         browserSessionGuid: String?,
+                         permissions: String,
+                         modelName: String?) -> Chat {
+        var chat = Chat(title: title,
+                        terminalSessionGuid: terminalSessionGuid,
+                        browserSessionGuid: browserSessionGuid,
+                        permissions: permissions,
+                        modelName: modelName)
+        chat.modelVendor = ChatListModel.vendorForNewPin(modelName: modelName,
+                                                         previousName: nil,
+                                                         previousVendor: nil)
+        return chat
+    }
+
     func create(chatWithTitle title: String,
                 terminalSessionGuid: String?,
                 browserSessionGuid: String?,
@@ -82,12 +103,17 @@ class ChatBroker {
                 initialMessages: [Message]) throws -> String {
         ensureServiceRunning()
 
+        // A session's kind is fixed, so file each guid under the kind it really is
+        // regardless of which slot the caller used.
+        let (terminalSessionGuid, browserSessionGuid) = ChatListModel.sessionGuidsByKind(
+            terminal: terminalSessionGuid,
+            browser: browserSessionGuid)
         let rce = RemoteCommandExecutor.instance
-        let chat = Chat(title: title,
-                        terminalSessionGuid: terminalSessionGuid,
-                        browserSessionGuid: browserSessionGuid,
-                        permissions: permissions,
-                        modelName: AITermController.provider?.model.name)
+        let chat = Self.makeChat(title: title,
+                                 terminalSessionGuid: terminalSessionGuid,
+                                 browserSessionGuid: browserSessionGuid,
+                                 permissions: permissions,
+                                 modelName: AITermController.provider?.model.name)
         let permissionsDict = rce.permissionsDict(encoded: permissions) ?? rce.defaultPermissions(
             chatID: chat.id,
             terminalGuid: terminalSessionGuid,
@@ -154,12 +180,19 @@ class ChatBroker {
     // rather than mutating the model directly, is what lets the local UI, the
     // agent, and a subscribed companion phone all converge - the same fan-out
     // that publish() uses for new messages.
+    //
+    // Callers pass only the IDs they display, so the store is truncated from
+    // the earliest of them onward (taking undisplayed tool rows with it), and
+    // subscribers hear about every removed row, not just the requested ones,
+    // so the agent can dequeue any removed message still waiting for a turn.
     func deleteMessages(_ messageIDs: [UUID], fromChatID chatID: String) {
         guard !messageIDs.isEmpty else {
             return
         }
-        listModel.delete(chatID: chatID, messageIDs: messageIDs)
-        fanOut(.messagesRemoved(messageIDs, chatID), toChatID: chatID)
+        let truncated = listModel.truncate(chatID: chatID, fromEarliestOf: messageIDs)
+        let truncatedSet = Set(truncated)
+        let removed = truncated + messageIDs.filter { !truncatedSet.contains($0) }
+        fanOut(.messagesRemoved(removed, chatID), toChatID: chatID)
     }
 
     // Deliver an update to every subscriber of `chatID` (and wildcard subscribers).

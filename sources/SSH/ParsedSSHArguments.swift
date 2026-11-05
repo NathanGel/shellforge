@@ -18,10 +18,20 @@ struct ParsedSSHArguments: Codable, CustomDebugStringConvertible {
     let username: String?
     let port: Int?
     private(set) var paramArgs = ParamArgs()
+    // The command after the host, split into words. For deciding what the command is (a custom
+    // shell, say), not for running it: the split loses the quoting.
     private(set) var commandArgs = [String]()
 
+    // The command after the host exactly as ssh would send it: the arguments joined with spaces,
+    // for the remote shell to parse. "" when there is none.
+    private(set) var commandLine = ""
+
+    // Every argument before the command: the options and the destination. Not persisted; only
+    // meaningful for arguments parsed in this run.
+    private(set) var argumentsBeforeCommand = [String]()
+
     enum CodingKeys: String, CodingKey {
-        case host, hostname, username, port, paramArgs, commandArgs
+        case host, hostname, username, port, paramArgs, commandArgs, commandLine
     }
 
     init(from decoder: Decoder) throws {
@@ -34,6 +44,9 @@ struct ParsedSSHArguments: Codable, CustomDebugStringConvertible {
         self.port = try container.decodeIfPresent(Int.self, forKey: .port)
         self.paramArgs = try container.decode(ParamArgs.self, forKey: .paramArgs)
         self.commandArgs = try container.decode([String].self, forKey: .commandArgs)
+        // Absent from conductors saved before it existed. Joining the words is what was sent then.
+        self.commandLine = try container.decodeIfPresent(String.self, forKey: .commandLine)
+            ?? commandArgs.joined(separator: " ")
     }
 
     func encode(to encoder: Encoder) throws {
@@ -44,6 +57,7 @@ struct ParsedSSHArguments: Codable, CustomDebugStringConvertible {
         try container.encode(port, forKey: .port)
         try container.encode(paramArgs, forKey: .paramArgs)
         try container.encode(commandArgs, forKey: .commandArgs)
+        try container.encode(commandLine, forKey: .commandLine)
     }
 
     var debugDescription: String {
@@ -109,13 +123,27 @@ struct ParsedSSHArguments: Codable, CustomDebugStringConvertible {
         }
     }
 
+    /// `sshargs` with its command, if any, replaced by `command` (or removed when nil), quoted so
+    /// that it2ssh and ssh pass `command` to the remote shell as given.
+    static func sshargs(_ sshargs: String, booleanArgs: String, replacingCommandWith command: String?) -> String {
+        let parsed = ParsedSSHArguments(sshargs, booleanArgs: booleanArgs, hostnameFinder: iTermHostnameFinder())
+        var words = parsed.argumentsBeforeCommand
+        if let command {
+            words.append(command)
+        }
+        return words.map { "'" + $0.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+            .joined(separator: " ")
+    }
+
     var identity: SSHIdentity {
         return SSHIdentity(host: host, hostname: hostname, username: username, port: port ?? 22)
     }
 
     init(_ string: String, booleanArgs boolArgsString: String, hostnameFinder: SSHHostnameFinder) {
         let booleanArgs = Set(Array<String.Element>(boolArgsString).map { String($0) })
-        let args = (string as NSString).componentsInShellCommand()
+        // it2ssh sends its arguments %q-quoted, which uses $'…' for control and non-ASCII
+        // characters; BashWordSplitter reads that, componentsInShellCommand does not.
+        let args = BashWordSplitter.words(string)
         var destination: String? = nil
         var optionsAllowed = true
         var preferredUser: String? = nil
@@ -163,18 +191,26 @@ struct ParsedSSHArguments: Codable, CustomDebugStringConvertible {
                 continue
             }
             if destination == nil {
-                if let url = URL(string: arg), url.scheme == "ssh" {
-                    if let user = url.user, let host = url.host {
-                        preferredUser = user
-                        destination = host
-                    } else if let host = url.host {
-                        destination = host
+                // Like ssh, a -l before the destination takes precedence over its user.
+                let loginNameGiven = paramArgs.hasOption(.loginName)
+                if let url = URL(string: arg), url.scheme == "ssh", let host = url.host {
+                    if !loginNameGiven {
+                        preferredUser = url.user
                     }
+                    destination = host
                     if !paramArgs.hasOption(.port), let urlPort = url.port {
                         preferredPort = urlPort
                     }
+                } else if let at = arg.range(of: "@", options: .backwards),
+                          at.lowerBound != arg.startIndex {
+                    // user@host. Like ssh, split at the last @ (F-920).
+                    if !loginNameGiven {
+                        preferredUser = String(arg[..<at.lowerBound])
+                    }
+                    destination = String(arg[at.upperBound...])
+                } else {
+                    destination = arg
                 }
-                destination = arg
                 continue
             }
             commandArgs.append(arg)
@@ -184,7 +220,11 @@ struct ParsedSSHArguments: Codable, CustomDebugStringConvertible {
         // ["ssh", "example.com", "cat", "file with space"]   executes ["cat", "file", "with", "space"]
         // ["ssh", "example.com", "cat", "'file with space"'] executes ["cat", "file with space"]
 
-        commandArgs = (commandArgs.joined(separator: " ") as NSString).componentsInShellCommand()
+        // Every argument after the first command word is part of the command, so the command is a
+        // suffix of the arguments.
+        argumentsBeforeCommand = Array(args.prefix(args.count - commandArgs.count))
+        commandLine = commandArgs.joined(separator: " ")
+        commandArgs = BashWordSplitter.words(commandLine)
         host = destination ?? ""
         hostname = hostnameFinder.sshHostname(forHost: host)
         username = preferredUser ?? paramArgs.value(for: .loginName)

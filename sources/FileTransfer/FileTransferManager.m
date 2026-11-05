@@ -19,11 +19,15 @@ static const NSTimeInterval kMaximumTimeToKeepFinishedDownload = 24 * 60 * 60;
 
 @interface FileTransferManager ()<iTermPasswordManagerDelegate>
 @property(nonatomic, retain) NSMutableArray *files;
+- (BOOL)brieflyOpenMenu:(NSMenu *)menu accessibilityIdentifier:(NSString *)identifier;
 @end
 
 @implementation FileTransferManager {
     NSMutableArray *_viewControllers;
     NSTimer *_timer;  // cleanUpMenus timer. weak reference.
+    // The Uploads menu is inserted once per launch and never removed, so once it has been opened
+    // its title has been drawn.
+    BOOL _hasRefreshedMenuBar;
     iTermPasswordManagerWindowController *_passwordManagerWindowController;
     void (^_passwordCompletion)(NSString *password);
 }
@@ -55,6 +59,7 @@ static const NSTimeInterval kMaximumTimeToKeepFinishedDownload = 24 * 60 * 60;
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     [_files release];
     [_viewControllers release];
+    [_passwordCompletion release];
     [super dealloc];
 }
 
@@ -218,7 +223,38 @@ static const NSTimeInterval kMaximumTimeToKeepFinishedDownload = 24 * 60 * 60;
     return NULL;
 }
 
+// Tests turn this off: pressing the menu tracks it modally and stops the test runner.
+static BOOL gFileTransferManagerOpensMenus = YES;
+
++ (void)setOpensMenusForTesting:(BOOL)opensMenus {
+    gFileTransferManagerOpensMenus = opensMenus;
+}
+
 - (void)openDownloadsMenu {
+    [self performMenuActionOnRunLoop:@selector(pressDownloadsMenu) inModes:@[ NSRunLoopCommonModes ]];
+}
+
+- (void)openUploadsMenu {
+    [self performMenuActionOnRunLoop:@selector(pressUploadsMenu) inModes:@[ NSRunLoopCommonModes ]];
+}
+
+// The refresh is cosmetic and should go unnoticed, so it waits for the default mode rather than
+// taking over a menu the user is browsing or interrupting a drag or modal.
+- (void)refreshMenuBarIfNeeded {
+    [self performMenuActionOnRunLoop:@selector(refreshMenuBarNow) inModes:@[ NSDefaultRunLoopMode ]];
+}
+
+// Pressing a menu runs its nested tracking loop. Do it from a run-loop timer, not the caller's
+// stack: callers are often main-queue blocks, and libdispatch doesn't drain the main queue
+// reentrantly, so nothing else dispatched to the main queue would run until the menu closed.
+- (void)performMenuActionOnRunLoop:(SEL)selector inModes:(NSArray<NSRunLoopMode> *)modes {
+    if (!gFileTransferManagerOpensMenus) {
+        return;
+    }
+    [self performSelector:selector withObject:nil afterDelay:0 inModes:modes];
+}
+
+- (void)pressDownloadsMenu {
     AXUIElementRef menuElement = [self downloadsMenuElement];
     if (menuElement) {
         AXUIElementPerformAction(menuElement, kAXPressAction);
@@ -226,12 +262,56 @@ static const NSTimeInterval kMaximumTimeToKeepFinishedDownload = 24 * 60 * 60;
     }
 }
 
-- (void)openUploadsMenu {
+- (void)pressUploadsMenu {
     AXUIElementRef menuElement = [self uploadsMenuElement];
     if (menuElement) {
-        AXUIElementPerformAction(menuElement, kAXPressAction);
+        if (AXUIElementPerformAction(menuElement, kAXPressAction) == kAXErrorSuccess) {
+            // Opening the menu draws its title, so it needs no refresh.
+            _hasRefreshedMenuBar = YES;
+        }
         CFRelease(menuElement);
     }
+}
+
+- (void)refreshMenuBarNow {
+    if (_hasRefreshedMenuBar) {
+        return;
+    }
+    _hasRefreshedMenuBar = YES;
+    if (![self brieflyOpenMenu:[self uploadsMenu] accessibilityIdentifier:iTermUploadsMenuAXIdentifier]) {
+        _hasRefreshedMenuBar = NO;
+    }
+}
+
+// On macOS 27, inserting a top-level menu can update the menu model and bar layout
+// while leaving its title blank until the next menu interaction. Briefly opening
+// and closing a menu forces AppKit to redraw the bar. Unlike replacing NSApp.mainMenu,
+// this preserves the installed menu objects and avoids the related shortcut-tracking bug.
+// See https://github.com/AvaloniaUI/Avalonia/issues/22285.
+// Call only after pending pastes drain: menu tracking pauses their default-mode timers.
+- (BOOL)brieflyOpenMenu:(NSMenu *)menu accessibilityIdentifier:(NSString *)identifier {
+    AXUIElementRef menuElement = [self menuElementWithAXIdentifier:identifier];
+    if (!menuElement) {
+        DLog(@"Can't briefly open menu %@: no menu-bar element", identifier);
+        return NO;
+    }
+    NSTimer *closeTimer = [NSTimer timerWithTimeInterval:0.01 repeats:NO block:^(NSTimer *timer) {
+        DLog(@"Closing briefly opened menu %@", identifier);
+        [menu cancelTrackingWithoutAnimation];
+    }];
+    // Menu tracking pauses default-mode timers. Also register in default mode in case
+    // pressing the menu fails, so the one-shot timer is still retired.
+    NSRunLoop *runLoop = [NSRunLoop mainRunLoop];
+    [runLoop addTimer:closeTimer forMode:NSEventTrackingRunLoopMode];
+    [runLoop addTimer:closeTimer forMode:NSDefaultRunLoopMode];
+    DLog(@"Briefly opening menu %@ for 10 ms", identifier);
+    const AXError error = AXUIElementPerformAction(menuElement, kAXPressAction);
+    DLog(@"Brief menu %@ press returned %d", identifier, (int)error);
+    if (error != kAXErrorSuccess) {
+        [closeTimer invalidate];
+    }
+    CFRelease(menuElement);
+    return error == kAXErrorSuccess;
 }
 
 - (void)removeAllDownloads {
@@ -266,6 +346,10 @@ static const NSTimeInterval kMaximumTimeToKeepFinishedDownload = 24 * 60 * 60;
         }
     }
     return nil;
+}
+
+- (BOOL)isListingTransferrableFileForTesting:(TransferrableFile *)transferrableFile {
+    return [self viewControllerForTransferrableFile:transferrableFile] != nil;
 }
 
 - (NSMenuItem *)menuItemForTransferrableFile:(TransferrableFile *)transferrableFile {
@@ -348,6 +432,14 @@ static const NSTimeInterval kMaximumTimeToKeepFinishedDownload = 24 * 60 * 60;
 // |error| is nil on success
 - (void)transferrableFile:(TransferrableFile *)transferrableFile
     didFinishTransmissionWithError:(NSError *)error {
+    if (error && (transferrableFile.status == kTransferrableFileStatusCancelling ||
+                  transferrableFile.status == kTransferrableFileStatusCancelled)) {
+        // It was stopped (usually by the user), so the error is how stopping ended it, not a
+        // failure.
+        RLog(@"Transfer stopped by the user ended with error %@", error);
+        [self transferrableFileDidStopTransfer:transferrableFile];
+        return;
+    }
     if (error) {
         [transferrableFile didFailWithError:error.localizedDescription ?: NSLocalizedStringWithDefaultValue(@"FileTransfer.UnknownError", nil, [NSBundle mainBundle], @"File transfer failed with an unknown error", @"Error shown when a file transfer fails without a specific reason")];
     } else {
@@ -463,6 +555,23 @@ static const NSTimeInterval kMaximumTimeToKeepFinishedDownload = 24 * 60 * 60;
     [_viewControllers removeObject:viewController];
 }
 
+// Calls the pending password completion, if any, at most once. The ivar is cleared before the
+// call so a reentrant delegate callback cannot run it a second time.
+- (void)finishPasswordManagerSelectionWithPassword:(NSString *)password {
+    void (^completion)(NSString *) = _passwordCompletion;
+    if (!completion) {
+        return;
+    }
+    _passwordCompletion = nil;
+    completion(password);
+    [completion release];
+}
+
+- (void)setPasswordManagerCompletionForTesting:(void (^)(NSString *password))completion {
+    [_passwordCompletion release];
+    _passwordCompletion = [completion copy];
+}
+
 #pragma mark - iTermPasswordManagerDelegate
 
 - (BOOL)iTermPasswordManagerCanEnterPassword {
@@ -470,10 +579,8 @@ static const NSTimeInterval kMaximumTimeToKeepFinishedDownload = 24 * 60 * 60;
 }
 
 - (void)iTermPasswordManagerEnterPassword:(NSString *)password broadcast:(BOOL)broadcast {
-    if (_passwordCompletion) {
-        _passwordCompletion(password);
-    }
-    _passwordCompletion = nil;
+    DLog(@"Password manager entered a password");
+    [self finishPasswordManagerSelectionWithPassword:password];
     _passwordManagerWindowController.delegate = nil;
     _passwordManagerWindowController = nil;
 }
@@ -491,7 +598,10 @@ static const NSTimeInterval kMaximumTimeToKeepFinishedDownload = 24 * 60 * 60;
 }
 
 - (void)iTermPasswordManagerDidClose {
-    _passwordCompletion = nil;
+    // Closing without choosing a password cancels the request. The transfer waits on this
+    // completion, so it must be called exactly once (nil means cancel).
+    DLog(@"Password manager closed");
+    [self finishPasswordManagerSelectionWithPassword:nil];
     _passwordManagerWindowController.delegate = nil;
     _passwordManagerWindowController = nil;
 }

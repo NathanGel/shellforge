@@ -64,6 +64,207 @@ final class ShellIntegrationLiveHarness: XCTestCase {
         try runShellBaseline(.zsh)
     }
 
+    /// The zsh integration wraps RPROMPT in OSC 133;P;k=r … B, so iTerm2 keeps
+    /// the right prompt out of the recorded command.
+    func testZsh_rightPrompt_isMarkedAndExcludedFromCommand() throws {
+        let rightPrompt = "iterm2_right_prompt_token"
+        guard let recorded = try runShellBaseline(.zsh,
+                                                  beforeSourcing: "RPROMPT='\(rightPrompt)'\n") else {
+            return
+        }
+        XCTAssertTrue(recorded.osc133Args(forKind: "P").contains { $0.split(separator: ";").contains("k=r") },
+                      "[zsh] expected the right prompt to be marked with OSC 133;P;k=r")
+
+        // Replay what the shell wrote through the real parser.
+        let harness = TerminalTestHarness(width: LiveShell.columns, height: LiveShell.rows)
+        harness.feedEscapeSequence(Array(recorded))
+        harness.sync()
+        let marks = harness.allScreenMarks().filter {
+            $0.fullCommand == SupportedShell.zsh.testCommand.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        XCTAssertEqual(marks.count, 1, "[zsh] expected one mark for the test command")
+        XCTAssertEqual(marks.first?.excludedSubranges?.count, 1,
+                       "[zsh] expected the right prompt's cells to be excluded")
+    }
+
+    /// A theme that rebuilds PS1 in a precmd hook makes the ^C path decorate
+    /// the prompt again while RPROMPT and RPS2 still hold their wrapped values.
+    /// Those must not be saved as the raw ones: commands must still see the
+    /// user's own right prompts.
+    func testZsh_ctrlCAfterThemeRebuildsPS1_keepsRawRightPrompts() throws {
+        let output = try runZsh(beforeSourcing: [Self.bindSendBreak, "RPROMPT='%T'", "RPS2='r2'"],
+                                steps: [.command("theme() { PS1=\"%~ $RANDOM %# \" }\n"),
+                                        .command("precmd_functions+=(theme)\n"),
+                                        .keys("abc"),
+                                        .command(Self.sendBreak),
+                                        .keys(Self.printValues("$RPROMPT|$RPS2"))])
+        XCTAssertEqual(Self.printedValues(in: output), "%T|r2")
+    }
+
+    /// After ^C, a precmd hook that runs before ours changes RPROMPT and RPS2.
+    /// The new RPS2 is the user's and must not be replaced by the one saved at
+    /// the previous prompt.
+    func testZsh_ctrlCAfterHookChangesRightPrompts_keepsNewRPS2() throws {
+        let output = try runZsh(beforeSourcing: [Self.bindSendBreak,
+                                                 "typeset -gi n=0",
+                                                 "rp() { n=$((n+1)); RPROMPT=\"rp$n\"; RPS2=\"rps2_$n\" }",
+                                                 "precmd_functions=(rp)"],
+                                steps: [.command("true\n"),
+                                        .keys("abc"),
+                                        .command(Self.sendBreak),
+                                        .keys(Self.printValues("$RPS2|$n"))])
+        guard let printed = Self.printedValues(in: output) else {
+            XCTFail("[zsh] values were not printed")
+            return
+        }
+        let parts = printed.split(separator: "|", omittingEmptySubsequences: false)
+        XCTAssertEqual(parts.count, 2)
+        XCTAssertEqual(parts.first.map(String.init), parts.last.map { "rps2_\($0)" })
+    }
+
+    /// An async theme sets RPROMPT from a zle callback after precmd. Running a
+    /// command must not put back the value precmd saw.
+    func testZsh_rightPromptSetAfterPrecmd_survivesPreexec() throws {
+        let output = try runZsh(beforeSourcing: ["RPROMPT='sync_A'"],
+                                // async_""B so that waiting for async_B matches the redrawn
+                                // prompt, not the echoed definition.
+                                steps: [.command("TRAPALRM() { RPROMPT=async_\"\"B; zle && zle reset-prompt; TMOUT=0 }\n"),
+                                        .command("TMOUT=1\n"),
+                                        .waitFor("async_B"),
+                                        .keys(Self.printValues("$RPROMPT"))])
+        XCTAssertEqual(Self.printedValues(in: output), "async_B")
+    }
+
+    /// A right prompt that already carries a 133;P mark (a theme that marks
+    /// its own, like powerlevel10k's unreleased master in iTerm2 3.7+, or one
+    /// added by hand) must not get a second, nested mark from the integration.
+    func testZsh_alreadyMarkedRightPrompt_isNotMarkedAgain() throws {
+        let output = try runZsh(beforeSourcing: ["RPROMPT=$'%{\\e]133;P;k=r\\a%}hand%{\\e]133;B\\a%}'"],
+                                steps: [.command("echo hi\n")])
+        let recorded = Data(output.utf8)
+        let rightPromptMarks = recorded.osc133Args(forKind: "P").filter { $0.split(separator: ";").contains("k=r") }
+        XCTAssertFalse(rightPromptMarks.isEmpty, "[zsh] the hand-added mark should be drawn")
+        XCTAssertTrue(rightPromptMarks.allSatisfy { !$0.contains("aid=") },
+                      "[zsh] the integration added its own mark: \(rightPromptMarks)")
+    }
+
+    /// fish never marks its right prompt itself, so the integration wraps
+    /// fish_right_prompt's output in OSC 133;P;k=r … B and iTerm2 keeps it out
+    /// of the recorded command.
+    func testFish_rightPrompt_isMarkedAndExcludedFromCommand() throws {
+        let output = try runShell(.fish,
+                                  beforeSourcing: ["function fish_right_prompt; echo fish_right_prompt_token; end"],
+                                  steps: [.command("echo hi\n")])
+        let recorded = Data(output.utf8)
+        XCTAssertTrue(recorded.osc133Args(forKind: "P").contains { $0.split(separator: ";").contains("k=r") },
+                      "[fish] expected the right prompt to be marked with OSC 133;P;k=r")
+
+        let harness = TerminalTestHarness(width: LiveShell.columns, height: LiveShell.rows)
+        harness.feedEscapeSequence(Array(recorded))
+        harness.sync()
+        let marks = harness.allScreenMarks().filter { $0.fullCommand == "echo hi" }
+        XCTAssertEqual(marks.count, 1, "[fish] expected one mark for the test command")
+        XCTAssertEqual(marks.first?.excludedSubranges?.count, 1,
+                       "[fish] expected the right prompt's cells to be excluded")
+    }
+
+    /// The wrapped right prompt must still see the previous command's status.
+    func testFish_rightPrompt_seesLastStatus() throws {
+        let output = try runShell(.fish,
+                                  beforeSourcing: ["function fish_right_prompt; echo \"rp_st\"\"atus=$status\"; end"],
+                                  steps: [.command("false\n")])
+        XCTAssertTrue(output.contains("rp_status=1"),
+                      "[fish] the right prompt should show the status of `false`")
+    }
+
+    /// A right prompt that already carries a 133;P mark must not get a second,
+    /// nested mark from the integration.
+    func testFish_alreadyMarkedRightPrompt_isNotMarkedAgain() throws {
+        let output = try runShell(.fish,
+                                  beforeSourcing: ["function fish_right_prompt; printf '\\e]133;P;k=r\\ahand\\e]133;B\\a'; end"],
+                                  steps: [.command("echo hi\n")])
+        let marks = Data(output.utf8).osc133Args(forKind: "P").filter { $0.split(separator: ";").contains("k=r") }
+        XCTAssertFalse(marks.isEmpty, "[fish] the hand-added mark should be drawn")
+        XCTAssertTrue(marks.allSatisfy { !$0.contains("aid=") },
+                      "[fish] the integration added its own mark: \(marks)")
+    }
+
+    /// fish 4.0 and later send their own A, C and D unless the mark-prompt
+    /// feature (fish 4.0.6 and later) is turned off. Then the integration must
+    /// send them.
+    func testFish_markPromptFeatureOff_integrationSendsMarks() throws {
+        try XCTSkipUnless(Self.fishTurnsOffMarkPrompt(),
+                          "This fish doesn't have the mark-prompt feature (fish 4.0.6 and later)")
+        let output = try runShell(.fish,
+                                  environment: ["fish_features": "no-mark-prompt"],
+                                  beforeSourcing: [],
+                                  steps: [.command("echo hi\n")])
+        let recorded = Data(output.utf8)
+        for kind in ["A", "C"] {
+            XCTAssertTrue(recorded.osc133Args(forKind: kind).contains { $0.contains("aid=") },
+                          "[fish] expected the integration to send OSC 133;\(kind)")
+        }
+        let harness = TerminalTestHarness(width: LiveShell.columns, height: LiveShell.rows)
+        harness.feedEscapeSequence(Array(recorded))
+        harness.sync()
+        XCTAssertEqual(harness.allScreenMarks().filter { $0.fullCommand == "echo hi" }.count, 1,
+                       "[fish] expected the command to be recorded")
+    }
+
+    /// tcsh pads the gap before rprompt with spaces, so nothing but a mark keeps
+    /// the right prompt out of the recorded command. The integration wraps
+    /// rprompt in OSC 133;P;k=r … B.
+    func testTcsh_rightPrompt_isMarkedAndExcludedFromCommand() throws {
+        let output = try runShell(.tcsh,
+                                  beforeSourcing: ["set rprompt='tcsh_rp_token'"],
+                                  steps: [.command("echo hi\n")])
+        let recorded = Data(output.utf8)
+        XCTAssertTrue(recorded.osc133Args(forKind: "P").contains { $0.split(separator: ";").contains("k=r") },
+                      "[tcsh] expected the right prompt to be marked with OSC 133;P;k=r")
+
+        let harness = TerminalTestHarness(width: LiveShell.columns, height: LiveShell.rows)
+        harness.feedEscapeSequence(Array(recorded))
+        harness.sync()
+        let marks = harness.allScreenMarks().filter { $0.isPrompt && $0.fullCommand != nil }
+        XCTAssertTrue(marks.contains { $0.fullCommand == "echo hi" },
+                      "[tcsh] recorded commands: \(marks.map { $0.fullCommand ?? "" })")
+        XCTAssertEqual(marks.first { $0.fullCommand == "echo hi" }?.excludedSubranges?.count, 1,
+                       "[tcsh] expected the right prompt's cells to be excluded")
+    }
+
+    /// Wrapping rprompt must not change how it looks: runs of spaces inside it
+    /// survive. Only the right prompt drawn inside our mark counts; tcsh draws
+    /// the unwrapped one at the prompt before the integration is sourced.
+    func testTcsh_rightPromptWithRunsOfSpaces_isUnchanged() throws {
+        let output = try runShell(.tcsh,
+                                  beforeSourcing: ["set rprompt='rp1   rp2'"],
+                                  steps: [.command("echo hi\n")])
+        let drawn = Self.markedRightPrompts(in: output)
+        XCTAssertFalse(drawn.isEmpty, "[tcsh] expected a marked right prompt")
+        XCTAssertTrue(drawn.allSatisfy { $0 == "rp1   rp2" }, "[tcsh] marked right prompts: \(drawn)")
+    }
+
+    /// ITERM2_SQUELCH_RPROMPT_MARK leaves rprompt alone.
+    func testTcsh_squelchRightPromptMark_leavesRightPromptUnmarked() throws {
+        let output = try runShell(.tcsh,
+                                  beforeSourcing: ["set ITERM2_SQUELCH_RPROMPT_MARK", "set rprompt='tcsh_rp_token'"],
+                                  steps: [.command("echo hi\n")])
+        XCTAssertTrue(output.contains("tcsh_rp_token"), "[tcsh] expected the right prompt to be drawn")
+        XCTAssertEqual(Self.markedRightPrompts(in: output), [], "[tcsh] the right prompt was marked")
+    }
+
+    /// A right prompt that already carries a 133;P mark must not get a second,
+    /// nested mark from the integration.
+    func testTcsh_alreadyMarkedRightPrompt_isNotMarkedAgain() throws {
+        let output = try runShell(.tcsh,
+                                  beforeSourcing: ["set rprompt=\"%{`printf '\\033]133;P;k=r\\007'`%}hand%{`printf '\\033]133;B\\007'`%} \""],
+                                  steps: [.command("echo hi\n")])
+        let marks = Data(output.utf8).osc133Args(forKind: "P").filter { $0.split(separator: ";").contains("k=r") }
+        XCTAssertFalse(marks.isEmpty, "[tcsh] the hand-added mark should be drawn")
+        XCTAssertTrue(marks.allSatisfy { !$0.contains("aid=") },
+                      "[tcsh] the integration added its own mark: \(marks)")
+    }
+
     func testBash_baseline_emitsOnePromptAPerCommand() throws {
         try runShellBaseline(.bash)
     }
@@ -93,6 +294,186 @@ final class ShellIntegrationLiveHarness: XCTestCase {
     }
 
     // MARK: - Implementation
+
+    /// Aborting the line at the prompt makes zsh run precmd without preexec,
+    /// which is what ^C does. A real ^C arrives as SIGINT, and the terminal
+    /// flushes pending input when it does; depending on when it lands, zsh can
+    /// lose the keys and never redraw. A key bound to send-break takes the same
+    /// path as an ordinary character.
+    private static let bindSendBreak = "bindkey '^X' send-break"
+    private static let sendBreak = "\u{18}"
+
+    private enum ShellStep {
+        // Type text without waiting for anything.
+        case keys(String)
+        // Type text, then wait until the line editor is reading the next line.
+        case command(String)
+        // Wait until zsh has written `text`.
+        case waitFor(String)
+    }
+
+    /// A command that prints `values` between [[ and ]]. The brackets are
+    /// split in the typed text so the echoed command can't be mistaken for
+    /// the output. `print -r` is zsh's; fish has no print builtin.
+    private static func printValues(_ values: String, shell: SupportedShell = .zsh) -> String {
+        let command = shell == .zsh ? "print -r --" : "echo"
+        return "\(command) \"[\"\"[\(values)]\"\"]\"\n"
+    }
+
+    /// What the command from printValues(_:) printed.
+    /// Whether the installed fish reports mark-prompt as off when
+    /// fish_features=no-mark-prompt is set. `status test-feature` exits 1 for a
+    /// feature that is off and 2 for one this fish doesn't know.
+    private static func fishTurnsOffMarkPrompt() -> Bool {
+        guard let fish = SupportedShell.fish.executablePath() else {
+            return false
+        }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: fish)
+        process.arguments = ["-N", "-c", "status test-feature mark-prompt"]
+        var env = ProcessInfo.processInfo.environment
+        env["fish_features"] = "no-mark-prompt"
+        process.environment = env
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+        } catch {
+            return false
+        }
+        process.waitUntilExit()
+        return process.terminationStatus == 1
+    }
+
+    /// The text between each OSC 133;P;k=r and the B that closes it.
+    private static func markedRightPrompts(in output: String) -> [String] {
+        let pattern = "\u{1B}\\]133;P;k=r[^\u{07}]*\u{07}([^\u{1B}]*)\u{1B}\\]133;B"
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            return []
+        }
+        let range = NSRange(output.startIndex..., in: output)
+        return regex.matches(in: output, range: range).compactMap {
+            Range($0.range(at: 1), in: output).map { String(output[$0]) }
+        }
+    }
+
+    private static func printedValues(in output: String) -> String? {
+        guard let start = output.range(of: "[["),
+              let end = output.range(of: "]]", range: start.upperBound..<output.endIndex) else {
+            return nil
+        }
+        return String(output[start.upperBound..<end.lowerBound])
+    }
+
+    private func runZsh(beforeSourcing: [String], steps: [ShellStep]) throws -> String {
+        return try runShell(.zsh, beforeSourcing: beforeSourcing, steps: steps)
+    }
+
+    /// Runs `shell` with `environment` added, sends `beforeSourcing`, sources
+    /// the integration, performs `steps`, and returns everything the shell
+    /// wrote once it has printed a sentinel after the last step. Throws
+    /// XCTSkip when the shell or the project root is unavailable.
+    private func runShell(_ shell: SupportedShell,
+                          environment: [String: String] = [:],
+                          beforeSourcing: [String],
+                          steps: [ShellStep]) throws -> String {
+        guard let executable = shell.executablePath() else {
+            throw XCTSkip("\(shell.rawValue) is not installed on this machine")
+        }
+        guard let projectRoot = Self.projectRoot() else {
+            throw XCTSkip("PROJECT_ROOT not set; run via tools/run_shell_integration_live.sh")
+        }
+        let integrationPath = (projectRoot as NSString)
+            .appendingPathComponent("Resources/shell_integration/\(shell.integrationFilename())")
+
+        var env = ProcessInfo.processInfo.environment
+        env["TERM_PROGRAM"] = "iTerm.app"
+        env["LC_TERMINAL"] = "iTerm2"
+        env["TERM"] = "xterm-256color"
+        env.removeValue(forKey: "ITERM_SHELL_INTEGRATION_INSTALLED")
+        // Xcode's malloc diagnostics describe the test runner, not a user's
+        // shell, and every subprocess the integration starts would print their
+        // log lines into the terminal, where they'd land in recorded commands.
+        for key in env.keys where key.hasPrefix("Malloc") {
+            env.removeValue(forKey: key)
+        }
+        env.merge(environment) { _, new in new }
+
+        let captured = NSMutableData()
+        let lock = NSLock()
+        let liveShell = try LiveShell(shellPath: executable,
+                                      arguments: shell.arguments(for: executable),
+                                      environment: env,
+                                      answersTerminalQueries: shell.waitsForTerminalQueryReplies,
+                                      onBytes: { bytes, length in
+                                          lock.lock()
+                                          captured.append(bytes, length: length)
+                                          lock.unlock()
+                                      })
+        defer {
+            liveShell.terminate()
+        }
+        func snapshot() -> Data {
+            lock.lock(); defer { lock.unlock() }
+            return captured as Data
+        }
+        for line in beforeSourcing {
+            liveShell.send(line + "\n")
+        }
+        // What the shell writes once its line editor is reading again. zsh's
+        // precmd sends OSC 133;D early on, then runs subprocesses while it
+        // decorates the prompt, so D alone doesn't mean the shell is ready: a
+        // key sent then would reach precmd instead of the line editor. A theme
+        // may also rebuild the prompt without our A mark, so A can't be relied
+        // on either.
+        let lineEditorReading = shell.lineEditorReadingMarker
+        func lineEditorIsReading(afterFirst marker: Data, from offset: Int) -> Bool {
+            let data = snapshot()
+            guard let found = data.range(of: marker, in: offset..<data.count) else {
+                return false
+            }
+            return data.range(of: lineEditorReading, in: found.upperBound..<data.count) != nil
+        }
+        func waitForLineEditor(afterFirst marker: Data, from offset: Int, _ description: String) throws {
+            do {
+                try liveShell.waitUntil(description, timeout: 8.0) {
+                    lineEditorIsReading(afterFirst: marker, from: offset)
+                }
+            } catch {
+                print("[\(shell.rawValue)] \(error); captured:\n" + snapshot().escapedForLog)
+                throw error
+            }
+        }
+
+        let sourced = snapshot().count
+        liveShell.send(shell.sourceCommand(integrationPath: integrationPath))
+        try waitForLineEditor(afterFirst: Data("ShellIntegrationVersion=".utf8),
+                              from: sourced,
+                              "integration loaded")
+        for step in steps {
+            switch step {
+            case .keys(let text):
+                liveShell.send(text)
+            case .command(let text):
+                let sent = snapshot().count
+                liveShell.send(text)
+                // The command's exit status is reported with D before the next
+                // prompt, then the line editor starts reading.
+                try waitForLineEditor(afterFirst: Data("\u{1B}]133;D".utf8),
+                                      from: sent,
+                                      "line editor reading after \(text.debugDescription)")
+            case .waitFor(let text):
+                try liveShell.waitUntil(text, timeout: 8.0) {
+                    snapshot().contains(asciiString: text)
+                }
+            }
+        }
+        liveShell.send("echo \"DONE_\"\"SENTINEL\"\n")
+        try liveShell.waitUntil("sentinel", timeout: 8.0) {
+            snapshot().contains(asciiString: "DONE_SENTINEL")
+        }
+        return String(decoding: snapshot(), as: UTF8.self)
+    }
 
     private enum SupportedShell: String {
         case zsh, bash, fish, tcsh, xonsh, nu
@@ -168,9 +549,30 @@ final class ShellIntegrationLiveHarness: XCTestCase {
         }
 
         var testCommand: String { "echo iterm2_shell_test_token\n" }
+
+        // Written after a command's D once the line editor is reading the next
+        // line. zle enables bracketed paste each time it starts reading. fish
+        // enables it before drawing the prompt, and the integration's D may
+        // come from fish_prompt, so use the B that ends fish_prompt instead;
+        // fish reads keys in raw mode, so anything typed after it is kept, and
+        // the same goes for tcsh.
+        var lineEditorReadingMarker: Data {
+            switch self {
+            case .fish, .tcsh:
+                // tcsh's line editor doesn't use bracketed paste at all.
+                return Data("\u{1B}]133;B".utf8)
+            case .zsh, .bash, .xonsh, .nu:
+                return Data("\u{1B}[?2004h".utf8)
+            }
+        }
     }
 
-    private func runShellBaseline(_ shell: SupportedShell) throws {
+    /// Runs `shell` with the integration, sends one command, and checks the
+    /// baseline OSC 133 traffic. `beforeSourcing` is sent to the shell before
+    /// the integration is sourced. Returns everything the shell wrote, or nil
+    /// if the integration file is missing.
+    @discardableResult
+    private func runShellBaseline(_ shell: SupportedShell, beforeSourcing: String? = nil) throws -> Data? {
         guard let executable = shell.executablePath() else {
             throw XCTSkip("\(shell.rawValue) is not installed on this machine")
         }
@@ -181,7 +583,7 @@ final class ShellIntegrationLiveHarness: XCTestCase {
             .appendingPathComponent("Resources/shell_integration/\(shell.integrationFilename())")
         guard FileManager.default.fileExists(atPath: integrationPath) else {
             XCTFail("Shell integration file not found at \(integrationPath)")
-            return
+            return nil
         }
 
         var env = ProcessInfo.processInfo.environment
@@ -228,6 +630,9 @@ final class ShellIntegrationLiveHarness: XCTestCase {
             }
         }
 
+        if let beforeSourcing {
+            liveShell.send(beforeSourcing)
+        }
         liveShell.send(shell.sourceCommand(integrationPath: integrationPath))
 
         // Wait for the integration's ShellIntegrationVersion announcement
@@ -301,6 +706,7 @@ final class ShellIntegrationLiveHarness: XCTestCase {
                                 "[\(shell.rawValue)] OSC 133;D arg '\(args)' should start with a numeric return code")
             }
         }
+        return recorded
     }
 }
 

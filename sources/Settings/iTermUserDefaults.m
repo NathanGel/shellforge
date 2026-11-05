@@ -33,6 +33,9 @@ static NSString *const iTermUserDefaultsKeyClaudeCodeConfigDirPath = @"NoSyncCla
 static NSString *const iTermUserDefaultsKeyClaudeCodeIntegrationCompleted = @"NoSyncClaudeCodeIntegrationCompleted";
 static NSString *const iTermUserDefaultsKeyShowSessionStatusInTabSubtitle = @"ShowSessionStatusInTabSubtitle";
 NSString *const iTermShowSessionStatusInTabSubtitleDidChange = @"iTermShowSessionStatusInTabSubtitleDidChange";
+NSString *const iTermUserDefaultsDidMigrateKeysNotification = @"iTermUserDefaultsDidMigrateKeysNotification";
+NSString *const iTermUserDefaultsMigrationValuesBeforeKey = @"before";
+NSString *const iTermUserDefaultsMigrationValuesAfterKey = @"after";
 static NSString *const iTermUserDefaultsKeyHaveExplainedHowToAddTouchbarControls = @"NoSyncHaveExplainedHowToAddTouchbarControls";
 static NSString *const iTermUserDefaultsKeyHaveWarnedAboutUndoCloseShortcutChange = @"NoSyncHaveWarnedAboutUndoCloseShortcutChange";
 static NSString *const iTermUserDefaultsKeyHaveWarnedAboutUndoKeyChange = @"NoSyncHaveWarnedAboutUndoKeyChange";
@@ -50,6 +53,7 @@ static NSString *const iTermUserDefaultsKeyWorkgroupsData = @"Workgroups";
 static NSString *const iTermUserDefaultsKeyWorkgroupShortcutsBackfilled = @"NoSyncWorkgroupShortcutsBackfilled";
 static NSString *const iTermUserDefaultsKeyClaudeCodeDiffModeBackfilled = @"NoSyncClaudeCodeDiffModeBackfilled";
 static NSString *const iTermUserDefaultsKeyClaudeCodeReviewSystemPromptCommandBackfilled = @"NoSyncClaudeCodeReviewSystemPromptCommandBackfilled";
+static NSString *const iTermUserDefaultsKeyClaudeCodeReviewSettingsCommandBackfilled = @"NoSyncClaudeCodeReviewSettingsCommandBackfilled";
 static NSString *const iTermUserDefaultsKeyClaudeCodeAutoSendClippingsBackfilled = @"NoSyncClaudeCodeAutoSendClippingsBackfilled";
 static NSString *const iTermUserDefaultsKeyClaudeCodeAutoRequestReviewBackfilled = @"NoSyncClaudeCodeAutoRequestReviewBackfilled";
 static NSString *const iTermUserDefaultsKeySuppressPhysicalKeyBindingSuggestion = @"NoSyncSuppressPhysicalKeyBindingSuggestion";
@@ -131,6 +135,7 @@ static NSUserDefaults *iTermPrivateUserDefaults(void) {
     // silently revert it. performMigrations runs after that copy, so the migration
     // sees the real value. Keep it first so the early return below never skips it.
     [iTermAdvancedSettingsModel migrateAlternateScreenBidiSettingInUserDefaults:userDefaults];
+    [iTermAdvancedSettingsModel migrateDECRQCRASettingInUserDefaults:userDefaults];
 
     id obj = [userDefaults objectForKey:iTermUserDefaultsKeySearchHistory];
     if (!obj) {
@@ -143,6 +148,35 @@ static NSUserDefaults *iTermPrivateUserDefaults(void) {
     if (maybeSearchHistory && ![maybeSearchHistory isKindOfClass:[NSNumber class]]) {
         [userDefaults removeObjectForKey:iTermUserDefaultsKeyBuggySecureKeyboardEntry];
     }
+}
+
++ (void)migrateKeys:(NSArray<NSString *> *)keys
+     inUserDefaults:(NSUserDefaults *)userDefaults
+              block:(void (^ NS_NOESCAPE)(void))block {
+    NSMutableDictionary *before = [NSMutableDictionary dictionary];
+    for (NSString *key in keys) {
+        before[key] = [userDefaults objectForKey:key];
+    }
+    block();
+    NSMutableDictionary *changedBefore = [NSMutableDictionary dictionary];
+    NSMutableDictionary *changedAfter = [NSMutableDictionary dictionary];
+    for (NSString *key in keys) {
+        id oldValue = before[key];
+        id newValue = [userDefaults objectForKey:key];
+        if (oldValue == newValue || [oldValue isEqual:newValue]) {
+            continue;
+        }
+        changedBefore[key] = oldValue;
+        changedAfter[key] = newValue;
+    }
+    if (changedBefore.count == 0 && changedAfter.count == 0) {
+        return;
+    }
+    DLog(@"Migration changed %@ -> %@", changedBefore, changedAfter);
+    [[NSNotificationCenter defaultCenter] postNotificationName:iTermUserDefaultsDidMigrateKeysNotification
+                                                        object:userDefaults
+                                                      userInfo:@{ iTermUserDefaultsMigrationValuesBeforeKey: changedBefore,
+                                                                  iTermUserDefaultsMigrationValuesAfterKey: changedAfter }];
 }
 
 + (NSArray<NSString *> *)searchHistory {
@@ -225,6 +259,10 @@ static NSUserDefaults *iTermPrivateUserDefaults(void) {
 + (void)setOpenTmuxDashboardIfHiddenWindows:(BOOL)openTmuxDashboardIfHiddenWindows {
     [self.userDefaults setBool:openTmuxDashboardIfHiddenWindows
                         forKey:iTermUserDefaultsKeyOpenTmuxDashboardIfHiddenWindows];
+}
+
++ (NSString *)claudeCodeWorkgroupUpsellSuppressedUserDefaultsKey {
+    return iTermUserDefaultsKeyClaudeCodeWorkgroupUpsellSuppressed;
 }
 
 + (BOOL)claudeCodeWorkgroupUpsellSuppressed {
@@ -448,6 +486,15 @@ static NSUserDefaults *iTermPrivateUserDefaults(void) {
 + (void)setClaudeCodeReviewSystemPromptCommandBackfilled:(BOOL)value {
     [self.userDefaults setBool:value
                         forKey:iTermUserDefaultsKeyClaudeCodeReviewSystemPromptCommandBackfilled];
+}
+
++ (BOOL)claudeCodeReviewSettingsCommandBackfilled {
+    return [self.userDefaults boolForKey:iTermUserDefaultsKeyClaudeCodeReviewSettingsCommandBackfilled];
+}
+
++ (void)setClaudeCodeReviewSettingsCommandBackfilled:(BOOL)value {
+    [self.userDefaults setBool:value
+                        forKey:iTermUserDefaultsKeyClaudeCodeReviewSettingsCommandBackfilled];
 }
 
 + (BOOL)claudeCodeAutoSendClippingsBackfilled {

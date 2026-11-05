@@ -23,8 +23,9 @@ protocol ComposerTextViewDelegate: AnyObject {
     @objc(composerTextViewPerformFindPanelAction:) func composerTextViewPerformFindPanelAction(_ sender: Any?)
     @objc(composerTextViewClear) func composerTextViewClear()
 
+    // Nil when there is nothing to highlight with, such as a composer with no delegate of its own.
     @objc(composerSyntaxHighlighterForAttributedString:)
-    func composerSyntaxHighlighter(textStorage: NSMutableAttributedString) -> SyntaxHighlighting
+    func composerSyntaxHighlighter(textStorage: NSMutableAttributedString) -> SyntaxHighlighting?
     @objc func composerHandleKeyDown(event: NSEvent) -> Bool
     @objc func composerTextViewShouldForwardCopy() -> Bool
     @objc func composerForwardMenuItem(_ menuItem: NSMenuItem)
@@ -42,6 +43,13 @@ class ComposerTextView: MultiCursorTextView {
     // to plain text so pasted fonts/colors can't leak in. Default off,
     // so ordinary plain-text composer usage is unaffected.
     @objc var forcePlainTextPaste = false
+    // Opt-in (cockpit only). Send each (Opt-Shift-Return) and enqueue each
+    // (Opt-Return) extract commands as plain strings and delete them from
+    // the text view, which discards @-mention attachment chips. When this
+    // is set they behave like Send (Shift-Return) instead, leaving the
+    // contents in place for the delegate to read. With a selection, Send
+    // delivers all selected text as one substring. Default off.
+    @objc var sendEachActsAsSend = false
     @objc private(set) var isSettingSuggestion = false
     @objc private(set) var isDoingSyntaxHighlighting = false
     private let syntaxHighlightingRateLimit = iTermRateLimitedUpdate(name: "Syntax Highlighting Rate Limit",
@@ -273,16 +281,78 @@ class ComposerTextView: MultiCursorTextView {
         if forcePlainTextPaste {
             // Strip pasted fonts/colors/attachments; insert plain text
             // only. Keeps a rich-text-enabled cockpit composer safe.
-            pasteAsPlainText(sender)
+            if !pasteStrippingAttachmentCharacters(from: NSPasteboard.general) {
+                pasteAsPlainText(sender)
+            }
             return
         }
         super.paste(sender)
     }
 
+    // Plain text with any attachment characters (U+FFFC, what an
+    // @-mention chip becomes as text) removed: pasted without its chip it
+    // would be an invisible character in the command.
+    static func removingAttachmentCharacters(_ string: String) -> String {
+        let attachment: Unicode.Scalar = "\u{FFFC}"  // NSTextAttachment.character
+        guard string.unicodeScalars.contains(attachment) else {
+            return string
+        }
+        var scalars = String.UnicodeScalarView()
+        scalars.append(contentsOf: string.unicodeScalars.filter { $0 != attachment })
+        return String(scalars)
+    }
+
+    // If the pasteboard's text holds attachment characters, insert it
+    // without them and return true. Otherwise leave the paste to the
+    // caller. Internal for testing.
+    func pasteStrippingAttachmentCharacters(from pasteboard: NSPasteboard) -> Bool {
+        guard let string = pasteboard.string(forType: .string) else {
+            return false
+        }
+        let cleaned = Self.removingAttachmentCharacters(string)
+        guard cleaned != string else {
+            return false
+        }
+        guard !cleaned.isEmpty else {
+            // Only chips were copied; there's no text to paste, so leave
+            // the selection alone rather than deleting it.
+            return true
+        }
+        // Its own undo step, like any paste, not merged into typing.
+        breakUndoCoalescing()
+        insertText(cleaned, replacementRange: NSRange(location: NSNotFound, length: 0))
+        breakUndoCoalescing()
+        return true
+    }
+
+    // With plain-text paste forced (the cockpit), copy the chips' text
+    // form without their attachment characters, so pasting it anywhere
+    // doesn't carry an invisible character along.
+    open override func writeSelection(to pboard: NSPasteboard, types: [NSPasteboard.PasteboardType]) -> Bool {
+        let wrote = super.writeSelection(to: pboard, types: types)
+        if wrote {
+            removeAttachmentCharactersIfPlainTextOnly(in: pboard)
+        }
+        return wrote
+    }
+
+    private func removeAttachmentCharactersIfPlainTextOnly(in pboard: NSPasteboard) {
+        guard forcePlainTextPaste, let string = pboard.string(forType: .string) else {
+            return
+        }
+        let cleaned = Self.removingAttachmentCharacters(string)
+        if cleaned != string {
+            pboard.setString(cleaned, forType: .string)
+        }
+    }
+
     // Opt-in (cockpit only). Placeholder text drawn when there is no
     // typed command (empty, or only @-mention chips). Default nil, so
-    // ordinary composer usage draws nothing extra.
-    @objc var placeholderString: String? {
+    // ordinary composer usage draws nothing extra. Not named
+    // placeholderString: that would override NSTextView's own placeholder
+    // property, and AppKit would draw a second, wrapped copy whenever the
+    // view is empty.
+    @objc var composerPlaceholderString: String? {
         didSet { needsDisplay = true }
     }
 
@@ -306,16 +376,22 @@ class ComposerTextView: MultiCursorTextView {
 
     open override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-        guard let placeholder = placeholderString,
+        guard let placeholder = composerPlaceholderString,
               !placeholder.isEmpty,
               shouldShowPlaceholder,
               let layoutManager,
               let textContainer else {
             return
         }
+        let placeholderFont = font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        // One line, ending in an ellipsis when it doesn't fit (a long
+        // translation in a narrow composer) rather than cut off mid-word.
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineBreakMode = .byTruncatingTail
         let attributes: [NSAttributedString.Key: Any] = [
-            .font: font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize),
-            .foregroundColor: NSColor.placeholderTextColor
+            .font: placeholderFont,
+            .foregroundColor: NSColor.placeholderTextColor,
+            .paragraphStyle: paragraphStyle
         ]
         let origin = textContainerOrigin
         // Draw after the last mention chip (so the placeholder follows
@@ -342,7 +418,13 @@ class ComposerTextView: MultiCursorTextView {
             point = NSPoint(x: origin.x + rect.maxX + textContainer.lineFragmentPadding,
                             y: origin.y + rect.minY)
         }
-        (placeholder as NSString).draw(at: point, withAttributes: attributes)
+        let rightEdge = min(bounds.maxX,
+                            origin.x + textContainer.size.width - textContainer.lineFragmentPadding)
+        let rect = NSRect(x: point.x,
+                          y: point.y,
+                          width: max(0, rightEdge - point.x),
+                          height: layoutManager.defaultLineHeight(for: placeholderFont))
+        (placeholder as NSString).draw(in: rect, withAttributes: attributes)
     }
 
     @objc
@@ -375,12 +457,24 @@ class ComposerTextView: MultiCursorTextView {
     @objc override func copy(_ sender: Any?) {
         if let menuItem = sender as? NSMenuItem {
             if super.validateMenuItem(menuItem) {
-                super.copy(sender)
+                copyRemovingAttachmentCharacters(sender)
             } else {
                 composerDelegate?.composerForwardMenuItem(menuItem)
             }
         } else if sender as? ComposerTextView === self || sender == nil {
-            super.copy(sender)
+            copyRemovingAttachmentCharacters(sender)
+        }
+    }
+
+    // A copy with several cursors writes the pasteboard directly, not
+    // through writeSelection(to:types:), so clean up after it too. Only
+    // when this copy wrote the pasteboard, never another app's contents.
+    private func copyRemovingAttachmentCharacters(_ sender: Any?) {
+        let pasteboard = NSPasteboard.general
+        let changeCount = pasteboard.changeCount
+        super.copy(sender)
+        if pasteboard.changeCount != changeCount {
+            removeAttachmentCharactersIfPlainTextOnly(in: pasteboard)
         }
     }
 
@@ -792,7 +886,19 @@ class ComposerTextView: MultiCursorTextView {
         suggestion = nil
         if hasSelection {
             let content = string as NSString
-            let strings = multiCursorSelectedRanges.filter { $0.length > 0}.map { content.substring(with: $0) }
+            let ranges = multiCursorSelectedRanges.filter { $0.length > 0 }
+            if sendEachActsAsSend {
+                // The cockpit sends one command per keypress (it re-reads
+                // the composer for its target chips), so deliver every
+                // selection as a single command, one per line, in
+                // document order.
+                let joined = ranges.sorted { $0.location < $1.location }
+                    .map { content.substring(with: $0) }
+                    .joined(separator: "\n")
+                composerDelegate?.composerTextViewSendSubstring(joined)
+                return
+            }
+            let strings = ranges.map { content.substring(with: $0) }
             for s in strings.dropLast() {
                 composerDelegate?.composerTextViewSendSubstring(s + "\n")
             }
@@ -805,6 +911,10 @@ class ComposerTextView: MultiCursorTextView {
     }
 
     private func sendEachAction() {
+        if sendEachActsAsSend {
+            sendAction()
+            return
+        }
         suggestion = nil
         for command in take() {
             composerDelegate?.composerTextViewSend(string: command)
@@ -812,6 +922,10 @@ class ComposerTextView: MultiCursorTextView {
     }
 
     private func enqueueEachAction() {
+        if sendEachActsAsSend {
+            sendAction()
+            return
+        }
         suggestion = nil
         for command in take() {
             composerDelegate?.composerTextViewEnqueue(string: command)
@@ -1277,7 +1391,7 @@ class ComposerTextView: MultiCursorTextView {
         }
         isDoingSyntaxHighlighting = true
         composerDelegate?.composerSyntaxHighlighter(
-            textStorage: textStorage).highlight(
+            textStorage: textStorage)?.highlight(
                 range: NSRange(rangeExcludingPrefixAndSuggestion))
         isDoingSyntaxHighlighting = false
     }

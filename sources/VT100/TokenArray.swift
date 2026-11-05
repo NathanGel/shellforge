@@ -25,7 +25,8 @@ class TokenArray: IteratorProtocol, CustomDebugStringConvertible {
     static var destroyQueue: DispatchQueue = {
         return DispatchQueue(label: "com.iterm2.token-destroyer")
     }()
-    private var semaphore: DispatchSemaphore?
+    // Holds one slot until this array is finished or cleaned up.
+    private var budget: TokenBudget?
 
     var hasNext: Bool {
         return nextIndex < count
@@ -57,12 +58,12 @@ class TokenArray: IteratorProtocol, CustomDebugStringConvertible {
     init(_ cvector: CVector,
          lengthTotal: Int,
          lengthExcludingInBandSignaling: Int,
-         semaphore: DispatchSemaphore?) {
+         budget: TokenBudget?) {
         precondition(lengthTotal > 0 && lengthExcludingInBandSignaling >= 0)
         self.cvector = cvector
         self.lengthTotal = lengthTotal
         self.lengthExcludingInBandSignaling = lengthExcludingInBandSignaling
-        self.semaphore = semaphore
+        self.budget = budget
         count = CVectorCount(&self.cvector)
     }
 
@@ -72,9 +73,8 @@ class TokenArray: IteratorProtocol, CustomDebugStringConvertible {
         }
         defer {
             nextIndex += 1
-            if nextIndex == count, let semaphore = semaphore {
-                semaphore.signal()
-                self.semaphore = nil
+            if nextIndex == count {
+                releaseBudget()
             }
         }
         return (CVectorGetObject(&cvector, nextIndex) as! VT100Token)
@@ -84,6 +84,19 @@ class TokenArray: IteratorProtocol, CustomDebugStringConvertible {
         return (nextIndex..<count).map {
             CVectorGetVT100Token(&cvector, $0)
         }
+    }
+
+    // Calls body with each token that hasn't been consumed, in order, until it returns false.
+    // Returns false if body stopped the enumeration.
+    func enumerateRemaining(_ body: (VT100Token) -> Bool) -> Bool {
+        var i = nextIndex
+        while i < count {
+            if !body(CVectorGetVT100Token(&cvector, i)) {
+                return false
+            }
+            i += 1
+        }
+        return true
     }
 
     // Returns the next token in the queue or nil if it is empty.
@@ -97,9 +110,8 @@ class TokenArray: IteratorProtocol, CustomDebugStringConvertible {
     // Returns whether there is another token.
     func consume() -> Bool {
         nextIndex += 1
-        if nextIndex == count, let semaphore = semaphore {
-            semaphore.signal()
-            self.semaphore = nil
+        if nextIndex == count {
+            releaseBudget()
         }
         return hasNext
     }
@@ -110,17 +122,18 @@ class TokenArray: IteratorProtocol, CustomDebugStringConvertible {
             return
         }
         nextIndex = count
-        if let semaphore = semaphore {
-            semaphore.signal()
-            self.semaphore = nil
-        }
+        releaseBudget()
     }
 
     private var dirty = true
 
     func didFinish() {
-        semaphore?.signal()
-        semaphore = nil
+        releaseBudget()
+    }
+
+    private func releaseBudget() {
+        budget?.release()
+        budget = nil
     }
 
     func cleanup(asyncFree: Bool) {
@@ -128,7 +141,7 @@ class TokenArray: IteratorProtocol, CustomDebugStringConvertible {
             return
         }
         dirty = false
-        semaphore?.signal()
+        releaseBudget()
         if asyncFree {
             TokenArray.destroyQueue.async { [cvector] in
                 CVectorReleaseObjectsAndDestroy(cvector)

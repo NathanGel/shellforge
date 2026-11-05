@@ -48,6 +48,8 @@ TOP-LEVEL keys
                                            urlString/displayName/name
   CodeReviewSavedPrompts ................. JSON Data: prompt name/text
   StatusPriorityEntries .................. JSON Data: status "pattern"
+  NoSyncIT2HostGrants .................... JSON Data: "host" (user@host of each
+                                           remote host always allowed to use it2)
   Coprocess MRU, NoSyncCoprocessCommandsToIgnoreErrorOutput,
     FileDropCoprocess, UrlHandlerCommand   user shell commands
   NoSyncKnownHosts ....................... user@host:port list
@@ -58,6 +60,10 @@ TOP-LEVEL keys
                                            the private part is in the KEY)
   NoSyncRecordedVariables ................ recorded variable names (deep)
   NoSyncSearchHistory[2] ................. find-bar search terms
+  NoSyncSuppressedAlertsCatalog .......... suppressed alert/announcement
+                                           messages (may name URLs, paths,
+                                           hosts) keyed by identifiers that
+                                           can hold a host; removed
   NoSyncOpenAIAPIKey ..................... legacy plaintext API key
   NoSyncCompanion* ....................... push token / paired id / relay
                                            origin (string values only)
@@ -65,19 +71,22 @@ TOP-LEVEL keys
   AICustomHeaders ........................ auth headers (name/value, deep)
   AIManualModelConfigurations ............ custom endpoint "url" (+ name)
   AitermURL, AiProxy, AiModel, AIEconomyModelName  AI endpoint/model
+  AIOllamaRegularModel, AIOllamaEconomyModel  user-chosen Ollama model names
+                                           (may be custom/namespaced)
   AI Prompt* (11 keys), CodeciergeGhostRidingPrompt, CodeciergeRegularPrompt
                                            user-authored AI prompt templates
   PrefsCustomFolder, CustomScriptsFolder, DownloadsDirectory,
     ScreenshotSaveLocation, PreferredBaseDir, DynamicProfilesPath,
     GitSearchPath, PathsToIgnore, NativeRenderingCSSLight/Dark,
     BrowserPluginPathHint, ImportPath, NoSyncLastSSHDirectory,
-    NoSyncClaudeCodeConfigDirPath  paths
+    NoSyncClaudeCodeConfigDirPath, NoSyncTokenExecutionStatsFile  paths
   NoSyncSavePanelSavedSettings_* ......... nested "InitialDirectory" path
   PathToDatabase_* ....................... password-manager backend URL
   NoSyncBrowserJavaScriptAllowed_* ....... site origin in the key name
                                            (key removed, with its
                                            _selection/_SilenceUntil kin)
   NoSyncLoadURLAllowed_* ................. host in the key name (likewise)
+  PathToExecutable_* ..................... password-manager adapter path
   OnePasswordAccount, LastpassGroups ..... password-manager identifiers
   FakeFullyQualifiedDomainName, FakeBootSessionUUID, AlternateSSHIntegrationScript, SshSchemePath
   PasteSpecialRegex, PasteSpecialSubstitution
@@ -102,7 +111,8 @@ embedded in arrangements under Bookmark / Initial Profile)
 
 TRIGGERS (profile "Triggers")
   regex, contentregex, parameter (skipped for Highlight triggers whose
-  parameter encodes colors), eventParams.* (deep). Kept: action (class),
+  parameter encodes colors, and for Set Profile Setting triggers whose
+  parameter is a profile key plus 0/1), eventParams.* (deep). Kept: action (class),
   matchType, partial, disabled, performance, provenance.
 
 SMART SELECTION (profile "Smart Selection Rules")
@@ -156,6 +166,19 @@ JSON_V = "json"     # value is JSON (bytes/str): decode, recurse, re-encode
 
 # Trigger subclasses whose "parameter" encodes colors, not private text.
 HIGHLIGHT_ACTIONS = {"HighlightTrigger", "iTermHighlightLineTrigger"}
+
+# Set Profile Setting trigger: "parameter" is "<profile key>\x01<0|1>", which
+# names a built-in profile setting and holds no private text. Only kept when it
+# has exactly that shape; anything else is redacted as usual.
+SET_PROFILE_BOOLEAN_ACTION = "iTermSetProfileBooleanTrigger"
+
+
+def is_profile_boolean_parameter(value):
+    if not isinstance(value, str):
+        return False
+    parts = value.split("\x01")
+    return len(parts) == 2 and parts[0] != "" and parts[1] in ("0", "1")
+
 
 # Keys whose *values* are always private content. Matched by exact key name
 # anywhere in the tree (values only; dict keys are never matched), so nested
@@ -240,6 +263,7 @@ CONTENT_KEYS = {
     "BrowserPluginPathHint": REDACT_V,
     "NoSyncLastSSHDirectory": REDACT_V,
     "NoSyncClaudeCodeConfigDirPath": REDACT_V,
+    "NoSyncTokenExecutionStatsFile": REDACT_V,
     "NoSyncRecentArchives": REDACT_V,
     "InitialDirectory": REDACT_V,
     # Removed rather than redacted: this blob is keyed BY endpoint URL (plus a
@@ -254,6 +278,7 @@ CONTENT_KEYS = {
     "Last Directory SSH Identity": REDACT_V,  # SSHIdentity: host/hostname/username
     "hostname": REDACT_V,
     "username": REDACT_V,
+    "host": REDACT_V,                     # user@host, e.g. in NoSyncIT2HostGrants
     # Array of JSON Data blobs (SSHReconnectionInfo: ssh args + directory).
     # Removed rather than redacted: redact_value would empty the Data, which
     # fails to decode on restore anyway.
@@ -266,6 +291,9 @@ CONTENT_KEYS = {
     "Browser Target": REDACT_V,
     "Browser State": REMOVE,
     "AitermURL": REDACT_V,
+    # User-chosen Ollama model names (locally created/namespaced models).
+    "AIOllamaRegularModel": REDACT_V,
+    "AIOllamaEconomyModel": REDACT_V,
     "AiProxy": REDACT_V,
     "FakeFullyQualifiedDomainName": REDACT_V,
     "FakeBootSessionUUID": REDACT_V,
@@ -321,6 +349,8 @@ CONTENT_KEYS = {
     # find-bar search history
     "NoSyncSearchHistory2": REDACT_V,
     "NoSyncSearchHistory": REDACT_V,  # legacy; no-op if it holds a bool
+    # Suppressed Alerts panel state; its keys can name hosts, so drop it all.
+    "NoSyncSuppressedAlertsCatalog": REMOVE,
     # user-authored session messages
     "SessionEndMessageText": REDACT_V,
     "SessionRestartedMessageText": REDACT_V,
@@ -330,6 +360,7 @@ CONTENT_KEYS = {
     "Workgroups": JSON_V,
     "CodeReviewSavedPrompts": JSON_V,
     "StatusPriorityEntries": JSON_V,
+    "NoSyncIT2HostGrants": JSON_V,
 }
 
 # Lower-sensitivity labels, only redacted with --aggressive.
@@ -355,6 +386,7 @@ LABEL_KEYS = {
 # scrubs the string-valued push token / paired id / relay origin.
 PREFIX_CONTENT = [
     ("PathToDatabase_", REDACT_V),
+    ("PathToExecutable_", REDACT_V),   # adapter path; contains the user name
     ("NoSyncCompanion", REDACT_V),
     ("NoSyncSavePanelSavedSettings_", None),  # None => recurse (hits InitialDirectory)
     # The key name itself holds the site, so the whole key goes.
@@ -440,6 +472,12 @@ def scrub(obj, aggressive, report, path):
             if (key == "parameter" and action == REDACT_V and
                     isinstance(obj.get("action"), str) and
                     obj["action"] in HIGHLIGHT_ACTIONS):
+                continue
+
+            # Preserve Set Profile Setting params (profile key + 0/1).
+            if (key == "parameter" and action == REDACT_V and
+                    obj.get("action") == SET_PROFILE_BOOLEAN_ACTION and
+                    is_profile_boolean_parameter(value)):
                 continue
 
             if action == REMOVE:

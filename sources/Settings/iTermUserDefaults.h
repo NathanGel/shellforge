@@ -12,6 +12,15 @@ NS_ASSUME_NONNULL_BEGIN
 extern NSString *const kSelectionRespectsSoftBoundariesKey;
 extern NSString *const iTermShowSessionStatusInTabSubtitleDidChange;
 
+// Posted (synchronously, on the migrating thread) by +migrateKeys:inUserDefaults:block: when a
+// one-time migration changed at least one of its keys. The object is the NSUserDefaults that was
+// migrated. userInfo holds iTermUserDefaultsMigrationValuesBeforeKey and
+// iTermUserDefaultsMigrationValuesAfterKey, each a dictionary mapping a changed key to its value
+// before or after the migration; a key absent from one of them had no value at that time.
+extern NSString *const iTermUserDefaultsDidMigrateKeysNotification;
+extern NSString *const iTermUserDefaultsMigrationValuesBeforeKey;
+extern NSString *const iTermUserDefaultsMigrationValuesAfterKey;
+
 @interface iTermUserDefaults : NSObject
 
 // Call this before any access to +userDefaults to use a custom suite instead of standardUserDefaults.
@@ -32,6 +41,14 @@ extern NSString *const iTermShowSessionStatusInTabSubtitleDidChange;
 // Exposed for testing. performMigrations forwards to this with self.userDefaults.
 + (void)performMigrationsInUserDefaults:(NSUserDefaults *)userDefaults;
 
+// Runs a one-time migration that may change `keys` in `userDefaults`, then posts
+// iTermUserDefaultsDidMigrateKeysNotification describing any of those keys it changed. Migrations
+// of synced settings must go through this so that a change they make on their own is not
+// mistaken for a user edit that needs to be copied to a custom settings folder.
++ (void)migrateKeys:(NSArray<NSString *> *)keys
+     inUserDefaults:(NSUserDefaults *)userDefaults
+              block:(void (^ NS_NOESCAPE)(void))block;
+
 @property (class, nonatomic, copy) NSArray<NSString *> *searchHistory;
 @property (class, nonatomic) BOOL secureKeyboardEntry;
 @property (class, nonatomic) BOOL enableAutomaticProfileSwitchingLogging;
@@ -47,6 +64,7 @@ typedef NS_ENUM(NSUInteger, iTermAppleWindowTabbingMode) {
 @property (class, nonatomic) BOOL requireAuthenticationAfterScreenLocks;
 @property (class, nonatomic) BOOL openTmuxDashboardIfHiddenWindows;
 @property (class, nonatomic) BOOL claudeCodeWorkgroupUpsellSuppressed;
+@property (class, nonatomic, readonly) NSString *claudeCodeWorkgroupUpsellSuppressedUserDefaultsKey;
 @property (class, nonatomic) BOOL claudeCodeHooksInstalled;
 @property (class, nonatomic) BOOL claudeCodeTriggersInstalled;
 // Absolute path to the directory Claude Code's settings.json was last
@@ -64,13 +82,12 @@ typedef NS_ENUM(NSUInteger, iTermAppleWindowTabbingMode) {
 // rewriting ~/.claude/settings.json) silently strips our hook.
 @property (class, nonatomic) BOOL claudeCodeIntegrationCompleted;
 
-// Whether session-status text (from cc-status, OSC 21337, the SetTabStatus
-// trigger, or iterm2.set_status) is woven into the tab’s subtitle and
-// allowed to tint that subtitle text. The colored dot on the tab is
-// independent and always visible regardless of this setting. Default YES
-// preserves the existing behavior. Posted as
-// iTermShowSessionStatusInTabSubtitleDidChange when toggled so tabs can
-// refresh their labels live.
+// Whether session status (from cc-status, OSC 21337, OSC 7501, the
+// SetTabStatus trigger, or iterm2.set_status) appears on the tab at all: the
+// status text woven into the tab’s subtitle, the tint on that subtitle text,
+// and the colored dot drawn as the tab’s icon. Default YES preserves the
+// existing behavior. Posted as iTermShowSessionStatusInTabSubtitleDidChange
+// when toggled so tabs can refresh their labels and icons live.
 @property (class, nonatomic) BOOL showSessionStatusInTabSubtitle;
 @property (class, nonatomic) BOOL haveExplainedHowToAddTouchbarControls;
 
@@ -112,6 +129,7 @@ typedef NS_ENUM(NSUInteger, iTermAppleWindowTabbingMode) {
 // bundled code-review-system-prompt.txt has run. NoSync for the same
 // reason as workgroupShortcutsBackfilled.
 @property (class, nonatomic) BOOL claudeCodeReviewSystemPromptCommandBackfilled;
+@property (class, nonatomic) BOOL claudeCodeReviewSettingsCommandBackfilled;
 
 // Latched once the one-time migration that adds the Auto-Send Clippings
 // When Idle toolbar item to the Claude Code workgroup's Code Review peer

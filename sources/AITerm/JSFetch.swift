@@ -8,10 +8,64 @@
 import Foundation
 import JavaScriptCore
 
+// The aiProxy advanced setting ("host:port"), applied to every AI HTTP request.
+enum AIProxySetting {
+    // Overrides the advanced setting in tests.
+    private static let _settingForTesting = MutableAtomicObject<String?>(nil)
+    static var settingForTesting: String? {
+        get { _settingForTesting.value }
+        set { _settingForTesting.set(newValue) }
+    }
+
+    // A URLSession proxy dictionary for the setting, or nil when no proxy is
+    // configured or the setting is malformed.
+    static func connectionProxyDictionary() -> [AnyHashable: Any]? {
+        guard let proxyString = settingForTesting ?? iTermAdvancedSettingsModel.aiProxy(),
+              !proxyString.isEmpty else {
+            return nil
+        }
+        let parts = proxyString.split(separator: ":", maxSplits: 1)
+        guard parts.count == 2, let port = Int(parts[1]) else {
+            return nil
+        }
+        return [
+            kCFNetworkProxiesHTTPSEnable as String: true,
+            kCFNetworkProxiesHTTPSProxy as String: String(parts[0]),
+            kCFNetworkProxiesHTTPSPort as String: port
+        ]
+    }
+}
+
+// Runs one plugin call. Make a new instance per call: cancel() stops only the
+// HTTP transfer this instance started, so concurrent requests (for example two
+// chats streaming at once) can be cancelled independently.
 class PluginClient {
-    static let instance = PluginClient()
-    private var session: URLSession?
-    private let task = MutableAtomicObject<URLSessionDataTask?>(nil)
+    private struct State {
+        var task: URLSessionDataTask?
+        var cancelled = false
+    }
+    private let state = MutableAtomicObject(State())
+
+    // Test seam: URLProtocol classes to install on each request's session so
+    // unit tests can stand in for the network. Nothing in the app sets it.
+    private static let _protocolClassesForTesting = MutableAtomicObject<[AnyClass]?>(nil)
+    static var protocolClassesForTesting: [AnyClass]? {
+        get { _protocolClassesForTesting.value }
+        set { _protocolClassesForTesting.set(newValue) }
+    }
+
+    // Test seam: called with a label and each object a call creates (the
+    // client, its JSContext and its URLSession's delegate) so unit tests can
+    // check that they are freed. Nothing in the app sets it.
+    private static let _objectCreatedForTesting = MutableAtomicObject<((String, AnyObject) -> Void)?>(nil)
+    static var objectCreatedForTesting: ((String, AnyObject) -> Void)? {
+        get { _objectCreatedForTesting.value }
+        set { _objectCreatedForTesting.set(newValue) }
+    }
+
+    private static func noteCreated(_ label: String, _ object: AnyObject) {
+        objectCreatedForTesting?(label, object)
+    }
 
     private class HTTPStreamDelegate: NSObject, URLSessionDataDelegate {
         var receivedData = Data()
@@ -36,7 +90,7 @@ class PluginClient {
             DLog("HTTP append data")
             DLog("HTTPStreamDelegate \(it_addressString): append")
             for line in data.lossyString.components(separatedBy: "\n") {
-                DLog(line)
+                DLog(AIChatWireLogSanitizer.scrubbingSecrets(line))
             }
             DLog("---end---")
             receivedData.append(data)
@@ -47,10 +101,12 @@ class PluginClient {
         }
 
         func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-            RLog("HTTPStreamDelegate \(it_addressString): complete. error=\(error.d)")
+            // A URLSession error's description includes the failing URL,
+            // which carries the API key for Gemini.
+            RLog("HTTPStreamDelegate \(it_addressString): complete. error=\(AIChatWireLogSanitizer.scrubbingSecrets(error.d))")
             if let error = error {
-                RLog("URLSession error: \(error)")
-                callback(receivedData.lossyString, "HTTP request failed with \(error.localizedDescription)")
+                RLog("URLSession error: \(AIChatWireLogSanitizer.scrubbingSecrets(String(describing: error)))")
+                callback(receivedData.lossyString, "HTTP request failed: \(error.localizedDescription)")
             } else if let httpResponse = task.response as? HTTPURLResponse, httpResponse.statusCode != 200 {
                 // Headers can carry Set-Cookie/auth echoes and the body can be private
                 // content; keep both out of the ring (header keys and byte count only).
@@ -58,16 +114,23 @@ class PluginClient {
                 callback(receivedData.lossyString,
                          "HTTP request failed with status \(httpResponse.statusCode).")
             } else {
-                DLog("Read \(receivedData.lossyString)")
+                DLog("Read \(AIChatWireLogSanitizer.scrubbingSecrets(receivedData.lossyString))")
                 callback(receivedData.lossyString, "")
             }
+            // A session retains its delegate (and through the callback, the
+            // JSContext) until it is invalidated. Each session runs exactly one
+            // task, so invalidate it now that the task is done, whether it
+            // finished, failed or was cancelled.
+            session.finishTasksAndInvalidate()
         }
     }
 
+    // Cancels this call's in-flight HTTP transfer, and any it would start later.
     func cancel() {
-        task.mutableAccess { currentTask in
-            currentTask?.cancel()
-            currentTask = nil
+        state.mutableAccess { state in
+            state.cancelled = true
+            state.task?.cancel()
+            state.task = nil
         }
     }
 
@@ -77,6 +140,7 @@ class PluginClient {
                                      request: RequestType?,
                                      async: Bool,
                                      stream: ((String) -> ())?) throws -> ResponseType {
+        Self.noteCreated("client", self)
         DLog("Call \(functionName) with \(request?.debugDescription ?? "(nil)"), async=\(async)")
         let args: [String]
         if let request {
@@ -109,7 +173,7 @@ class PluginClient {
                                     body: Data,
                                     streaming: Bool,
                                     callback: @escaping (String?, String?) -> Void) {
-        DLog("performHTTPRequest(\(method), \(url), \(headers), \(body.lossyString), \(streaming)")
+        DLog("performHTTPRequest(\(method), \(AIChatWireLogSanitizer.scrubbingSecrets(url)), \(AIChatWireLogSanitizer.sanitizedHeadersDescription(headers)), \(AIChatWireLogSanitizer.scrubbingSecrets(body.lossyString)), \(streaming)")
         guard let url = URL(string: url) else {
             RLog("Invalid url \(redacted: url, or: "len=\(url.count)")")
             callback(nil, "Invalid URL")
@@ -138,43 +202,51 @@ class PluginClient {
         // because using the pref there would kill long-but-healthy requests. See
         // issue #12995.
         config.timeoutIntervalForRequest = iTermPreferences.double(forKey: kPreferenceKeyAITimeout)
+        if let protocolClasses = Self.protocolClassesForTesting {
+            config.protocolClasses = protocolClasses
+        }
         let delegate = HTTPStreamDelegate { [weak self] first, second in
             if second != nil {
-                self?.task.mutableAccess { currentTask in
-                    currentTask = nil
+                self?.state.mutableAccess { state in
+                    state.task = nil
                 }
             }
             callback(first, second)
         }
-        let proxyString = iTermAdvancedSettingsModel.aiProxy()
-        if let proxyString, !proxyString.isEmpty {
-            let parts = proxyString.split(separator: ":", maxSplits: 1)
-            if parts.count == 2, let port = Int(parts[1]) {
-                let host = String(parts[0])
-                config.connectionProxyDictionary = [
-                    kCFNetworkProxiesHTTPSEnable as String: true,
-                    kCFNetworkProxiesHTTPSProxy as String: host,
-                    kCFNetworkProxiesHTTPSPort as String: port
-                ]
-            }
+        if let proxy = AIProxySetting.connectionProxyDictionary() {
+            config.connectionProxyDictionary = proxy
         }
 
         delegate.streaming = streaming
         DLog("Request with delegate \(delegate.it_addressString):\n\(body)")
-        session = URLSession(configuration: config,
-                             delegate: delegate,
-                             delegateQueue: nil)
-        let newTask = session?.dataTask(with: request)
-        task.mutableAccess { currentTask in
-            currentTask = newTask
+        // One session per request. The delegate invalidates it when the task
+        // completes, which releases the session and the delegate.
+        let session = URLSession(configuration: config,
+                                 delegate: delegate,
+                                 delegateQueue: nil)
+        Self.noteCreated("delegate", delegate)
+        let newTask = session.dataTask(with: request)
+        let cancelled = state.mutableAccess { state in
+            if !state.cancelled {
+                state.task = newTask
+            }
+            return state.cancelled
         }
-        DLog("resume session")
-        newTask?.resume()
+        if cancelled {
+            // Cancelling reports the error to the delegate, which completes the call.
+            DLog("Not starting HTTP request: the call was cancelled")
+            newTask.cancel()
+        } else {
+            DLog("resume session")
+            newTask.resume()
+        }
     }
 
+    // The blocks registered here are owned by the context, so they must not
+    // retain it or the context is never freed.
     private func registerFunctions(context: JSContext, stream: ((String) -> ())?) {
         DLog("registerFunctions")
-        let performRequest: @convention(block) (String, String, [String: String], Any, JSValue) -> Void = { [weak self]
+        let performRequest: @convention(block) (String, String, [String: String], Any, JSValue) -> Void = { [weak self, weak context]
             method, url, headers, body, callback in
             guard let self else {
                 let noError: String? = nil
@@ -200,7 +272,7 @@ class PluginClient {
                                     body: bodyData,
                                     streaming: stream != nil) { string, error in
                 if error == nil, let string, stream != nil {
-                    if let streamCallback = context.objectForKeyedSubscript("onStream"), !streamCallback.isUndefined {
+                    if let streamCallback = context?.objectForKeyedSubscript("onStream"), !streamCallback.isUndefined {
                         streamCallback.call(withArguments: [string as Any])
                     }
                     return
@@ -220,7 +292,7 @@ class PluginClient {
             context.setObject(streamFunction, forKeyedSubscript: "onStream" as (NSCopying & NSObjectProtocol))
         }
         let logMessage: @convention(block) (JSValue) -> Void = { message in
-            DLog("JS: \(message.toString() ?? "(nil)")")
+            DLog("JS: \(AIChatWireLogSanitizer.scrubbingSecrets(message.toString() ?? "(nil)"))")
         }
         context.setObject(logMessage, forKeyedSubscript: "log" as (NSCopying & NSObjectProtocol))
     }
@@ -234,6 +306,7 @@ class PluginClient {
         guard let context = JSContext() else {
             throw PluginError(reason: "Could not create context for plugin")
         }
+        Self.noteCreated("context", context)
         registerFunctions(context: context, stream: stream)
         context.evaluateScript(code)
         var exc: String?
@@ -274,6 +347,7 @@ class PluginClient {
         guard let context = JSContext() else {
             throw PluginError(reason: "Could not create context for plugin")
         }
+        Self.noteCreated("context", context)
 
         // Register performHTTPRequest or any other required function
         registerFunctions(context: context, stream: stream)
@@ -292,7 +366,9 @@ class PluginClient {
         }
 
         // Call the JavaScript function which returns a Promise
-        DLog("Call with arguments: \(arguments)")
+        // The arguments are the JSON-encoded request, credentials and
+        // all. call() already logged its redacted debugDescription.
+        DLog("Call with \(arguments.count) argument(s)")
         guard let result = function.call(withArguments: arguments) else {
             throw PluginError(reason: "JavaScript function call failed")
         }
@@ -302,8 +378,11 @@ class PluginClient {
         var response: ResponseType?
         var error: Error?
 
-        let handleWebResponse = { responseBody in
-            guard let jsonResponse = JSValue(object: responseBody, in: context).toString() else {
+        // The promise callbacks below are owned by the context, so capture it
+        // weakly. withExtendedLifetime keeps it alive until the call is done.
+        let handleWebResponse = { [weak context] responseBody in
+            guard let context,
+                  let jsonResponse = JSValue(object: responseBody, in: context).toString() else {
                 error = PluginError(reason: "Unexpected output from plugin")
                 semaphore.signal()
                 return
@@ -316,7 +395,7 @@ class PluginClient {
                 }
             } catch let decodeError {
                 DLog("Response is:")
-                DLog(jsonResponse)
+                DLog(AIChatWireLogSanitizer.scrubbingSecrets(jsonResponse))
                 error = PluginError(reason: "Error decoding response: \(decodeError)")
             }
             semaphore.signal()
@@ -336,7 +415,9 @@ class PluginClient {
 
         DLog("wait for completion")
         // Wait for the semaphore
-        semaphore.wait()
+        withExtendedLifetime(context) {
+            semaphore.wait()
+        }
 
         DLog("API call complete")
         // Return the response or throw the captured error

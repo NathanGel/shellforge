@@ -106,6 +106,9 @@ class iTermBrowserManager: NSObject, WKURLSchemeHandler, WKScriptMessageHandler 
     let historyController: iTermBrowserHistoryController
     private let navigationState: iTermBrowserNavigationState
     private var navigationCount = 0
+    // Decides when underPageBackgroundColor changes feed the minimal-theme tab tint.
+    private var pageColorTracker = iTermBrowserPageColorTracker()
+    private nonisolated static let underPageBackgroundColorKeyPath = "underPageBackgroundColor"
     private let readerModeManager = iTermBrowserReaderModeManager()
     let autofillHandler = iTermBrowserAutofillHandler()
     let user: iTermBrowserUser
@@ -177,6 +180,7 @@ class iTermBrowserManager: NSObject, WKURLSchemeHandler, WKScriptMessageHandler 
         }
         // Remove KVO observer to prevent crashes
         webView?.removeObserver(self, forKeyPath: "title")
+        webView?.removeObserver(self, forKeyPath: Self.underPageBackgroundColorKeyPath)
         if let webView = self.webView {
             let userState = self.userState
             Task { @MainActor in
@@ -198,20 +202,26 @@ class iTermBrowserManager: NSObject, WKURLSchemeHandler, WKScriptMessageHandler 
         case copyModeHandler
     }
 
+    // `inheritedFromOpener` is true for a web view opened from another tab (a target=_blank
+    // link or window.open). Its configuration already has the opener's data store, which it
+    // must share, and the opener's URL scheme handlers, which can't be replaced.
     private func configure(_ configuration: WKWebViewConfiguration,
-                           contentManager: BrowserExtensionUserContentManager) {
-        switch user {
-        case .regular(id: let userID):
-            if #available(macOS 14, *) {
-                let profileStore = WKWebsiteDataStore(forIdentifier: userID)
-                configuration.websiteDataStore = profileStore
+                           contentManager: BrowserExtensionUserContentManager,
+                           inheritedFromOpener: Bool) {
+        if !inheritedFromOpener {
+            switch user {
+            case .regular(id: let userID):
+                if #available(macOS 14, *) {
+                    let profileStore = WKWebsiteDataStore(forIdentifier: userID)
+                    configuration.websiteDataStore = profileStore
+                }
+            case .devNull:
+                configuration.websiteDataStore = .nonPersistent()
             }
-        case .devNull:
-            configuration.websiteDataStore = .nonPersistent()
-        }
 
-        // Configure proxy if enabled
-        applyProxyConfiguration(to: configuration.websiteDataStore)
+            // Configure proxy if enabled
+            applyProxyConfiguration(to: configuration.websiteDataStore)
+        }
 
         var logErrors = ""
 #if ITERM_DEBUG
@@ -419,10 +429,12 @@ class iTermBrowserManager: NSObject, WKURLSchemeHandler, WKScriptMessageHandler 
                                                     contentWorld: .defaultClient,
                                                     name: iTermBrowserNamedMarkManager.layoutUpdateHandlerName)
         }
-        // Register custom URL scheme handlers
-        configuration.setURLSchemeHandler(handlerProxy, forURLScheme: iTermBrowserSchemes.about)
-        configuration.setURLSchemeHandler(handlerProxy, forURLScheme: iTermBrowserSchemes.ssh)
-        configuration.setURLSchemeHandler(handlerProxy, forURLScheme: iTermBrowserSchemes.file)
+        // Register custom URL scheme handlers. An inherited configuration keeps the opener's,
+        // which hand each task to the manager of the web view that asked for it.
+        for scheme in [iTermBrowserSchemes.about, iTermBrowserSchemes.ssh, iTermBrowserSchemes.file]
+        where configuration.urlSchemeHandler(forURLScheme: scheme) == nil {
+            configuration.setURLSchemeHandler(handlerProxy, forURLScheme: scheme)
+        }
     }
 
     private func setupWebView(configuration preferredConfiguration: WKWebViewConfiguration?,
@@ -437,9 +449,16 @@ class iTermBrowserManager: NSObject, WKURLSchemeHandler, WKScriptMessageHandler 
         let configuration: WKWebViewConfiguration
         let contentManager: BrowserExtensionUserContentManager?
         if let preferredConfiguration {
-
+            // A web view opened from another tab. Its configuration is a copy of the opener's,
+            // but it must not share the opener's user content controller: the scripts there
+            // carry the opener's secrets and post their messages to the opener's handlers,
+            // which act on the opener's page. Give it its own, set up like any other tab's.
             configuration = preferredConfiguration
-            contentManager = nil
+            configuration.userContentController = WKUserContentController()
+            contentManager = BrowserExtensionUserContentManager(
+                userContentController: configuration.userContentController,
+                userScriptFactory: BrowserExtensionUserScriptFactory())
+            configure(configuration, contentManager: contentManager!, inheritedFromOpener: true)
         } else {
             let prefs = WKPreferences()
             
@@ -451,7 +470,7 @@ class iTermBrowserManager: NSObject, WKURLSchemeHandler, WKScriptMessageHandler 
                 userContentController: configuration.userContentController,
                 userScriptFactory: BrowserExtensionUserScriptFactory())
 
-            configure(configuration, contentManager: contentManager!)
+            configure(configuration, contentManager: contentManager!, inheritedFromOpener: false)
         }
         audioHandler?.delegate = self
         // Setup reader mode
@@ -489,17 +508,22 @@ class iTermBrowserManager: NSObject, WKURLSchemeHandler, WKScriptMessageHandler 
         webView.configuration.preferences.setValue(true, forKey: "developerExtrasEnabled")
         // Observe title changes
         webView.addObserver(self, forKeyPath: "title", options: [.new], context: nil)
-        // We intentionally do NOT observe underPageBackgroundColor via KVO. WebKit
+        // Observe the page background color for the minimal-theme tab tint. WebKit
         // reports transient values during load (its light default before the page is
-        // parsed, then the page's real color), which would flip the minimal-theme tab
-        // tint and window appearance on every navigation. Instead the settled color is
-        // read once per load in webView(_:didFinish:), so the tint updates once the
-        // page has resolved a background.
+        // parsed), and it updates the color after didFinish, so reading it only at
+        // didFinish lags one page behind. pageColorTracker ignores changes during a
+        // load and forwards the ones that arrive once it has settled.
+        webView.addObserver(self,
+                            forKeyPath: Self.underPageBackgroundColorKeyPath,
+                            options: [.new],
+                            context: nil)
 
-        // TODO: This is going to cause problems for extensions. If you open a link with target=_blank then the new webview won't have a content
-        // manager. I don't know what will happen if we do not register a webview with the extension manager.
         if let contentManager {
             userState.registerWebView(webView, contentManager: contentManager)
+        }
+        if preferredConfiguration != nil {
+            // The new user content controller lacks the opener's ad block rules.
+            updateWebViewContentRules()
         }
         copyModeHandler?.webView = webView
 
@@ -1062,6 +1086,12 @@ extension iTermBrowserManager: iTermBrowserWebViewDelegate {
 
 extension iTermBrowserManager {
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        // Every handler below acts on this manager's web view, so ignore a message from any
+        // other (such as one opened from this tab), lest it act on the wrong page.
+        guard message.webView === webView else {
+            DLog("Ignore \(message.name) from a web view other than mine")
+            return
+        }
         // Handle console.{log,debug,error} messages separately since they come as String
         switch message.name {
         case "iTerm2ConsoleLog":
@@ -1149,7 +1179,7 @@ extension iTermBrowserManager {
             selectionMonitor?.handleMessage(message, webView: webView)
 
         case iTermBrowserContextMenuMonitor.messageHandlerName:
-            contextMenuMonitor?.handleMessage(message, webView: webView)
+            contextMenuMonitor?.handleMessage(message)
             
         case iTermBrowserNamedMarkManager.messageHandlerName:
             if namedMarkManager?.handleMessage(webView: webView, message: message) == true {
@@ -1248,6 +1278,7 @@ extension iTermBrowserManager: WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         navigationCount += 1
+        pageColorTracker.navigationDidStart()
         basicAuth.didStartProvisionalNavigation(navigation)
         readerModeManager.resetForNavigation()
         delegate?.browserManager(self, didStartNavigation: navigation)
@@ -1301,11 +1332,12 @@ extension iTermBrowserManager: WKNavigationDelegate {
 
         notifyDelegateOfUpdates()
 
-        // Emit the page background color once, now that the page has loaded and its
-        // background has settled. This is the single source for the minimal-theme tab
-        // tint; we deliberately don't observe underPageBackgroundColor via KVO to avoid
-        // flipping the appearance on each transient value reported during load.
-        delegate?.browserManager(self, didUpdateBackgroundColor: webView.underPageBackgroundColor)
+        // Emit the page background color now that the load has finished, unless it is
+        // unchanged. WebKit may not have updated it for the new page yet; if so, the new
+        // color arrives later through KVO (see observeValue) and is forwarded then.
+        if let color = pageColorTracker.navigationDidSettle(currentColor: webView.underPageBackgroundColor) {
+            delegate?.browserManager(self, didUpdateBackgroundColor: color)
+        }
 
         // Update permission states for geolocation
         if let url = webView.url {
@@ -1338,6 +1370,7 @@ extension iTermBrowserManager: WKNavigationDelegate {
         // precedes commit), so there is nothing to do for auth here.
 
         navigationState.didCompleteLoading(error: error)
+        pageColorTracker.navigationDidFail()
 
         // Don't show error page for download-related cancellations
         if isDownloadRelatedError(error) {
@@ -1365,6 +1398,7 @@ extension iTermBrowserManager: WKNavigationDelegate {
         basicAuth.didFailProvisionalNavigation(navigation)
 
         navigationState.didCompleteLoading(error: error)
+        pageColorTracker.navigationDidFail()
 
         // Don't show error page for download-related cancellations
         if isDownloadRelatedError(error) {
@@ -1424,6 +1458,14 @@ extension iTermBrowserManager: WKNavigationDelegate {
                 }
                 return
             }
+        }
+
+        // Any other main-frame navigation that stays in this tab (cmd-clicks
+        // returned above) supersedes a View Source that hasn't been served yet,
+        // so its stored source must not be shown later.
+        if navigationAction.targetFrame?.isMainFrame == true,
+           navigationAction.request.url != iTermBrowserSourceHandler.sourceURL {
+            localPageManager.clearPendingSource()
         }
 
         // Store the target URL for this navigation so we can use it in error handlers
@@ -1674,35 +1716,39 @@ extension iTermBrowserManager: WKUIDelegate {
             return
         }
         
-        // Try to fetch the original source from the network first
+        // Try to fetch the original source from the network first. The completion
+        // may run on a URLSession queue, so hop to the main queue before touching
+        // the web view.
         fetchOriginalSource(url: url) { [weak self] originalSource in
+            DispatchQueue.main.async {
+                self?.showSource(originalSource: originalSource, url: url)
+            }
+        }
+    }
+
+    private func showSource(originalSource: String?, url: URL) {
+        if let originalSource {
+            // Got original source from network
+            showSourceInBrowser(htmlSource: originalSource, url: url)
+            return
+        }
+        // Fallback to DOM source if network fetch fails
+        webView.safelyEvaluateJavaScript(iife("return document.documentElement.outerHTML"),
+                                         contentWorld: .page) { [weak self] result, error in
             guard let self = self else { return }
-            
-            if let originalSource = originalSource {
-                // Got original source from network
-                DispatchQueue.main.async {
-                    self.showSourceInBrowser(htmlSource: originalSource, url: url)
-                }
-            } else {
-                // Fallback to DOM source if network fetch fails
-                self.webView.safelyEvaluateJavaScript(iife("return document.documentElement.outerHTML"),
-                                                      contentWorld: .page) { [weak self] result, error in
-                    guard let self = self else { return }
-                    
-                    if let error = error {
-                        DLog("Error getting page source: \(error)")
-                        return
-                    }
-                    
-                    guard let htmlSource = result as? String else {
-                        DLog("Failed to get HTML source")
-                        return
-                    }
-                    
-                    DispatchQueue.main.async {
-                        self.showSourceInBrowser(htmlSource: htmlSource, url: url)
-                    }
-                }
+
+            if let error = error {
+                DLog("Error getting page source: \(error)")
+                return
+            }
+
+            guard let htmlSource = result as? String else {
+                DLog("Failed to get HTML source")
+                return
+            }
+
+            DispatchQueue.main.async {
+                self.showSourceInBrowser(htmlSource: htmlSource, url: url)
             }
         }
     }
@@ -1749,7 +1795,8 @@ extension iTermBrowserManager: WKUIDelegate {
         task.resume()
     }
     
-    private func showSourceInBrowser(htmlSource: String, url: URL) {
+    // Internal rather than private so tests can drive it.
+    func showSourceInBrowser(htmlSource: String, url: URL) {
         localPageManager.showSourcePage(htmlSource: htmlSource, url: url, webView: webView)
     }
     
@@ -1885,6 +1932,14 @@ extension iTermBrowserManager {
             // Update history with new title if we have a current URL
             if let url = webView.url {
                 historyController.titleDidChange(for: url, title: webView.title)
+            }
+        } else if keyPath == Self.underPageBackgroundColorKeyPath,
+                  let webView = object as? iTermBrowserWebView,
+                  webView == self.webView {
+            if let color = pageColorTracker.observedColorDidChange(webView.underPageBackgroundColor,
+                                                                  isLoading: webView.isLoading) {
+                DLog("Page background color changed to \(color)")
+                delegate?.browserManager(self, didUpdateBackgroundColor: color)
             }
         } else {
             super.observeValue(forKeyPath: keyPath, of: object, change: change, context: context)

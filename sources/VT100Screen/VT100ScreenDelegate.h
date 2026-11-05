@@ -284,6 +284,8 @@ typedef NS_ENUM(NSUInteger, PTYSessionResizePermission) {
 // Bounce the dock. Set request to false to cancel.
 - (void)screenRequestAttention:(VT100AttentionRequestType)request;
 - (void)screenDidTryToUseDECRQCRA;
+// Called after an app read screen contents with DECRQCRA, which it may only do if the user allowed it.
+- (void)screenDidUseDECRQCRA;
 
 - (void)screenDisinterSession;
 
@@ -418,6 +420,8 @@ typedef NS_ENUM(NSUInteger, PTYSessionResizePermission) {
 
 - (void)screenSuggestShellIntegrationUpgrade;
 - (void)screenDidDetectShell:(NSString * _Nonnull)shell;
+// Every ShellIntegrationVersion report, including one that names no shell.
+- (void)screenDidReportShellIntegrationVersion:(NSInteger)version shell:(NSString * _Nullable)shell;
 
 - (void)screenSetBackgroundImageFile:(NSString * _Nonnull)filename;
 - (void)screenSetBadgeFormat:(NSString * _Nonnull)theFormat;
@@ -449,6 +453,8 @@ typedef NS_ENUM(NSUInteger, PTYSessionResizePermission) {
                        displayInline:(BOOL)displayInline
                          promptIfBig:(BOOL * _Nonnull)promptIfBig;
 - (void)screenAskAboutClearingScrollback;
+// Called after a control sequence cleared scrollback, which it may only do if the user allowed it.
+- (void)screenDidClearScrollbackWithPermission;
 - (VT100GridRange)screenRangeOfVisibleLines;
 - (void)screenDidResize;
 - (NSString * _Nullable)screenStringForKeypressWithCode:(unsigned short)keycode
@@ -487,9 +493,19 @@ typedef NS_ENUM(NSUInteger, PTYSessionResizePermission) {
                                   boolArgs:(NSString * _Nonnull)boolArgs
                                    sshargs:(NSString * _Nonnull)sshargs
                                      dcsID:(NSString * _Nonnull)dcsID
+                               parentDepth:(int)parentDepth
                                 savedState:(NSDictionary * _Nonnull)savedState;
+// The conductor hooked but its parameters could not be decoded. The remote conductor
+// is waiting for commands and must be told to quit.
+- (void)screenDidFailToParseSSHConductorHookWithToken:(NSString * _Nonnull)token
+                                             uniqueID:(NSString * _Nonnull)uniqueID
+                                                dcsID:(NSString * _Nonnull)dcsID
+                                          parentDepth:(int)parentDepth
+                                           savedState:(NSDictionary * _Nonnull)savedState;
 - (void)screenDidReadSSHConductorLine:(NSString * _Nonnull)string depth:(int)depth;
-- (void)screenDidUnhookSSHConductor;
+// depth is the nesting depth of the conductor whose hook ended.
+// dcsID names the hook that ended, if known.
+- (void)screenDidUnhookSSHConductorWithDCSID:(NSString * _Nullable)dcsID depth:(int)depth;
 - (void)screenDidBeginSSHConductorCommandWithIdentifier:(NSString * _Nonnull)identifier
                                                   depth:(int)depth;
 
@@ -502,16 +518,21 @@ typedef NS_ENUM(NSUInteger, PTYSessionResizePermission) {
                                  channel:(uint8_t)channel
                                    depth:(int)depth;
 - (void)screenDidReadRawSSHData:(NSData * _Nonnull)data;
+- (void)screenDidReadSSHPaneOutput:(NSData * _Nonnull)data pid:(int)pid depth:(int)depth;
 - (void)screenDidTerminateSSHProcess:(int)pid code:(int)code depth:(int)depth;
 - (void)screenHandleIT2:(NSString * _Nullable)string depth:(int)depth;
 - (void)screenWillBeginSSHIntegration;
+// `injectShellIntegration` is NO when it2ssh was run with --no-shell-integration (si=0).
 - (void)screenBeginSSHIntegrationWithToken:(NSString * _Nonnull)token
                                   uniqueID:(NSString * _Nonnull)uniqueID
                                  encodedBA:(NSString * _Nonnull)encodedBA
-                                   sshArgs:(NSString * _Nonnull)sshArgs;
+                                   sshArgs:(NSString * _Nonnull)sshArgs
+                    injectShellIntegration:(BOOL)injectShellIntegration;
 - (NSInteger)screenEndSSH:(NSString * _Nonnull)uniqueID;
 - (NSString * _Nonnull)screenSSHLocation;
-- (void)screenBeginFramerRecovery:(int)parentDepth;
+// Returns NO if the connection's framer output must not start recovery because the
+// connection was abandoned.
+- (BOOL)screenBeginFramerRecovery:(int)parentDepth;
 // Returns true when recovery completes
 - (iTermConductorRecovery * _Nullable)screenHandleFramerRecoveryString:(NSString * _Nonnull)string;
 - (void)screenFramerRecoveryDidFinish;
@@ -564,8 +585,11 @@ typedef NS_ENUM(NSUInteger, PTYSessionResizePermission) {
 
 - (void)screenSetTabStatus:(VT100TabStatusUpdate * _Nonnull)status;
 
-// The program reported its status through OSC 7501.
-- (void)screenReportProgramStatus:(iTermProgramStatusReport * _Nonnull)report;
+// The program reported its status through OSC 7501. Reports that arrived
+// together are delivered together, in order, already coalesced (see
+// iTermProgramStatusReportBatch).
+- (void)screenReportProgramStatusReports:(NSArray<iTermProgramStatusReport *> * _Nonnull)reports
+    NS_SWIFT_NAME(screenReportProgramStatusReports(_:));
 
 // A reset cleared the tab status. OSC 7501 records survive every reset but RIS
 // (see screenRemoveProgramStatusRecords), so they are shown again.

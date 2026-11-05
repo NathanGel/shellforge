@@ -37,6 +37,9 @@ const CGFloat iTermGetStatusBarHeight(void) {
     BOOL _needsUpdate;
     NSView *_view;
     iTermUnreadCountView *_unreadCountView;
+    // Whether the current left-button gesture began on the proxy icon, in which case the click
+    // recognizer leaves all of its events to the icon.
+    BOOL _clickRecognizerDeclinedGesture;
 }
 
 - (nullable instancetype)initWithComponent:(id<iTermStatusBarComponent>)component {
@@ -66,6 +69,7 @@ const CGFloat iTermGetStatusBarHeight(void) {
             if ([component statusBarComponentHandlesMouseDown]) {
                 recognizer.delaysPrimaryMouseButtonEvents = NO;
             }
+            recognizer.delegate = self;
             [self addGestureRecognizer:recognizer];
         }
         [self updateIconIfNeeded];
@@ -100,8 +104,6 @@ const CGFloat iTermGetStatusBarHeight(void) {
 - (void)updateIconIfNeeded {
     NSImage *icon = _component.statusBarComponentIcon;
     [_component statusBarComponentUpdateColors];
-    // Keep the proxy icon's target directory current even when the glyph itself is unchanged.
-    [self updateProxyIconURL];
     if (icon == _iconImageView.image) {
         return;
     }
@@ -120,6 +122,10 @@ const CGFloat iTermGetStatusBarHeight(void) {
             proxyIconView.onClick = ^{
                 [weakSelf proxyIconClicked];
             };
+            // Asked when a drag begins, so the component re-checks that the directory exists.
+            proxyIconView.urlProvider = ^NSURL * _Nullable {
+                return [weakSelf proxyIconURL];
+            };
             _iconImageView = proxyIconView;
         } else {
             _iconImageView = [NSImageView imageViewWithImage:icon];
@@ -134,22 +140,15 @@ const CGFloat iTermGetStatusBarHeight(void) {
         frame.origin.x = 0;
         frame.origin.y = (area.size.height - frame.size.height) / 2.0;
         _iconImageView.frame = frame;
-        [self updateProxyIconURL];
     }
 }
 
-// Pushes the component's current proxy icon URL (if any) to the draggable icon view so a drag
-// vends the up-to-date directory.
-- (void)updateProxyIconURL {
-    iTermStatusBarProxyIconImageView *proxyIconView = [iTermStatusBarProxyIconImageView castFrom:_iconImageView];
-    if (!proxyIconView) {
-        return;
+// The file a drag of the proxy icon should vend right now, or nil if it shouldn't be draggable.
+- (nullable NSURL *)proxyIconURL {
+    if (![_component respondsToSelector:@selector(statusBarComponentProxyIconURL)]) {
+        return nil;
     }
-    NSURL *url = nil;
-    if ([_component respondsToSelector:@selector(statusBarComponentProxyIconURL)]) {
-        url = [_component statusBarComponentProxyIconURL];
-    }
-    proxyIconView.url = url;
+    return [_component statusBarComponentProxyIconURL];
 }
 
 // Invoked when the proxy icon is clicked without dragging. Behaves like clicking the component.
@@ -191,11 +190,36 @@ const CGFloat iTermGetStatusBarHeight(void) {
     }
 }
 
+// Whether `point` (in this view's coordinates) is on a proxy icon, which handles its own clicks
+// and drags.
+- (BOOL)pointIsOnProxyIcon:(NSPoint)point {
+    return ([_iconImageView isKindOfClass:[iTermStatusBarProxyIconImageView class]] &&
+            NSPointInRect(point, _iconImageView.frame));
+}
+
+// NSGestureRecognizerDelegate
+- (BOOL)gestureRecognizer:(NSGestureRecognizer *)gestureRecognizer
+shouldAttemptToRecognizeWithEvent:(NSEvent *)event {
+    // The click recognizer delays mouse events until it fails. If it recognized a click on the
+    // proxy icon it would swallow the mouseDown/mouseUp the icon needs to tell a click from a
+    // drag, and the click would do nothing. Leave those events to the icon.
+    // Decide once per gesture, where the mouse went down, so a press on the icon and a release
+    // elsewhere (or the reverse) is not split between the icon and the recognizer.
+    if (event.type == NSEventTypeLeftMouseDown) {
+        const NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
+        _clickRecognizerDeclinedGesture = [self pointIsOnProxyIcon:point];
+    }
+    if (_clickRecognizerDeclinedGesture) {
+        DLog(@"Click recognizer declining event in a gesture that began on the proxy icon: %@", event);
+        return NO;
+    }
+    return YES;
+}
+
 - (void)clickRecognized:(NSGestureRecognizer *)sender {
-    // If the click landed on a proxy icon, that view already handled it (opening the menu or
-    // starting a drag), so don't handle it here too or the menu would open twice.
-    if ([_iconImageView isKindOfClass:[iTermStatusBarProxyIconImageView class]] &&
-        NSPointInRect([sender locationInView:self], _iconImageView.frame)) {
+    // If the click landed on a proxy icon, that view handles it (opening the menu or starting a
+    // drag), so don't handle it here too or the menu would open twice.
+    if ([self pointIsOnProxyIcon:[sender locationInView:self]]) {
         return;
     }
     [_component statusBarComponentDidClickWithView:_view];

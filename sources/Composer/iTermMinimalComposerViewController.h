@@ -87,7 +87,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic) BOOL forwardsTextChangesAlways;
 // The current contents including any @-mention attachment tokens.
 @property (nonatomic, readonly) NSAttributedString *attributedStringValue;
-@property (nonatomic, readonly) NSRange composerSelectedRange;
+@property (nonatomic) NSRange composerSelectedRange;
 // The view an @-mention completion popup should anchor to.
 @property (nonatomic, readonly) NSView *completionAnchorView;
 // Replace a character range with an attributed string (e.g. a mention
@@ -105,6 +105,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)setComposerPlaceholder:(nullable NSString *)placeholder;
 // Empty the field.
 - (void)clearComposer;
+// No terminal session is behind this composer (the Cockpit): disable the
+// menu items that need one and leave them out of the help popover.
+- (void)setSessionless:(BOOL)sessionless;
 
 - (void)updateFrame;
 - (void)makeFirstResponder;

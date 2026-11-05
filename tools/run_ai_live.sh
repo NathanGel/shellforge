@@ -23,11 +23,13 @@
 # skipped unless ITERM2_AI_LIVE_TAB_TITLE_CORPUS=1. With a large corpus
 # each one can run for hours.
 #
-# Refusal scenarios write captured responses to
-# ModernTests/Resources/SafetyRefusalFixtures/ only when explicitly
-# requested. Set ITERM2_AI_LIVE_REFRESH_REFUSAL_FIXTURES=1 to refresh.
-# Without it, refusal runs exercise the API path but leave the on-disk
-# fixtures untouched so casual sweeps don't dirty the working tree.
+# Refusal scenarios are skipped unless ITERM2_AI_LIVE_REFUSAL is set. They
+# send a prompt designed to be refused, which vendors' abuse monitoring
+# counts against the key (OpenAI has flagged it as suspected fraud), so run
+# them rarely, typically only after adding a model:
+#   ITERM2_AI_LIVE_REFUSAL=missing  send only for models with no fixture in
+#                                   ModernTests/Resources/SafetyRefusalFixtures/
+#   ITERM2_AI_LIVE_REFUSAL=all      send for every model, overwriting fixtures
 #
 # Why a JSON file: xcodebuild's test runner does not inherit shell env
 # vars, so this script writes a JSON config to a temp file and the
@@ -101,7 +103,7 @@ json_quote() {
     emit GEMINI_INTERVAL    "${ITERM2_AI_LIVE_GEMINI_INTERVAL:-}"
     emit DEEPSEEK_INTERVAL  "${ITERM2_AI_LIVE_DEEPSEEK_INTERVAL:-}"
     emit PROJECT_ROOT       "$PROJECT_DIR"
-    emit REFRESH_REFUSAL_FIXTURES "${ITERM2_AI_LIVE_REFRESH_REFUSAL_FIXTURES:-}"
+    emit REFUSAL            "${ITERM2_AI_LIVE_REFUSAL:-}"
     # Cassette record/playback. Unset means pure-live (the historical
     # behavior). See AICassette.swift for the mode semantics.
     #   off     no interception (default when unset)
@@ -161,6 +163,10 @@ cd "$PROJECT_DIR"
 # invocation marker for AILiveHarness's setUpWithError. Plain ModernTests
 # runs default to deleting stale configs, which is what we want for them.
 export ITERM2_AI_LIVE_KEEP_CONFIG=1
+# Live tests can wait minutes on a remote API, a local model, or a download, so
+# allow a longer quiet stretch than run_tests.expect's 300-second default before
+# it treats the run as hung.
+export RUN_TESTS_STALL_SECONDS="${RUN_TESTS_STALL_SECONDS:-1800}"
 # Don't `exec` here: bash needs to live long enough for the EXIT trap
 # above to fire and remove $CONFIG_FILE after the tests finish. An
 # `exec` would replace bash with run_tests.expect, dropping the trap

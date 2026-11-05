@@ -32,16 +32,23 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, strong) IBOutlet iTermComposerTextView *textView;
 @property (nonatomic, strong, nullable) id<VT100RemoteHostReading> host;
 @property (nonatomic, strong, nullable) NSString *workingDirectory;
-@property (nonatomic, copy) iTermVariableScope *scope;
+// Nil when the composer belongs to no session (the Cockpit).
+@property (nonatomic, copy, nullable) iTermVariableScope *scope;
 @property (nonatomic, weak, nullable) TmuxController *tmuxController;
 @property (nonatomic) BOOL hideAccessories;
 // Force the AI-completion warning and Engage-AI control hidden even
 // when AI completions are enabled (for hosts with no AI, like the
 // cockpit). The send tip and standard editing stay intact.
 @property (nonatomic) BOOL forceHideAIAccessories;
+// No terminal session is behind this composer (the Cockpit), so Advanced
+// Paste and command history have nowhere to go: their menu items are
+// disabled, and the help popover doesn't list them or AI lookup.
+@property (nonatomic) BOOL sessionless;
 @property (nonatomic, weak) IBOutlet id<iTermStatusBarLargeComposerViewControllerDelegate> delegate;
 
 - (void)fetchCompletions;
+// The lines the help popover shows. Internal for testing.
+- (NSArray<NSString *> *)helpLines;
 
 @end
 

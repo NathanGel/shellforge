@@ -73,6 +73,8 @@ static void HandleSigChld(int n) {
 
     dispatch_queue_t _jobManagerQueue;
     BOOL _isTmuxTask;
+    // Guarded by TaskNotifier's lock. See -markPidHandedToReaper:.
+    NSMutableIndexSet *_pidsHandedToReaper;
 }
 
 - (instancetype)init {
@@ -93,7 +95,27 @@ static void HandleSigChld(int n) {
         } else {
             self.jobManager = [[iTermLegacyJobManager alloc] initWithQueue:_jobManagerQueue];
         }
-        self.fd = -1;
+    }
+    return self;
+}
+
+- (instancetype)initForTestingWithFileDescriptor:(iTermOwnedFileDescriptor *)fileDescriptor {
+    ITAssertWithMessage(fileDescriptor != nil, @"A tmux job manager needs a file descriptor");
+    self = [self init];
+    if (self) {
+        iTermTmuxJobManager *jobManager = [[iTermTmuxJobManager alloc] initWithQueue:_jobManagerQueue];
+        jobManager.ownedFileDescriptor = fileDescriptor;
+        self.jobManager = jobManager;
+    }
+    return self;
+}
+
+- (instancetype)initForTestingWithInputQueue:(iTermTaskInputQueue *)inputQueue {
+    self = [self init];
+    if (self) {
+        iTermTmuxJobManager *jobManager = [[iTermTmuxJobManager alloc] initWithQueue:_jobManagerQueue];
+        jobManager.inputQueue = inputQueue;
+        self.jobManager = jobManager;
     }
     return self;
 }
@@ -123,7 +145,7 @@ static void HandleSigChld(int n) {
             self,
             self.jobManager,
             @(self.pid),
-            @(self.fd),
+            self.ownedFileDescriptor,
             _tmuxClientProcessID];
 }
 
@@ -140,7 +162,7 @@ static void HandleSigChld(int n) {
         _paused = paused;
     }
     // Start/stop selecting on our FD
-    [[TaskNotifier sharedInstance] unblock];
+    [[TaskNotifier sharedInstance] unblockTask:self];
     [_delegate taskDidChangePaused:self paused:paused];
 }
 
@@ -156,14 +178,17 @@ static void HandleSigChld(int n) {
     return self.jobManager.sessionRestorationIdentifier;
 }
 
-- (int)fd {
-    assert(self.jobManager);
-    return self.jobManager.fd;
+
+- (iTermOwnedFileDescriptor *)ownedFileDescriptor {
+    return self.jobManager.ownedFileDescriptor;
 }
 
-- (void)setFd:(int)fd {
-    assert(self.jobManager);
-    self.jobManager.fd = fd;
+- (BOOL)withFileDescriptor:(void (NS_NOESCAPE ^)(int fd))block {
+    return [self.ownedFileDescriptor withFileDescriptor:block];
+}
+
+- (iTermTaskInputQueue *)inputQueue {
+    return [iTermTmuxJobManager castFrom:self.jobManager].inputQueue;
 }
 
 - (pid_t)pid {
@@ -215,7 +240,7 @@ static void HandleSigChld(int n) {
     dispatch_async(dispatch_get_main_queue(), ^{
         [weakSelf.delegate taskMuteCoprocessDidChange:self hasMuteCoprocess:self.hasMuteCoprocess];
     });
-    [[TaskNotifier sharedInstance] unblock];
+    [[TaskNotifier sharedInstance] unblockTask:self];
 }
 
 - (BOOL)writeBufferHasRoom {
@@ -234,15 +259,17 @@ static void HandleSigChld(int n) {
 }
 
 - (BOOL)passwordInput {
-    struct termios termAttributes;
-    if ([iTermAdvancedSettingsModel detectPasswordInput] &&
-        self.fd > 0 &&
-        isatty(self.fd) &&
-        tcgetattr(self.fd, &termAttributes) == 0) {
-        return !(termAttributes.c_lflag & ECHO) && (termAttributes.c_lflag & ICANON);
-    } else {
+    if (![iTermAdvancedSettingsModel detectPasswordInput]) {
         return NO;
     }
+    __block BOOL result = NO;
+    [self.ownedFileDescriptor withFileDescriptor:^(int fd) {
+        struct termios termAttributes;
+        if (fd > 0 && isatty(fd) && tcgetattr(fd, &termAttributes) == 0) {
+            result = !(termAttributes.c_lflag & ECHO) && (termAttributes.c_lflag & ICANON);
+        }
+    }];
+    return result;
 }
 
 - (BOOL)hasBrokenPipe {
@@ -313,10 +340,21 @@ static void HandleSigChld(int n) {
     _tmuxClientProcessID = tmuxClientProcessID;
 }
 
-- (void)setReadOnlyFileDescriptor:(int)readOnlyFileDescriptor {
+- (void)readTmuxPaneOutputFrom:(iTermOwnedFileDescriptor *)readEnd {
+    // A nil wrapper would read as an open descriptor to the job manager.
+    ITAssertWithMessage(readEnd != nil, @"A tmux job manager needs a file descriptor");
     iTermTmuxJobManager *jobManager = [[iTermTmuxJobManager alloc] initWithQueue:self->_jobManagerQueue];
-    jobManager.fd = readOnlyFileDescriptor;
+    jobManager.ownedFileDescriptor = readEnd;
     RLog(@"Configure %@ as tmux task", self);
+    _jobManager = jobManager;
+    [[TaskNotifier sharedInstance] registerTask:self];
+}
+
+- (void)readTmuxPaneOutputFromQueue:(iTermTaskInputQueue *)inputQueue {
+    ITAssertWithMessage([TaskNotifier usesTaskIOMonitors], @"Only task I/O monitors read input queues");
+    iTermTmuxJobManager *jobManager = [[iTermTmuxJobManager alloc] initWithQueue:self->_jobManagerQueue];
+    jobManager.inputQueue = inputQueue;
+    RLog(@"Configure %@ as tmux task reading %@", self, inputQueue);
     _jobManager = jobManager;
     [[TaskNotifier sharedInstance] registerTask:self];
 }
@@ -331,11 +369,14 @@ static void HandleSigChld(int n) {
     return [[iTermChannelJobManager castFrom:_jobManager] ioBuffer];
 }
 
-- (int)readOnlyFileDescriptor {
-    if (![_jobManager isKindOfClass:[iTermTmuxJobManager class]]) {
-        return -1;
-    }
-    return _jobManager.fd;
+- (void)setFramerPaneJobManager:(iTermFramerPaneJobManager *)jobManager {
+    RLog(@"Configure %@ as a framer pane with %@", self, jobManager);
+    _jobManager = jobManager;
+    [[TaskNotifier sharedInstance] registerTask:self];
+}
+
+- (iTermFramerPaneJobManager *)framerPaneJobManager {
+    return [iTermFramerPaneJobManager castFrom:_jobManager];
 }
 
 // Send keyboard input, coprocess output, tmux commands, etc.
@@ -366,13 +407,18 @@ static void HandleSigChld(int n) {
         [ioBuffer write:data];
         return;
     }
+    iTermFramerPaneJobManager *framerPane = self.framerPaneJobManager;
+    if (framerPane) {
+        [framerPane forwardData:data];
+        return;
+    }
     // Write as much as we can now through the non-blocking pipe
     // Lock to protect the writeBuffer from the IO thread
     id<iTermJobManager> jobManager = self.jobManager;
     assert(!jobManager || !self.jobManager.isReadOnly);
     [writeLock lock];
     [writeBuffer appendData:data];
-    [[TaskNotifier sharedInstance] unblock];
+    [[TaskNotifier sharedInstance] unblockTask:self];
     [writeLock unlock];
 }
 
@@ -398,11 +444,36 @@ static void HandleSigChld(int n) {
 
 - (void)brokenPipe {
     RLog(@"brokenPipe %@", self);
+    BOOL first;
     @synchronized(self) {
+        first = !brokenPipe_;
         brokenPipe_ = YES;
     }
+    // Always deregister (it's idempotent) so a task can never be left registered on a dead fd.
     [[TaskNotifier sharedInstance] deregisterTask:self];
+    // TaskNotifier may call this more than once (e.g., read() returned 0 and the fd was also in
+    // the exception set). Report it only once. A second report would reach the session after a
+    // restart had already replaced this task and end the new shell.
+    if (!first) {
+        RLog(@"Ignore redundant brokenPipe for %@", self);
+        return;
+    }
     [self.delegate threadedTaskBrokenPipe];
+}
+
+- (BOOL)markPidHandedToReaper:(pid_t)pid {
+    if ([_pidsHandedToReaper containsIndex:pid]) {
+        return NO;
+    }
+    if (!_pidsHandedToReaper) {
+        _pidsHandedToReaper = [[NSMutableIndexSet alloc] init];
+    }
+    [_pidsHandedToReaper addIndex:pid];
+    return YES;
+}
+
+- (void)deregisterWithCompletion:(void (^)(void))completion {
+    [[TaskNotifier sharedInstance] deregisterTask:self completion:completion];
 }
 
 // Main queue
@@ -420,19 +491,60 @@ static void HandleSigChld(int n) {
 // defines the depth of our queue also determines (in the steady state) how much data can be
 // buffered and it's 1024 bytes * initial semaphore count.
 - (void)processRead {
-    int iterations = 4;
-    int bytesRead = 0;
+    const int iterations = 4;
+    __block int bytesRead = 0;
 
     char buffer[MAXRW * iterations];
+    char *bufferPointer = buffer;
+    __block BOOL broken = NO;
+    iTermTaskInputQueue *inputQueue = self.inputQueue;
+    if (inputQueue) {
+        // A tmux pane. A closed queue is like a pipe whose write end was closed.
+        bytesRead = (int)[inputQueue readInto:buffer maxLength:sizeof(buffer) endOfFile:&broken];
+    } else if (![self.ownedFileDescriptor withFileDescriptor:^(int fd) {
+        // Keeps the descriptor open while reading. Once it has been closed, it is treated like a
+        // read error.
+        BOOL readFailed = NO;
+        bytesRead = [self readFromFileDescriptor:fd into:bufferPointer iterations:iterations broken:&readFailed];
+        broken = readFailed;
+    }]) {
+        broken = YES;
+    }
+
+    hasOutput = YES;
+
+    if (!broken || bytesRead > 0) {
+        // Send data to the terminal. This precedes brokenPipe so the last output isn't lost.
+        [self readTask:buffer length:bytesRead];
+    }
+    if (broken) {
+        [self brokenPipe];
+    }
+}
+
+// Reads up to MAXRW * iterations bytes from `fd` into `buffer`. Sets *broken on EOF or a hard error.
+- (int)readFromFileDescriptor:(int)fd
+                         into:(char *)buffer
+                   iterations:(int)iterations
+                       broken:(BOOL *)broken {
+    int bytesRead = 0;
     for (int i = 0; i < iterations; ++i) {
         // Only read up to MAXRW*iterations bytes, then release control
-        ssize_t n = read(self.fd, buffer + bytesRead, MAXRW);
+        ssize_t n = read(fd, buffer + bytesRead, MAXRW);
+        if (n == 0) {
+            // EOF. A pty master reads 0 once its slave has no openers; a pipe (such as a framer
+            // pane's output) reads 0 once its write end is closed. Either way, nothing more will
+            // ever arrive. (This is distinct from reading nothing because of EAGAIN, which is
+            // handled below.)
+            *broken = YES;
+            break;
+        }
         if (n < 0) {
             // There was a read error.
             if (errno != EAGAIN && errno != EINTR) {
                 // It was a serious error.
-                [self brokenPipe];
-                return;
+                *broken = YES;
+                break;
             } else {
                 // We could read again in the case of EINTR but it would
                 // complicate the code with little advantage. Just bail out.
@@ -448,11 +560,7 @@ static void HandleSigChld(int n) {
             break;
         }
     }
-
-    hasOutput = YES;
-
-    // Send data to the terminal
-    [self readTask:buffer length:bytesRead];
+    return bytesRead;
 }
 
 - (void)processWrite {
@@ -466,10 +574,16 @@ static void HandleSigChld(int n) {
     if (length > MAXRW) {
         length = MAXRW;
     }
-    ssize_t written = write(self.fd, [writeBuffer mutableBytes], length);
+    __block ssize_t written = -1;
+    // Captured in the block: a close deferred until the block returns could change errno.
+    __block int error = EBADF;
+    [self.ownedFileDescriptor withFileDescriptor:^(int fd) {
+        written = write(fd, ptr, length);
+        error = errno;
+    }];
 
     // No data?
-    if ((written < 0) && (!(errno == EAGAIN || errno == EINTR))) {
+    if ((written < 0) && (!(error == EAGAIN || error == EINTR))) {
         [self brokenPipe];
     } else if (written > 0) {
         // Shrink the writeBuffer
@@ -492,6 +606,7 @@ static void HandleSigChld(int n) {
         coprocess_ = nil;
         self.hasMuteCoprocess = NO;
     }
+    [[TaskNotifier sharedInstance] unblockTask:self];
     [self.delegate taskMuteCoprocessDidChange:self hasMuteCoprocess:self.hasMuteCoprocess];
 
     if (thePid) {
@@ -631,10 +746,10 @@ static void HandleSigChld(int n) {
     return [_jobManager finishAttaching:partialResult task:self];
 }
 
-- (void)registerTmuxTask {
+- (void)markAsTmuxTask {
+    // Registration happened in setReadOnlyFileDescriptor:.
     _isTmuxTask = YES;
-    RLog(@"Register pid %@ as coprocess-only task", @(self.pid));
-    [[TaskNotifier sharedInstance] registerTask:self];
+    RLog(@"Mark %@ as a tmux task", self);
 }
 
 #pragma mark - Private
@@ -775,7 +890,11 @@ static void HandleSigChld(int n) {
     // In response to bug 2903, wherein select() fails to return despite the file
     // descriptor having EOF status, I changed the handler to unblock the task
     // notifier.
-    signal(SIGCHLD, HandleSigChld);
+    // Task I/O monitors don't use select, and ChildReaper waits for exits with kqueue, so they
+    // need no handler.
+    if (![TaskNotifier usesTaskIOMonitors]) {
+        signal(SIGCHLD, HandleSigChld);
+    }
 
     NSMutableArray<NSString *> *argv = [NSMutableArray array];
     [argv addObject:[progpath stringByStandardizingPath]];
@@ -882,7 +1001,34 @@ static void HandleSigChld(int n) {
     return hasOutput;
 }
 
+- (BOOL)hasReadCapacity {
+    id<PTYTaskDelegate> delegate = self.delegate;
+    if (!delegate) {
+        // What is read goes nowhere, so it can't back up.
+        return YES;
+    }
+    return [delegate taskHasReadCapacity];
+}
+
+- (void)notifyWhenReadCapacityAvailableOnQueue:(dispatch_queue_t)queue block:(void (^)(void))block {
+    id<PTYTaskDelegate> delegate = self.delegate;
+    if (!delegate) {
+        dispatch_async(queue, block);
+        return;
+    }
+    [delegate taskNotifyWhenReadCapacityAvailableOnQueue:queue block:block];
+}
+
+// Safe from any thread. On the TaskNotifier thread, prefer appendToCoprocessOutputBuffer:, which
+// skips the unneeded wakeup.
 - (void)writeToCoprocess:(NSData *)data {
+    [self appendToCoprocessOutputBuffer:data];
+    // The notifier only selects on the coprocess for writing when it has output, so wake it up
+    // to notice the new data.
+    [[TaskNotifier sharedInstance] unblockTask:self];
+}
+
+- (void)appendToCoprocessOutputBuffer:(NSData *)data {
     @synchronized (self) {
         [coprocess_.outputBuffer appendData:data];
     }
@@ -901,16 +1047,17 @@ static void HandleSigChld(int n) {
 
     @synchronized (self) {
         if (coprocess_ && !self.sshIntegrationActive) {
-            [self writeToCoprocess:[NSData dataWithBytes:buffer length:length]];
+            // On the notifier thread, which will select on the coprocess before sleeping again.
+            [self appendToCoprocessOutputBuffer:[NSData dataWithBytes:buffer length:length]];
         }
     }
 }
 
 - (void)closeFileDescriptorAndDeregisterIfPossible {
     assert(self.jobManager);
-    const int fd = self.fd;
+    iTermOwnedFileDescriptor *owned = self.ownedFileDescriptor;
     if ([self.jobManager closeFileDescriptor]) {
-        RLog(@"Deregister file descriptor %d for process %@ after closing it", fd, @(self.pid));
+        RLog(@"Deregister file descriptor %@ for process %@ after closing it", owned, @(self.pid));
         [[TaskNotifier sharedInstance] deregisterTask:self];
     }
 }
@@ -931,7 +1078,12 @@ static void HandleSigChld(int n) {
 @implementation PTYTask(WinSizeControllerDelegate)
 
 - (BOOL)winSizeControllerIsReady {
-    return self.fd != -1;
+    if (self.inputQueue) {
+        // A tmux pane has no tty to resize, but the session still hears about new sizes.
+        return self.jobManager.ioAllowed;
+    }
+    iTermOwnedFileDescriptor *owned = self.ownedFileDescriptor;
+    return owned != nil && !owned.isClosed;
 }
 
 - (void)winSizeControllerSetGridSize:(VT100GridSize)gridSize
@@ -942,7 +1094,15 @@ static void HandleSigChld(int n) {
         .pixelSize = iTermTTYPixelSizeMake(pointSize.width * scaleFactor,
                                            pointSize.height * scaleFactor)
     };
-    iTermSetTerminalSize(self.fd, desiredSize);
+    iTermFramerPaneJobManager *framerPane = self.framerPaneJobManager;
+    if (framerPane) {
+        [framerPane setGridSize:gridSize];
+    } else {
+        // Keeps the descriptor from being closed, and its number reused, during the ioctl.
+        [self.ownedFileDescriptor withFileDescriptor:^(int fd) {
+            iTermSetTerminalSize(fd, desiredSize);
+        }];
+    }
     [self.delegate taskDidResizeToGridSize:gridSize pixelSize:NSMakeSize(desiredSize.pixelSize.width,
                                                                          desiredSize.pixelSize.height)];
 }

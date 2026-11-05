@@ -6,11 +6,14 @@
 //
 
 #import "iTermExternalAttributeIndex.h"
+
+#import <os/lock.h>
 #import "iTermTLVCodec.h"
 #import "iTermURLStore.h"
 #import "NSArray+iTerm.h"
 #import "NSDictionary+iTerm.h"
 #import "NSMutableData+iTerm.h"
+#import "NSStringITerm.h"
 #import "ScreenChar.h"
 
 NSString *const iTermExternalAttributeBlockIDDelimiter = @"\uf8ff";
@@ -43,8 +46,13 @@ NSString *const iTermExternalAttributeBlockIDDelimiter = @"\uf8ff";
     self = [self init];
     if (self) {
         [dictionary enumerateKeysAndObjectsUsingBlock:^(id  _Nonnull key, id  _Nonnull obj, BOOL * _Nonnull stop) {
-            NSNumber *x = [NSNumber castFrom:key];
-            if (!x) {
+            // Keys are strings, but saves from older versions have NSNumber keys.
+            NSInteger column;
+            if ([key isKindOfClass:[NSNumber class]]) {
+                column = [key integerValue];
+            } else if ([key isKindOfClass:[NSString class]] && [key isNumeric]) {
+                column = [key integerValue];
+            } else {
                 return;
             }
             NSDictionary *dict = [[NSDictionary castFrom:obj] dictionaryByRemovingNullValues];
@@ -52,7 +60,7 @@ NSString *const iTermExternalAttributeBlockIDDelimiter = @"\uf8ff";
                 return;
             }
             iTermExternalAttribute *attr = [[iTermExternalAttribute alloc] initWithDictionary:dict];
-            [self setAttributes:attr at:x.intValue count:1];
+            [self setAttributes:attr at:(int)column count:1];
         }];
     }
     return self;
@@ -107,9 +115,13 @@ NSString *const iTermExternalAttributeBlockIDDelimiter = @"\uf8ff";
 
 - (NSDictionary *)dictionaryValue {
     // TODO: Consider runlength encoding this to save space, e.g. for long hyperlinks
-    return [_attributes mapValuesWithBlock:^id(NSNumber *key, iTermExternalAttribute *attribute) {
-        return attribute.dictionaryValue;
+    // Use string keys because property lists, as used by window arrangements saved to a file,
+    // forbid NSNumber keys.
+    NSMutableDictionary<NSString *, NSDictionary *> *result = [NSMutableDictionary dictionary];
+    [_attributes enumerateKeysAndObjectsUsingBlock:^(NSNumber *key, iTermExternalAttribute *attribute, BOOL *stop) {
+        result[key.stringValue] = attribute.dictionaryValue;
     }];
+    return result;
 }
 
 - (NSString *)description {
@@ -494,17 +506,22 @@ static BOOL iTermControlCodeAttributeEqualsNumber(const iTermControlCodeAttribut
         !dualFg.valid && !dualBg.valid) {
         return nil;
     }
+    // Each session's mutation queue may call this concurrently, so the cache is locked.
     static iTermExternalAttribute *last;
-    if (last &&
-        last.hasUnderlineColor == hasUnderlineColor &&
-        iTermTerminalColorValueEquals(&last->_underlineColor, &underlineColor) &&
-        [NSObject object:last.url isEqualToObject:url] &&
-        [NSObject object:last.blockIDList isEqualToObject:blockIDList] &&
-        iTermControlCodeAttributeEqualsNumber(&last->_controlCode, code) &&
-        iTermDualModeColorEquals(&last->_dualModeForeground, &dualFg) &&
-        iTermDualModeColorEquals(&last->_dualModeBackground, &dualBg)) {
+    static os_unfair_lock lastLock = OS_UNFAIR_LOCK_INIT;
+    os_unfair_lock_lock(&lastLock);
+    iTermExternalAttribute *cached = last;
+    os_unfair_lock_unlock(&lastLock);
+    if (cached &&
+        cached.hasUnderlineColor == hasUnderlineColor &&
+        iTermTerminalColorValueEquals(&cached->_underlineColor, &underlineColor) &&
+        [NSObject object:cached.url isEqualToObject:url] &&
+        [NSObject object:cached.blockIDList isEqualToObject:blockIDList] &&
+        iTermControlCodeAttributeEqualsNumber(&cached->_controlCode, code) &&
+        iTermDualModeColorEquals(&cached->_dualModeForeground, &dualFg) &&
+        iTermDualModeColorEquals(&cached->_dualModeBackground, &dualBg)) {
         // Since this class is immutable, there's a nice optimization in reusing the last one created.
-        return last;
+        return cached;
     }
     iTermExternalAttribute *result;
     if (hasUnderlineColor) {
@@ -517,7 +534,12 @@ static BOOL iTermControlCodeAttributeEqualsNumber(const iTermControlCodeAttribut
     }
     result.dualModeForeground = dualFg;
     result.dualModeBackground = dualBg;
+    // `replaced` keeps the old object until it goes out of scope after unlocking, so its dealloc
+    // never runs under the lock.
+    os_unfair_lock_lock(&lastLock);
+    __unused iTermExternalAttribute *replaced = last;
     last = result;
+    os_unfair_lock_unlock(&lastLock);
     return result;
 }
 
@@ -1306,15 +1328,23 @@ static NSArray<NSNumber *> *iTermUnderlineColorAsArray(const VT100TerminalColorV
         return nil;
     }
 
+    // Each session's mutation queue may call this concurrently, so the cache is locked and read
+    // as a unit.
     static NSData *lastData;
     static int lastCode;
     static iTermURL *lastURL;
+    static os_unfair_lock lastLock = OS_UNFAIR_LOCK_INIT;
+    os_unfair_lock_lock(&lastLock);
+    NSData *cachedData = lastData;
+    const int cachedCode = lastCode;
+    iTermURL *cachedURL = lastURL;
+    os_unfair_lock_unlock(&lastLock);
 
     self = [super init];
     if (self) {
         if (data) {
-            if (lastURL != nil && [NSObject object:data isEqualToObject:lastData]) {
-                return lastURL;
+            if (cachedURL != nil && [NSObject object:data isEqualToObject:cachedData]) {
+                return cachedURL;
             }
             iTermTLVDecoder *decoder = [[iTermTLVDecoder alloc] initWithData:data];
             NSData *urlData = [decoder decodeData];
@@ -1340,8 +1370,8 @@ static NSArray<NSNumber *> *iTermUnderlineColorAsArray(const VT100TerminalColorV
                 _target = [[NSString alloc] initWithData:targetData encoding:NSUTF8StringEncoding];
             }
         } else {
-            if (code == lastCode && lastURL != nil) {
-                return lastURL;
+            if (code == cachedCode && cachedURL != nil) {
+                return cachedURL;
             }
             _url = [[iTermURLStore sharedInstance] urlForCode:code];
             if (!_url) {
@@ -1352,10 +1382,16 @@ static NSArray<NSNumber *> *iTermUnderlineColorAsArray(const VT100TerminalColorV
         }
     }
 
-    lastData = [data copy];
-    lastCode = code;
+    NSData *dataCopy = [data copy];
+    os_unfair_lock_lock(&lastLock);
+    __unused NSData *replacedData = lastData;
+    __unused iTermURL *replacedURL = lastURL;
+    lastData = dataCopy;
+    // Only a URL looked up by code may be reused for that code. One decoded from data may differ.
+    lastCode = data ? 0 : code;
     lastURL = self;
-    
+    os_unfair_lock_unlock(&lastLock);
+
     return self;
 }
 
@@ -1368,13 +1404,18 @@ static NSArray<NSNumber *> *iTermUnderlineColorAsArray(const VT100TerminalColorV
 - (instancetype)initWithURL:(NSURL *)url
                  identifier:(NSString *)identifier
                      target:(NSString * _Nullable)target {
+    // Each session's mutation queue may call this concurrently, so the cache is locked.
     static iTermURL *lastObject;
+    static os_unfair_lock lastObjectLock = OS_UNFAIR_LOCK_INIT;
+    os_unfair_lock_lock(&lastObjectLock);
+    iTermURL *cached = lastObject;
+    os_unfair_lock_unlock(&lastObjectLock);
 
-    if (lastObject != nil &&
-        [lastObject.url isEqual:url] &&
-        [NSObject object:identifier isEqualToObject:lastObject.identifier] &&
-        [NSObject object:target isEqualToObject:lastObject.target]) {
-        return lastObject;
+    if (cached != nil &&
+        [cached.url isEqual:url] &&
+        [NSObject object:identifier isEqualToObject:cached.identifier] &&
+        [NSObject object:target isEqualToObject:cached.target]) {
+        return cached;
     }
 
     self = [super init];
@@ -1384,7 +1425,10 @@ static NSArray<NSNumber *> *iTermUnderlineColorAsArray(const VT100TerminalColorV
         _target = [target copy];
     }
 
+    os_unfair_lock_lock(&lastObjectLock);
+    __unused iTermURL *replaced = lastObject;
     lastObject = self;
+    os_unfair_lock_unlock(&lastObjectLock);
 
     return self;
 }

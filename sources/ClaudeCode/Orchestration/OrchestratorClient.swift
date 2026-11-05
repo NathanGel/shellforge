@@ -152,6 +152,49 @@ final class OrchestratorClient {
         }
     }
 
+    // Turn orchestration off for a chat (ChatViewController's Disable
+    // Orchestration, after it drops the agent). Tears down the dispatcher
+    // BEFORE the list-model write, for the reason given in
+    // ChatViewController.setOrchestrationEnabled, then clears the
+    // orchestration-only state, which includes every watcher. Publishes
+    // `disabledNotice` and then, if that clear cancelled any pending timers or
+    // watches, a notice counting them so the user doesn't keep waiting on
+    // them. Both are client-local notices: nothing reaches the model.
+    func disableOrchestration(forChatID chatID: String,
+                              disabledNotice: String) throws {
+        dropDispatcher(forChatID: chatID)
+        let cancelled = broker.listModel.watchers(forChatID: chatID)
+        try broker.listModel.setOrchestrationEnabled(false, forChatID: chatID)
+        try? broker.publishNotice(chatID: chatID, notice: disabledNotice)
+        OrchestratorDispatcher.publishCancelledWatchersNotice(broker: broker,
+                                                              chatID: chatID,
+                                                              cancelled: cancelled,
+                                                              cause: .disableOrchestration)
+    }
+
+    // Turn orchestration on for a chat (ChatViewController's Enable
+    // Orchestration, after it drops the agent). Tears down the dispatcher
+    // BEFORE the list-model write, for the reason given in
+    // ChatViewController.setOrchestrationEnabled. Enabling keeps the chat's
+    // timers and watches, and the torn-down dispatcher was what ran them, so
+    // if any are pending build a fresh dispatcher right away; it reconciles
+    // the persisted set and re-arms each one. Without this a pending timer
+    // would not fire until the next orchestration tool call or relaunch.
+    // Reconciling now rather than at that tool call means a watch whose
+    // session is already gone is dropped (with its status_update) while the
+    // user is toggling the chat, which is when they'd expect to hear of it.
+    func enableOrchestration(forChatID chatID: String) throws {
+        dropDispatcher(forChatID: chatID)
+        try broker.listModel.setOrchestrationEnabled(true, forChatID: chatID)
+        if !broker.listModel.watchers(forChatID: chatID).isEmpty {
+            _ = dispatcher(forChatID: chatID)
+        }
+    }
+
+    func existingDispatcherForTesting(chatID: String) -> OrchestratorDispatcher? {
+        dispatchers[chatID]
+    }
+
     // MARK: - Broker handler
 
     private func handle(update: ChatBroker.Update) {
@@ -177,6 +220,10 @@ final class OrchestratorClient {
     // a session before the agent has made its first tool call, and can
     // revoke after a restart before any tool call recreates it).
     private func handleUser(message: Message, chatID: String) {
+        if case .userCommand(.stop) = message.content {
+            handleStop(chatID: chatID)
+            return
+        }
         guard broker.listModel.chat(id: chatID)?.orchestrationEnabled == true else {
             return
         }
@@ -198,6 +245,35 @@ final class OrchestratorClient {
         default:
             break
         }
+    }
+
+    // The user pressed Stop. A live dispatcher handles Stop through its own
+    // broker subscription; calling it here too is harmless because
+    // userDidStop is idempotent (a second call finds nothing to cancel), and
+    // it covers a dispatcher created after the Stop was published. A chat can
+    // also have persisted timers or watches with no dispatcher at all (e.g.
+    // under the administrator lockout, which skips launch-time re-arming).
+    // Cancel those directly so Stop still means nothing will wake the agent.
+    // Applies to session-bound chats too, so this runs before the
+    // orchestrationEnabled gate.
+    private func handleStop(chatID: String) {
+        if let existing = dispatchers[chatID] {
+            existing.userDidStop()
+            return
+        }
+        let cancelled = broker.listModel.watchers(forChatID: chatID)
+        guard !cancelled.isEmpty else { return }
+        do {
+            try broker.listModel.setWatchers([], forChatID: chatID)
+        } catch {
+            RLog("OrchestratorClient: failed to clear watchers on Stop: \(error)")
+            return
+        }
+        RLog("OrchestratorClient: Stop cancelled \(cancelled.count) persisted watcher(s) for chat \(chatID) with no dispatcher")
+        OrchestratorDispatcher.publishCancelledWatchersNotice(broker: broker,
+                                                              chatID: chatID,
+                                                              cancelled: cancelled,
+                                                              cause: .stop)
     }
 
     private func grantClaims(fromUserText text: String, chatID: String) {
@@ -252,53 +328,112 @@ final class OrchestratorClient {
         }
     }
 
-    // Drop a chat's watchers when it is unlinked from its terminal session (and
-    // stays session-bound). A live dispatcher tears down its pollers/timers and
-    // clears the persisted set; with no live dispatcher there are no running
-    // pollers, so just clear the persisted set directly. NOT called when a chat
+    // Drop a chat's session watchers when it is unlinked from its terminal
+    // session (and stays session-bound). Timers target no session and are kept.
+    // A live dispatcher tears down the dropped watchers' pollers; with no live
+    // dispatcher there are no running pollers, so just rewrite the persisted
+    // set directly. NOT called when a chat
     // leaves its link by becoming an orchestration chat (that path keeps
     // watchers) -- the caller (unlink action) enforces that distinction.
     func cancelWatchers(forChatID chatID: String) {
         if let existing = dispatchers[chatID] {
             existing.cancelWatchersOnUnlink()
         } else {
-            try? broker.listModel.setWatchers([], forChatID: chatID)
+            let kept = OrchestratorDispatcher.watchersKeptOnUnlink(
+                broker.listModel.watchers(forChatID: chatID))
+            try? broker.listModel.setWatchers(kept, forChatID: chatID)
         }
     }
 
-    // Re-arm timers persisted before an app restart so a fired (or overdue) timer
-    // wakes its chat's agent even if the user never reopens any chat -- e.g. a
-    // Sparkle upgrade that quits and relaunches while a timer's deadline passes.
-    // Unlike a state/condition watch (whose reason to fire is a live session
-    // changing, which can't happen while iTerm2 is down), a timer's deadline can
-    // elapse during the downtime, so it must be re-armed eagerly rather than
-    // lazily on next chat open.
-    //
-    // Scans the (already in-memory) chat list for timer-bearing chats; only if
-    // one exists does it boot the chat service and instantiate that chat's
-    // dispatcher, whose init runs reconcilePersistedWatchers -- re-arming each
-    // timer and firing any whose time already passed. Idempotent: a chat whose
-    // dispatcher already exists is left as-is, and armTimer self-guards against
-    // double-arming. Called once at launch (see iTermChatTimerLaunch).
+    // Re-arm timers and watches persisted before an app restart so they wake
+    // their chat's agent even if the user never reopens any chat. A timer's
+    // deadline can elapse during the downtime (e.g. a Sparkle upgrade that
+    // quits and relaunches), so a chat with a timer gets its dispatcher right
+    // away; it reconciles once launch-time session restoration finishes (see
+    // SessionRestorationGate), re-arming each timer and firing any whose time
+    // already passed. A watched session restored at launch can reach its
+    // target state before anyone opens the chat, so a chat whose only
+    // watchers are watches gets a dispatcher too, but only once restoration
+    // is done and only if one of its watches can still run. A chat whose
+    // watched sessions are all gone is left alone: building its dispatcher
+    // would drop each watch with a status_update that starts an unattended
+    // agent turn, which waits until the user opens the chat instead.
+    // Idempotent: a chat whose dispatcher already exists is left as-is, and
+    // armTimer self-guards against double-arming. Called once at launch (see
+    // iTermChatTimerLaunch).
     @MainActor
     static func rearmPersistedTimersAtLaunch() {
+        // Under the administrator lockout a timer must not wake its chat (that
+        // sends the chat to the LLM), so leave persisted watchers dormant.
+        guard iTermAdvancedSettingsModel.generativeAIAllowed() else {
+            RLog("Not re-arming persisted AI chat timers and watches: generative AI is disallowed by the administrator")
+            return
+        }
         guard let broker = ChatBroker.instance else { return }
-        let model = broker.listModel
-        var timerChatIDs = [String]()
+        let timerChatIDs = chatIDsWithPersistedTimers(broker.listModel)
+        startDispatchers(chatIDs: timerChatIDs, broker: broker)
+        SessionRestorationGate.shared.whenReady {
+            guard iTermAdvancedSettingsModel.generativeAIAllowed() else { return }
+            let watchChatIDs = chatIDsWithResumableWatches(broker.listModel) { reference in
+                iTermController.sharedInstance()?.anySession(forReference: reference) != nil
+            }
+            startDispatchers(chatIDs: watchChatIDs, broker: broker)
+        }
+    }
+
+    @MainActor
+    private static func startDispatchers(chatIDs: [String], broker: ChatBroker) {
+        guard !chatIDs.isEmpty else { return }
+        // A fired timer or watch (or a dropped watch) publishes a
+        // status_update the chat service turns into an agent turn; boot it so
+        // that consumer exists even with no chat window.
+        broker.ensureServiceRunning()
+        guard let client = instance else { return }
+        for chatID in chatIDs {
+            _ = client.dispatcher(forChatID: chatID)
+        }
+    }
+
+    // Chats with a persisted timer.
+    static func chatIDsWithPersistedTimers(_ model: ChatListModel) -> [String] {
+        var chatIDs = [String]()
         for i in 0..<model.count {
             let chat = model.chat(at: i)
             if chat.watchers.contains(where: { $0.effectiveMode == .timer }) {
-                timerChatIDs.append(chat.id)
+                chatIDs.append(chat.id)
             }
         }
-        guard !timerChatIDs.isEmpty else { return }
-        // A fired timer publishes a status_update the chat service turns into an
-        // agent turn; boot it so that consumer exists even with no chat window.
-        broker.ensureServiceRunning()
-        guard let client = instance else { return }
-        for chatID in timerChatIDs {
-            _ = client.dispatcher(forChatID: chatID)
+        return chatIDs
+    }
+
+    // Chats without a timer all of whose watches can still run after
+    // restoration: each one's session exists, or (in an orchestration chat,
+    // where a tmux pane watch is held for reattach rather than dropped) it
+    // watches a tmux pane that may yet reattach. One watch that can't run
+    // would be dropped at reconcile with a status_update that starts an agent
+    // turn, so a partly restored chat also waits for the user to open it.
+    // (A held tmux watch can still be dropped later, at its reattach deadline
+    // or when its tmux session detaches, as can a timer chat's watches; those
+    // turns are accepted, as they are for timers.)
+    static func chatIDsWithResumableWatches(_ model: ChatListModel,
+                                            sessionExists: (String) -> Bool) -> [String] {
+        var chatIDs = [String]()
+        for i in 0..<model.count {
+            let chat = model.chat(at: i)
+            let watchers = chat.watchers
+            guard !watchers.isEmpty,
+                  !watchers.contains(where: { $0.effectiveMode == .timer }) else {
+                continue
+            }
+            let resumable = watchers.allSatisfy { watcher in
+                sessionExists(watcher.sessionGUID)
+                    || (chat.orchestrationEnabled && watcher.tmuxPane != nil)
+            }
+            if resumable {
+                chatIDs.append(chat.id)
+            }
         }
+        return chatIDs
     }
 
     // Internal (not private) so wiring tests can obtain two dispatchers for two
@@ -325,5 +460,114 @@ final class iTermChatTimerLaunch: NSObject {
         MainActor.assumeIsolated {
             OrchestratorClient.rearmPersistedTimersAtLaunch()
         }
+    }
+
+    // Called by the app delegate once window restoration (and the buried and
+    // orphaned session adoption that follows it) has created the sessions it
+    // is going to create. Dispatchers built earlier reconcile their persisted
+    // watchers now.
+    @objc static func sessionsDidFinishRestoring() {
+        MainActor.assumeIsolated {
+            SessionRestorationGate.shared.markReady()
+        }
+    }
+}
+
+// One-shot latch for “launch-time session restoration is done.” Until it
+// opens, an OrchestratorDispatcher defers reconciling its persisted watchers,
+// because a watched session that hasn't been restored yet is indistinguishable
+// from one that is gone for good. Tests construct their own instance.
+@MainActor
+final class SessionRestorationGate {
+    static let shared = SessionRestorationGate()
+
+    private(set) var isReady = false
+    private var waiters = [() -> Void]()
+
+    init(ready: Bool = false) {
+        isReady = ready
+    }
+
+    // Runs block now if the gate is open, otherwise once it opens.
+    func whenReady(_ block: @escaping () -> Void) {
+        if isReady {
+            block()
+        } else {
+            waiters.append(block)
+        }
+    }
+
+    func markReady() {
+        guard !isReady else { return }
+        RLog("Session restoration complete; releasing \(waiters.count) deferred watcher reconciliations")
+        isReady = true
+        let pending = waiters
+        waiters.removeAll()
+        for block in pending {
+            block()
+        }
+    }
+}
+
+// Whether a session terminating right now is being torn down by an app quit
+// that window restoration will undo. An ordinary quit closes every window,
+// which terminates every session and posts iTermSessionWillTerminate, but
+// when windows will be restored at the next launch each session comes back
+// with the same stableID. A chat's link to such a session, and the watches and
+// timers it registered, must outlive that teardown. “Quit and Close All
+// Windows” (Option-Quit) discards the saved state, which turns off
+// willRestoreWindowsAtNextLaunch, so it unlinks like a real close. tmux client
+// sessions are not saved for restoration (reattaching creates new sessions),
+// so a chat link to one is treated as a real close; only an orchestration
+// chat's watch that recorded the pane's tmux identity is kept (see
+// tmuxSessionMayReattachAfterQuit).
+enum SessionQuitRestoration {
+    // Takes an iTermSessionWillTerminate notification.
+    @MainActor
+    static func sessionWillBeRestoredAfterQuit(_ notification: Notification) -> Bool {
+        // Sessions are terminated by -[iTermController cleanUpIfNeeded] while
+        // the shared instance still exists. Once it is gone nothing can say
+        // whether windows will be restored, so behave like a real close.
+        guard let controller = iTermController.sharedInstance() else {
+            return false
+        }
+        return sessionWillBeRestored(isTmuxClient: wasTmuxClient(notification),
+                                     applicationIsQuitting: controller.applicationIsQuitting,
+                                     willRestoreWindowsAtNextLaunch: controller.willRestoreWindowsAtNextLaunch)
+    }
+
+    // -[PTYSession terminate] clears tmuxMode before posting, so the
+    // session's isTmuxClient is always false by now; read the value it
+    // captured beforehand.
+    static func wasTmuxClient(_ notification: Notification) -> Bool {
+        (notification.userInfo?[iTermSessionWillTerminateWasTmuxClientKey] as? NSNumber)?.boolValue ?? false
+    }
+
+    static func sessionWillBeRestored(isTmuxClient: Bool,
+                                      applicationIsQuitting: Bool,
+                                      willRestoreWindowsAtNextLaunch: Bool) -> Bool {
+        return !isTmuxClient && applicationIsQuitting && willRestoreWindowsAtNextLaunch
+    }
+
+    // Whether a tmux client session is terminating for a quit after which
+    // windows will be restored. The session itself is not restored, but the
+    // restored gateway may reattach tmux, and then the pane comes back as a
+    // new session that a watch can be re-bound to by its tmux identity (see
+    // OrchestratorDispatcher.holdForTmuxReattach). Takes an
+    // iTermSessionWillTerminate notification.
+    @MainActor
+    static func tmuxSessionMayReattachAfterQuit(_ notification: Notification) -> Bool {
+        guard let controller = iTermController.sharedInstance() else {
+            return false
+        }
+        return tmuxSessionMayReattach(isTmuxClient: wasTmuxClient(notification),
+                                      applicationIsQuitting: controller.applicationIsQuitting,
+                                      willRestoreWindowsAtNextLaunch: controller.willRestoreWindowsAtNextLaunch)
+    }
+
+    static func tmuxSessionMayReattach(isTmuxClient: Bool,
+                                       applicationIsQuitting: Bool,
+                                       willRestoreWindowsAtNextLaunch: Bool) -> Bool {
+        return isTmuxClient && applicationIsQuitting && willRestoreWindowsAtNextLaunch
     }
 }

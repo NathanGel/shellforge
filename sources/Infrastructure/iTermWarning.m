@@ -24,6 +24,9 @@ BOOL gShowRememberedAlerts = NO;
 
 @interface iTermWarningAction()
 @property (nonatomic) NSRange shortcutRange;
+// The Cmd-<letter> shortcut makeAlert chose from the label, or nil. Recomputed each time the alert
+// is built, and kept apart from keyEquivalent so the caller's choice is never overwritten.
+@property (nonatomic, copy, nullable) NSString *automaticKeyEquivalent;
 @end
 
 @implementation iTermWarningAction
@@ -508,7 +511,15 @@ static NSMutableArray<iTermHeadlessModalSession *> *gHeadlessModalSessions;
                 headlessSession = nil;
                 [sheetRegistration unregister];
                 DLog(@"Result for %@ is %@", self, @(result));
-                completion([self handleResult:result alert:alert], self);
+                const iTermWarningSelection selection = [self handleResult:result alert:alert];
+                // AppKit calls this while it is still ending the sheet. A completion that shows
+                // another warning on the same window (a paste that needs confirming, say) would
+                // start a nested modal sheet before this one has detached, which can leave the
+                // new sheet unable to end its modal session: an unrecoverable hang. See issue
+                // 13169. Run the completion once the sheet is fully gone.
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    completion(selection, self);
+                });
             };
             if (gRunsHeadlessModals) {
                 // Kept alive by gHeadlessModalSessions until a button is clicked.
@@ -590,15 +601,50 @@ static NSMutableArray<iTermHeadlessModalSession *> *gHeadlessModalSessions;
     }
 }
 
-- (void)assignKeyEquivalents {
-    NSSet<NSString *> *assignedValues = [NSSet set];
-    for (iTermWarningAction *action in _warningActions) {
-        if (action.keyEquivalent) {
-            [assignedValues setByAddingObject:action.keyEquivalent];
+// YES if `view` or a subview holds text the user can select or edit, such as a text field.
+static BOOL iTermWarningViewHasSelectableText(NSView *view) {
+    NSTextField *textField = [NSTextField castFrom:view];
+    if (textField.isSelectable) {
+        return YES;
+    }
+    NSTextView *textView = [NSTextView castFrom:view];
+    if (textView.isSelectable) {
+        return YES;
+    }
+    for (NSView *subview in view.subviews) {
+        if (iTermWarningViewHasSelectableText(subview)) {
+            return YES;
         }
     }
-    for (iTermWarningAction *action in _warningActions) {
-        [action.label enumerateComposedCharacters:^(NSRange range, unichar simple, NSString *complexString, BOOL *stop) {
+    return NO;
+}
+
+// Gives each button that has no key equivalent yet a Cmd-<letter> shortcut taken from its action's
+// label, and stores it in the action's automaticKeyEquivalent. Letters already taken are skipped.
+// When the accessory holds selectable or editable text, the letters of the standard text editing
+// commands (select all, copy, paste, cut, undo) are skipped too, so those keys reach the text
+// instead of pressing a button. An action's own keyEquivalent is never changed, so building the
+// alert again (for example, to show it a second time) gives the same result.
+- (void)assignAutomaticKeyEquivalentsForButtons:(NSArray<NSButton *> *)buttons {
+    // Cmd-H, Cmd-Q, Cmd-W, and Cmd-M are Hide, Quit, Close, and Minimize everywhere in macOS, so
+    // pressing one must not press a button instead.
+    NSMutableSet<NSString *> *assignedValues = [NSMutableSet setWithArray:@[ @"h", @"q", @"w", @"m" ]];
+    if (_accessory && iTermWarningViewHasSelectableText(_accessory)) {
+        [assignedValues addObjectsFromArray:@[ @"a", @"c", @"v", @"x", @"z" ]];
+    }
+    [_warningActions enumerateObjectsUsingBlock:^(iTermWarningAction *action, NSUInteger idx, BOOL *stop) {
+        action.automaticKeyEquivalent = nil;
+        action.shortcutRange = NSMakeRange(NSNotFound, 0);
+        NSString *existing = buttons[idx].keyEquivalent;
+        if (existing.length) {
+            [assignedValues addObject:existing.lowercaseString];
+        }
+    }];
+    [_warningActions enumerateObjectsUsingBlock:^(iTermWarningAction *action, NSUInteger idx, BOOL *stop) {
+        if (buttons[idx].keyEquivalent.length) {
+            return;
+        }
+        [action.label enumerateComposedCharacters:^(NSRange range, unichar simple, NSString *complexString, BOOL *stopLetters) {
             if (complexString.length > 1) {
                 return;
             }
@@ -614,12 +660,12 @@ static NSMutableArray<iTermHeadlessModalSession *> *gHeadlessModalSessions;
             if ([assignedValues containsObject:string]) {
                 return;
             }
-            action.keyEquivalent = string;
-            [assignedValues setByAddingObject:string];
+            action.automaticKeyEquivalent = string;
+            [assignedValues addObject:string];
             action.shortcutRange = range;
-            *stop = YES;
+            *stopLetters = YES;
         }];
-    }
+    }];
 }
 
 - (NSAlert *)makeAlert {
@@ -640,15 +686,13 @@ static NSMutableArray<iTermHeadlessModalSession *> *gHeadlessModalSessions;
         button.hasDestructiveAction = action.destructive;
         if (action.keyEquivalent) {
             button.keyEquivalent = action.keyEquivalent;
-        } else {
-            action.keyEquivalent = button.keyEquivalent;
         }
     }
-    [self assignKeyEquivalents];
+    [self assignAutomaticKeyEquivalentsForButtons:alert.buttons];
     [_warningActions enumerateObjectsUsingBlock:^(iTermWarningAction * _Nonnull action, NSUInteger idx, BOOL * _Nonnull stop) {
         NSButton *button = alert.buttons[idx];
-        if (!button.keyEquivalent.length) {
-            button.keyEquivalent = action.keyEquivalent;
+        if (!button.keyEquivalent.length && action.automaticKeyEquivalent.length) {
+            button.keyEquivalent = action.automaticKeyEquivalent;
             button.keyEquivalentModifierMask = NSEventModifierFlagCommand;
             if ([iTermAdvancedSettingsModel alertsIndicateShortcuts] && action.shortcutRange.length == 1) {
                 dispatch_async(dispatch_get_main_queue(),
@@ -1044,6 +1088,12 @@ static NSMutableArray<iTermHeadlessModalSession *> *gHeadlessModalSessions;
         }
         [[iTermUserDefaults userDefaults] setObject:@(selection)
                                                   forKey:[self.class selectionKeyForIdentifier:_identifier]];
+        // List it in the Suppressed Alerts panel right away instead of the next time it is
+        // auto-answered.
+        [[iTermSuppressedAlerts sharedInstance] recordRememberedSelectionWithIdentifier:_identifier
+                                                                                  title:_title
+                                                                                heading:_heading
+                                                                         selectionLabel:[self actionForSelection:selection].label];
     }
     DLog(@"Return selection %@ for %@", @(selection), self);
     return selection;

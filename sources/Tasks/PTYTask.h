@@ -12,7 +12,10 @@
 
 @class Coprocess;
 @class iTermIOBuffer;
+@class iTermFramerPaneJobManager;
+@class iTermOwnedFileDescriptor;
 @class iTermProcessInfo;
+@class iTermTaskInputQueue;
 @protocol iTermTask;
 @class iTermWinSizeController;
 @class PTYTab;
@@ -41,6 +44,11 @@
 - (void)taskMuteCoprocessDidChange:(PTYTask *)task hasMuteCoprocess:(BOOL)hasMuteCoprocess;
 - (void)taskDidResizeToGridSize:(VT100GridSize)gridSize pixelSize:(NSSize)pixelSize;
 - (void)taskDidReadFromCoprocessWhileSSHIntegrationInUse:(NSData *)data;
+
+// Any thread. Whether -threadedReadTask:length: would return without blocking.
+- (BOOL)taskHasReadCapacity;
+// Any thread. Runs `block` asynchronously on `queue` once there may be capacity again.
+- (void)taskNotifyWhenReadCapacityAvailableOnQueue:(dispatch_queue_t)queue block:(void (^)(void))block;
 
 @end
 
@@ -84,7 +92,8 @@ typedef struct {
 
 @protocol iTermJobManager<NSObject>
 
-@property (atomic) int fd;
+// Owns the descriptor. Nil if there is none.
+@property (atomic, readonly) iTermOwnedFileDescriptor *ownedFileDescriptor;
 @property (atomic, copy) NSString *tty;
 @property (atomic, readonly) pid_t externallyVisiblePid;
 @property (atomic, readonly) BOOL hasJob;
@@ -156,7 +165,6 @@ typedef NS_OPTIONS(NSUInteger, iTermJobManagerAttachResults) {
 @property(nonatomic, readonly) BOOL isSessionRestorationPossible;
 @property(nonatomic, readonly) id sessionRestorationIdentifier;
 
-@property(atomic, readonly) int fd;
 @property(atomic, readonly) pid_t pid;
 // Externally, only PTYSession should assign to this when reattaching to a server.
 @property(atomic, readonly) NSString *tty;
@@ -171,9 +179,19 @@ typedef NS_OPTIONS(NSUInteger, iTermJobManagerAttachResults) {
 @property(nonatomic, readonly) BOOL passwordInput;
 @property(nonatomic) unichar pendingHighSurrogate;
 @property(nonatomic, copy) NSNumber *tmuxClientProcessID;
-// This is used by tmux clients as a way to route data from %output in to the taskNotifier. Like
-// the name says you can't write to it.
-@property(atomic) int readOnlyFileDescriptor;
+// The pid process info is looked up under: the tmux pane pid when this task stands for a tmux
+// pane, otherwise the task's own. Both the cached and the fetched lookups (PTYTask+ProcessInfo)
+// use it.
+@property(nonatomic, readonly) pid_t processInfoPID;
+// Makes this a tmux pane's task, reading the pane's %output from the read end of a pipe the
+// session writes to. Nothing is written to it. Registers the task.
+- (void)readTmuxPaneOutputFrom:(iTermOwnedFileDescriptor *)readEnd;
+// Like readTmuxPaneOutputFrom:, but the session appends the pane's %output to `inputQueue`. Only
+// for use with task I/O monitors, since TaskNotifier's select loop can't watch a queue.
+- (void)readTmuxPaneOutputFromQueue:(iTermTaskInputQueue *)inputQueue;
+// Any thread. Runs `block` with the task's file descriptor, which stays open until it returns.
+// Returns NO without running it when there is no descriptor or it has been closed.
+- (BOOL)withFileDescriptor:(void (NS_NOESCAPE ^)(int fd))block;
 
 // This is used by clients so they can initialize the TTY size once when the view size is known
 // for real. It is never assigned to by PTYTask.
@@ -187,9 +205,18 @@ typedef NS_OPTIONS(NSUInteger, iTermJobManagerAttachResults) {
 // This is used by channels. It takes care of handling IO and this is the one strong reference to the ioBuffer.
 @property(nonatomic, strong) iTermIOBuffer *ioBuffer;
 
+// Set when the program is a pane of another session's framer, with no local process.
+@property(nonatomic, strong) iTermFramerPaneJobManager *framerPaneJobManager;
+
 + (NSMutableDictionary *)mutableEnvironmentDictionary;
 
 - (instancetype)init;
+
+// Testing only. Makes a task that reads from `fileDescriptor` and has no process. It is not
+// registered with TaskNotifier.
+- (instancetype)initForTestingWithFileDescriptor:(iTermOwnedFileDescriptor *)fileDescriptor;
+// Testing only. Like a tmux pane's task reading `inputQueue`, but not registered.
+- (instancetype)initForTestingWithInputQueue:(iTermTaskInputQueue *)inputQueue;
 
 - (BOOL)hasBrokenPipe;
 
@@ -209,6 +236,9 @@ typedef NS_OPTIONS(NSUInteger, iTermJobManagerAttachResults) {
 - (void)writeTask:(NSData*)data;
 
 - (void)stop;
+// Stops TaskNotifier from servicing this task, then calls `completion` on the main queue. With task
+// I/O monitors, that is once the task can no longer read into its delegate.
+- (void)deregisterWithCompletion:(void (^)(void))completion;
 
 // Called on any thread
 - (void)brokenPipe;
@@ -239,7 +269,7 @@ typedef NS_OPTIONS(NSUInteger, iTermJobManagerAttachResults) {
 
 - (void)killWithMode:(iTermJobManagerKillingMode)mode;
 
-- (void)registerTmuxTask;
+- (void)markAsTmuxTask;
 
 - (void)getWorkingDirectoryWithCompletion:(void (^)(NSString *pwd))completion;
 

@@ -43,6 +43,7 @@
 #import "PasteboardHistory.h"
 #import "PreferencePanel.h"
 #import "PseudoTerminal.h"
+#import "NSApplication+iTerm.h"
 #import "UKCrashReporter.h"
 #import "VT100Screen.h"
 #import "WindowArrangements.h"
@@ -137,7 +138,11 @@ static iTermController *gSharedInstance;
     self = [super init];
 
     if (self) {
-        UKCrashReporterCheckForCrash();
+        // A test host would offer to report any recent iTerm2 crash in a modal window, which
+        // blocks button and menu actions in the tests that follow.
+        if (![NSApp isRunningUnitTests]) {
+            UKCrashReporterCheckForCrash();
+        }
 
         // create the "~/Library/Application Support/iTerm2" directory if it does not exist
         [[NSFileManager defaultManager] applicationSupportDirectory];
@@ -484,6 +489,26 @@ replaceInitialDirectoryForSessionWithGUID:(NSString *)guid
     }];
 }
 
+- (void)writeArrangements:(NSArray *)terminalArrangements toSaveItem:(iTermSavePanelItem *)saveItem {
+    [terminalArrangements writeToSaveItem:saveItem completionHandler:^(NSError *error) {
+        if (!error) {
+            return;
+        }
+        // The handler of a bridged async method isn't guaranteed to run on the main thread.
+        dispatch_async(dispatch_get_main_queue(), ^{
+            DLog(@"Failed to write arrangement to %@: %@", saveItem, error);
+            [iTermWarning showWarningWithTitle:[NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"WindowArrangements.ExportSaveError", nil, [NSBundle mainBundle], @"Error saving to %1$@: %2$@", @"Error message when writing a window arrangement to a file fails; first arg is a filename, second is the error"),
+                                                saveItem.displayName, error.localizedDescription]
+                                       actions:@[ iTermLocalizedOK() ]
+                                     accessory:nil
+                                    identifier:@"NoSyncArrangementWritingError"
+                                   silenceable:kiTermWarningTypePersistent
+                                       heading:NSLocalizedStringWithDefaultValue(@"WindowArrangements.ExportFailedHeading", nil, [NSBundle mainBundle], @"Couldn’t Save Window Arrangement", @"Heading of the warning shown when saving a window arrangement to a file fails")
+                                        window:[[self currentTerminal] window]];
+        });
+    }];
+}
+
 // Precondition: at least one of name,saveItem is nonnil.
 - (void)saveWindowArrangementForAllWindows:(BOOL)allWindows name:(NSString *)name saveItem:(iTermSavePanelItem *)saveItem {
     if (allWindows) {
@@ -503,7 +528,7 @@ replaceInitialDirectoryForSessionWithGUID:(NSString *)guid
             }
         }
         if (saveItem) {
-            [terminalArrangements writeToSaveItem:saveItem completionHandler:^(NSError *error){ }];
+            [self writeArrangements:terminalArrangements toSaveItem:saveItem];
         } else {
             [WindowArrangements setArrangement:terminalArrangements withName:name];
         }
@@ -526,7 +551,7 @@ replaceInitialDirectoryForSessionWithGUID:(NSString *)guid
     }
     if (terminalArrangements.count) {
         if (saveItem) {
-            [terminalArrangements writeToSaveItem:saveItem completionHandler:^(NSError *error){ }];
+            [self writeArrangements:terminalArrangements toSaveItem:saveItem];
         } else {
             [WindowArrangements setArrangement:terminalArrangements withName:name];
         }
@@ -2110,7 +2135,7 @@ static const NSUInteger iTermUndoCloseStateMaximumCount = 20;
         case iTermOpenStyleVerticalSplit:
         case iTermOpenStyleHorizontalSplit:
             term = [self currentTerminal];
-            if (term && !(term.layoutLocked && term.numberOfTabs > 0)) {
+            if ([iTermController canOpenURLInSplitPaneOfTerminal:term]) {
                 return [self openURLInSplitPane:url
                                          target:target
                                          window:term
@@ -2122,7 +2147,7 @@ static const NSUInteger iTermUndoCloseStateMaximumCount = 20;
             break;
         case iTermOpenStyleFloatingPane:
             term = [self currentTerminal];
-            if (term.canCreateFloatingPane) {
+            if (term.canInstallNativeFloatingPane) {
                 PTYSession *previous = term.currentSession;
                 [term openFloatingPaneWithURL:url target:target baseProfile:profile];
                 if (!select && previous) {
@@ -2178,6 +2203,12 @@ static const NSUInteger iTermUndoCloseStateMaximumCount = 20;
     }
     [session openURL:url];
     return YES;
+}
+
+// A web page is a session iTerm2 runs itself, so it can't go into a tmux tab, and a locked layout
+// can't be split.
++ (BOOL)canOpenURLInSplitPaneOfTerminal:(PseudoTerminal *)term {
+    return term && !(term.layoutLocked && term.numberOfTabs > 0) && term.canInstallNativeSplitPane;
 }
 
 - (BOOL)openURLInSplitPane:(NSURL *)url

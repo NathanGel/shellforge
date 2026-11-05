@@ -12,7 +12,17 @@ import LocalAuthentication
 class PasswordManagerDataSourceProvider: NSObject {
     @objc static let forTerminal = PasswordManagerDataSourceProvider(browser: false)
     @objc static let forBrowser = PasswordManagerDataSourceProvider(browser: true)
-    @objc private(set) var authenticated = false
+    // Posted with the provider as the object when `authenticated` goes from true to false:
+    // a failed or cancelled prompt, or a screen lock. Every open window locks then.
+    @objc static let didRevokeAuthenticationNotification = Notification.Name("iTermPasswordManagerDidRevokeAuthentication")
+    @objc private(set) var authenticated = false {
+        didSet {
+            if oldValue && !authenticated {
+                NotificationCenter.default.post(name: Self.didRevokeAuthenticationNotification,
+                                                object: self)
+            }
+        }
+    }
     private var _dataSource: PasswordManagerDataSource? = nil
     private var dataSourceType: DataSource!
     private let _keychain: KeychainPasswordDataSource
@@ -25,6 +35,7 @@ class PasswordManagerDataSourceProvider: NSObject {
     private var _testAdapter: AdapterPasswordDataSource
     #endif
     private let browser: Bool
+    private let authenticationMode: () -> PasswordManagerAuthenticationMode
     private var dataSourceNameUserDefaultsKey: String {
         "NoSyncPasswordManagerDataSourceName" + (browser ? "Browser" : "")
     }
@@ -43,15 +54,20 @@ class PasswordManagerDataSourceProvider: NSObject {
         static let defaultValue = DataSource.keychain
     }
 
-    init(browser: Bool) {
+    // A screen lock revokes the cached authentication here, on the provider, rather than
+    // in the password manager window. Authentication can be obtained without that window
+    // ever being opened (for example, saving a browser basic-auth credential), and it
+    // must still be revoked. The parameters let tests use a private notification center
+    // and a fixed authentication mode.
+    init(browser: Bool,
+         screenLockNotificationCenter: NotificationCenter = DistributedNotificationCenter.default(),
+         authenticationMode: @escaping () -> PasswordManagerAuthenticationMode = { PasswordManagerDataSourceProvider.currentAuthenticationMode }) {
         _keychain = KeychainPasswordDataSource(browser: browser)
         _onePassword = OnePasswordDataSource(browser: browser)
         _lastPass = LastPassDataSource(browser: browser)
 
         let keepassPath = Bundle(for: Self.self).path(forAuxiliaryExecutable: "iterm2-keepassxc-adapter")!
-        _keePassXC = AdapterPasswordDataSource(browser: browser,
-                                               adapterPath: keepassPath,
-                                               identifier: "KeePassXC")
+        _keePassXC = Self.makeKeePassXCDataSource(browser: browser, adapterPath: keepassPath)
 
         let bitwardenPath = Bundle(for: Self.self).path(forAuxiliaryExecutable: "iterm2-bitwarden-adapter")!
         _bitwarden = AdapterPasswordDataSource(browser: browser,
@@ -70,10 +86,39 @@ class PasswordManagerDataSourceProvider: NSObject {
         #endif
 
         self.browser = browser
+        self.authenticationMode = authenticationMode
 
         super.init()
 
         dataSourceType = preferredDataSource
+        screenLockNotificationCenter.addObserver(self,
+                                                 selector: #selector(screenDidLock(_:)),
+                                                 name: NSNotification.Name("com.apple.screenIsLocked"),
+                                                 object: nil)
+    }
+
+    // keepassxc-cli can’t store “/” in an entry title, so this data source maps it to a
+    // lookalike. See AdapterAccountNameCodec.keePassXC.
+    static func makeKeePassXCDataSource(browser: Bool,
+                                        adapterPath: String,
+                                        identifier: String = "KeePassXC") -> AdapterPasswordDataSource {
+        return AdapterPasswordDataSource(browser: browser,
+                                         adapterPath: adapterPath,
+                                         identifier: identifier,
+                                         accountNameCodec: .keePassXC)
+    }
+
+    @objc private func screenDidLock(_ notification: Notification) {
+        guard Self.requiresAuthenticationAfterScreenLock(mode: authenticationMode()) else {
+            return
+        }
+        DLog("Screen locked. Revoke password manager authentication (browser=\(browser))")
+        revokeAuthentication()
+    }
+
+    // For unit tests only: stands in for a successful LocalAuthentication prompt.
+    func markAuthenticatedForTesting() {
+        authenticated = true
     }
 
     var preferredDataSource: DataSource {

@@ -174,36 +174,8 @@ static NSInteger SIGArchiveVerifiedLowestSupportedVersion = 2;
 
 #pragma mark - Private
 
-- (NSDictionary<NSString *, NSString *> *)metadataDictionaryFromString:(NSString *)metadata
-                                                                 error:(out NSError **)error {
-    NSMutableDictionary *dictionary = [NSMutableDictionary dictionary];
-    NSArray<NSString *> *rows = [metadata componentsSeparatedByString:@"\n"];
-    NSArray<NSString *> *knownKeys = SIGArchiveGetKnownKeys();
-
-    for (NSString *row in rows) {
-        NSInteger index = [row rangeOfString:@"="].location;
-        if (index == NSNotFound) {
-            continue;
-        }
-        NSString *key = [row substringToIndex:index];
-        if (![knownKeys containsObject:key]) {
-            continue;
-        }
-        if (dictionary[key]) {
-            if (error) {
-                *error = [SIGError errorWithCode:SIGErrorCodeMalformedMetadata];
-            }
-            return nil;
-        }
-        NSString *value = [row substringFromIndex:SIGAddNonnegativeInt64s(index, 1)];
-        dictionary[key] = value;
-    }
-    return dictionary;
-}
-
 - (BOOL)verifyMetadata:(NSString *)metadata error:(out NSError **)error {
-    NSDictionary *const dictionary = [self metadataDictionaryFromString:metadata
-                                                                  error:error];
+    NSDictionary *const dictionary = SIGArchiveParseMetadata(metadata, error);
     if (!dictionary) {
         return NO;
     }
@@ -271,6 +243,14 @@ static NSInteger SIGArchiveVerifiedLowestSupportedVersion = 2;
         return NO;
     }
 
+    // Encrypted archives are opened with -[SIGArchiveReader decryptedPayloadWithPassphrase:...].
+    // Refuse them here so ciphertext is never mistaken for a verified payload.
+    if (_reader.isEncrypted) {
+        if (error) {
+            *error = [SIGError errorWithCode:SIGErrorCodeEncrypted];
+        }
+        return NO;
+    }
     if (![self verifyMetadata:metadata error:error]) {
         return NO;
     }
@@ -309,6 +289,7 @@ static NSInteger SIGArchiveVerifiedLowestSupportedVersion = 2;
         if (error) {
             *error = [SIGError errorWithCode:SIGErrorCodeNoCertificate];
         }
+        return NO;
     }
 
     NSMutableArray<SIGCertificate *> *certs = [NSMutableArray array];
@@ -352,16 +333,25 @@ static NSInteger SIGArchiveVerifiedLowestSupportedVersion = 2;
     if (!algorithm) {
         return NO;
     }
+    // The verification algorithm passes the key to Security APIs that crash on NULL.
+    SecKeyRef publicKey = _certificates.firstObject.publicKey.secKey;
+    if (!publicKey) {
+        if (error) {
+            *error = [SIGError errorWithCode:SIGErrorCodeInputMalformedCertificate
+                                      detail:@"Could not get the public key from the signing certificate"];
+        }
+        return NO;
+    }
     if (_signature2Data) {
         return [algorithm verifyInputStream:_payload2InputStream
                               signatureData:_signature2Data
-                                  publicKey:_certificates.firstObject.publicKey.secKey
+                                  publicKey:publicKey
                                       error:error];
     }
 #if ENABLE_SIGARCHIVE_MIGRATION_VALIDATION
     return [algorithm verifyInputStream:_payloadInputStream
                           signatureData:_signatureData
-                              publicKey:_certificates.firstObject.publicKey.secKey
+                              publicKey:publicKey
                                   error:error];
 #else
     if (error) {

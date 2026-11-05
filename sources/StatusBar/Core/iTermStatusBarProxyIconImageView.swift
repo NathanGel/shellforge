@@ -8,13 +8,16 @@
 import AppKit
 
 // A status bar icon image view that doubles as a proxy icon: dragging it starts a file drag of
-// `url` (like the proxy icon in a window title bar), while a plain click invokes `onClick`. The
-// displayed image is whatever the container sets (a monochrome template glyph), so it stays
-// visually consistent with other status bar icons; only the drag image is the real Finder icon.
+// the URL from `urlProvider` (like the proxy icon in a window title bar), while a plain click
+// invokes `onClick`. The displayed image is whatever the container sets (a monochrome template
+// glyph), so it stays visually consistent with other status bar icons; only the drag image is
+// the real Finder icon.
 @objc(iTermStatusBarProxyIconImageView)
 class iTermStatusBarProxyIconImageView: NSImageView, NSDraggingSource {
-    // The file to drag. When nil, dragging is disabled but clicking still works.
-    @objc var url: URL?
+    // Returns the file to drag. It is asked when a drag begins rather than cached, so a
+    // directory deleted after it became current is not offered. When it is nil or returns nil,
+    // dragging is disabled but clicking still works.
+    @objc var urlProvider: (() -> URL?)?
 
     // Invoked on a click that did not turn into a drag.
     @objc var onClick: (() -> Void)?
@@ -25,6 +28,33 @@ class iTermStatusBarProxyIconImageView: NSImageView, NSDraggingSource {
 
     private static let dragThreshold: CGFloat = 4
 
+    // Whether the mouse has moved far enough from where it went down to count as a drag rather
+    // than a click.
+    static func movementIsDrag(from start: NSPoint, to end: NSPoint) -> Bool {
+        return hypot(end.x - start.x, end.y - start.y) >= dragThreshold
+    }
+
+    // The URL a proxy icon should vend for `path`, or nil if it must not be draggable. A proxy
+    // icon drag hands a real file to another app, so it only makes sense for a local directory
+    // that exists right now.
+    @objc(directoryURLForPath:isLocal:)
+    static func directoryURL(forPath path: String?, isLocal: Bool) -> URL? {
+        guard let path, !path.isEmpty, isLocal else {
+            return nil
+        }
+        var isDirectory = ObjCBool(false)
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
+              isDirectory.boolValue else {
+            return nil
+        }
+        return URL(fileURLWithPath: path, isDirectory: true)
+    }
+
+    // The URL to vend for a drag starting now. Asks `urlProvider` afresh on every call.
+    func urlForDrag() -> URL? {
+        return urlProvider?()
+    }
+
     override func mouseDown(with event: NSEvent) {
         isMouseDown = true
         didDrag = false
@@ -32,16 +62,23 @@ class iTermStatusBarProxyIconImageView: NSImageView, NSDraggingSource {
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard isMouseDown, !didDrag, let url else {
+        guard isMouseDown, !didDrag else {
             return
         }
         let point = convert(event.locationInWindow, from: nil)
-        let distance = hypot(point.x - mouseDownPoint.x, point.y - mouseDownPoint.y)
-        guard distance >= Self.dragThreshold else {
+        guard Self.movementIsDrag(from: mouseDownPoint, to: point) else {
             return
         }
+        // The gesture is a drag from here on, even if there's nothing to drag, so releasing
+        // the mouse must not count as a click.
         didDrag = true
         isMouseDown = false
+        // Check now rather than when the path last changed: the directory may have been
+        // deleted since.
+        guard let url = urlForDrag() else {
+            DLog("Proxy icon drag refused: no URL")
+            return
+        }
 
         let pbItem = NSPasteboardItem()
         pbItem.setString(url.absoluteString, forType: .fileURL)

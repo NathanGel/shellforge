@@ -254,6 +254,12 @@ static BOOL hasBecomeActive = NO;
     BOOL _sparkleRestarting;  // Is Sparkle about to restart the app?
 
     BOOL _orphansAdopted;  // Have orphan servers been adopted?
+    // Launch-time session restoration bookkeeping for AI chat watchers. See
+    // -maybeReportSessionRestorationComplete.
+    BOOL _windowRestorationFinished;  // restoreWindowsWithCompletion: completed
+    BOOL _postRestorationStepsFinished;  // buried/orphan/workgroup steps ran
+    BOOL _sessionRestorationReported;  // AI chat has been told
+    id _sessionRestorationDecodeObserver;
 
     NSArray<NSDictionary *> *_buriedSessionsState;
 
@@ -725,9 +731,22 @@ static NSModalResponse iTermCompareRenderingRunModal(id self, SEL _cmd) {
                                       didSendUserName:didSendUserName];
     } else {
         DLog(@"Open password manager as standalone window");
-        if (!_passwordManagerWindowController) {
-            _passwordManagerWindowController = [[iTermPasswordManagerWindowController alloc] init];
-            _passwordManagerWindowController.delegate = self;
+        NSWindow *existingWindow = _passwordManagerWindowController.isWindowLoaded ? _passwordManagerWindowController.window : nil;
+        // A minimized window counts as closed, so it errs toward authenticating again. So
+        // does a window whose open ended (for example, a lock) while it stayed on screen.
+        const BOOL windowIsOpen = existingWindow.isVisible && _passwordManagerWindowController.isOpen;
+        switch ([iTermPasswordManagerStandaloneOpen actionWithHasWindowController:_passwordManagerWindowController != nil
+                                                                     windowIsOpen:windowIsOpen]) {
+            case iTermPasswordManagerStandaloneOpenActionCreate:
+                _passwordManagerWindowController = [[iTermPasswordManagerWindowController alloc] init];
+                _passwordManagerWindowController.delegate = self;
+                break;
+            case iTermPasswordManagerStandaloneOpenActionReopen:
+                // Each open authenticates as the mode requires, as a new window would.
+                [_passwordManagerWindowController reopen];
+                break;
+            case iTermPasswordManagerStandaloneOpenActionBringToFront:
+                break;
         }
         _passwordManagerWindowController.sendUserByDefault = forUser;
         _passwordManagerWindowController.didSendUserName = didSendUserName;
@@ -794,12 +813,13 @@ static NSModalResponse iTermCompareRenderingRunModal(id self, SEL _cmd) {
 - (NSMenu *)downloadsMenu {
     if (!downloadsMenu_) {
         downloadsMenu_ = [[[NSMenuItem alloc] init] autorelease];
-        downloadsMenu_.title = NSLocalizedStringWithDefaultValue(@"DownloadsMenu.Title", nil, [NSBundle mainBundle], @"Downloads", @"Title of the Downloads menu");
+        NSString *title = NSLocalizedStringWithDefaultValue(@"DownloadsMenu.Title", nil, [NSBundle mainBundle], @"Downloads", @"Title of the Downloads menu");
+        downloadsMenu_.title = title;
         [downloadsMenu_ setAccessibilityIdentifier:iTermDownloadsMenuAXIdentifier];
         NSMenu *mainMenu = [[NSApplication sharedApplication] mainMenu];
         [mainMenu insertItem:downloadsMenu_
                      atIndex:mainMenu.itemArray.count - 1];
-        [downloadsMenu_ setSubmenu:[[[NSMenu alloc] initWithTitle:@"Downloads"] autorelease]];
+        [downloadsMenu_ setSubmenu:[[[NSMenu alloc] initWithTitle:title] autorelease]];
 
         NSMenuItem *clearAll = [[[NSMenuItem alloc] initWithTitle:NSLocalizedStringWithDefaultValue(@"Menu.ClearAll", nil, [NSBundle mainBundle], @"Clear All", @"Menu item to clear all items") action:@selector(clearAllDownloads:) keyEquivalent:@""] autorelease];
         [downloadsMenu_.submenu addItem:clearAll];
@@ -811,12 +831,13 @@ static NSModalResponse iTermCompareRenderingRunModal(id self, SEL _cmd) {
 - (NSMenu *)uploadsMenu {
     if (!uploadsMenu_) {
         uploadsMenu_ = [[[NSMenuItem alloc] init] autorelease];
-        uploadsMenu_.title = NSLocalizedStringWithDefaultValue(@"UploadsMenu.Title", nil, [NSBundle mainBundle], @"Uploads", @"Title of the Uploads menu");
+        NSString *title = NSLocalizedStringWithDefaultValue(@"UploadsMenu.Title", nil, [NSBundle mainBundle], @"Uploads", @"Title of the Uploads menu");
+        uploadsMenu_.title = title;
         [uploadsMenu_ setAccessibilityIdentifier:iTermUploadsMenuAXIdentifier];
         NSMenu *mainMenu = [[NSApplication sharedApplication] mainMenu];
         [mainMenu insertItem:uploadsMenu_
                      atIndex:mainMenu.itemArray.count - 1];
-        [uploadsMenu_ setSubmenu:[[[NSMenu alloc] initWithTitle:@"Uploads"] autorelease]];
+        [uploadsMenu_ setSubmenu:[[[NSMenu alloc] initWithTitle:title] autorelease]];
 
         NSMenuItem *clearAll = [[[NSMenuItem alloc] initWithTitle:NSLocalizedStringWithDefaultValue(@"Menu.ClearAll", nil, [NSBundle mainBundle], @"Clear All", @"Menu item to clear all items") action:@selector(clearAllUploads:) keyEquivalent:@""] autorelease];
         [uploadsMenu_.submenu addItem:clearAll];
@@ -891,6 +912,12 @@ static NSModalResponse iTermCompareRenderingRunModal(id self, SEL _cmd) {
     }
     if ([filename.pathExtension isEqualToString:@"it2triggers"]) {
         [TriggerController importTriggersFromFile:filename];
+        return YES;
+    }
+    if ([filename.pathExtension isEqualToString:@"iterm2passwords"]) {
+        [iTermPasswordArchiveController importPasswordsFromURL:[NSURL fileURLWithPath:filename]
+                                                        window:nil
+                                                    completion:nil];
         return YES;
     }
     NSLog(@"Quiet launch");
@@ -1433,6 +1460,8 @@ void TurnOnDebugLoggingAutomatically(void) {
     // about another instance would stall each one after the first.
     if (![NSApp isRunningUnitTests]) {
         [iTermInstanceLock resolveConflictIfNeeded];
+    } else {
+        suUpdater.delegate = (id<SUUpdaterDelegate>)[iTermTestHostIsolation updaterDelegate];
     }
     [[iTermApplication sharedApplication] updateAppearance];
     [[iTermUserDefaults userDefaults] it_addObserverForKey:kPreferenceKeyTabStyle
@@ -1490,6 +1519,10 @@ void TurnOnDebugLoggingAutomatically(void) {
     [iTermPreferences initializeUserDefaults];
     DLog(@"performMigrations");
     [iTermUserDefaults performMigrations];
+    // Must run before the user can change the AI safety check setting, or a
+    // fresh choice would be mistaken for a 3.6 setting and undone.
+    DLog(@"migrateAISafetyCheckProviderIfNeeded");
+    [iTermMigrationHelper migrateAISafetyCheckProviderIfNeeded];
 
     // Enable restoring windows to their original Spaces if needed.
     // This has to happen after -initializeUserDefaults and before this method returns.
@@ -1512,9 +1545,12 @@ void TurnOnDebugLoggingAutomatically(void) {
     // app actually accesses the local network. Without this, users may find that commands like
     // `ping 10.0.0.1` fail with "No route to host" until they reboot. Probing every launch is
     // silent once a decision exists and lets us recover after a TCC reset or OS upgrade (issue
-    // 12956).
-    DLog(@"Prompt for local network permission");
-    [[iTermLocalNetworkPermissionPrompter shared] prompt];
+    // 12956). Not for a unit test host: it needs no local network, and the prompt would sit
+    // unanswered on a machine running tests unattended.
+    if (![NSApp isRunningUnitTests]) {
+        DLog(@"Prompt for local network permission");
+        [[iTermLocalNetworkPermissionPrompter shared] prompt];
+    }
 
     // Bookmarks must be loaded for this to work since it needs to know if the hotkey's profile
     // exists.
@@ -1579,6 +1615,8 @@ void TurnOnDebugLoggingAutomatically(void) {
         [_untitledWindowStateMachine didFinishRestoringWindows];
         ScreenCharGarbageCollectImages();
         [[WorkgroupRestorationCoordinator sharedInstance] reconstructReadyAnchors];
+        _windowRestorationFinished = YES;
+        [self maybeReportSessionRestorationComplete];
     }];
 }
 
@@ -1634,6 +1672,7 @@ void TurnOnDebugLoggingAutomatically(void) {
     // When running an isolated instance via -suite, overlay the suite name on
     // the dock icon so it's obvious which instance this dock icon belongs to.
     [iTermSuiteDockTileView configureDockTileIfNeeded];
+    [[iTermFlowControlMonitor instance] start];
 
     // Record whether the previous shutdown ran to completion. +lastShutdownWasClean
     // returns NO if the process was killed (e.g. SIGKILL by the logout/reboot
@@ -1805,6 +1844,10 @@ void TurnOnDebugLoggingAutomatically(void) {
             if ([[iTermController sharedInstance] numberOfDecodesPending] == 0) {
                 _orphansAdopted = YES;
                 [[iTermOrphanServerAdopter sharedInstance] openWindowWithOrphansWithCompletion:nil];
+                _postRestorationStepsFinished = YES;
+                [self maybeReportSessionRestorationComplete];
+                // Like orphaned job servers, remote panes no restored session claims.
+                [[iTermFramerPaneStrandedFinder sharedInstance] restorationDidSettle];
             } else {
                 [[NSNotificationCenter defaultCenter] addObserver:self
                                                          selector:@selector(itermDidDecodeWindowRestorableState:)
@@ -1815,6 +1858,21 @@ void TurnOnDebugLoggingAutomatically(void) {
     } else {
         [self restoreBuriedSessionsState];
         [[WorkgroupRestorationCoordinator sharedInstance] reconstructReadyAnchors];
+        [[iTermFramerPaneStrandedFinder sharedInstance] restorationDidSettle];
+        if (_restorableStateController) {
+            [PseudoTerminalRestorer setPostRestorationCompletionBlock:^{
+                _postRestorationStepsFinished = YES;
+                [self maybeReportSessionRestorationComplete];
+            }];
+        }
+    }
+    if (!_restorableStateController) {
+        // Without our restorable state controller (unit tests, or the advanced
+        // setting that uses system window restoration) there is no completion
+        // signal to wait for, so don't hold up AI chat watchers. With system
+        // restoration a watch whose session is restored later can still be
+        // dropped; that mode is not otherwise supported here.
+        [self reportSessionRestorationComplete];
     }
     if ([iTermAPIHelper isEnabled]) {
         [iTermAPIHelper sharedInstance];  // starts the server. Won't ask the user since it's enabled.
@@ -1849,6 +1907,8 @@ void TurnOnDebugLoggingAutomatically(void) {
     // the migrated (now-flagged) state this launch rather than next launch.
     [iTermClaudeCodeOnboarding migrateExitTriggersToLeaderOnlyIfNeeded];
     [iTermClaudeCodeOnboarding reconcileTriggersCache];
+    // A tmux profile created later gets the triggers if they are installed elsewhere.
+    [iTermClaudeCodeOnboarding observeTmuxProfileCreation];
 
     // Sticky claudeCodeIntegrationCompleted flag was added after
     // 3.7.0beta1/beta2 shipped; users who installed the
@@ -2020,7 +2080,57 @@ static iTermKeyEventReplayer *gReplayer;
     if (!_orphansAdopted && [[iTermController sharedInstance] numberOfDecodesPending] == 0) {
         _orphansAdopted = YES;
         [[iTermOrphanServerAdopter sharedInstance] openWindowWithOrphansWithCompletion:nil];
+        _postRestorationStepsFinished = YES;
+        [self maybeReportSessionRestorationComplete];
+        [[iTermFramerPaneStrandedFinder sharedInstance] restorationDidSettle];
     }
+}
+
+// AI chat reconciles its persisted session watchers once this reports, so it
+// must not report while a restored session might still be missing. That needs
+// all of: every restored window's completion handler has run (this includes
+// native full screen windows, whose restoration is deferred past the
+// post-restoration block); the post-restoration steps (buried sessions,
+// workgroup reconstruction, orphan adoption kickoff) have run; and no window
+// is still decoding its restorable state.
+- (void)maybeReportSessionRestorationComplete {
+    if (_sessionRestorationReported || !_windowRestorationFinished || !_postRestorationStepsFinished) {
+        return;
+    }
+    if ([[iTermController sharedInstance] numberOfDecodesPending] > 0) {
+        if (!_sessionRestorationDecodeObserver) {
+            __weak __typeof(self) weakSelf = self;
+            _sessionRestorationDecodeObserver =
+                [[[NSNotificationCenter defaultCenter] addObserverForName:iTermDidDecodeWindowRestorableStateNotification
+                                                                   object:nil
+                                                                    queue:nil
+                                                               usingBlock:^(NSNotification *notification) {
+                    [weakSelf maybeReportSessionRestorationComplete];
+                }] retain];
+        }
+        return;
+    }
+    if (_sessionRestorationDecodeObserver) {
+        [[NSNotificationCenter defaultCenter] removeObserver:_sessionRestorationDecodeObserver];
+        [_sessionRestorationDecodeObserver release];
+        _sessionRestorationDecodeObserver = nil;
+    }
+    // Rebuild any workgroups whose windows are now in place before declaring
+    // their peer sessions present. This is idempotent.
+    [[WorkgroupRestorationCoordinator sharedInstance] reconstructReadyAnchors];
+    [self reportSessionRestorationComplete];
+}
+
+// Restored and adopted sessions now exist, so AI chat can tell a watched
+// session that is gone for good from one that just hasn't been restored yet.
+// Orphan adoption is still finishing asynchronously at this point, but an
+// adopted orphan gets a fresh stableID and so can never be a watcher's target.
+- (void)reportSessionRestorationComplete {
+    if (_sessionRestorationReported) {
+        return;
+    }
+    _sessionRestorationReported = YES;
+    [iTermChatTimerLaunch sessionsDidFinishRestoring];
 }
 
 - (void)dynamicToolsDidChange:(NSNotification *)notification {
@@ -3871,11 +3981,9 @@ static iTermKeyEventReplayer *gReplayer;
     PseudoTerminal *term = [[iTermController sharedInstance] currentTerminal];
     PTYSession *session = [term currentSession];
     PTYTab *tab = [term tabForSession:session];
-    NSString *reason = [self gpuUnavailableStringForReason:tab.metalUnavailableReason];
-    NSString *message;
-    if (reason) {
-        message = [NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"GPURenderer.OffBecause", nil, [NSBundle mainBundle], @"GPU rendering is off in the current session because %@", @"Explanation that GPU rendering is off; %@ is the reason"), reason];
-    } else {
+    // The reason is a complete sentence that says GPU rendering is off and why.
+    NSString *message = [self gpuUnavailableStringForReason:tab.metalUnavailableReason];
+    if (!message) {
         message = NSLocalizedStringWithDefaultValue(@"GPURenderer.Enabled", nil, [NSBundle mainBundle], @"GPU rendering is enabled for the current session.", @"Message that GPU rendering is enabled");
     }
     [iTermWarning showWarningWithTitle:message

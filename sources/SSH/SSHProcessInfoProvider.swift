@@ -39,51 +39,69 @@ fileprivate enum ProcessEdit {
 fileprivate struct PSRow {
     let pid: pid_t
     let ppid: pid_t
+    /// nil from a framer too old to report it.
+    let pgid: pid_t?
     let command: String
     let fg: Bool
+    /// False when framer marked the process as in the foreground process group with neither its
+    /// stdin nor its stdout on a terminal (OFF_TERMINAL_MARKER in framer.py), like the caffeinate
+    /// claude starts. True otherwise, including from a framer too old to check.
+    let stdioOnTerminal: Bool
     let startTime: Date?
 
-    init?(_ line: String) {
-        let nsstring = line as NSString
+    // framer sends `pid ppid pgid stat start-time command`; one that predates pgid leaves it out.
+    // stat always starts with a letter, so the two can't be confused.
+    private static func pattern(withPGID: Bool) -> String {
         let whitespace = "\\s+"
         let number = "\\d+"
         let nonspace = "\\S+"
         let letters = "[\\p{Letter}]+"
 
-        let pattern = ["^",
-                       "\\s*",
-                       "(",
-                       number,  // pid [capture 1]
-                       ")",
-                       whitespace,
-                       "(",
-                       number,  // ppid [capture 2]
-                       ")",
-                       whitespace,
-                       "(",
-                       nonspace,  // stat [capture 3]
-                       ")",
-                       whitespace,
-                       "(",
-                       letters,  // day of week  [capture 4]
-                       whitespace,
-                       letters,  // name of month
-                       whitespace,
-                       number,  // day of month
-                       whitespace,
-                       number,  // hh
-                       ":",
-                       number,  // mm
-                       ":",
-                       number,  // ss
-                       whitespace,
-                       number,  // yyyy
-                       ")",
-                       whitespace,
-                       "(.*)"  // command  [capture 5]
+        return ["^",
+                "\\s*",
+                "(",
+                number,  // pid
+                ")",
+                whitespace,
+                "(",
+                number,  // ppid
+                ")",
+                whitespace,
+                withPGID ? "(" + number + ")" + whitespace : "",  // pgid
+                "(",
+                nonspace,  // stat
+                ")",
+                whitespace,
+                "(",
+                letters,  // day of week
+                whitespace,
+                letters,  // name of month
+                whitespace,
+                number,  // day of month
+                whitespace,
+                number,  // hh
+                ":",
+                number,  // mm
+                ":",
+                number,  // ss
+                whitespace,
+                number,  // yyyy
+                ")",
+                whitespace,
+                "(.*)"  // command
         ].joined(separator: "")
+    }
 
-        let ranges = line.captureGroups(regex: pattern)
+    init?(_ line: String) {
+        let nsstring = line as NSString
+        var ranges = line.captureGroups(regex: Self.pattern(withPGID: true))
+        var pgid: pid_t?
+        if ranges.count == 7 {
+            pgid = pid_t(nsstring.substring(with: ranges[3]))
+            ranges.remove(at: 3)
+        } else {
+            ranges = line.captureGroups(regex: Self.pattern(withPGID: false))
+        }
         guard ranges.count == 6,
               let pid = pid_t(nsstring.substring(with: ranges[1])),
               let ppid = pid_t(nsstring.substring(with: ranges[2])) else {
@@ -91,7 +109,10 @@ fileprivate struct PSRow {
         }
         self.pid = pid
         self.ppid = ppid
-        self.fg = nsstring.substring(with: ranges[3]).contains("+")
+        self.pgid = pgid
+        let stat = nsstring.substring(with: ranges[3])
+        self.fg = stat.contains("+")
+        self.stdioOnTerminal = !stat.contains("!")
 
         let ltime = nsstring.substring(with: ranges[4])
         let formatter = DateFormatter()
@@ -116,10 +137,12 @@ class SSHProcessInfoProvider {
         minimumInterval: 1)
     private var dirtyPIDs = Set<pid_t>()
     private var cachedDeepestForegroundJob = [pid_t: iTermProcessInfo]()
+    private var cachedDisplayForegroundJob = [pid_t: iTermProcessInfo]()
     private var tracked = Set<pid_t>()
     private var rootInfo: iTermProcessInfo?
     private let rootPID: pid_t
     private var haveBumped = false
+    private var paneProviders = [pid_t: SSHPaneProcessInfoProvider]()
     private var lastRows = [pid_t: PSRow]()
     private(set) var cpuUtilization: Double?
     let cpuUtilizationPublisher = iTermPublisher<NSNumber>(capacity: 120)
@@ -255,6 +278,7 @@ class SSHProcessInfoProvider {
 
         self.collection = collection
         cachedDeepestForegroundJob = newDeepestForegroundJobCache()
+        cachedDisplayForegroundJob = newDisplayForegroundJobCache()
         _needsUpdate = false
         rootInfo = collection.info(forProcessID: rootPID)
     }
@@ -292,6 +316,23 @@ class SSHProcessInfoProvider {
         return result
     }
 
+    /// As for a local session: the deepest foreground job on the terminal, else the deepest
+    /// foreground job. framer says which processes are on a terminal; SSHProcessDataSource gives
+    /// them all one synthetic tty.
+    private func newDisplayForegroundJobCache() -> [pid_t: iTermProcessInfo] {
+        var cache = [pid_t: iTermProcessInfo]()
+        guard let collection = collection else {
+            return cache
+        }
+        for pid in tracked {
+            if let info = collection.info(forProcessID: pid)?.deepestForegroundJob(
+                attachedToTTYRdev: SSHProcessDataSource.terminalRdev) {
+                cache[pid] = info
+            }
+        }
+        return cache
+    }
+
     private func newDeepestForegroundJobCache() -> [pid_t: iTermProcessInfo] {
         var cache = [pid_t: iTermProcessInfo]()
         guard let collection = collection else {
@@ -307,6 +348,10 @@ class SSHProcessInfoProvider {
 }
 
 fileprivate class SSHProcessDataSource: NSObject, ProcessDataSource {
+    /// A stand-in for "a terminal": remote device numbers mean nothing here, and all that
+    /// matters is whether a process's stdio is on one.
+    static let terminalRdev: dev_t = 1
+
     private let rows: [PSRow]
     private let index: [pid_t: Int]
 
@@ -350,6 +395,13 @@ fileprivate class SSHProcessDataSource: NSObject, ProcessDataSource {
         return args
     }
 
+    // No rawCommandLineArguments: ps joins the arguments with spaces, so splitting its command
+    // column can't recover them. `claude "update the readme"` comes back as four arguments.
+
+    func processGroupID(forProcess pid: pid_t) -> pid_t {
+        return row(pid: pid)?.pgid ?? 0
+    }
+
     func startTime(forProcess pid: pid_t) -> Date? {
         guard let row = self.row(pid: pid) else {
             return nil
@@ -358,8 +410,12 @@ fileprivate class SSHProcessDataSource: NSObject, ProcessDataSource {
     }
 
     func ttyRdev(forFileDescriptor fd: Int32, ofProcess pid: pid_t) -> dev_t {
-        // We can't introspect file descriptors of remote processes.
-        return 0
+        // framer reports only whether a process's stdio is on a terminal, not which fd or which
+        // terminal.
+        guard let row = row(pid: pid), row.stdioOnTerminal else {
+            return 0
+        }
+        return Self.terminalRdev
     }
 }
 
@@ -392,12 +448,15 @@ extension SSHProcessInfoProvider: ProcessInfoProvider {
     }
 
     func displayForegroundJob(for pid: pid_t) -> iTermProcessInfo? {
-        // We can't introspect remote file descriptors, so tty attachment is
-        // unknowable. Fall back to the raw deepest foreground job.
-        return cachedDeepestForegroundJob[pid]
+        return cachedDisplayForegroundJob[pid] ?? cachedDeepestForegroundJob[pid]
     }
 
+    /// Idempotent: a pid already tracked is not sent to framer again. reregisterTrackedPIDs is for
+    /// after a reset, when framer has forgotten them.
     func register(trackedPID pid: pid_t) {
+        guard !tracked.contains(pid) else {
+            return
+        }
         runner?.registerProcess(pid)
         tracked.insert(pid)
         needsUpdate = true
@@ -406,6 +465,63 @@ extension SSHProcessInfoProvider: ProcessInfoProvider {
     func unregister(trackedPID pid: pid_t) {
         runner?.deregisterProcess(pid)
         tracked.remove(pid)
+        paneProviders.removeValue(forKey: pid)
+    }
+
+    /// Registers every tracked pid with framer again. A framer reset forgets its registrations, and
+    /// the tracked set includes tmux panes as well as the login shell.
+    func reregisterTrackedPIDs(including extra: pid_t? = nil) {
+        if let extra {
+            tracked.insert(extra)
+        }
+        for pid in tracked {
+            runner?.registerProcess(pid)
+        }
+        needsUpdate = true
+    }
+
+    /// The jobs in `pid`'s subtree, as a session sees them: for a tmux pane on this host, whose
+    /// pid is registered here. One per pid, so its update state survives between calls.
+    func sessionProcessInfoProvider(forPID pid: pid_t) -> SSHPaneProcessInfoProvider {
+        if let existing = paneProviders[pid] {
+            return existing
+        }
+        let pane = SSHPaneProcessInfoProvider(provider: self, pid: pid)
+        paneProviders[pid] = pane
+        return pane
+    }
+
+    /// The deepest foreground job under `pid`, asking for an update the first time there is none.
+    fileprivate func cachedJob(for pid: pid_t, haveBumped: inout Bool) -> iTermProcessInfo? {
+        if let info = deepestForegroundJob(for: pid) {
+            return info
+        }
+        if !haveBumped {
+            haveBumped = true
+            needsUpdate = true
+        }
+        return nil
+    }
+
+    fileprivate func fetchJob(for pid: pid_t,
+                              haveBumped: inout Bool,
+                              completion: @escaping (iTermProcessInfo?) -> ()) {
+        if let info = deepestForegroundJob(for: pid), info.name != nil {
+            completion(info)
+            return
+        }
+        if pid <= 0 {
+            completion(nil)
+            return
+        }
+        if haveBumped {
+            needsUpdate = true
+            return
+        }
+        haveBumped = true
+        requestImmediateUpdate { [weak self] in
+            completion(self?.deepestForegroundJob(for: pid))
+        }
     }
 
     func processIsDirty(_ pid: pid_t) -> Bool {
@@ -420,33 +536,39 @@ extension SSHProcessInfoProvider: ProcessInfoProvider {
 @MainActor
 extension SSHProcessInfoProvider: SessionProcessInfoProvider {
     func cachedProcessInfoIfAvailable() -> iTermProcessInfo? {
-        if let info = deepestForegroundJob(for: rootPID) {
-            return info
-        }
-        if !haveBumped {
-            haveBumped = true
-            needsUpdate = true
-        }
-        return nil
+        return cachedJob(for: rootPID, haveBumped: &haveBumped)
     }
 
     func fetchProcessInfoForCurrentJob(completion: @escaping (iTermProcessInfo?) -> ()) {
-        let pid = rootPID
-        if let info = deepestForegroundJob(for: pid), info.name != nil {
-            completion(info)
-            return
-        }
-        if rootPID <= 0 {
+        fetchJob(for: rootPID, haveBumped: &haveBumped, completion: completion)
+    }
+}
+
+/// A tmux pane's view of the host's processes. The provider answers for the connection's login
+/// shell; this answers for one pane's pid, which must be registered with the provider so framer
+/// reports its subtree.
+@MainActor
+final class SSHPaneProcessInfoProvider: NSObject, SessionProcessInfoProvider {
+    private weak var provider: SSHProcessInfoProvider?
+    let pid: pid_t
+    private var haveBumped = false
+
+    fileprivate init(provider: SSHProcessInfoProvider, pid: pid_t) {
+        self.provider = provider
+        self.pid = pid
+        super.init()
+    }
+
+    func cachedProcessInfoIfAvailable() -> iTermProcessInfo? {
+        return provider?.cachedJob(for: pid, haveBumped: &haveBumped)
+    }
+
+    func fetchProcessInfoForCurrentJob(completion: @escaping (iTermProcessInfo?) -> ()) {
+        guard let provider else {
             completion(nil)
-        }
-        if haveBumped {
-            needsUpdate = true
             return
         }
-        haveBumped = true
-        requestImmediateUpdate { [weak self] in
-            completion(self?.deepestForegroundJob(for: pid))
-        }
+        provider.fetchJob(for: pid, haveBumped: &haveBumped, completion: completion)
     }
 }
 

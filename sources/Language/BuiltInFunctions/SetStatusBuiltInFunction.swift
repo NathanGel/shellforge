@@ -21,6 +21,7 @@ extension SetStatusBuiltInFunction: iTermBuiltInFunctionProtocol {
     private static let turnOpenArg = "turn_open"
     private static let ifTurnOpenArg = "if_turn_open"
     private static let ifBackgroundTasksArg = "if_background_tasks"
+    private static let progressArg = "progress"
     private static let expiresOnArg = "expires_on"
     private static let thenStatusArg = "then_status"
     private static let thenTextColorArg = "then_text_color"
@@ -157,6 +158,20 @@ extension SetStatusBuiltInFunction: iTermBuiltInFunctionProtocol {
         if let turnOpen = parameters[turnOpenArg] as? NSNumber {
             update.turnOpenPresence = .set
             update.turnOpen = turnOpen.boolValue
+        }
+
+        if let progress = parameters[progressArg] as? String {
+            // The two states a hook can ask for, spelled the way it2's --progress spells them.
+            switch progress {
+            case "running":
+                update.progressPresence = .set
+                update.progress = .indeterminate
+            case "stopped":
+                update.progressPresence = .set
+                update.progress = .stopped
+            default:
+                throw error(message: String(localized: "SetStatus.UnknownProgress", defaultValue: "Unknown progress “\(progress)”. The supported values are running and stopped.", comment: "Error when the progress argument is not one of the two supported states. The placeholder is the value the caller passed."))
+            }
         }
 
         if let requiredTurnOpen = parameters[ifTurnOpenArg] as? NSNumber {
@@ -327,6 +342,7 @@ extension SetStatusBuiltInFunction: iTermBuiltInFunctionProtocol {
                 turnOpenArg: NSNumber.self,
                 ifTurnOpenArg: NSNumber.self,
                 ifBackgroundTasksArg: NSNumber.self,
+                progressArg: NSString.self,
                 expiresOnArg: NSString.self,
                 thenStatusArg: NSString.self,
                 thenTextColorArg: NSString.self,
@@ -459,10 +475,12 @@ extension SetStatusBuiltInFunction: iTermBuiltInFunctionProtocol {
     //
     // `origin` is empty for this Mac, or the clientUniqueID of the SSH-integration conductor a
     // remote caller arrived over. It exists because the rest of the address is only meaningful
-    // within one machine (see TmuxPaneLocator). The it2 command tree fills it in from its own
-    // execution context, never from its arguments, so a remote caller cannot name a connection
-    // other than its own. A local API client can pass anything, which grants nothing: a client
-    // that can call this can already drive every session directly.
+    // within one machine (see TmuxPaneLocator). The it2 commands that take a pane address fill it
+    // in from their own execution context, never from their arguments, so they can't be misled
+    // into another connection's servers. It is not access control: any client that can evaluate
+    // an expression can pass any origin, including a remote it2 through interpolation
+    // (`it2 session list --format`). That grants little, since such a client can already list
+    // and drive every session, this Mac's included.
     //
     // Returns the empty string when no connected tmux server answers to that address, rather than
     // guessing at a session.

@@ -31,7 +31,7 @@ DEPLOYMENT_TARGET = '26.0'
 # IMPORTANT: bump these HERE, not in the generated .xcodeproj - the next
 # regeneration overwrites the project wholesale, so a version edited only in
 # project.pbxproj is silently reverted (this is how the 1.1 release was lost).
-MARKETING_VERSION = '1.2'
+MARKETING_VERSION = '1.5'
 CURRENT_PROJECT_VERSION = '1'
 PACKAGE_PRODUCTS = %w[CompanionProtocol CompanionNoise CompanionTransport]
 WHISPERKIT_URL = 'https://github.com/argmaxinc/WhisperKit.git'
@@ -76,7 +76,7 @@ SHARED_MAC_SOURCES = %w[
 PUSH_SOURCES = %w[NotificationService.swift NSEFetcher.swift]
 
 # Unit-test sources.
-TEST_SOURCES = %w[AppModelWatchTests.swift SessionWatchStateTests.swift AppModelAIAvailabilityTests.swift AppModelSessionTreePushTests.swift AppModelMacStatusTests.swift MacRequestWatchdogTests.swift MacAlertWindowPresenterTests.swift]
+TEST_SOURCES = %w[AppModelWatchTests.swift SessionWatchStateTests.swift AppModelAIAvailabilityTests.swift AppModelSessionTreePushTests.swift AppModelMacStatusTests.swift MacRequestWatchdogTests.swift MacAlertWindowPresenterTests.swift AppModelBrowserStreamTests.swift CompanionKeyboardInputViewTests.swift]
 
 project = Xcodeproj::Project.new(PROJECT_PATH)
 

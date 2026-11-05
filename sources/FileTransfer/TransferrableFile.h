@@ -33,7 +33,12 @@ typedef void (^TransferrableFileCompletionBlock)(BOOL success, NSString * _Nulla
 @property(atomic, retain, nullable) TransferrableFile *successor;
 @property(atomic, assign) BOOL hasPredecessor;
 @property(atomic, assign) BOOL isZipOfFolder;
+// Don't auto-open the Uploads or Downloads menu when this transfer starts or fails.
+@property(atomic, assign) BOOL suppressesAutomaticMenu;
 @property(atomic, copy, nullable) TransferrableFileCompletionBlock completionBlock;
+// A complete sentence shown with the finished notification and in the Downloads menu, such as
+// what a folder's archive left out because it couldn't be read.
+@property(atomic, copy, nullable) NSString *completionNote;
 
 + (void)lockFileName:(NSString *)name;
 + (void)unlockFileName:(NSString *)name;
@@ -55,6 +60,9 @@ typedef void (^TransferrableFileCompletionBlock)(BOOL success, NSString * _Nulla
 - (NSTimeInterval)timeOfLastStatusChange;
 - (BOOL)isDownloading;
 - (void)didFailWithError:(NSString *)error;
+
+// Tests set this to see the notifications transfers post instead of posting them.
++ (void)setNotificationHandlerForTesting:(void (^ _Nullable)(NSString *title, NSString * _Nullable detail))handler;
 
 #pragma mark - Utility
 

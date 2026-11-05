@@ -44,6 +44,11 @@ static iTermKeyboardHandler *sCurrentKeyboardHandler;
     // delegate in this case.
     BOOL _hadMarkedTextBeforeHandlingKeypressEvent;
 
+    // Set once -doCommandBySelector: has sent _eventBeingHandled after an IME commit. A key bound
+    // to several selectors (e.g., Option-Up) calls -doCommandBySelector: once per selector, and
+    // the key must only be sent once.
+    BOOL _sentKeyHandedBackByInputMethod;
+
     BOOL _performsTextReplacement;
 }
 
@@ -161,6 +166,18 @@ static iTermKeyboardHandler *sCurrentKeyboardHandler;
 
 #pragma mark - NSTextInputClient
 
+static BOOL iTermKeyboardHandlerShouldSendSelectorHandedBackByInputMethod(SEL aSelector) {
+    return (aSelector == @selector(deleteBackward:) ||
+            aSelector == @selector(deleteBackwardByDecomposingPreviousCharacter:) ||
+            aSelector == @selector(insertNewline:) ||
+            aSelector == @selector(insertTab:) ||
+            aSelector == @selector(insertBacktab:) ||
+            aSelector == @selector(moveLeft:) ||
+            aSelector == @selector(moveRight:) ||
+            aSelector == @selector(moveUp:) ||
+            aSelector == @selector(moveDown:));
+}
+
 - (void)doCommandBySelector:(SEL)aSelector {
     DLog(@"doCommandBySelector:%@", NSStringFromSelector(aSelector));
     if (sCurrentKeyboardHandler && self != sCurrentKeyboardHandler) {
@@ -170,20 +187,21 @@ static iTermKeyboardHandler *sCurrentKeyboardHandler;
         return;
     }
 
-    // An input method can finish a composition by committing it with
-    // -insertText:replacementRange: and then handing the keystroke back to us as a command
-    // selector. When that happens the key is ours to handle: the composition is already gone
-    // by the time we get here, so the delete would otherwise be dropped and the committed
-    // text left behind. _keyPressHandled distinguishes this from the case where the IME
-    // consumed the keystroke to edit its composition, in which case there is nothing to do.
-    // Issue 13030.
+    // An input method can commit its composition with -insertText:replacementRange: and then
+    // hand the keystroke back as a command selector. Unless we send it, the Return, arrow key,
+    // etc. that ended the composition is lost. Issue 13030. _keyPressHandled is set only when
+    // this keypress committed text, which rules out an IME that consumed the key to edit its
+    // composition.
+    //
+    // We send the event, not the selector. The selector is only used to limit this to keys
+    // known to need it, so other bindings (e.g., Ctrl-letters) keep their old behavior.
     if (_keyPressHandled &&
         _hadMarkedTextBeforeHandlingKeypressEvent &&
         ![self hasMarkedText] &&
         _eventBeingHandled &&
-        (aSelector == @selector(deleteBackward:) ||
-         aSelector == @selector(deleteBackwardByDecomposingPreviousCharacter:) ||
-         aSelector == @selector(insertNewline:))) {
+        !_sentKeyHandedBackByInputMethod &&
+        iTermKeyboardHandlerShouldSendSelectorHandedBackByInputMethod(aSelector)) {
+        _sentKeyHandedBackByInputMethod = YES;
         DLog(@"IME committed and handed back %@; sending to delegate", NSStringFromSelector(aSelector));
         [self.delegate keyboardHandler:self sendEventToController:_eventBeingHandled];
         DLog(@"returning from doCommandBySelector:%@", NSStringFromSelector(aSelector));
@@ -318,7 +336,16 @@ static iTermKeyboardHandler *sCurrentKeyboardHandler;
     }
 
     DLog(@"PTYTextView insertText:%@", aString);
-    if (replacementRange.length > 0 && replacementRange.location != NSNotFound) {
+    if ([self isPeriodSubstitution:aString replacementRange:replacementRange]) {
+        // macOS’s “Add period with double-space” asks to replace the space before the cursor
+        // with “. ” when you press space again. In vim the period repeats the last command. The
+        // app sets NSAutomaticPeriodSubstitutionEnabled to NO, but that doesn't always reach
+        // NSSpellChecker (for example, with a custom user defaults suite), so type the space the
+        // user pressed instead. Issue 13123.
+        DLog(@"Ignoring period substitution; inserting a space");
+        aString = @" ";
+        replacementRange = NSMakeRange(NSNotFound, 0);
+    } else if (replacementRange.length > 0 && replacementRange.location != NSNotFound) {
         DLog(@"Replacement range has length %@", @(replacementRange.length));
         const NSInteger count = [self.delegate keyboardHandler:self
                             numberOfCharactersToReplaceInRange:replacementRange];
@@ -344,6 +371,18 @@ static iTermKeyboardHandler *sCurrentKeyboardHandler;
 
 - (BOOL)hasMarkedText {
     return [self.delegate keyboardHandlerMarkedTextRange:self].length > 0;
+}
+
+// Double-space period substitution replaces the one space before the cursor with “. ” while the
+// text input system handles a press of the space bar. Text inserted outside a keypress, such as by
+// dictation, and an input method committing marked text are not doing that.
+- (BOOL)isPeriodSubstitution:(NSString *)string replacementRange:(NSRange)replacementRange {
+    return (_eventBeingHandled.type == NSEventTypeKeyDown &&
+            [_eventBeingHandled.characters isEqualToString:@" "] &&
+            [string isEqualToString:@". "] &&
+            replacementRange.location != NSNotFound &&
+            replacementRange.length == 1 &&
+            ![self hasMarkedText]);
 }
 
 // Deletes text that was already sent so that the text being inserted replaces it. The backspaces
@@ -418,6 +457,7 @@ static iTermKeyboardHandler *sCurrentKeyboardHandler;
 
 - (void)sendEventToCocoa:(NSEvent *)event inputContext:(NSTextInputContext *)inputContext {
     _eventBeingHandled = event;
+    _sentKeyHandedBackByInputMethod = NO;
     // TODO: Consider going straight to interpretKeyEvents: for repeats. See issue 6052.
     if ([iTermAdvancedSettingsModel experimentalKeyHandling] || [iTermAdvancedSettingsModel enableCharacterAccentMenu]) {
         // This may cause -insertText:replacementRange: or -doCommandBySelector: to be called.

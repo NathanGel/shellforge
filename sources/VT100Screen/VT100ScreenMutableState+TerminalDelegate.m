@@ -728,16 +728,30 @@ typedef struct {
 
 - (void)terminalSendReport:(NSData *)report {
     DLog(@"begin %@", report);
-    if (!self.config.isTmuxClient && report) {
-        DLog(@"report %@", [report stringWithEncoding:NSUTF8StringEncoding]);
-        [self willSendReport];
-        __weak __typeof(self) weakSelf = self;
-        [self addReportSideEffect:^(id<VT100ScreenDelegate>  _Nonnull delegate) {
-            DLog(@"begin side-effect");
-            [delegate screenSendReportData:report];
-            [weakSelf didSendReport:delegate];
-        } name:@"send report"];
+    if (self.config.isTmuxClient) {
+        DLog(@"Not sending report for tmux client");
+        return;
     }
+    [self sendReport:report];
+}
+
+- (void)terminalSendReportAllowedInTmux:(NSData *)report {
+    DLog(@"begin %@", report);
+    [self sendReport:report];
+}
+
+- (void)sendReport:(NSData *)report {
+    if (!report) {
+        return;
+    }
+    DLog(@"report %@", [report stringWithEncoding:NSUTF8StringEncoding]);
+    [self willSendReport];
+    __weak __typeof(self) weakSelf = self;
+    [self addReportSideEffect:^(id<VT100ScreenDelegate>  _Nonnull delegate) {
+        DLog(@"begin side-effect");
+        [delegate screenSendReportData:report];
+        [weakSelf didSendReport:delegate];
+    } name:@"send report"];
 }
 
 - (void)terminalSendOSC4Report:(NSData *)report {
@@ -1191,24 +1205,99 @@ typedef struct {
     _collectInputForPrinting = YES;
 }
 
+// A program can set the title as fast as it can write. Title changes with no
+// other side effect between them share one batch and one side effect, so a
+// flood of them costs the main thread one title update (and at most one
+// working directory fetch) per side-effect pass rather than one per
+// sequence. A change never joins a batch that has another side effect behind
+// it, which would move it ahead of that side effect.
+//
+// A change may join a batch after its side effect started running, so the
+// main thread can see it before syncing state the mutation thread changed
+// just before it. That is safe because applying a title update reads nothing
+// from the screen.
+//
+// `immediate` means the change must not wait for a deferred side-effect pass,
+// as with a working directory request, which used to be its own immediate
+// side effect.
+- (void)updateTitles:(void (^)(iTermTitleUpdate *update))block
+           immediate:(BOOL)immediate {
+    if (_titleBatch &&
+        (_titleBatchIsImmediate || !immediate) &&
+        self.tokenExecutor.sideEffectSerial == _titleBatchSideEffectSerial &&
+        [_titleBatch addUpdate:block]) {
+        // This changes state the main thread reads, like adding a side
+        // effect would.
+        [self.tokenExecutor noteStateSideEffectScheduled];
+        return;
+    }
+    iTermTitleBatch *batch = [[iTermTitleBatch alloc] init];
+    // A new batch is never taken yet.
+    const BOOL added = [batch addUpdate:block];
+    assert(added);
+    const int64_t serialBefore = self.tokenExecutor.sideEffectSerial;
+    __weak __typeof(self) weakSelf = self;
+    void (^task)(void) = ^{
+        // Take the update even without a delegate so the batch closes and
+        // stops collecting changes.
+        iTermTitleUpdate *update = [batch take];
+        [weakSelf performSideEffect:^(id<VT100ScreenDelegate> delegate) {
+            [weakSelf applyTitleUpdate:update delegate:delegate];
+        } name:@"update titles"];
+    };
+    if (immediate) {
+        [self.tokenExecutor addSideEffect:task];
+    } else {
+        // Deferred because we don't want to redraw at this moment. It is
+        // often while/just after drawing a prompt and users hate when it
+        // draws twice either during the prompt or just after entering a
+        // command at the prompt.
+        [self.tokenExecutor addDeferredSideEffect:task];
+    }
+    const int64_t serialAfter = self.tokenExecutor.sideEffectSerial;
+    // If another side effect was added at the same moment, this one may not
+    // be the last, so the next change starts a new batch.
+    _titleBatch = (serialAfter == serialBefore + 1) ? batch : nil;
+    _titleBatchSideEffectSerial = serialAfter;
+    _titleBatchIsImmediate = immediate;
+}
+
+// Main thread, in a side effect.
+- (void)applyTitleUpdate:(iTermTitleUpdate *)update
+                delegate:(id<VT100ScreenDelegate>)delegate {
+    DLog(@"begin side-effect");
+    if (update.setsWindowTitle || update.setsIconTitle || update.setsSubtitle) {
+        if ([delegate screenAllowTitleSetting]) {
+            if (update.setsWindowTitle) {
+                DLog(@"calling screenSetWindowTitle:%@", update.windowTitle);
+                [delegate screenSetWindowTitle:update.windowTitle];
+            }
+            if (update.setsIconTitle) {
+                [delegate screenSetIconName:update.iconTitle];
+            }
+            if (update.setsSubtitle) {
+                [delegate screenSetSubtitle:update.subtitle];
+            }
+        }
+    }
+    if (update.pollsLocalDirectoryOnly) {
+        [delegate screenPollLocalDirectoryOnly];
+    }
+    [self fetchWorkingDirectoryWithDelegate:delegate
+                                    fetches:update.directoryFetches
+                                     pushed:YES];
+}
+
 - (void)terminalSetWindowTitle:(NSString *)title {
     DLog(@"begin %@", title);
-
-    // Use a deferred side effect because we don't want to redraw at this moment.
-    // It is often while/just after drawing a prompt and users hate when it draws
-    // twice either during the prompt or just after entering a command at th eprompt.
-    [self addDeferredSideEffect:^(id<VT100ScreenDelegate> delegate) {
-        DLog(@"begin side-effect");
-        if ([delegate screenAllowTitleSetting]) {
-            DLog(@"calling screenSetWindowTitle:%@", title);
-            [delegate screenSetWindowTitle:title];
-        }
-    } name:@"set window title"];
 
     // If you know to use RemoteHost then assume you also use CurrentDirectory. Innocent window title
     // changes shouldn't override CurrentDirectory.
     if ([self remoteHostOnLine:self.numberOfScrollbackLines + self.height]) {
         DLog(@"Already have a remote host so not updating working directory because of title change");
+        [self updateTitles:^(iTermTitleUpdate *update) {
+            [update changeWindowTitle:title];
+        } immediate:NO];
         return;
     }
     // If OSC 7 or shell integration has provided working directory updates, don't update the
@@ -1218,9 +1307,10 @@ typedef struct {
     // new sessions that reuse the previous pwd.
     if (self.shouldExpectWorkingDirectoryUpdates) {
         DLog(@"Shell integration/OSC 7 is providing working directory updates, polling local directory only");
-        [self addSideEffect:^(id<VT100ScreenDelegate> delegate) {
-            [delegate screenPollLocalDirectoryOnly];
-        } name:@"poll local directory only"];
+        [self updateTitles:^(iTermTitleUpdate *update) {
+            [update changeWindowTitle:title];
+            [update pollLocalDirectoryOnly];
+        } immediate:YES];
         return;
     }
     DLog(@"Don't have a remote host, so changing working directory");
@@ -1231,36 +1321,32 @@ typedef struct {
     // enough rate (not too common, not too rare when part of a prompt)
     // that I'm comfortable calling it a push. I want it to do things like
     // update the list of recently used directories.
-    [self setWorkingDirectory:nil
-                    onAbsLine:self.lineNumberOfCursor + self.cumulativeScrollbackOverflow
-                       pushed:YES
-                        token:[self.setWorkingDirectoryOrderEnforcer newToken]];
+    const long long absLine = self.lineNumberOfCursor + self.cumulativeScrollbackOverflow;
+    if ([self workingDirectoryLineForAbsLine:absLine] < 0) {
+        [self updateTitles:^(iTermTitleUpdate *update) {
+            [update changeWindowTitle:title];
+        } immediate:NO];
+        return;
+    }
+    id<iTermOrderedToken> token = [self.setWorkingDirectoryOrderEnforcer newToken];
+    [self updateTitles:^(iTermTitleUpdate *update) {
+        [update changeWindowTitle:title];
+        [update fetchWorkingDirectoryOnAbsLine:absLine token:token];
+    } immediate:YES];
 }
 
 - (void)terminalSetIconTitle:(NSString *)title {
     DLog(@"begin %@", title);
-    // Use a deferred side effect because we don't want to redraw at this moment.
-    // It is often while/just after drawing a prompt and users hate when it draws
-    // twice either during the prompt or just after entering a command at th eprompt.
-    [self addDeferredSideEffect:^(id<VT100ScreenDelegate> delegate) {
-        DLog(@"begin side-effect");
-        if ([delegate screenAllowTitleSetting]) {
-            [delegate screenSetIconName:title];
-        }
-    } name:@"set icon title"];
+    [self updateTitles:^(iTermTitleUpdate *update) {
+        [update changeIconTitle:title];
+    } immediate:NO];
 }
 
 - (void)terminalSetSubtitle:(NSString *)subtitle {
     DLog(@"begin %@", subtitle);
-    // Use a deferred side effect because we don't want to redraw at this moment.
-    // It is often while/just after drawing a prompt and users hate when it draws
-    // twice either during the prompt or just after entering a command at th eprompt.
-    [self addDeferredSideEffect:^(id<VT100ScreenDelegate> delegate) {
-        DLog(@"begin side-effect");
-        if ([delegate screenAllowTitleSetting]) {
-            [delegate screenSetSubtitle:subtitle];
-        }
-    } name:@"set subtitle"];
+    [self updateTitles:^(iTermTitleUpdate *update) {
+        [update changeSubtitle:subtitle];
+    } immediate:NO];
 }
 
 - (void)terminalCopyStringToPasteboard:(NSString *)string {
@@ -1784,10 +1870,17 @@ typedef struct {
         return;
     }
 
+    // A gateway's budget counts the line (approximately: UTF-16 units, but tmux lines are ASCII)
+    // from now until main has handled it, so the gateway stops reading while main is behind and
+    // doesn't overshoot by what main hasn't handled yet.
+    iTermByteBudget *budget = self.tmuxInputBudget;
+    const NSInteger charge = budget ? (NSInteger)token.string.length : 0;
+    [budget take:charge];
     dispatch_async(dispatch_get_main_queue(), ^{
         DLog(@"on main queue for %@", token);
         id<VT100ScreenDelegate> delegate = self.sideEffectPerformer.sideEffectPerformingScreenDelegate;
         [delegate screenHandleTmuxInput:token];
+        [budget give:charge];
         DLog(@"leave group");
         dispatch_group_leave(self->_tmuxGroup);
     });
@@ -1823,7 +1916,11 @@ typedef struct {
 
 - (void)terminalMouseModeDidChangeTo:(MouseMode)mouseMode {
     DLog(@"begin");
-    [self addSideEffect:^(id<VT100ScreenDelegate> delegate) {
+    // Joined because the delegate reads the mouse mode back from the screen to decide whether to
+    // track mouse-moved events. An ordinary side effect can be drained before the next sync and
+    // would see the old mode, leaving motion unreported (issue 13184). setMouseMode: only calls
+    // this on a real change, so the cost of joining is rare.
+    [self addJoinedSideEffect:^(id<VT100ScreenDelegate> delegate) {
         DLog(@"begin side-effect");
         [delegate screenMouseModeDidChange];
     } name:@"mouse mode did change"];
@@ -1931,6 +2028,10 @@ typedef struct {
         return;
     }
     [self clearScrollbackBuffer];
+    [self addSideEffect:^(id<VT100ScreenDelegate>  _Nonnull delegate) {
+        DLog(@"begin side-effect");
+        [delegate screenDidClearScrollbackWithPermission];
+    } name:@"cleared scrollback buffer"];
 }
 
 - (void)terminalClearBuffer {
@@ -2025,6 +2126,10 @@ typedef struct {
     DLog(@"begin");
     if (![iTermAdvancedSettingsModel disableDECRQCRA]) {
         DLog(@"not disabled");
+        [self addSideEffect:^(id<VT100ScreenDelegate>  _Nonnull delegate) {
+            DLog(@"begin side-effect");
+            [delegate screenDidUseDECRQCRA];
+        } name:@"used decrqcra"];
         return YES;
     }
     [self addSideEffect:^(id<VT100ScreenDelegate>  _Nonnull delegate) {
@@ -2727,33 +2832,38 @@ typedef struct {
     // progenitor, then derive an unbound twin via -unboundCopy for the
     // doppelganger. The EventuallyConsistentIntervalTree's mutate side
     // effect binds the unbound twin to the main-thread pool's dataSource
-    // right after this closure runs on the doppelganger side. The
-    // mutation thread no longer reaches for self.mainThreadCopy here.
+    // right after this closure runs on the doppelganger side.
     iTermResilientCoordinateRange *mutationRange =
         [[iTermResilientCoordinateRange alloc] initWithDataSource:self absRange:absRange];
     iTermResilientCoordinateRange *unboundRange = [mutationRange unboundCopy];
+    // Remember what the prompt showed so a later erase or overwrite can be detected when the
+    // command ends.
+    [self.excludedSubrangeTexts setObject:[self textInExcludedAbsRange:absRange] forKey:mutationRange];
 
-    [self.mutableIntervalTree mutateObject:mark block:^(id<IntervalTreeObject> _Nonnull obj) {
-        VT100ScreenMark *m = (VT100ScreenMark *)obj;
-        // Discriminate by the authoritative iTermMark.isDoppelganger
-        // property rather than by identity comparison against the
-        // captured `mark` reference. mutateObject:'s contract today
-        // invokes the closure once with the progenitor and once with
-        // its doppelganger, but a future refactor that always hands
-        // user closures the doppelganger would silently flip identity
-        // comparisons into the wrong branch and append two unbound
-        // ranges to the progenitor.
-        if (!m.isDoppelganger) {
-            // Mutation-thread side: append the already-bound RC.
-            [m appendExcludedSubrange:mutationRange];
-        } else {
-            // Main-thread side: append the unbound RC. The tree's
-            // mutate side-effect wrapper (in JournalingIntervalTree.swift)
-            // binds it to the main-pool DS via the holder protocol
-            // immediately after this closure returns.
-            [m appendExcludedSubrange:unboundRange];
+    // A prompt drawn over cells that an earlier one covered replaces it. fish redraws its right
+    // prompt after every keystroke, which would otherwise add an exclusion each time.
+    NSMutableIndexSet *overlapping = [NSMutableIndexSet indexSet];
+    [mark.excludedSubranges enumerateObjectsUsingBlock:^(iTermResilientCoordinateRange *existing,
+                                                         NSUInteger i,
+                                                         BOOL *stop) {
+        if (existing.start.status != StatusValid || existing.end.status != StatusValid) {
+            return;
+        }
+        const VT100GridAbsCoordRange other = existing.absRange;
+        // Half-open ranges overlap when each starts before the other ends.
+        if (VT100GridAbsCoordOrder(other.start, absRange.end) == NSOrderedAscending &&
+            VT100GridAbsCoordOrder(absRange.start, other.end) == NSOrderedAscending) {
+            [overlapping addIndex:i];
         }
     }];
+    if (overlapping.count > 0) {
+        DLog(@"New excluded subrange %@ replaces %@ overlapping ones",
+             VT100GridAbsCoordRangeDescription(absRange), @(overlapping.count));
+    }
+    [self replaceExcludedSubrangesOfMark:mark
+                               atIndexes:overlapping
+                       withMutationRange:mutationRange
+                            unboundRange:unboundRange];
 }
 
 // FTCS C
@@ -2887,6 +2997,7 @@ typedef struct {
     NSInteger latestKnownVersion = [latestVersionByShell[shell ?: @""] integerValue];
     [self addSideEffect:^(id<VT100ScreenDelegate>  _Nonnull delegate) {
         DLog(@"begin side-effect");
+        [delegate screenDidReportShellIntegrationVersion:versionNumber shell:shell];
         if (shell) {
             DLog(@"shell=%@", shell);
             [delegate screenDidDetectShell:shell];
@@ -3890,7 +4001,7 @@ static BOOL iTermStringIsASCIIDecimal(NSString *string) {
     return @[token, uniqueID, boolArgs, sshargs, dcsid];
 }
 
-- (void)terminalDidHookSSHConductorWithParams:(NSString *)params {
+- (void)terminalDidHookSSHConductorWithParams:(NSString *)params parentDepth:(int)parentDepth {
     NSArray<NSString *> *values = [self parseHookSSHConductorParameter:params];
     // values are the decoded conductor params (ssh target/args); log the count in the ring.
     RLog(@"%@", RLogRedact(values, @(values.count)));
@@ -3899,18 +4010,30 @@ static BOOL iTermStringIsASCIIDecimal(NSString *string) {
     }
     NSString *token = values[0];
     NSString *uniqueID = values[1];
-    NSString *boolArgs = [values[2] stringByBase64DecodingStringWithEncoding:NSUTF8StringEncoding];
-    if (!boolArgs) {
-        RLog(@"Failed to base64 decode %@", values[2]);
-        return;
-    }
-    NSString *sshargs = [values[3] stringByBase64DecodingStringWithEncoding:NSUTF8StringEncoding];
-    if (!sshargs) {
-        RLog(@"Failed to base64 decode %@", values[3]);
-        return;
-    }
     NSString *dcsID = values[4];
-    [self appendBannerMessage:[NSString stringWithFormat:@"ssh %@", sshargs]];
+    NSString *boolArgs = [values[2] stringByBase64DecodingStringWithEncoding:NSUTF8StringEncoding];
+    // it2ssh quotes the ssh arguments with bash's printf %q, which can produce bytes that
+    // are not UTF-8 (F-608), so decode the quoting at the byte level.
+    NSData *sshargsData = [NSData dataWithBase64EncodedString:values[3]];
+    NSString *sshargs = sshargsData ? [iTermSSHHookArguments normalizedArgumentsFromData:sshargsData] : nil;
+    if (!boolArgs || !sshargs) {
+        // sshargs may hold private data, so keep it out of the ring.
+        RLog(@"Failed to decode conductor hook parameters (boolArgs ok=%@, sshargs length=%@)",
+             @(boolArgs != nil), @(values[3].length));
+        // The remote conductor waits for an answer with the tty in raw mode. Tell it to
+        // quit so it restores the tty and the connection ends.
+        NSDictionary *savedState = self.savedState;
+        [self addUrgentSideEffect:^(id<VT100ScreenDelegate> _Nonnull delegate) {
+            [delegate screenDidFailToParseSSHConductorHookWithToken:token
+                                                           uniqueID:uniqueID
+                                                              dcsID:dcsID
+                                                        parentDepth:parentDepth
+                                                         savedState:savedState];
+        } name:@"ssh hook failed"];
+        [self.terminal resetForSSH];
+        return;
+    }
+    [self appendBannerMessage:[NSString stringWithFormat:@"ssh %@", [iTermSSHHookArguments displayStringForNormalizedArguments:sshargs]]];
     NSDictionary *savedState = self.savedState;
     [self addUrgentSideEffect:^(id<VT100ScreenDelegate> _Nonnull delegate) {
         [delegate screenDidHookSSHConductorWithToken:token
@@ -3918,6 +4041,7 @@ static BOOL iTermStringIsASCIIDecimal(NSString *string) {
                                             boolArgs:boolArgs
                                              sshargs:sshargs
                                                dcsID:dcsID
+                                         parentDepth:parentDepth
                                        savedState:savedState];
     } name:@"did hook ssh"];
     [self.terminal resetForSSH];
@@ -3929,9 +4053,9 @@ static BOOL iTermStringIsASCIIDecimal(NSString *string) {
     } name:@"read ssh"];
 
 }
-- (void)terminalDidUnhookSSHConductor {
+- (void)terminalDidUnhookSSHConductorWithDCSID:(NSString *)dcsID depth:(int)depth {
     [self addUrgentSideEffect:^(id<VT100ScreenDelegate> _Nonnull delegate) {
-        [delegate screenDidUnhookSSHConductor];
+        [delegate screenDidUnhookSSHConductorWithDCSID:dcsID depth:depth];
     } name:@"unhook ssh"];
 }
 
@@ -3986,6 +4110,27 @@ static BOOL iTermStringIsASCIIDecimal(NSString *string) {
     [self addSideEffect:^(id<VT100ScreenDelegate>  _Nonnull delegate) {
         [delegate screenDidReadRawSSHData:data];
     } name:@"read raw ssh"];
+}
+
+- (void)terminalDidExecuteFlowControlledSSHOutputOfLength:(NSUInteger)length
+                                         sendMilliseconds:(int64_t)sendMilliseconds
+                                                    flags:(int)flags
+                                                    depth:(int)depth {
+    [self.flowLedger frameDidExecuteWithLength:length depth:depth];
+}
+
+- (void)terminalDidReadSSHPaneOutput:(NSData *)data
+                                 pid:(int)pid
+                               depth:(int)depth {
+    if (!data) {
+        return;
+    }
+    DLog(@"Add side effect to handle pane output %@ for pid %d", data.shortDebugString, pid);
+    // Urgent: it is another session's output, and that session is on screen exactly when this
+    // one (its workgroup's leader) is not.
+    [self addUrgentSideEffect:^(id<VT100ScreenDelegate>  _Nonnull delegate) {
+        [delegate screenDidReadSSHPaneOutput:data pid:pid depth:depth];
+    } name:@"read pane output"];
 }
 
 - (void)terminalHandleSSHTerminatePID:(int)pid withCode:(int)code depth:(int)depth {
@@ -4045,13 +4190,17 @@ static BOOL iTermStringIsASCIIDecimal(NSString *string) {
     NSString *encodedBA = _sshIntegrationFlags[2];
     NSString *sshArgs = _sshIntegrationFlags[3];
     _sshIntegrationFlags = nil;
+    // it2ssh loads shell integration on the host unless it was run with --no-shell-integration,
+    // which it reports as si=0. An older it2ssh never sends si, so it gets the default.
+    const BOOL injectShellIntegration = ![params[@"si"] isEqualToString:@"0"];
     // Urgent: this is the handshake that starts the conductor, and it pauses the token
     // executor until it runs.
     [self addUrgentPausedSideEffect:^(id<VT100ScreenDelegate> delegate, iTermTokenExecutorUnpauser *unpauser) {
         [delegate screenBeginSSHIntegrationWithToken:token
                                             uniqueID:uniqueID
                                            encodedBA:encodedBA
-                                             sshArgs:sshArgs];
+                                             sshArgs:sshArgs
+                              injectShellIntegration:injectShellIntegration];
         [unpauser unpause];
     } name:@"send conductor"];
 }
@@ -4107,14 +4256,31 @@ static BOOL iTermStringIsASCIIDecimal(NSString *string) {
 }
 
 - (void)terminalBeginFramerRecoveryForChildOfConductorAtDepth:(int)parentDepth {
-    [self appendBannerMessage:@"Recovering ssh connection…"];
     self.terminal.framerRecoveryMode = VT100TerminalFramerRecoveryModeRecovering;
+    self.terminal.framerRecoveryParentDepth = parentDepth;
+    __weak __typeof(self) weakSelf = self;
+    dispatch_queue_t queue = _queue;
     // Urgent: opens the recovery handshake, which is strictly serial and pauses the token
     // executor per step. See -terminalHandleFramerRecoveryString:.
     [self addUrgentPausedSideEffect:^(id<VT100ScreenDelegate> delegate, iTermTokenExecutorUnpauser *unpauser) {
-        [delegate screenBeginFramerRecovery:parentDepth];
-        [unpauser unpause];
+        // The session may have abandoned this connection after this token was executed
+        // but before this ran (F-459). Then it refuses, and the framer output must be
+        // ignored instead. No token runs until the unpause, so none sees the stale mode.
+        const BOOL began = [delegate screenBeginFramerRecovery:parentDepth];
+        dispatch_async(queue, ^{
+            [weakSelf framerRecoveryDidBegin:began unpauser:unpauser];
+        });
     } name:@"begin framer recovery for child"];
+}
+
+- (void)framerRecoveryDidBegin:(BOOL)began unpauser:(iTermTokenExecutorUnpauser *)unpauser {
+    if (began) {
+        [self appendBannerMessage:@"Recovering ssh connection…"];
+    } else if (self.terminal.framerRecoveryMode == VT100TerminalFramerRecoveryModeRecovering) {
+        DLog(@"Framer recovery refused");
+        self.terminal.framerRecoveryMode = VT100TerminalFramerRecoveryModeNone;
+    }
+    [unpauser unpause];
 }
 
 - (void)terminalHandleFramerRecoveryString:(NSString *)string {
@@ -4129,10 +4295,20 @@ static BOOL iTermStringIsASCIIDecimal(NSString *string) {
         iTermConductorRecovery *recovery = [delegate screenHandleFramerRecoveryString:string];
         if (recovery) {
             weakSelf.terminal.framerRecoveryMode = VT100TerminalFramerRecoveryModeSyncing;
+            // The outermost conductor's it2ssh hooked the top-level parser. Its unique ID
+            // lets the parser recognize that it2ssh's EndSSH even mid-frame.
+            iTermConductor *rootConductor = recovery.parent;
+            while (rootConductor.parent) {
+                rootConductor = rootConductor.parent;
+            }
+            NSString *clientUniqueID = rootConductor ? rootConductor.clientUniqueID : recovery.clientUniqueID;
             // Drop tokens until we get a SSH_RECOVERY_BOUNDARY with the right boundary number.
             weakSelf.terminal.framerBoundaryNumber = [weakSelf.terminal.parser startConductorRecoveryModeWithID:recovery.dcsID
-                                                                                                           tree:recovery.tree];
+                                                                                                           tree:recovery.tree
+                                                                                                 clientUniqueID:clientUniqueID.length ? clientUniqueID : nil];
             [delegate screenFramerRecoveryDidFinish];
+            // Resynchronizing should not wait for the host to print something.
+            [weakSelf flushParserAsynchronously];
             dispatch_async(queue, ^{
                 [weakSelf appendBanner:@"ssh connection recovered!" andUnpause:unpauser];
             });
@@ -4327,11 +4503,43 @@ willExecuteToken:(VT100Token *)token
     } name:@"remove program status records"];
 }
 
+// A program can report as fast as it can write. Reports with no other side
+// effect between them share one batch and one side effect, so a flood of them
+// costs the main thread one update per side-effect pass rather than one per
+// report. A report never joins a batch that has another side effect behind
+// it, which would move it ahead of that side effect.
+//
+// A report may join a batch after its side effect started running, so the
+// main thread can see it before syncing state the mutation thread changed
+// just before it. That is safe only because whatever handling a report reads
+// from the screen changes through a side effect, which closes the batch.
+// Anything new it comes to read must keep that true.
 - (void)terminalReportProgramStatus:(iTermProgramStatusReport *)report {
     DLog(@"begin %@", report);
-    [self addDeferredSideEffect:^(id<VT100ScreenDelegate> delegate) {
-        [delegate screenReportProgramStatus:report];
-    } name:@"report program status"];
+    if (_programStatusBatch &&
+        self.tokenExecutor.sideEffectSerial == _programStatusBatchSideEffectSerial &&
+        [_programStatusBatch addReport:report]) {
+        // This changes state the main thread reads, like adding a side
+        // effect would.
+        [self.tokenExecutor noteStateSideEffectScheduled];
+        return;
+    }
+    iTermProgramStatusReportBatch *batch = [[iTermProgramStatusReportBatch alloc] initWithReport:report];
+    const int64_t serialBefore = self.tokenExecutor.sideEffectSerial;
+    __weak __typeof(self) weakSelf = self;
+    [self.tokenExecutor addDeferredSideEffect:^{
+        // Take the reports even without a delegate so the batch closes and
+        // stops collecting them.
+        NSArray<iTermProgramStatusReport *> *reports = [batch take];
+        [weakSelf performSideEffect:^(id<VT100ScreenDelegate> delegate) {
+            [delegate screenReportProgramStatusReports:reports];
+        } name:@"report program status"];
+    }];
+    const int64_t serialAfter = self.tokenExecutor.sideEffectSerial;
+    // If another side effect was added at the same moment, this one may not
+    // be the last, so the next report starts a new batch.
+    _programStatusBatch = (serialAfter == serialBefore + 1) ? batch : nil;
+    _programStatusBatchSideEffectSerial = serialAfter;
 }
 
 - (void)terminalSetTabStatus:(VT100TabStatusUpdate *)status {

@@ -1,5 +1,6 @@
 
 #import "VT100Screen.h"
+#import <stdatomic.h>
 #import "VT100Screen+Private.h"
 #import "VT100Screen+Search.h"
 #import "VT100ScreenMutableState+RCDataSource.h"
@@ -54,6 +55,9 @@ const NSInteger VT100ScreenBigFileDownloadThreshold = 1024 * 1024 * 1024;
 
 
 @implementation VT100Screen {
+    // Read on the main thread, added to on the read thread.
+    _Atomic(long long) _bytesReceived;
+    iTermExecutorUpdateTickerClient *_executorUpdateClient;
     // Used for recording instant replay.
     // This is an inherently shared mutable data structure. I don't think it can be easily moved into
     // the VT100ScreenState model. Instad it will need lots of mutexes :(
@@ -73,9 +77,27 @@ const NSInteger VT100ScreenBigFileDownloadThreshold = 1024 * 1024 * 1024;
 @synthesize delegate = delegate_;
 
 - (instancetype)init {
+    return [self initWithOptionalMutationQueue:nil ownsQueue:NO];
+}
+
+- (instancetype)initWithMutationQueue:(dispatch_queue_t)queue ownsQueue:(BOOL)ownsQueue {
+    return [self initWithOptionalMutationQueue:queue ownsQueue:ownsQueue];
+}
+
+// A nil queue means the default, and then ownsQueue is ignored.
+- (instancetype)initWithOptionalMutationQueue:(dispatch_queue_t _Nullable)queue ownsQueue:(BOOL)ownsQueue {
     self = [super init];
     if (self) {
-        _mutableState = [[VT100ScreenMutableState alloc] initWithSideEffectPerformer:self];
+        _mutableState = queue ? [[VT100ScreenMutableState alloc] initWithSideEffectPerformer:self queue:queue ownsQueue:ownsQueue]
+                              : [[VT100ScreenMutableState alloc] initWithSideEffectPerformer:self];
+        if (_mutableState.ownsQueue) {
+            // Sessions on the shared queue keep sending updates with their own timers.
+            __weak __typeof(self) weakSelf = self;
+            _executorUpdateClient = [iTermExecutorUpdateTicker.shared makeClientWithFire:^{
+                [weakSelf deliverExecutorUpdate];
+            }];
+            _mutableState.executorUpdateClient = _executorUpdateClient;
+        }
         _animatedLines = [[NSMutableIndexSet alloc] init];
         _state = [_mutableState copy];
         _mutableState.mainThreadCopy = _state;
@@ -225,8 +247,7 @@ const NSInteger VT100ScreenBigFileDownloadThreshold = 1024 * 1024 * 1024;
     // runs as a side effect (see the long-form comment in
     // -[VT100ScreenMutableState mutateColorMap:]). That can re-enter here via
     // sessionViewDidChangeEffectiveAppearance → loadColorsFromProfile while
-    // performingSideEffect is YES. mutateColorMap already schedules a paused
-    // side effect for the main-thread copy, so running inline is safe.
+    // performingSideEffect is YES, where a plain join would assert.
     [self performBlockWithJoinedThreadsReentrantSafe:^(VT100Terminal *terminal, VT100ScreenMutableState *mutableState, id<VT100ScreenDelegate> delegate) {
         [mutableState setColorsFromDictionary:dict harmonize:harmonize];
     }];
@@ -920,7 +941,7 @@ additionalWordCharacters:(NSString *)additionalWordCharacters
     const NSInteger numberOfScrollbackLines = self.numberOfScrollbackLines;
     if (range.location < numberOfScrollbackLines) {
         historyRange.location = range.location;
-        historyRange.length = numberOfScrollbackLines - range.location;
+        historyRange.length = MIN(range.length, numberOfScrollbackLines - range.location);
 
         screenRange.location = 0;
         screenRange.length = range.length - historyRange.length;
@@ -1419,6 +1440,75 @@ additionalWordCharacters:(NSString *)additionalWordCharacters
     return [_state rangeOfOutputForCommandMark:mark];
 }
 
+- (VT100GridRange)lineRangeOfOutputForCommandMark:(id<VT100ScreenMarkReading>)mark {
+    return [self lineRangeOfOutputForCoordRange:[self rangeOfOutputForCommandMark:mark]];
+}
+
+- (VT100GridRange)lineRangeOfOutputForCoordRange:(VT100GridCoordRange)coordRange {
+    // The coord range is half-open. When it ends at column 0, which is where
+    // the next prompt begins, its last line holds none of the output. Output
+    // with no trailing newline shares that line with the prompt and is not
+    // counted, which matches what Copy Output selects.
+    const int location = MAX(0, coordRange.start.y);
+    const int endY = coordRange.end.x > 0 ? coordRange.end.y + 1 : coordRange.end.y;
+    const int length = MAX(0, endY - location);
+    return VT100GridRangeMake(location, length);
+}
+
+- (NSInteger)numberOfCellsUsedInOutputForCommandMark:(id<VT100ScreenMarkReading>)mark {
+    const VT100GridCoordRange coordRange = [self rangeOfOutputForCommandMark:mark];
+    const VT100GridRange lineRange = [self lineRangeOfOutputForCoordRange:coordRange];
+    const NSInteger count = [self numberOfCellsUsedInRange:lineRange];
+    if (lineRange.length == 0 || coordRange.end.x != 0) {
+        return count;
+    }
+    const int lastLine = VT100GridRangeMax(lineRange);
+    if (coordRange.end.y != lastLine + 1) {
+        return count;
+    }
+    const NSInteger padding = [self numberOfPromptSPCellsOnLine:lastLine];
+    DLog(@"Output for %@ has %@ cells including %@ of PROMPT_SP padding",
+         mark, @(count), @(padding));
+    return MAX(0, count - padding);
+}
+
+// When output does not end in a newline, zsh's PROMPT_SP writes its inverse
+// eol mark (% or #) after it and then pads with spaces until the line wraps,
+// so the next prompt begins on a new line. That leaves the output's last line
+// soft-wrapped into the prompt's line, ending in the mark and the padding.
+// Returns the number of those cells on |line|, or 0 if it does not look like
+// that. Spaces before the mark belong to the output and are not included.
+- (NSInteger)numberOfPromptSPCellsOnLine:(int)line {
+    ScreenCharArray *sca = [self screenCharArrayForLine:line];
+    if (sca.eol != EOL_SOFT) {
+        return 0;
+    }
+    const screen_char_t *chars = sca.line;
+    NSInteger result = 0;
+    int i = sca.length - 1;
+    // Skip the padding. Nulls are not counted as used cells, so they are
+    // skipped without being included.
+    while (i >= 0 && !chars[i].complexChar && !chars[i].image && (chars[i].code == ' ' || chars[i].code == 0)) {
+        if (chars[i].code == ' ') {
+            result += 1;
+        }
+        i -= 1;
+    }
+    if (i < 0) {
+        return 0;
+    }
+    const screen_char_t c = chars[i];
+    const BOOL isEOLMark = (c.inverse &&
+                            !c.complexChar &&
+                            !c.image &&
+                            (c.code == '%' || c.code == '#'));
+    if (!isEOLMark) {
+        // Without the mark, the spaces could be the command's own output.
+        return 0;
+    }
+    return result + 1;
+}
+
 - (iTermStringLine *)stringLineAsStringAtAbsoluteLineNumber:(long long)absoluteLineNumber
                                                    startPtr:(long long *)startAbsLineNumber {
     return [_state stringLineAsStringAtAbsoluteLineNumber:absoluteLineNumber startPtr:startAbsLineNumber];
@@ -1635,7 +1725,8 @@ additionalWordCharacters:(NSString *)additionalWordCharacters
 }
 
 - (id<iTermTemporaryDoubleBufferedGridControllerReading>)temporaryDoubleBuffer {
-    if ([delegate_ screenShouldReduceFlicker] || _state.temporaryDoubleBuffer.explicit) {
+    if ([delegate_ screenShouldReduceFlicker] ||
+        _state.temporaryDoubleBuffer.appliesWithoutReduceFlicker) {
         return _state.temporaryDoubleBuffer;
     } else {
         return nil;
@@ -1653,18 +1744,47 @@ additionalWordCharacters:(NSString *)additionalWordCharacters
     [_mutableState performLightweightBlockWithJoinedThreads:block];
 }
 
-// Skips running side effects if it's already in a side effect. This is harder to reason about
-// since you don't know whether side effects will run first. Only call this if you know what you're
-// doing.
+// Like performBlockWithJoinedThreads:, but may also be called from inside one of this screen's
+// unpaused side effects, where that method asserts. If already joined, the block runs right away.
+//
+// Why the other method forbids it: a normal join first runs every side effect still waiting in the
+// queue, then runs its block against the newest state. A join made from inside a side effect can't
+// do that (side effects don't nest, so the waiting ones stay queued until the current one returns),
+// so its block runs before side effects that were queued earlier. Anything the block does on the
+// main thread therefore happens ahead of them. The join itself also runs ahead of them: on the way
+// out it syncs the main-thread copy to the newest state (screenRestoreState:), syncs expect, and may
+// call screenUpdateDisplay:. The waiting side effects then run against that newer state.
+//
+// The rules for a block passed here:
+// 1. It may change mutable state. For example, mutableState.echoProbeDelegate = delegate.
+// 2. It may enqueue side effects. They go to the back of the queue and run in order. For example,
+//    -[VT100ScreenMutableState setColor:forKey:] changes the mutation-queue color map and enqueues a
+//    paused side effect (token execution stops until it runs) that updates the main-thread copy.
+// 3. It must not act on the main thread directly: no calls to the delegate, the session, views,
+//    windows or other UI, and nothing that posts notifications or redraws. For example, calling
+//    [delegate screenSetWindowTitle:] here could set a title that a waiting side effect then
+//    overwrites with an older one. Enqueue a side effect instead.
+// 4. It must not read mutableState.mainThreadCopy expecting it to reflect the waiting side effects.
+//    They haven't run yet. (Reads through the screen see the shared mutable state during the block.)
+//
+// Callers today: setColorsFromDictionary:harmonize:, setColor:forKey: (AppKit can change the
+// appearance during a side effect), and setEchoProbeDelegate: (broadcast password input, issue
+// 11914).
 - (void)performBlockWithJoinedThreadsReentrantSafe:(void (^ NS_NOESCAPE)(VT100Terminal *terminal,
                                                                          VT100ScreenMutableState *mutableState,
                                                                          id<VT100ScreenDelegate> delegate))block {
     DLog(@"%@", [NSThread callStackSymbols]);
-    if (!_mutableState.performingSideEffect ||
-        _mutableState.performingPausedSideEffect) {
-        block(_mutableState.terminal, _mutableState, _mutableState.sideEffectPerformer.sideEffectPerformingScreenDelegate);
-    } else {
-        [_mutableState performBlockWithJoinedThreads:block];
+    // The join can drop the last owner of this screen's session.
+    [[self retain] autorelease];
+    [_mutableState performBlockWithJoinedThreads:block];
+    [self assertStateRestoredAfterJoin];
+}
+
+// Once this screen's outermost join ends, the delegate must have switched the main-thread copy back
+// from the shared state. Otherwise main keeps reading mutable state that its queue is changing.
+- (void)assertStateRestoredAfterJoin {
+    if (!_mutableState.performingJoinedBlock) {
+        ITAssertWithMessage(_sharedStateCount == 0, @"Delegate did not restore state after a joined block");
     }
 }
 
@@ -1672,12 +1792,15 @@ additionalWordCharacters:(NSString *)additionalWordCharacters
                                                             VT100ScreenMutableState *mutableState,
                                                             id<VT100ScreenDelegate> delegate))block {
     DLog(@"%@", [NSThread callStackSymbols]);
-    // We don't want to allow joining inside a side-effect because that causes side-effects to run
-    // out of order (joining runs remaining side-effects immediately, which is out of order since
-    // the current one isn't done yet).
+    // We don't want to allow joining inside a side-effect because the block would run ahead of
+    // side-effects that were queued earlier and haven't run yet. See
+    // performBlockWithJoinedThreadsReentrantSafe: for details.
     assert(!_mutableState.performingSideEffect ||
            _mutableState.performingPausedSideEffect);
+    // The join can drop the last owner of this screen's session.
+    [[self retain] autorelease];
     [_mutableState performBlockWithJoinedThreads:block];
+    [self assertStateRestoredAfterJoin];
 }
 
 - (void)mutateAsynchronously:(void (^)(VT100Terminal *terminal,
@@ -1860,6 +1983,11 @@ additionalWordCharacters:(NSString *)additionalWordCharacters
     }
 }
 
+- (void)setTmuxInputBudget:(iTermByteBudget *)budget {
+    // Atomic, and only read by the mutation queue when it hands tmux lines to main.
+    _mutableState.tmuxInputBudget = budget;
+}
+
 - (void)injectData:(NSData *)data {
     [self mutateAsynchronously:^(VT100Terminal *terminal, VT100ScreenMutableState *mutableState, id<VT100ScreenDelegate> delegate) {
         [mutableState injectData:data];
@@ -1868,7 +1996,20 @@ additionalWordCharacters:(NSString *)additionalWordCharacters
 
 // Warning: this is called on PTYTask's thread.
 - (void)threadedReadTask:(char *)buffer length:(int)length {
+    atomic_fetch_add_explicit(&_bytesReceived, length, memory_order_relaxed);
     [_mutableState threadedReadTask:buffer length:length];
+}
+
+- (long long)bytesReceived {
+    return atomic_load_explicit(&_bytesReceived, memory_order_relaxed);
+}
+
+- (BOOL)threadedHasTokenCapacity {
+    return _mutableState.tokenExecutor.hasTokenCapacity;
+}
+
+- (void)threadedNotifyWhenTokenCapacityAvailableOnQueue:(dispatch_queue_t)queue block:(void (^)(void))block {
+    [_mutableState.tokenExecutor notifyWhenTokenCapacityAvailableOnQueue:queue block:block];
 }
 
 - (long long)lastPromptLine {
@@ -2162,6 +2303,18 @@ additionalWordCharacters:(NSString *)additionalWordCharacters
 #pragma mark - VT100ScreenSideEffectPerforming
 
 // THis is accessed by both main and mutation queues and it must be atomic.
+// Main queue, called by the shared executor update ticker. Not a side effect, since the delegate
+// might join.
+- (void)deliverExecutorUpdate {
+    [self.delegate screenExecutorDidUpdate:[_mutableState forkExecutorUpdate]];
+}
+
+// Main queue, when the user presses a key. The executor update that reports the echo goes to the
+// main thread right away rather than waiting out the throttle, so the redraw isn't delayed.
+- (void)expediteExecutorUpdate {
+    [_executorUpdateClient expedite];
+}
+
 - (id<VT100ScreenDelegate>)sideEffectPerformingScreenDelegate {
     return self.delegate;
 }

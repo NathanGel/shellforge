@@ -383,6 +383,10 @@ extern NSString *const iTermDidCreateTerminalWindowNotification;
 - (NSDictionary *)arrangementWithSession:(PTYSession *)session;
 + (NSDictionary *)arrangementWithSession:(PTYSession *)session;
 
+// The arrangement Window > Duplicate Window opens. Unlike -arrangement, it leaves out state that
+// belongs to this window alone, such as Lock Location.
+- (NSDictionary *)arrangementForDuplicateWindow;
+
 // All tabs in this window.
 - (NSArray<PTYTab *> *)tabs;
 
@@ -443,6 +447,14 @@ extern NSString *const iTermDidCreateTerminalWindowNotification;
 
 // Floating panes
 - (BOOL)canCreateFloatingPane;
+// Whether a session iTerm2 runs itself (a shell, a command, a web page) may go into the current
+// tab as a float. A tmux tab's panes belong to tmux, so it can't take one.
+- (BOOL)canInstallNativeFloatingPane;
++ (BOOL)canInstallNativeFloatingPaneWhenFloatsAllowed:(BOOL)canCreateFloatingPane
+                                     currentTabIsTmux:(BOOL)currentTabIsTmux;
+// Whether a session iTerm2 runs itself may go into the current tab as a split pane. A tmux tab's
+// panes belong to tmux, so it can't take one.
+- (BOOL)canInstallNativeSplitPane;
 - (IBAction)newFloatingPaneWithCurrentProfile:(id)sender;
 // Adds a floating pane to the current tab, starting in the current session's directory.
 - (void)newFloatingPaneWithProfile:(Profile *)profile;
@@ -481,6 +493,15 @@ extern NSString *const iTermDidCreateTerminalWindowNotification;
 - (IBAction)closeCurrentTab:(id)sender;
 - (BOOL)closeTabIfConfirmed:(PTYTab *)tab;
 - (BOOL)closeSessionWithConfirmation:(PTYSession *)aSession;
+
+// Whether closing these sessions would end a workgroup on a tmux server, and so must be confirmed.
++ (BOOL)closingEndsTmuxWorkgroup:(NSArray<PTYSession *> *)sessions;
+
+// The name a close confirmation gives `session` (the shown session's, for a stand-in).
++ (NSString *)nameForClosingSession:(PTYSession *)session;
+
+// The attached tmux pane's session whose pane closing `session` kills, if any.
++ (PTYSession *)tmuxPaneSessionClosedByClosing:(PTYSession *)session;
 - (void)closeSessionWithoutConfirmation:(PTYSession *)aSession;
 
 // Close the named tab without confirmation. Used by the layout-

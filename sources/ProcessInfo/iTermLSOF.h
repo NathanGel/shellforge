@@ -26,7 +26,10 @@ int iTermProcPidInfoWrapper(int pid, int flavor, uint64_t arg,  void *buffer, in
 
 @interface iTermLSOF : NSObject
 
+// Each argument shell-escaped, so the joined result can be pasted into a shell.
 + (NSArray<NSString *> *)commandLineArgumentsForProcess:(pid_t)pid execName:(NSString **)execName;
+// Each argument exactly as the process received it.
++ (NSArray<NSString *> *)rawCommandLineArgumentsForProcess:(pid_t)pid execName:(NSString **)execName;
 + (NSString *)commandForProcess:(pid_t)pid execName:(NSString **)execName;
 // The process's environment as an array of "KEY=VALUE" strings, or nil if it
 // could not be read (e.g. the process is owned by another user). Extracted from
@@ -45,6 +48,10 @@ int iTermProcPidInfoWrapper(int pid, int flavor, uint64_t arg,  void *buffer, in
 + (NSString *)displayCommandForProcess:(pid_t)pid execName:(NSString **)execName;
 + (NSArray<NSNumber *> *)allPids;
 + (pid_t)ppidForPid:(pid_t)childPid;
+// Reads the whole process table with one sysctl(KERN_PROC_ALL) and calls block once
+// per live (non-zombie) process. name is nil when the kernel reports an empty p_comm
+// (typically mid-exec). Returns NO, without calling block, if the table could not be read.
++ (BOOL)enumerateProcessTable:(void (^ NS_NOESCAPE)(pid_t pid, pid_t ppid, NSString *name, BOOL isForeground))block;
 + (NSString *)nameOfProcessWithPid:(pid_t)thePid isForeground:(BOOL *)isForeground;
 
 // Best-effort human-readable explanation of why nameOfProcessWithPid: would return

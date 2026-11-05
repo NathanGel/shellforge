@@ -25,6 +25,44 @@ class VT100ScreenTests: XCTestCase {
         return screen
     }
 
+    // The reentrant-safe variant used to run its block inline, without joining, whenever it was
+    // not inside a side effect, racing with token execution.
+    func testReentrantSafeJoinActuallyJoins() {
+        let screen = fiveByFourScreenWithThreeLinesOneWrapped()
+        var joined = false
+        screen.performBlock(joinedThreadsReentrantSafe: { _, mutableState, _ in
+            joined = mutableState.performingJoinedBlock
+        })
+        XCTAssertTrue(joined)
+    }
+
+    // A tmux line counts against the gateway's budget from when it is handed to the main queue
+    // until main has handled it. Otherwise the gateway keeps reading while main is behind and
+    // overshoots the budget, then stops reading for seconds while the panes catch up.
+    func testTmuxLineCountsAgainstBudgetUntilMainHandlesIt() {
+        let screen = fiveByFourScreenWithThreeLinesOneWrapped()
+        let budget = ByteBudget(capacity: 1000)
+        screen.setTmuxInputBudget(budget)
+        let line = "%output %1 hello"
+        var inUseWhileHandling: Int?
+        session.tmuxInputHandler = { _ in
+            inUseWhileHandling = budget.inUse
+        }
+        let token = VT100Token()
+        token.type = TMUX_LINE
+        token.string = line
+        screen.performBlock(joinedThreads: { _, mutableState, _ in
+            mutableState.terminalHandleTmuxInput(token)
+        })
+        XCTAssertEqual(budget.inUse, line.utf16.count)
+
+        let handled = expectation(description: "Main handled the line")
+        DispatchQueue.main.async { handled.fulfill() }
+        wait(for: [handled], timeout: 10)
+        XCTAssertEqual(inUseWhileHandling, line.utf16.count)
+        XCTAssertEqual(budget.inUse, 0)
+    }
+
     private func fiveByNineScreenWithEmptyLineAtTop() -> VT100Screen {
         let screen = VT100Screen()
         session.screen = screen
@@ -113,6 +151,97 @@ class VT100ScreenTests: XCTestCase {
         XCTAssertTrue(session.keyReportingFlagsAtChange.isEmpty)
     }
 
+    private func waitUntil(_ screen: VT100Screen,
+                           timeout: TimeInterval = 10,
+                           file: StaticString = #filePath,
+                           line: UInt = #line,
+                           _ condition: () -> Bool) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            screen.performBlock(joinedThreads: { _, _, _ in })
+            if condition() {
+                return
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        }
+        XCTFail("Timed out waiting for condition", file: file, line: line)
+    }
+
+    private func fileSequence(name: String, payload: Data, inline: Bool) -> String {
+        let encodedName = name.data(using: .utf8)!.base64EncodedString()
+        let body = payload.base64EncodedString(options: [.lineLength76Characters, .endLineWithLineFeed])
+        let inlineArg = inline ? ";inline=1" : ""
+        return "\u{1b}]1337;File=name=\(encodedName);size=\(payload.count)\(inlineArg):\(body)\u{07}"
+    }
+
+    // F-720: declining “Allow Terminal-Initiated Download?” drew the whole base64 payload.
+    func testDeclinedDownloadDiscardsPayload() {
+        declinedFileTest(inline: false)
+    }
+
+    // Same for “Allow Terminal-Initiated Display?”.
+    func testDeclinedInlineFileDiscardsPayload() {
+        declinedFileTest(inline: true)
+    }
+
+    private func declinedFileTest(inline: Bool) {
+        let screen = screen(width: 20, height: 6)
+        session.allowsDownloads = false
+        let payload = Data((0..<300).map { UInt8(truncatingIfNeeded: $0 * 7) })
+        feed(screen, "before\r\n" + fileSequence(name: "f.bin", payload: payload, inline: inline) + "after")
+        waitUntil(screen) {
+            screen.compactLineDump().contains("after")
+        }
+        XCTAssertEqual(session.downloadConfirmationRequests, 1)
+        XCTAssertEqual(screen.compactLineDump(),
+                       "before..............\n" +
+                       "after...............\n" +
+                       "....................\n" +
+                       "....................\n" +
+                       "....................\n" +
+                       "....................")
+
+        // The terminal is back to normal: another file is asked about and text after it shows.
+        feed(screen, "\r\n" + fileSequence(name: "g.bin", payload: payload, inline: inline) + "more")
+        waitUntil(screen) {
+            screen.compactLineDump().contains("more")
+        }
+        XCTAssertEqual(session.downloadConfirmationRequests, 2)
+        XCTAssertEqual(screen.compactLineDump(),
+                       "before..............\n" +
+                       "after...............\n" +
+                       "more................\n" +
+                       "....................\n" +
+                       "....................\n" +
+                       "....................")
+
+        // While a declined payload is still arriving there is no download for ^C to abort.
+        var partial = fileSequence(name: "h.bin", payload: payload, inline: inline)
+        partial.removeLast()
+        feed(screen, partial)
+        waitUntil(screen) {
+            session.downloadConfirmationRequests == 3
+        }
+        // The answer reaches the terminal on the mutation queue after the prompt returns, so
+        // read it there in a later join, once that has run.
+        var receiving = true
+        screen.performBlock(joinedThreads: { terminal, _, _ in
+            receiving = terminal!.receivingFile
+        })
+        XCTAssertFalse(receiving)
+        feed(screen, "\u{07}end")
+        waitUntil(screen) {
+            screen.compactLineDump().contains("end")
+        }
+        XCTAssertEqual(screen.compactLineDump(),
+                       "before..............\n" +
+                       "after...............\n" +
+                       "moreend.............\n" +
+                       "....................\n" +
+                       "....................\n" +
+                       "....................")
+    }
+
     private func screen(width: Int32, height: Int32) -> VT100Screen {
         let screen = VT100Screen()
         session.screen = screen
@@ -148,7 +277,7 @@ class VT100ScreenTests: XCTestCase {
 
     private func feed(_ screen: VT100Screen, _ string: String) {
         screen.inject(string.data(using: .utf8)!)
-        screen.performBlock(joinedThreads: { _, _, _ in })
+        screen.waitForQueuedTokensForTesting()
     }
 
     // The per-row cache's combined screenCharArrayForLine:contentIdentity: must
@@ -390,6 +519,333 @@ class VT100ScreenTests: XCTestCase {
 
     func testResizeWithNoteFirstTwoCharactersOfSecondLine() {
         commonAnnotationRestoration(range: VT100GridCoordRangeMake(0, 1, 3, 1))
+    }
+
+    // QA finding F-224: a restored session is created at the wrong size and then fit to its
+    // window, so its grid goes through a resize round trip. When the screen had been cleared
+    // with the cursor moved down, the shrink drops the blank rows below the cursor and pulls
+    // the pre-clear lines from scrollback onto the screen, and the grow does not push them
+    // back. Restoring the preferred cursor position afterwards then left the cursor pointing
+    // into the old text, above the new content. It must instead put the same content at the
+    // same rows with the cursor where it was.
+    private func clearScreenAndMoveCursorRestoration(transientSize: VT100GridSize,
+                                                     maxScrollbackLines: UInt32 = 1000) {
+        var screen = self.screen(width: 30, height: 24)
+        screen.performBlock(joinedThreads: { _, mutableState, _ in
+            mutableState.maxScrollbackLines = maxScrollbackLines
+        })
+        feed(screen, "1\r\n2\r\n3\r\n4\r\n5\r\n6\r\n7\r\n8\r\nBEFORE2J\r\n")
+        feed(screen, "\u{1b}[2J\u{1b}[HX\u{1b}[10;20H")
+        let dumpBefore = screen.compactLineDumpWithHistory()
+        let screenDumpBefore = screen.compactLineDump()
+        XCTAssertEqual(screen.cursorX(), 20)
+        XCTAssertEqual(screen.cursorY(), 10)
+        // ED 2 pushed the pre-clear lines into history and left only X on the screen.
+        XCTAssertEqual(screenDumpBefore.components(separatedBy: "\n").first,
+                       "X" + String(repeating: ".", count: 29))
+
+        let encoder = iTermMutableDictionaryEncoderAdapter.encoder()
+        var linesDropped = Int32(0)
+        screen.encodeContents(encoder, linesDropped: &linesDropped, unlimited: true)
+        let state = encoder.mutableDictionary
+
+        screen = self.screen(width: 30, height: 24)
+        screen.performBlock(joinedThreads: { _, mutableState, _ in
+            mutableState.maxScrollbackLines = maxScrollbackLines
+        })
+        screen.restore(from: (state as? [AnyHashable : Any])!,
+                       includeRestorationBanner: false,
+                       reattached: true,
+                       isArchive: false,
+                       largeContentProvider: nil)
+        // What PseudoTerminal does while restoring: the session is at the wrong size for a
+        // moment, then fit to its window, then the preferred cursor position is restored.
+        screen.size = transientSize
+        screen.size = VT100GridSizeMake(30, 24)
+        screen.performBlock(joinedThreads: { _, mutableState, _ in
+            mutableState.restorePreferredCursorPositionIfPossible()
+        })
+
+        XCTAssertEqual(screen.compactLineDump(), screenDumpBefore)
+        XCTAssertEqual(screen.compactLineDumpWithHistory(), dumpBefore)
+        XCTAssertEqual(screen.cursorX(), 20)
+        XCTAssertEqual(screen.cursorY(), 10)
+    }
+
+    func testClearScreenAndMoveCursorSurvivesRestorationWithTransientShrink() {
+        clearScreenAndMoveCursorRestoration(transientSize: VT100GridSizeMake(30, 23))
+    }
+
+    func testClearScreenAndMoveCursorSurvivesRestorationWithTransientGrow() {
+        clearScreenAndMoveCursorRestoration(transientSize: VT100GridSizeMake(30, 30))
+    }
+
+    // The transient resize drops lines from a capped scrollback buffer; the restored screen
+    // must still match.
+    func testClearScreenAndMoveCursorSurvivesRestorationWithSmallScrollback() {
+        clearScreenAndMoveCursorRestoration(transientSize: VT100GridSizeMake(30, 23),
+                                            maxScrollbackLines: 5)
+    }
+
+    func testClearScreenAndMoveCursorSurvivesRestorationWithTinyTransientSize() {
+        clearScreenAndMoveCursorRestoration(transientSize: VT100GridSizeMake(10, 2))
+    }
+
+    // With the “Session Contents Restored” banner, a resize round trip followed by the fix-up
+    // must leave the same screen as a restoration that was never resized.
+    func testClearScreenAndMoveCursorSurvivesRestorationWithBanner() {
+        let screen = self.screen(width: 30, height: 24)
+        screen.performBlock(joinedThreads: { _, mutableState, _ in
+            mutableState.maxScrollbackLines = 1000
+        })
+        feed(screen, "1\r\n2\r\n3\r\n4\r\n5\r\n6\r\n7\r\n8\r\nBEFORE2J\r\n")
+        feed(screen, "\u{1b}[2J\u{1b}[HX\u{1b}[10;20H")
+        let encoder = iTermMutableDictionaryEncoderAdapter.encoder()
+        var linesDropped = Int32(0)
+        screen.encodeContents(encoder, linesDropped: &linesDropped, unlimited: true)
+        let state = (encoder.mutableDictionary as? [AnyHashable : Any])!
+
+        func restored(transientSize: VT100GridSize?) -> VT100Screen {
+            let screen = self.screen(width: 30, height: 24)
+            screen.performBlock(joinedThreads: { _, mutableState, _ in
+                mutableState.maxScrollbackLines = 1000
+            })
+            screen.restore(from: state,
+                           includeRestorationBanner: true,
+                           reattached: false,
+                           isArchive: false,
+                           largeContentProvider: nil)
+            if let transientSize {
+                screen.size = transientSize
+                screen.size = VT100GridSizeMake(30, 24)
+            }
+            screen.performBlock(joinedThreads: { _, mutableState, _ in
+                mutableState.restorePreferredCursorPositionIfPossible()
+            })
+            return screen
+        }
+        let expected = restored(transientSize: nil)
+        let expectedDump = expected.compactLineDumpWithHistory()
+        let expectedX = expected.cursorX()
+        let expectedY = expected.cursorY()
+        for size in [VT100GridSizeMake(30, 23), VT100GridSizeMake(30, 30)] {
+            let actual = restored(transientSize: size)
+            XCTAssertEqual(actual.compactLineDumpWithHistory(), expectedDump)
+            XCTAssertEqual(actual.cursorX(), expectedX)
+            XCTAssertEqual(actual.cursorY(), expectedY)
+        }
+    }
+
+    // QA finding F-324: after restoring with the “Session Contents Restored” banner, the cursor
+    // goes at the start of the row right after the banner, even if it was mid-line when the
+    // state was saved. Returns the cursor and the number of non-blank rows on the screen.
+    private func cursorAfterBannerRestoration(width: Int32,
+                                              output: String) -> (cursor: VT100GridCoord, usedRows: Int) {
+        var screen = self.screen(width: width, height: 24)
+        feed(screen, "\u{1b}[2J\u{1b}[H" + output)
+        let encoder = iTermMutableDictionaryEncoderAdapter.encoder()
+        var linesDropped = Int32(0)
+        screen.encodeContents(encoder, linesDropped: &linesDropped, unlimited: true)
+        let state = (encoder.mutableDictionary as? [AnyHashable : Any])!
+
+        screen = self.screen(width: width, height: 24)
+        screen.restore(from: state,
+                       includeRestorationBanner: true,
+                       reattached: false,
+                       isArchive: false,
+                       largeContentProvider: nil)
+        screen.performBlock(joinedThreads: { _, mutableState, _ in
+            mutableState.restorePreferredCursorPositionIfPossible()
+        })
+        let rows = screen.compactLineDump().components(separatedBy: "\n")
+        let usedRows = (rows.lastIndex(where: { $0.contains { $0 != "." } }) ?? -1) + 1
+        return (VT100GridCoordMake(screen.cursorX() - 1, screen.cursorY() - 1), usedRows)
+    }
+
+    func testCursorFollowsBannerWhenRestoredMidLine() {
+        // Rows: 1, 2, abc, banner. The cursor belongs on the row after the banner.
+        let (cursor, usedRows) = cursorAfterBannerRestoration(width: 80, output: "1\r\n2\r\nabc")
+        XCTAssertEqual(cursor.x, 0)
+        XCTAssertEqual(Int(cursor.y), usedRows)
+    }
+
+    func testCursorFollowsBannerWhenRestoredAtStartOfLine() {
+        // Rows: 1, 2, banner. The cursor belongs on the row after the banner.
+        let (cursor, usedRows) = cursorAfterBannerRestoration(width: 80, output: "1\r\n2\r\n")
+        XCTAssertEqual(cursor.x, 0)
+        XCTAssertEqual(Int(cursor.y), usedRows)
+    }
+
+    // In a narrow window the banner wraps; the cursor still goes right after its last row.
+    func testCursorFollowsWrappedBanner() {
+        for output in ["1\r\n2\r\nabc", "1\r\n2\r\n"] {
+            let (cursor, usedRows) = cursorAfterBannerRestoration(width: 20, output: output)
+            XCTAssertEqual(cursor.x, 0, output)
+            XCTAssertEqual(Int(cursor.y), usedRows, output)
+        }
+    }
+
+    // If output moved the cursor after the state was restored, the cursor is lower than its
+    // preferred row because of that output and not because a resize pulled history onto the
+    // screen, so nothing may be scrolled into history.
+    func testRestorePreferredCursorPositionAfterOutputDoesNotScroll() {
+        var screen = self.screen(width: 30, height: 24)
+        screen.performBlock(joinedThreads: { _, mutableState, _ in
+            mutableState.maxScrollbackLines = 1000
+        })
+        feed(screen, "1\r\n2\r\n3\r\n4\r\n5\r\n6\r\n7\r\n8\r\nBEFORE2J\r\n")
+        feed(screen, "\u{1b}[2J\u{1b}[HX\u{1b}[10;1H")
+
+        let encoder = iTermMutableDictionaryEncoderAdapter.encoder()
+        var linesDropped = Int32(0)
+        screen.encodeContents(encoder, linesDropped: &linesDropped, unlimited: true)
+        let state = encoder.mutableDictionary
+
+        screen = self.screen(width: 30, height: 24)
+        screen.restore(from: (state as? [AnyHashable : Any])!,
+                       includeRestorationBanner: false,
+                       reattached: true,
+                       isArchive: false,
+                       largeContentProvider: nil)
+        feed(screen, "out1\r\nout2\r\nout3\r\n")
+        let dumpBeforeFixUp = screen.compactLineDumpWithHistory()
+        screen.performBlock(joinedThreads: { _, mutableState, _ in
+            mutableState.restorePreferredCursorPositionIfPossible()
+        })
+        XCTAssertEqual(screen.compactLineDumpWithHistory(), dumpBeforeFixUp)
+    }
+
+    // A window restored taller than it was saved fills the new rows with history, as any grow
+    // does. That is not a slide to undo, so the fix-up must not scroll it back into history.
+    func testRestorePreferredCursorPositionInTallerWindowDoesNotScroll() {
+        var screen = self.screen(width: 30, height: 24)
+        screen.performBlock(joinedThreads: { _, mutableState, _ in
+            mutableState.maxScrollbackLines = 1000
+        })
+        for i in 0..<40 {
+            feed(screen, "line\(i)\r\n")
+        }
+
+        let encoder = iTermMutableDictionaryEncoderAdapter.encoder()
+        var linesDropped = Int32(0)
+        screen.encodeContents(encoder, linesDropped: &linesDropped, unlimited: true)
+        let state = encoder.mutableDictionary
+
+        screen = self.screen(width: 30, height: 24)
+        screen.restore(from: (state as? [AnyHashable : Any])!,
+                       includeRestorationBanner: false,
+                       reattached: true,
+                       isArchive: false,
+                       largeContentProvider: nil)
+        screen.size = VT100GridSizeMake(30, 30)
+        let dumpBeforeFixUp = screen.compactLineDumpWithHistory()
+        let screenDumpBeforeFixUp = screen.compactLineDump()
+        screen.performBlock(joinedThreads: { _, mutableState, _ in
+            mutableState.restorePreferredCursorPositionIfPossible()
+        })
+        XCTAssertEqual(screen.compactLineDumpWithHistory(), dumpBeforeFixUp)
+        XCTAssertEqual(screen.compactLineDump(), screenDumpBeforeFixUp)
+    }
+
+    // When nothing moved the content during restoration, restoring the preferred cursor
+    // position must not scroll anything into history.
+    func testRestorePreferredCursorPositionWithoutResizeLeavesContentAlone() {
+        var screen = self.screen(width: 30, height: 24)
+        feed(screen, "hello\r\nworld\u{1b}[10;20H")
+        let dumpBefore = screen.compactLineDumpWithHistory()
+
+        let encoder = iTermMutableDictionaryEncoderAdapter.encoder()
+        var linesDropped = Int32(0)
+        screen.encodeContents(encoder, linesDropped: &linesDropped, unlimited: true)
+        let state = encoder.mutableDictionary
+
+        screen = self.screen(width: 30, height: 24)
+        screen.restore(from: (state as? [AnyHashable : Any])!,
+                       includeRestorationBanner: false,
+                       reattached: true,
+                       isArchive: false,
+                       largeContentProvider: nil)
+        screen.performBlock(joinedThreads: { _, mutableState, _ in
+            mutableState.restorePreferredCursorPositionIfPossible()
+        })
+        XCTAssertEqual(screen.compactLineDumpWithHistory(), dumpBefore)
+        XCTAssertEqual(screen.cursorX(), 20)
+        XCTAssertEqual(screen.cursorY(), 10)
+    }
+
+    // QA finding F-225: a scroll region (DECSTBM) set by a program that is still running when
+    // the app is killed must survive restoration. The restored grid is created at the wrong
+    // size and then fit to its window, and each resize resets the scroll region.
+    private func scrollRegionAfterRestoration(reattached: Bool,
+                                              transientSize: VT100GridSize?,
+                                              finalSize: VT100GridSize = VT100GridSizeMake(30, 24),
+                                              scrollRegionAfterRestore: (top: Int32, bottom: Int32)? = nil) -> VT100GridRange {
+        var screen = self.screen(width: 30, height: 24)
+        feed(screen, "\u{1b}[5;15r")
+        screen.performBlock(joinedThreads: { _, mutableState, _ in
+            XCTAssertEqual(mutableState.currentGrid.scrollRegionRows.location, 4)
+            XCTAssertEqual(mutableState.currentGrid.scrollRegionRows.length, 11)
+        })
+        let encoder = iTermMutableDictionaryEncoderAdapter.encoder()
+        var linesDropped = Int32(0)
+        screen.encodeContents(encoder, linesDropped: &linesDropped, unlimited: true)
+        let state = (encoder.mutableDictionary as? [AnyHashable : Any])!
+
+        screen = self.screen(width: 30, height: 24)
+        screen.restore(from: state,
+                       includeRestorationBanner: false,
+                       reattached: reattached,
+                       isArchive: false,
+                       largeContentProvider: nil)
+        if let transientSize {
+            screen.size = transientSize
+        }
+        screen.size = finalSize
+        if let scrollRegionAfterRestore {
+            // Stands in for the program sending DECSTBM after restoration.
+            screen.performBlock(joinedThreads: { _, mutableState, _ in
+                mutableState.terminalSetScrollRegionTop(scrollRegionAfterRestore.top,
+                                                        bottom: scrollRegionAfterRestore.bottom)
+            })
+        }
+        screen.performBlock(joinedThreads: { _, mutableState, _ in
+            mutableState.restorePreferredCursorPositionIfPossible()
+        })
+        var result = VT100GridRangeMake(-1, -1)
+        screen.performBlock(joinedThreads: { _, mutableState, _ in
+            result = mutableState.currentGrid.scrollRegionRows
+        })
+        return result
+    }
+
+    func testScrollRegionSurvivesRestorationResizeRoundTrip() {
+        for size in [VT100GridSizeMake(30, 23), VT100GridSizeMake(30, 30), VT100GridSizeMake(10, 2)] {
+            let region = scrollRegionAfterRestoration(reattached: true, transientSize: size)
+            XCTAssertEqual(region.location, 4, "transient size \(size.width)x\(size.height)")
+            XCTAssertEqual(region.length, 11, "transient size \(size.width)x\(size.height)")
+        }
+    }
+
+    func testScrollRegionNotRestoredForFreshShell() {
+        let region = scrollRegionAfterRestoration(reattached: false, transientSize: VT100GridSizeMake(30, 23))
+        XCTAssertEqual(region.location, 0)
+        XCTAssertEqual(region.length, 24)
+    }
+
+    func testScrollRegionNotRestoredAtDifferentSize() {
+        let region = scrollRegionAfterRestoration(reattached: true,
+                                                  transientSize: nil,
+                                                  finalSize: VT100GridSizeMake(30, 30))
+        XCTAssertEqual(region.location, 0)
+        XCTAssertEqual(region.length, 30)
+    }
+
+    func testScrollRegionSetAfterRestorationIsKept() {
+        let region = scrollRegionAfterRestoration(reattached: true,
+                                                  transientSize: VT100GridSizeMake(30, 23),
+                                                  scrollRegionAfterRestore: (top: 1, bottom: 5))
+        XCTAssertEqual(region.location, 1)
+        XCTAssertEqual(region.length, 5)
     }
 
     func testResizeWithNoteSecondLine() {
@@ -1769,6 +2225,7 @@ struct SeededGenerator: RandomNumberGenerator {
 
 class FakeSession: NSObject, VT100ScreenDelegate {
     var keyReportingFlagsAtChange = [VT100TerminalKeyReportingFlags]()
+    var tmuxInputHandler: ((VT100Token) -> Void)?
     var screen: VT100Screen?
     var configuration = VT100MutableScreenConfiguration()
     var selection = iTermSelection()
@@ -1786,11 +2243,21 @@ class FakeSession: NSObject, VT100ScreenDelegate {
     /// gate test can assert the warning path was taken.
     var didWarnOSC7Disabled = false
 
-    /// OSC 7501 reports delivered via screenReportProgramStatus, in order.
+    /// OSC 7501 reports delivered via screenReportProgramStatusReports, in order.
     var programStatusReports = [ProgramStatusReport]()
+
+    /// Times OSC 7501 reports were delivered, however many each delivery held.
+    var programStatusDeliveries = 0
+
+    /// OSC 7501 reports and record removals, in the order they arrived.
+    var programStatusEvents = [String]()
 
     /// Times screenRemoveProgramStatusRecords fired (a full reset).
     var removeProgramStatusRecordsCount = 0
+
+    /// The answer to “Allow Terminal-Initiated Download?” and how many times it was asked.
+    var allowsDownloads = true
+    var downloadConfirmationRequests = 0
 
     func screenConvertAbsoluteRange(_ range: VT100GridAbsCoordRange, toTextDocumentOfType type: String?, filename: String?, forceWide: Bool) {
 
@@ -1800,7 +2267,11 @@ class FakeSession: NSObject, VT100ScreenDelegate {
         kittyDragAndDropContents.append(content)
     }
     
-    func screenDidHookSSHConductor(withToken token: String, uniqueID: String, boolArgs: String, sshargs: String, dcsID: String, savedState: [AnyHashable : Any]) {
+    func screenDidHookSSHConductor(withToken token: String, uniqueID: String, boolArgs: String, sshargs: String, dcsID: String, parentDepth: Int32, savedState: [AnyHashable : Any]) {
+
+    }
+
+    func screenDidFailToParseSSHConductorHook(withToken token: String, uniqueID: String, dcsID: String, parentDepth: Int32, savedState: [AnyHashable : Any]) {
 
     }
     
@@ -1808,7 +2279,7 @@ class FakeSession: NSObject, VT100ScreenDelegate {
 
     }
     
-    func screenDidUnhookSSHConductor() {
+    func screenDidUnhookSSHConductor(withDCSID dcsID: String?, depth: Int32) {
 
     }
     
@@ -1824,6 +2295,9 @@ class FakeSession: NSObject, VT100ScreenDelegate {
 
     }
     
+    func screenDidReadSSHPaneOutput(_ data: Data, pid: Int32, depth: Int32) {
+    }
+
     func screenDidReadRawSSHData(_ data: Data) {
 
     }
@@ -1840,7 +2314,8 @@ class FakeSession: NSObject, VT100ScreenDelegate {
 
     }
     
-    func screenBeginSSHIntegration(withToken token: String, uniqueID: String, encodedBA: String, sshArgs: String) {
+    func screenBeginSSHIntegration(withToken token: String, uniqueID: String, encodedBA: String, sshArgs: String,
+                                   injectShellIntegration: Bool) {
 
     }
     
@@ -1852,8 +2327,8 @@ class FakeSession: NSObject, VT100ScreenDelegate {
         return "localhost"
     }
     
-    func screenBeginFramerRecovery(_ parentDepth: Int32) {
-
+    func screenBeginFramerRecovery(_ parentDepth: Int32) -> Bool {
+        return true
     }
     
     func screenHandleFramerRecoveryString(_ string: String) -> iTerm2SharedARC.ConductorRecovery? {
@@ -1921,8 +2396,10 @@ class FakeSession: NSObject, VT100ScreenDelegate {
 
     }
 
-    func screenReportProgramStatus(_ report: ProgramStatusReport) {
-        programStatusReports.append(report)
+    func screenReportProgramStatusReports(_ reports: [ProgramStatusReport]) {
+        programStatusDeliveries += 1
+        programStatusReports.append(contentsOf: reports)
+        programStatusEvents.append(contentsOf: reports.map { "report \($0.state.rawValue)" })
     }
 
     func screenDidClearTabStatusForReset() {
@@ -1931,6 +2408,7 @@ class FakeSession: NSObject, VT100ScreenDelegate {
 
     func screenRemoveProgramStatusRecords() {
         removeProgramStatusRecordsCount += 1
+        programStatusEvents.append("remove")
     }
 
     func screenProgressWasReset(withGeneration generation: Int) {
@@ -1966,8 +2444,10 @@ class FakeSession: NSObject, VT100ScreenDelegate {
         screen!.switchToSharedState()
     }
     
+    // Like PTYSession. Without this, the screen keeps reading the mutable state through the
+    // sanitizing adapter after the first join, racing the mutation queue.
     func screenRestore(_ state: VT100ScreenState) {
-
+        screen?.restore(state)
     }
     
     func screenConfiguration() -> VT100MutableScreenConfiguration {
@@ -2046,11 +2526,15 @@ class FakeSession: NSObject, VT100ScreenDelegate {
     }
     
     func screenConfirmDownloadAllowed(_ name: String, size: Int, displayInline: Bool, promptIfBig: UnsafeMutablePointer<ObjCBool>) -> Bool {
-        true
+        downloadConfirmationRequests += 1
+        return allowsDownloads
     }
     
     func screenAskAboutClearingScrollback() {
 
+    }
+
+    func screenDidClearScrollbackWithPermission() {
     }
     
     func screenRangeOfVisibleLines() -> VT100GridRange {
@@ -2068,6 +2552,9 @@ class FakeSession: NSObject, VT100ScreenDelegate {
     
     func screenDidDetectShell(_ shell: String) {
 
+    }
+
+    func screenDidReportShellIntegrationVersion(_ version: Int, shell: String?) {
     }
     
     func screenSetBackgroundImageFile(_ filename: String) {
@@ -2162,6 +2649,9 @@ class FakeSession: NSObject, VT100ScreenDelegate {
 
     }
     
+    func screenDidUseDECRQCRA() {
+    }
+
     func screenDidTryToUseDECRQCRA() {
 
     }
@@ -2385,7 +2875,7 @@ class FakeSession: NSObject, VT100ScreenDelegate {
     }
     
     func screenHandleTmuxInput(_ token: VT100Token) {
-
+        tmuxInputHandler?(token)
     }
     
     func screenShouldTreatAmbiguousCharsAsDoubleWidth() -> Bool {

@@ -97,6 +97,8 @@ NSString *const kPreferenceKeyDisableMetalWhenUnplugged = @"disableMetalWhenUnpl
 NSString *const kPreferenceKeyDisableInLowPowerMode = @"disableMetalInLowPowerMode";
 NSString *const kPreferenceKeyPreferIntegratedGPU = @"preferIntegratedGPU";
 NSString *const kPreferenceKeyMaximizeThroughput = @"metalMaximizeThroughput";  // Used to be metal-specific but not any more
+NSString *const kPreferenceKeyMaximumConcurrentTokenExecutions = @"MaximumConcurrentTokenExecutions";
+NSString *const kPreferenceKeyMaximumConcurrentTokenExecutionsAutomatic = @"MaximumConcurrentTokenExecutionsAutomatic";
 NSString *const kPreferenceKeyEnableAPIServer = @"EnableAPIServer";
 NSString *const kPreferenceKeyAPIAuthentication = @"API Authentication Method";
 NSString *const kPreferenceKeyEnableAI = @"Enable AI";
@@ -633,6 +635,12 @@ static void iTermPreferencesRefreshFastCachesForKey(NSString *key);
         @"NSAutomaticCapitalizationEnabled": @NO,
         @"NSAutomaticQuoteSubstitutionEnabled": @NO,
         @"NSAutomaticDashSubstitutionEnabled": @NO,
+
+        // On macOS 26 AppKit donates every distinct window and tab title to CoreSpotlight, which
+        // runs each one through on-device text embedding. Terminal titles change constantly (job
+        // names, session status), so this burns a lot of CPU in mediaanalysisd and
+        // spotlightknowledged. AppKit reads this once at launch. Issue 13066.
+        @"NSEnableWindowTabIndexing": @NO,
     };
 }
 
@@ -767,6 +775,8 @@ static void iTermPreferencesRefreshFastCachesForKey(NSString *key);
                   kPreferenceKeyDisableInLowPowerMode: @YES,
                   kPreferenceKeyPreferIntegratedGPU: @YES,
                   kPreferenceKeyMaximizeThroughput: @YES,
+                  kPreferenceKeyMaximumConcurrentTokenExecutions: @0,
+                  kPreferenceKeyMaximumConcurrentTokenExecutionsAutomatic: @YES,  // ignored - synthetic value
                   kPreferenceKeyEnableAPIServer: @NO,
                   kPreferenceKeyAPIAuthentication: @0,  // ignored — synthetic value
                   kPreferenceKeyEnableAI: @NO,  // ignored - synthetic value
@@ -1318,7 +1328,15 @@ static BOOL gHideTabBarSuppressedDuringDrag = NO;
     if (gHideTabBarSuppressedDuringDrag == suppressed) {
         return;
     }
+    const BOOL hideTabBarBefore = [[self computedHideTabBar] boolValue];
     gHideTabBarSuppressedDuringDrag = suppressed;
+    if ([[self computedHideTabBar] boolValue] == hideTabBarBefore) {
+        // The user already shows the tab bar for single-tab windows, so
+        // nothing visible changes. Skip the refresh: it refits every window
+        // and session, which makes drags stutter with many windows (issue
+        // 13187).
+        return;
+    }
     // Mirror what the Settings UI does when the user toggles "Hide tab bar
     // when only one tab is open": post kRefreshTerminalNotification so every
     // PseudoTerminal runs refreshTerminal: and refits its window.

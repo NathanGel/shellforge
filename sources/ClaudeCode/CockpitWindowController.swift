@@ -66,10 +66,26 @@ class CockpitWindowController: NSWindowController {
     // The document range of the @-run the picker is currently editing,
     // so a chosen session replaces exactly that text with a token.
     private var activeMentionRange: NSRange?
+    private var sheetLevelGuard: CockpitSheetLevelGuard?
+    // The start of the @-run whose picker the user dismissed with Esc, so
+    // typing more of that run doesn't bring the picker straight back.
+    private var dismissedMentionLocation: Int?
 
     // Guards the two-way binding between composer @-mention chips and
     // outline row selection so an update in one doesn't bounce back.
     private var isSyncingTargets = false
+    // True while refresh() rebuilds the outline. Moving a selected row
+    // between groups clears and restores its selection; those transient
+    // selection changes must not rewrite the composer (that moved the
+    // caret to the end while the user typed).
+    private var isRefreshingOutline = false
+    // The targets each selected row contributed as of the last selection
+    // change the user made, keyed by row identity.
+    private var lastSelection: [CockpitRow.Identity: [String]] = [:]
+    // Tokens of composer chips that are there because the user selected
+    // their rows in the outline (as opposed to typing them). A click on
+    // another row replaces these even after their rows become hidden.
+    private var selectionChips: Set<String> = []
 
     // The AI chat's @-mention session picker, reused: a window > tab >
     // pane > peer outline with a live session preview, driven from the
@@ -173,6 +189,9 @@ class CockpitWindowController: NSWindowController {
         // selected a row without ever making the panel key/active.
         panel.becomesKeyOnlyIfNeeded = false
         panel.hidesOnDeactivate = true
+        // A floating panel would cover a sheet on a terminal window (an
+        // alert's buttons included), so step aside while one is up.
+        sheetLevelGuard = CockpitSheetLevelGuard(panel: panel)
     }
 
     private func configureToolbar() {
@@ -481,6 +500,8 @@ class CockpitWindowController: NSWindowController {
         _ = composerVC.view  // force the nib to load before configuring
         composerVC.setFont(font)
         composerVC.setDockedChromeHidden(true)
+        // No session behind it: no Advanced Paste or command history.
+        composerVC.setSessionless(true)
         composerVC.setTextColor(.labelColor, cursorColor: .labelColor)
         // Let @-mention chips (NSTextAttachments) survive editing; the
         // composer is plain-text by default and would strip them.
@@ -554,6 +575,14 @@ class CockpitWindowController: NSWindowController {
         guard let window else { return }
         window.makeKeyAndOrderFront(nil)
         composerVC.makeFirstResponder()
+    }
+
+    // Shell > Close (Cmd-W) is wired to closeCurrentSession: rather than
+    // performClose:, so without this the menu item is disabled while the
+    // cockpit is key and Cmd-W can't close it.
+    @objc(closeCurrentSession:)
+    func closeCurrentSession(_ sender: Any?) {
+        window?.performClose(sender)
     }
 
     // MARK: - Toolbar actions
@@ -888,31 +917,24 @@ class CockpitWindowController: NSWindowController {
     // chips, the command goes to the selected rows. On success the view
     // clears (chips repopulated from the selection). Anything that would
     // send to nowhere reports a status and leaves the text in place.
-    fileprivate func sendCommandFieldContents() {
+    //
+    // selectedText is the composer's selected text when the user sent a
+    // selection. Then only the selection is sent (to the chips anywhere in
+    // the field) and the field is left as it is.
+    fileprivate func sendCommandFieldContents(selectedText: String? = nil) {
         mentionPicker.hide()
 
-        // Split the composer into chip targets (anywhere) and the typed
-        // text, so a chip embedded mid-text never leaks into the command.
-        let attributed = composerVC.attributedStringValue
-        let ns = attributed.string as NSString
-        var chipTokens: [String] = []
-        var typed = ""
-        attributed.enumerateAttribute(.attachment,
-                                      in: NSRange(location: 0, length: attributed.length),
-                                      options: []) { value, range, _ in
-            if let mention = value as? ChatSessionMentionAttachment {
-                chipTokens.append("@" + mention.guid)
-            } else if value == nil {
-                typed += ns.substring(with: range)
-            }
-        }
-
-        // Only chips are targets; every typed character (including any
-        // literal '@x' that never became a chip) is sent verbatim.
-        let command = typed.trimmingCharacters(in: .whitespacesAndNewlines)
-        DLog("Cockpit send: chips=\(chipTokens) command=\(command)")
+        let (chipTokens, command) = Self.chipTokensAndCommand(in: composerVC.attributedStringValue,
+                                                              selectedText: selectedText)
+        DLog("Cockpit send: chips=\(chipTokens) command=\(command) selection=\(selectedText != nil)")
 
         let sessions: [PTYSession]
+        // Display names of chips whose targets no longer exist (their
+        // tab or window was closed). They're skipped, not fatal.
+        var skippedNames: [String] = []
+        // Chip guids of those gone targets, removed from the composer after
+        // the send so later sends don't skip them again.
+        var goneChipGuids = Set<String>()
         if chipTokens.isEmpty {
             guard !command.isEmpty else { return }
             sessions = selectedRowSessions()
@@ -922,17 +944,23 @@ class CockpitWindowController: NSWindowController {
             }
         } else {
             let (resolved, unknown) = resolveTargets(chipTokens)
-            guard unknown.isEmpty else {
-                setCockpitStatus(String(localized: "Cockpit.UnknownTargetStatus", defaultValue: "Unknown target \(unknown.joined(separator: " "))", comment: "Cockpit status listing unrecognized @mention targets"), isError: true)
-                return
-            }
-            guard !command.isEmpty else {
+            switch Self.chipSendPlan(command: command,
+                                     resolvedCount: resolved.count,
+                                     unknownTokens: unknown,
+                                     chips: composerChipTargets()) {
+            case .needsCommand:
                 setCockpitStatus(String(localized: "Cockpit.AddCommandStatus", defaultValue: "Add a command after the @mention", comment: "Cockpit status prompting the user to type a command after the @mention"), isError: true)
                 return
-            }
-            guard !resolved.isEmpty else {
+            case .noMatches:
                 setCockpitStatus(String(localized: "Cockpit.NoMatchingSessions", defaultValue: "No matching sessions", comment: "Cockpit status shown when the targets resolve to no sessions"), isError: true)
                 return
+            case .allGone(let names):
+                let list = names.joined(separator: ", ")
+                setCockpitStatus(String(localized: "Cockpit.TargetsGoneStatus", defaultValue: "Nothing was sent. These targets no longer exist: \(list)", comment: "Cockpit status shown when every @mention target was closed; the placeholder is a comma-separated list of session, tab, or window names"), isError: true)
+                return
+            case .send(let skipped):
+                skippedNames = skipped
+                goneChipGuids = Self.chipGuids(forTokens: unknown)
             }
             sessions = resolved
         }
@@ -948,15 +976,186 @@ class CockpitWindowController: NSWindowController {
             return
         }
         DLog("Cockpit sent command to \(sent) session(s)")
-        clearCommandView()
-        setCockpitStatus(String(localized: "Cockpit.SentToSessions", defaultValue: "Sent to \(sent) sessions", comment: "Cockpit status; %lld is the number of sessions a command was sent to"), isError: false)
+        if let remaining = Self.removingChips(goneChipGuids,
+                                              from: composerVC.attributedStringValue,
+                                              selection: composerVC.composerSelectedRange) {
+            DLog("Cockpit dropping chips for gone targets \(goneChipGuids)")
+            isSyncingTargets = true
+            composerVC.replace(NSRange(location: 0, length: composerVC.attributedStringValue.length),
+                               with: remaining.text)
+            // A selection send leaves the field as it was, selection included.
+            composerVC.composerSelectedRange = remaining.selection
+            isSyncingTargets = false
+            // The replace evaluated the picker with the caret at the end of
+            // the field; evaluate it again for the restored selection.
+            updateMentionPicker()
+        }
+        if Self.clearsComposerAfterSend(selectedText: selectedText) {
+            clearCommandView()
+        }
+        setCockpitStatus(Self.sentStatus(sent: sent, skippedNames: skippedNames),
+                         isError: !skippedNames.isEmpty)
+    }
+
+    // The status after a send. Naming skipped targets is one localized
+    // string so every language gets complete, punctuated sentences.
+    static func sentStatus(sent: Int, skippedNames: [String]) -> String {
+        guard !skippedNames.isEmpty else {
+            return String(localized: "Cockpit.SentToSessions", defaultValue: "Sent to \(sent) sessions", comment: "Cockpit status; %lld is the number of sessions a command was sent to")
+        }
+        let list = skippedNames.joined(separator: ", ")
+        return String(localized: "Cockpit.SentToSessionsSkippingGoneTargets", defaultValue: "Sent to \(sent) sessions. Skipped targets that no longer exist: \(list)", comment: "Cockpit status after a send that skipped @mention targets that were closed; the number is how many sessions got the command and the second placeholder is a comma-separated list of session, tab, or window names")
+    }
+
+    // The chip guids for target tokens ("@<guid>", as chipTokensAndCommand
+    // makes them).
+    static func chipGuids(forTokens tokens: [String]) -> Set<String> {
+        return Set(tokens.map { $0.hasPrefix("@") ? String($0.dropFirst()) : $0 })
+    }
+
+    // `attributed` without the mention chips whose guid is in `guids`
+    // (each with the space after it), and `selection` moved to cover the
+    // same remaining text, or nil when it holds none of them.
+    static func removingChips(_ guids: Set<String>,
+                              from attributed: NSAttributedString,
+                              selection: NSRange) -> (text: NSAttributedString, selection: NSRange)? {
+        guard !guids.isEmpty else {
+            return nil
+        }
+        let ns = attributed.string as NSString
+        var doomedRanges: [NSRange] = []
+        attributed.enumerateAttribute(.attachment,
+                                      in: NSRange(location: 0, length: attributed.length),
+                                      options: []) { value, range, _ in
+            if let mention = value as? ChatSessionMentionAttachment, guids.contains(mention.guid) {
+                var doomed = range
+                if NSMaxRange(doomed) < ns.length && ns.character(at: NSMaxRange(doomed)) == 0x20 {
+                    doomed.length += 1
+                }
+                doomedRanges.append(doomed)
+            }
+        }
+        guard !doomedRanges.isEmpty else {
+            return nil
+        }
+        let result = NSMutableAttributedString(attributedString: attributed)
+        for range in doomedRanges.reversed() {
+            result.deleteCharacters(in: range)
+        }
+        // Where `position` lands once the doomed ranges are gone.
+        func adjusted(_ position: Int) -> Int {
+            var removedBefore = 0
+            for range in doomedRanges where range.location < position {
+                removedBefore += min(position, NSMaxRange(range)) - range.location
+            }
+            return position - removedBefore
+        }
+        let start = adjusted(selection.location)
+        let end = adjusted(NSMaxRange(selection))
+        return (result, NSRange(location: start, length: end - start))
+    }
+
+    enum ChipSendPlan: Equatable {
+        case needsCommand
+        case noMatches
+        // Every chip's target is gone; carries their display names.
+        case allGone([String])
+        // Send to the resolved sessions, skipping the named gone targets.
+        case send(skipped: [String])
+    }
+
+    // What a send with chips should do. A chip whose session, tab, or
+    // window was closed doesn't block the targets that are still there;
+    // it's skipped and named by its display name (not its internal id).
+    static func chipSendPlan(command: String,
+                             resolvedCount: Int,
+                             unknownTokens: [String],
+                             chips: [(token: String, name: String)]) -> ChipSendPlan {
+        guard !command.isEmpty else {
+            return .needsCommand
+        }
+        var names: [String] = []
+        var seen = Set<String>()
+        for token in unknownTokens where seen.insert(token).inserted {
+            let bare = token.hasPrefix("@") ? String(token.dropFirst()) : token
+            names.append(chips.first { $0.token == bare }?.name ?? bare)
+        }
+        if resolvedCount == 0 {
+            return names.isEmpty ? .noMatches : .allGone(names)
+        }
+        return .send(skipped: names)
+    }
+
+    // Split the composer into chip targets (anywhere) and the typed text,
+    // so a chip embedded mid-text never leaks into the command. Only chips
+    // are targets; every typed character (including any literal '@x' that
+    // never became a chip) is sent verbatim. When selectedText is given it
+    // is the command instead of the whole field's typed text, minus any
+    // chips inside the selection.
+    static func chipTokensAndCommand(in attributed: NSAttributedString,
+                                     selectedText: String?) -> (chipTokens: [String], command: String) {
+        let ns = attributed.string as NSString
+        var chipTokens: [String] = []
+        var typed = ""
+        attributed.enumerateAttribute(.attachment,
+                                      in: NSRange(location: 0, length: attributed.length),
+                                      options: []) { value, range, _ in
+            if let mention = value as? ChatSessionMentionAttachment {
+                chipTokens.append("@" + mention.guid)
+            } else if value == nil {
+                typed += ns.substring(with: range)
+            }
+        }
+        if let selectedText {
+            typed = selectedText
+        }
+        // An attachment character with no chip behind it (pasted text
+        // copied from a chip) is invisible; never send it to a shell.
+        let attachment = Unicode.Scalar(UInt32(NSTextAttachment.character))
+        var scalars = String.UnicodeScalarView()
+        scalars.append(contentsOf: typed.unicodeScalars.filter { $0 != attachment })
+        typed = String(scalars)
+        return (chipTokens, typed.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    enum ComposerSendRequest: Equatable {
+        // Esc or close: just hide the picker.
+        case cancel
+        case wholeField
+        // A send key (Return variants) with text selected; carries the
+        // selected text.
+        case selection(String)
+    }
+
+    // A selection send arrives with neither a newline nor dismissal (see
+    // composerTextViewSendSubstring). Esc arrives as an empty command with
+    // dismiss=YES.
+    static func composerSendRequest(command: String,
+                                    addNewline: Bool,
+                                    dismiss: Bool) -> ComposerSendRequest {
+        if !addNewline && !dismiss {
+            return .selection(command)
+        }
+        if command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return .cancel
+        }
+        return .wholeField
+    }
+
+    // Sending a selection leaves the field alone, like the regular
+    // composer; sending the whole field clears the command text.
+    static func clearsComposerAfterSend(selectedText: String?) -> Bool {
+        return selectedText == nil
     }
 
     // After a send, drop the command text but keep the mention chips
     // (the row selection persists, so the two stay in sync and you can
-    // fire again at the same targets without re-picking them).
+    // fire again at the same targets without re-picking them). Chips for
+    // rows that are hidden stay too, like they do on a click.
     private func clearCommandView() {
-        let chips = mentionChips(for: selectedTargets())
+        let chips = mentionChips(for: Self.composerTargets(existing: composerChipTargets(),
+                                                           selected: selectedTargets(),
+                                                           releasable: releasableTokens(includingSelectionChips: false)))
         let length = composerVC.attributedStringValue.length
         isSyncingTargets = true
         composerVC.replace(NSRange(location: 0, length: length), with: chips)
@@ -974,7 +1173,7 @@ class CockpitWindowController: NSWindowController {
                 displayName: target.name,
                 font: font,
                 color: NSColor.linkColor,
-                symbolName: symbolName(forToken: target.token)))
+                symbolName: ChatMentionDisplay.symbolName(forToken: target.token)))
             result.append(NSAttributedString(string: " ",
                                              attributes: [.font: font, .foregroundColor: NSColor.labelColor]))
         }
@@ -983,14 +1182,28 @@ class CockpitWindowController: NSWindowController {
 
     // MARK: - @-mention session picker (reuses ChatMentionPickerController)
 
-    // The composer supports multiple cursors, so several @-runs can be
-    // in flight at once. Per the routing rule, auto-completion is always
-    // aimed at the FIRST at-mention in the document: the earliest '@'
-    // that starts a word and is followed by a run of non-whitespace,
-    // non-token characters. Returns that run's range and the query typed
-    // after '@'. nil means there is no at-mention to complete.
+    // The at-mention being typed: the first '@' that starts a word, is
+    // followed by a run of non-whitespace, non-token characters, and has
+    // the caret inside that run (just after the '@' or anywhere up to the
+    // run's end). An '@' the caret has left (for example "email me @ noon")
+    // is literal text, so the picker closes and Return inserts a newline.
+    // A run whose picker was dismissed with Esc is skipped. Returns the
+    // run's range and the query typed after '@'; nil means there is
+    // nothing to complete.
     private func firstMentionContext() -> (range: NSRange, query: String)? {
-        let ns = composerVC.attributedStringValue.string as NSString
+        return Self.mentionContext(in: composerVC.attributedStringValue.string,
+                                   selectedRange: composerVC.composerSelectedRange,
+                                   dismissedLocation: dismissedMentionLocation)
+    }
+
+    static func mentionContext(in string: String,
+                               selectedRange: NSRange,
+                               dismissedLocation: Int?) -> (range: NSRange, query: String)? {
+        guard selectedRange.length == 0 else {
+            return nil
+        }
+        let caret = selectedRange.location
+        let ns = string as NSString
         let length = ns.length
         var i = 0
         while i < length {
@@ -1001,15 +1214,27 @@ class CockpitWindowController: NSWindowController {
                 while end < length && !isMentionBoundary(ns.character(at: end)) {
                     end += 1
                 }
-                let queryRange = NSRange(location: i + 1, length: end - (i + 1))
-                return (NSRange(location: i, length: end - i), ns.substring(with: queryRange))
+                if caret > i && caret <= end && i != dismissedLocation {
+                    let queryRange = NSRange(location: i + 1, length: end - (i + 1))
+                    return (NSRange(location: i, length: end - i), ns.substring(with: queryRange))
+                }
+                i = end
+                continue
             }
             i += 1
         }
         return nil
     }
 
-    private func isMentionBoundary(_ c: unichar) -> Bool {
+    // The start of the @-run the caret is in, ignoring any dismissal.
+    // Used to forget a dismissal once the caret leaves that run.
+    private func caretMentionLocation() -> Int? {
+        return Self.mentionContext(in: composerVC.attributedStringValue.string,
+                                   selectedRange: composerVC.composerSelectedRange,
+                                   dismissedLocation: nil)?.range.location
+    }
+
+    private static func isMentionBoundary(_ c: unichar) -> Bool {
         if c == 0xFFFC { return true }  // object replacement char: an existing token
         guard let scalar = UnicodeScalar(c) else { return false }
         return CharacterSet.whitespacesAndNewlines.contains(scalar)
@@ -1018,6 +1243,9 @@ class CockpitWindowController: NSWindowController {
     // Drive the shared picker for the first at-mention, or hide it when
     // there is none. Called on every composer text change.
     fileprivate func updateMentionPicker() {
+        if let dismissed = dismissedMentionLocation, caretMentionLocation() != dismissed {
+            dismissedMentionLocation = nil
+        }
         guard window != nil, let context = firstMentionContext() else {
             activeMentionRange = nil
             mentionPicker.hide()
@@ -1028,36 +1256,23 @@ class CockpitWindowController: NSWindowController {
             mentionPicker.update(query: context.query)
         } else {
             mentionPicker.show(anchorView: composerVC.completionAnchorView,
-                               query: context.query) { [weak self] guid, displayName in
-                self?.insertMention(guid: guid, displayName: displayName)
+                               query: context.query) { [weak self] choice in
+                self?.insertMention(choice)
             }
         }
     }
 
-    // The chip icon for a target token: window, tab, or (default)
-    // session. Matches the window/tab/pane glyphs used elsewhere (the
-    // Companion app's session tree): macwindow / folder / terminal.
-    private func symbolName(forToken token: String) -> String {
-        if token.hasPrefix("win:") {
-            return SFSymbol.macwindow.rawValue
-        }
-        if token.hasPrefix("tab:") {
-            return SFSymbol.folder.rawValue
-        }
-        return SFSymbol.terminal.rawValue
-    }
-
     // Replace the first at-mention run with an atomic chip token.
-    private func insertMention(guid: String, displayName: String) {
+    private func insertMention(_ choice: ChatMentionPickerController.Choice) {
         guard let range = firstMentionContext()?.range ?? activeMentionRange else { return }
         let font = profileASCIIFont()
         let mention = NSMutableAttributedString(
             attributedString: ChatSessionMentionAttachment.attributedString(
-                guid: guid,
-                displayName: displayName,
+                guid: choice.guid,
+                displayName: choice.displayName,
                 font: font,
                 color: NSColor.linkColor,
-                symbolName: symbolName(forToken: guid)))
+                symbolName: choice.symbolName))
         mention.append(NSAttributedString(string: " ",
                                           attributes: [.font: font, .foregroundColor: NSColor.labelColor]))
         composerVC.replace(range, with: mention)
@@ -1066,68 +1281,150 @@ class CockpitWindowController: NSWindowController {
 
     // MARK: - Two-way binding: composer @-mentions <-> row selection
 
-    // The sessions currently @-mentioned as chips in the composer, in
-    // document order, deduped.
-    // The target tokens currently @-mentioned as chips (the chip guid,
-    // e.g. a session stableID, "tab:<uid>", or "win:<guid>"), in
-    // document order, deduped.
-    private func composerTokens() -> [String] {
-        let attr = composerVC.attributedStringValue
-        var tokens: [String] = []
-        var seen = Set<String>()
-        attr.enumerateAttribute(.attachment,
-                                in: NSRange(location: 0, length: attr.length)) { value, _, _ in
-            if let mention = value as? ChatSessionMentionAttachment, seen.insert(mention.guid).inserted {
-                tokens.append(mention.guid)
-            }
-        }
-        return tokens
-    }
-
     // The (token, display name) targets for the current row selection. A
     // window or tab row is a single container target; a session row is a
     // session target; a status/workgroup group expands to its sessions.
     private func selectedTargets() -> [(token: String, name: String)] {
-        let controller = iTermController.sharedInstance()
         var out: [(token: String, name: String)] = []
         var seen = Set<String>()
-        func add(_ token: String, _ name: String) {
-            if seen.insert(token).inserted {
-                out.append((token, name))
-            }
-        }
         for index in outlineView.selectedRowIndexes {
             guard let row = outlineView.item(atRow: index) as? CockpitRow else { continue }
-            switch row.kind {
-            case .window(let guid):
-                add("win:\(guid)", row.title)
-            case .tab(let uniqueId):
-                add("tab:\(uniqueId)", row.title)
-            case .session(let guid):
-                if let session = controller?.anySession(withGUID: guid) {
-                    add(session.stableID, ChatMentionDisplay.displayName(for: session))
-                }
-            case .group, .buriedRoot, .workgroup:
-                var guids: [String] = []
-                var innerSeen = Set<String>()
-                collectSessionGuids(row, into: &guids, seen: &innerSeen)
-                for guid in guids {
-                    if let session = controller?.anySession(withGUID: guid) {
-                        add(session.stableID, ChatMentionDisplay.displayName(for: session))
-                    }
-                }
+            for target in targets(for: row) where seen.insert(target.token).inserted {
+                out.append(target)
             }
         }
         return out
     }
 
+    // The (token, display name) targets one row stands for when selected.
+    private func targets(for row: CockpitRow) -> [(token: String, name: String)] {
+        let controller = iTermController.sharedInstance()
+        switch row.kind {
+        case .window(let guid):
+            return [("win:\(guid)", row.title)]
+        case .tab(let uniqueId):
+            return [("tab:\(uniqueId)", row.title)]
+        case .session(let guid):
+            guard let session = controller?.anySession(withGUID: guid) else {
+                return []
+            }
+            return [(session.stableID, ChatMentionDisplay.displayName(for: session))]
+        case .group, .buriedRoot, .workgroup:
+            var guids: [String] = []
+            var innerSeen = Set<String>()
+            collectSessionGuids(row, into: &guids, seen: &innerSeen)
+            return guids.compactMap { guid in
+                controller?.anySession(withGUID: guid).map {
+                    ($0.stableID, ChatMentionDisplay.displayName(for: $0))
+                }
+            }
+        }
+    }
+
+    // The composer's chips as (token, display name), in document order,
+    // deduped. The token is the chip guid, e.g. a session stableID,
+    // "tab:<uid>", or "win:<guid>".
+    private func composerChipTargets() -> [(token: String, name: String)] {
+        let attr = composerVC.attributedStringValue
+        var out: [(token: String, name: String)] = []
+        var seen = Set<String>()
+        attr.enumerateAttribute(.attachment,
+                                in: NSRange(location: 0, length: attr.length)) { value, _, _ in
+            if let mention = value as? ChatSessionMentionAttachment, seen.insert(mention.guid).inserted {
+                out.append((mention.guid, mention.displayName))
+            }
+        }
+        return out
+    }
+
+    // Tokens whose chips a selection change may replace. Pass
+    // includingSelectionChips only for a selection change the user made.
+    private func releasableTokens(includingSelectionChips: Bool) -> Set<String> {
+        var visibleRows: [(identity: CockpitRow.Identity, ownTokens: [String])] = []
+        for index in 0..<outlineView.numberOfRows {
+            guard let row = outlineView.item(atRow: index) as? CockpitRow else { continue }
+            switch row.kind {
+            case .window, .tab, .session:
+                visibleRows.append((row.identity, targets(for: row).map { $0.token }))
+            case .group, .buriedRoot, .workgroup:
+                visibleRows.append((row.identity, []))
+            }
+        }
+        return Self.releasableTokens(visibleRows: visibleRows,
+                                     selected: capturedSelectedIdentities(),
+                                     lastSelection: lastSelection,
+                                     selectionChips: includingSelectionChips ? selectionChips : [])
+    }
+
+    // Every target with its own row on screen (the user can see it and
+    // chose not to select it), plus the targets of previously selected
+    // rows that are still on screen but no longer selected (clicking away
+    // from a collapsed workgroup releases its hidden sessions). A
+    // previously selected row that is now hidden releases nothing: the
+    // user didn't deselect it, so its chip stays like any hidden chip,
+    // unless it's in `selectionChips` (the chip came from a row the user
+    // selected) and the user replaced the selection: a click retargets.
+    // A replacement selects a row that wasn't selected before and either
+    // starts from nothing or drops a visible row that was. Removing rows
+    // (collapsing a group that holds selected rows) or adding to the
+    // selection (Cmd-click) replaces nothing. lastSelection can include
+    // rows a refresh hid since, which the user didn't drop, so only
+    // visible ones count.
+    static func releasableTokens<ID: Hashable>(visibleRows: [(identity: ID, ownTokens: [String])],
+                                               selected: Set<ID>,
+                                               lastSelection: [ID: [String]],
+                                               selectionChips: Set<String> = []) -> Set<String> {
+        var result = Set<String>()
+        var visible = Set<ID>()
+        for row in visibleRows {
+            visible.insert(row.identity)
+            result.formUnion(row.ownTokens)
+        }
+        for (identity, tokens) in lastSelection
+        where visible.contains(identity) && !selected.contains(identity) {
+            result.formUnion(tokens)
+        }
+        let previous = Set(lastSelection.keys).intersection(visible)
+        let gainedRow = !selected.isSubset(of: previous)
+        let isAddition = !previous.isEmpty && previous.isSubset(of: selected)
+        if gainedRow && !isAddition {
+            result.formUnion(selectionChips)
+        }
+        return result
+    }
+
+    // The chips that came from the outline selection after a selection
+    // change the user made: earlier ones still in the composer plus the
+    // newly selected rows' chips. Typed chips never join.
+    static func selectionChipTokens(previous: Set<String>,
+                                    chips: [String],
+                                    selected: [String]) -> Set<String> {
+        return previous.intersection(chips).union(Set(selected).intersection(chips))
+    }
+
+    // Remember what each selected row contributed, so the next selection
+    // change knows which hidden chips came from a row the user deselected.
+    private func rememberSelection() {
+        var remembered: [CockpitRow.Identity: [String]] = [:]
+        for index in outlineView.selectedRowIndexes {
+            guard let row = outlineView.item(atRow: index) as? CockpitRow else { continue }
+            remembered[row.identity] = targets(for: row).map { $0.token }
+        }
+        lastSelection = remembered
+    }
+
     // Composer chips changed -> select the rows those targets name. Only
-    // acts when the target set actually differs, so a container-row
-    // selection whose expansion matches isn't needlessly rewritten.
+    // acts when the chips and the selection disagree, so a container-row
+    // selection whose expansion matches isn't needlessly rewritten, and a
+    // chip whose row is hidden doesn't count as a disagreement.
     fileprivate func syncSelectionFromComposer() {
         guard !isSyncingTargets else { return }
-        let chips = Set(composerTokens())
-        guard chips != Set(selectedTargets().map { $0.token }) else { return }
+        let existing = composerChipTargets()
+        let chips = Set(existing.map { $0.token })
+        let consistent = Self.composerTargets(existing: existing,
+                                              selected: selectedTargets(),
+                                              releasable: releasableTokens(includingSelectionChips: false))
+        guard chips != Set(consistent.map { $0.token }) else { return }
         let controller = iTermController.sharedInstance()
         var desired = IndexSet()
         for row in 0..<outlineView.numberOfRows {
@@ -1153,16 +1450,62 @@ class CockpitWindowController: NSWindowController {
     }
 
     // Row selection changed -> rewrite the composer's chips to match,
-    // preserving the typed command. Only fires when the target set
-    // actually differs, so it never clobbers the command or caret on a
-    // no-op reselection.
+    // preserving the typed command. Chips the user couldn't have
+    // deselected (their rows are collapsed, filtered out, or not shown in
+    // this grouping) are kept. Only fires when the chip set actually
+    // differs, so it never clobbers the command or caret on a no-op
+    // reselection.
     fileprivate func syncComposerFromSelection() {
         guard !isSyncingTargets else { return }
-        let targets = selectedTargets()
-        guard Set(targets.map { $0.token }) != Set(composerTokens()) else { return }
+        let existing = composerChipTargets()
+        let desired = Self.composerTargets(existing: existing,
+                                           selected: selectedTargets(),
+                                           releasable: releasableTokens(includingSelectionChips: true))
+        guard Set(desired.map { $0.token }) != Set(existing.map { $0.token }) else { return }
         isSyncingTargets = true
-        setComposerMentions(targets)
+        setComposerMentions(desired)
         isSyncingTargets = false
+    }
+
+    // After a refresh: the composer's chips minus any whose target no
+    // longer exists, or nil if every chip still resolves (the common
+    // case, which leaves the composer and its caret alone).
+    static func composerTargetsDroppingUnresolvable(
+        existing: [(token: String, name: String)],
+        isResolvable: (String) -> Bool) -> [(token: String, name: String)]? {
+        let kept = existing.filter { isResolvable($0.token) }
+        return kept.count == existing.count ? nil : kept
+    }
+
+    // A refresh doesn't rewrite the composer from the selection (rows
+    // moving between groups transiently lose it), but a chip for a
+    // session, tab, or window that went away is dropped so the next send
+    // doesn't fail on an unknown target.
+    fileprivate func dropComposerChipsForVanishedTargets() {
+        guard let desired = Self.composerTargetsDroppingUnresolvable(
+            existing: composerChipTargets(),
+            isResolvable: { token in
+                !sessions(forToken: "@" + token).isEmpty
+            }) else {
+            return
+        }
+        isSyncingTargets = true
+        setComposerMentions(desired)
+        isSyncingTargets = false
+    }
+
+    // The chips the composer should hold after the row selection changes.
+    // A click retargets: the selected rows' targets replace any chip in
+    // `releasable` (targets the user could see and didn't select). Other
+    // chips stay, ahead of the selection, in their original order.
+    static func composerTargets(existing: [(token: String, name: String)],
+                                selected: [(token: String, name: String)],
+                                releasable: Set<String>) -> [(token: String, name: String)] {
+        let selectedTokens = Set(selected.map { $0.token })
+        let kept = existing.filter {
+            !releasable.contains($0.token) && !selectedTokens.contains($0.token)
+        }
+        return kept + selected
     }
 
     // Replace the composer's contents with chips for `targets` (in
@@ -1796,7 +2139,17 @@ extension CockpitWindowController: NSOutlineViewDataSource, NSOutlineViewDelegat
 
     func outlineViewSelectionDidChange(_ notification: Notification) {
         updateNotifyToolbarItem()
+        guard !isRefreshingOutline else { return }
+        // isSyncingTargets is set when typing a chip selected the row;
+        // only a selection the user made marks chips as selection chips.
+        let userChangedSelection = !isSyncingTargets
         syncComposerFromSelection()
+        if userChangedSelection {
+            selectionChips = Self.selectionChipTokens(previous: selectionChips,
+                                                      chips: composerChipTargets().map { $0.token },
+                                                      selected: selectedTargets().map { $0.token })
+        }
+        rememberSelection()
     }
 
     func outlineView(_ outlineView: NSOutlineView,
@@ -1920,6 +2273,10 @@ extension CockpitWindowController {
         let oldRowCache = rowCache
         let previouslySelected = capturedSelectedIdentities()
         let previouslyExpanded = capturedExpandedIdentities()
+        isRefreshingOutline = true
+        defer {
+            isRefreshingOutline = false
+        }
         rebuildRows()
         let newShape = snapshotTreeShape(of: rootRows)
         applyDiff(from: oldShape,
@@ -1930,6 +2287,7 @@ extension CockpitWindowController {
                                        newShape: newShape,
                                        previouslyExpanded: previouslyExpanded)
         restoreSelection(previouslySelected: previouslySelected)
+        dropComposerChipsForVanishedTargets()
         updateStatusFilter()
         // With a filter active the surviving matches must be visible, so
         // expand every container (otherwise a collapsed window hides the
@@ -2314,7 +2672,8 @@ extension CockpitWindowController {
     // Backstop after diffable updates: covers the edge case where a
     // selected session row changes parent (state transition) within a
     // single refresh. NSOutlineView preserves selection for items that
-    // don't move, but a moveItem clears the row's selection state.
+    // don't move, but removing a row from one parent and inserting it
+    // under another (how applyDiff moves it) clears its selection.
     private func capturedSelectedIdentities() -> Set<CockpitRow.Identity> {
         var selected: Set<CockpitRow.Identity> = []
         for rowIndex in outlineView.selectedRowIndexes {
@@ -2789,6 +3148,9 @@ extension CockpitWindowController: iTermMinimalComposerViewControllerDelegate {
     // routed to the first at-mentioned run.
     func minimalComposerTextDidChange(_ composer: iTermMinimalComposerViewController) {
         updateMentionPicker()
+        // A chip the user deleted is no longer a selection chip, so typing
+        // it again later makes it a typed chip.
+        selectionChips.formIntersection(composerChipTargets().map { $0.token })
         syncSelectionFromComposer()
     }
 
@@ -2799,11 +3161,17 @@ extension CockpitWindowController: iTermMinimalComposerViewControllerDelegate {
                          sendCommand command: String,
                          addNewline: Bool,
                          dismiss: Bool) {
-        if command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        switch Self.composerSendRequest(command: command, addNewline: addNewline, dismiss: dismiss) {
+        case .cancel:
+            if mentionPicker.isVisible {
+                dismissedMentionLocation = activeMentionRange?.location
+            }
             mentionPicker.hide()
-            return
+        case .wholeField:
+            sendCommandFieldContents()
+        case .selection(let selectedText):
+            sendCommandFieldContents(selectedText: selectedText)
         }
-        sendCommandFieldContents()
     }
 
     func minimalComposer(_ composer: iTermMinimalComposerViewController,
@@ -2817,6 +3185,14 @@ extension CockpitWindowController: iTermMinimalComposerViewControllerDelegate {
     // navigation drives the list instead of the text.
     func minimalComposerHandleKeyDown(_ event: NSEvent) -> Bool {
         guard mentionPicker.isVisible else { return false }
+        // The caret may have moved off the @-run (a click or an arrow key
+        // doesn't change the text), so the picker is stale: close it and
+        // let the key do what it normally does.
+        guard firstMentionContext() != nil else {
+            activeMentionRange = nil
+            mentionPicker.hide()
+            return false
+        }
         switch event.specialKey {
         case NSEvent.SpecialKey.upArrow:
             mentionPicker.moveSelectionUp()
@@ -2892,6 +3268,94 @@ extension CockpitWindowController: iTermMinimalComposerViewControllerDelegate {
     func minimalComposer(_ composer: iTermMinimalComposerViewController,
                          fetchSuggestions request: SuggestionRequest,
                          byUserRequest: Bool) {}
+}
+
+// The Cockpit panel floats above iTerm2's windows, so it would cover a
+// sheet on a terminal window (an alert asking to confirm Broadcast Input,
+// say), hiding its buttons. While another window has a sheet up, drop the
+// panel to the normal level just behind that window; put it back when no
+// other window has a sheet. App-modal alerts already sit above floating
+// panels, so only sheets need this.
+final class CockpitSheetLevelGuard {
+    private weak var panel: NSWindow?
+    private let floatingLevel: NSWindow.Level
+    private let notificationCenter: NotificationCenter
+    // Windows other than `excluding` that currently show a sheet.
+    private let windowsWithSheets: (_ excluding: NSWindow) -> [NSWindow]
+    private var observers: [NSObjectProtocol] = []
+
+    init(panel: NSWindow,
+         notificationCenter: NotificationCenter = .default,
+         windowsWithSheets: @escaping (_ excluding: NSWindow) -> [NSWindow] = CockpitSheetLevelGuard.visibleWindowsWithSheets) {
+        self.panel = panel
+        self.floatingLevel = panel.level
+        self.notificationCenter = notificationCenter
+        self.windowsWithSheets = windowsWithSheets
+        observers.append(notificationCenter.addObserver(forName: NSWindow.willBeginSheetNotification,
+                                                        object: nil,
+                                                        queue: nil) { [weak self] notification in
+            self?.sheetWillBegin(on: notification.object as? NSWindow)
+        })
+        observers.append(notificationCenter.addObserver(forName: NSWindow.didEndSheetNotification,
+                                                        object: nil,
+                                                        queue: nil) { [weak self] notification in
+            self?.sheetDidEnd(on: notification.object as? NSWindow)
+        })
+        // A window that closes with its sheet up may never report the
+        // sheet ending, so check again once it's gone.
+        observers.append(notificationCenter.addObserver(forName: NSWindow.willCloseNotification,
+                                                        object: nil,
+                                                        queue: nil) { [weak self] notification in
+            guard let closing = notification.object as? NSWindow else {
+                return
+            }
+            DispatchQueue.main.async {
+                self?.restoreLevelIfNoSheets(excluding: closing)
+            }
+        })
+    }
+
+    deinit {
+        for observer in observers {
+            notificationCenter.removeObserver(observer)
+        }
+    }
+
+    static func visibleWindowsWithSheets(excluding window: NSWindow) -> [NSWindow] {
+        return NSApp.windows.filter { $0 !== window && $0.attachedSheet != nil && $0.isVisible }
+    }
+
+    private func sheetWillBegin(on parent: NSWindow?) {
+        guard let panel, let parent, parent !== panel, parent.sheetParent !== panel else {
+            return
+        }
+        DLog("Cockpit: a sheet is beginning on \(parent); lowering the panel")
+        panel.level = .normal
+        if panel.isVisible && parent.isVisible {
+            panel.order(.below, relativeTo: parent.windowNumber)
+        }
+    }
+
+    private func sheetDidEnd(on parent: NSWindow?) {
+        guard let panel, let parent, parent !== panel, parent.sheetParent !== panel else {
+            return
+        }
+        restoreLevelIfNoSheets(excluding: parent)
+    }
+
+    // Float again unless a window other than `window` (whose sheet ended,
+    // or which closed) still shows a sheet.
+    func restoreLevelIfNoSheets(excluding window: NSWindow) {
+        guard let panel, panel.level != floatingLevel else {
+            return
+        }
+        let remaining = windowsWithSheets(window).filter { $0 !== panel && $0.sheetParent !== panel }
+        guard remaining.isEmpty else {
+            return
+        }
+        DLog("Cockpit: no sheets remain; restoring the panel's level")
+        panel.level = floatingLevel
+    }
 }
 
 // A do-nothing syntax highlighter for the cockpit composer, which has

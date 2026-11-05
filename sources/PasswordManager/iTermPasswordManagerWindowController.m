@@ -23,7 +23,7 @@
 #import "NSTextField+iTerm.h"
 #import "NSWindow+iTerm.h"
 
-static NSString *const kPasswordManagersShouldReloadData = @"kPasswordManagersShouldReloadData";
+NSString *const kPasswordManagersShouldReloadData = @"kPasswordManagersShouldReloadData";
 // Looks nice and is unlikely to be used already
 static NSString *const iTermPasswordManagerAccountNameUserNameSeparator = @"\u2002—\u2002";
 NSString *const iTermPasswordManagerDidLoadAccounts = @"iTermPasswordManagerDidLoadAccounts";
@@ -121,6 +121,7 @@ typedef NS_ENUM(NSUInteger, iTermPasswordManagerReload) {
     NSMenuItemValidation,
     NSMenuDelegate>
 @property (nonatomic, class, strong) NSArray<NSString *> *cachedCombinedAccountNames;
+@property (nonatomic, readonly) BOOL isUnlocked;
 @end
 
 @implementation iTermPasswordManagerWindowController {
@@ -174,6 +175,10 @@ typedef NS_ENUM(NSUInteger, iTermPasswordManagerReload) {
     NSInteger _cancelCount;
     BOOL _awakeFromNibAvailabilityCheckFailed;
     iTermPasswordManagerReload _reloadPolicy;
+    // Whether this window may show account data, given its own authentication.
+    iTermPasswordManagerOpenGate *_openGate;
+    // Whether this open has already closed, so a lock doesn't close it a second time.
+    BOOL _closedThisOpen;
 
     @protected
     NSString *_accountNameToSelectAfterAuthentication;
@@ -188,6 +193,23 @@ typedef NS_ENUM(NSUInteger, iTermPasswordManagerReload) {
 }
 
 static NSArray<NSString *> *gTerminalCachedCombinedAccountNames;
+
++ (void)initialize {
+    if (self != [iTermPasswordManagerWindowController class] &&
+        self != [iTermBrowserPasswordManagerWindowController class]) {
+        return;
+    }
+    // The cached account names (shown in the trigger editor, for example) must not outlive
+    // authentication, such as after a screen lock revokes it.
+    Class theClass = self;
+    [[NSNotificationCenter defaultCenter] addObserverForName:iTermPasswordManagerDataSourceProvider.didRevokeAuthenticationNotification
+                                                      object:[self dataSourceProvider]
+                                                       queue:nil
+                                                  usingBlock:^(NSNotification * _Nonnull notification) {
+        DLog(@"Authentication revoked; forget cached account names for %@", theClass);
+        [theClass setCachedCombinedAccountNames:nil];
+    }];
+}
 + (NSArray<NSString *> *)cachedCombinedAccountNames {
     return gTerminalCachedCombinedAccountNames;
 }
@@ -254,10 +276,6 @@ static NSArray<NSString *> *gTerminalCachedCombinedAccountNames;
 }
 
 - (void)awakeFromNib {
-    [[NSDistributedNotificationCenter defaultCenter] addObserver:[self class]
-                                                        selector:@selector(staticScreenDidLock:)
-                                                            name:@"com.apple.screenIsLocked"
-                                                          object:nil];
     [[NSDistributedNotificationCenter defaultCenter] addObserver:self
                                                         selector:@selector(instanceScreenDidLock:)
                                                             name:@"com.apple.screenIsLocked"
@@ -327,7 +345,7 @@ static NSArray<NSString *> *gTerminalCachedCombinedAccountNames;
 // so checkAvailability does not block the main thread. dataSource is the instance that was
 // warmed; the check runs against it rather than a possibly-changed currentDataSource.
 - (void)performInitialAvailabilityCheckForDataSource:(id<PasswordManagerDataSource>)dataSource {
-    if ([[self.class dataSourceProvider] authenticated] &&
+    if (self.isUnlocked &&
         ![dataSource checkAvailability]) {
         _awakeFromNibAvailabilityCheckFailed = YES;
         [self dataSourceDidBecomeUnavailable];
@@ -441,7 +459,7 @@ static NSArray<NSString *> *gTerminalCachedCombinedAccountNames;
 }
 
 - (void)windowDidBecomeKey:(NSNotification *)notification {
-    if (self.dataSourceProvider.authenticated) {
+    if (self.isUnlocked) {
         [[self window] makeFirstResponder:_searchField];
     }
 }
@@ -514,7 +532,7 @@ static NSArray<NSString *> *gTerminalCachedCombinedAccountNames;
         [_tableView selectRowIndexes:[NSIndexSet indexSetWithIndex:index]
                 byExtendingSelection:NO];
         [_tableView scrollRowToVisible:index];
-    } else if (!self.dataSourceProvider.authenticated) {
+    } else if (!self.isUnlocked) {
         RLog(@"set _accountNameToSelectAfterAuthentication to %@", name);
         _accountNameToSelectAfterAuthentication = [name copy];
     } else {
@@ -527,7 +545,7 @@ static NSArray<NSString *> *gTerminalCachedCombinedAccountNames;
 #pragma mark - Keychain
 
 - (void)updateConfiguration {
-    if (self.dataSourceProvider.authenticated) {
+    if (self.isUnlocked) {
         [self reloadAccounts:^{}];
     }
 }
@@ -568,7 +586,7 @@ static NSArray<NSString *> *gTerminalCachedCombinedAccountNames;
 }
 
 - (IBAction)reloadItems:(id)sender {
-    if (!self.dataSourceProvider.authenticated) {
+    if (!self.isUnlocked) {
         return;
     }
     __weak __typeof(self) weakSelf = self;
@@ -582,7 +600,7 @@ static NSArray<NSString *> *gTerminalCachedCombinedAccountNames;
 }
 
 - (IBAction)reloadItemsWithCompletion:(void (^)(void))completion {
-    if (!self.dataSourceProvider.authenticated) {
+    if (!self.isUnlocked) {
         completion();
         return;
     }
@@ -683,6 +701,7 @@ static NSArray<NSString *> *gTerminalCachedCombinedAccountNames;
 }
 
 - (void)orderOutOrEndSheet {
+    _closedThisOpen = YES;
     [self sendWillClose];
     if (self.window.isSheet) {
         [self.window.sheetParent endSheet:self.window];
@@ -791,7 +810,7 @@ static NSArray<NSString *> *gTerminalCachedCombinedAccountNames;
 }
 
 - (IBAction)add:(id)sender {
-    if (!self.dataSourceProvider.authenticated) {
+    if (!self.isUnlocked) {
         return;
     }
     [self ensureNewAccountPanel];
@@ -1051,7 +1070,7 @@ static NSArray<NSString *> *gTerminalCachedCombinedAccountNames;
 }
 
 - (IBAction)remove:(id)sender {
-    if (self.dataSourceProvider.authenticated) {
+    if (self.isUnlocked) {
         NSInteger selectedRow = [_tableView selectedRow];
         if (selectedRow < 0 || selectedRow >= _entries.count) {
             return;
@@ -1308,7 +1327,7 @@ static NSArray<NSString *> *gTerminalCachedCombinedAccountNames;
 
 - (void)enterUsername {
     DLog(@"enterUserName");
-    if (!self.dataSourceProvider.authenticated) {
+    if (!self.isUnlocked) {
         return;
     }
     NSString *userName = [self selectedUserName];
@@ -1323,6 +1342,7 @@ static NSArray<NSString *> *gTerminalCachedCombinedAccountNames;
 }
 
 - (void)closeOrEndSheet {
+    _closedThisOpen = YES;
     [self sendWillClose];
     if (self.window.isSheet) {
         DLog(@"Ask parent to end sheet");
@@ -1557,6 +1577,26 @@ static NSArray<NSString *> *gTerminalCachedCombinedAccountNames;
     return [[RecipeExecutionContext alloc] initWithWindow:self.window];
 }
 
+- (BOOL)isBrowserPasswordManager {
+    return self.dataSourceProvider == [iTermPasswordManagerDataSourceProvider forBrowser];
+}
+
+- (IBAction)exportPasswords:(id)sender {
+    if (!self.isUnlocked || !self.dataSourceProvider.keychainEnabled) {
+        return;
+    }
+    [iTermPasswordArchiveController exportPasswordsForBrowser:[self isBrowserPasswordManager]
+                                                       window:self.window];
+}
+
+- (IBAction)importPasswords:(id)sender {
+    if (!self.isUnlocked || !self.dataSourceProvider.keychainEnabled) {
+        return;
+    }
+    // The import posts kPasswordManagersShouldReloadData, which reloads this window.
+    [iTermPasswordArchiveController importPasswordsWithWindow:self.window completion:nil];
+}
+
 - (IBAction)switchAccount:(id)sender {
     [[self currentDataSource] switchAccountWithCompletion:^{
         [self reloadItems:nil];
@@ -1564,7 +1604,7 @@ static NSArray<NSString *> *gTerminalCachedCombinedAccountNames;
 }
 
 - (IBAction)appendOTP:(id)sender {
-    if (!self.dataSourceProvider.authenticated) {
+    if (!self.isUnlocked) {
         return;
     }
     id<PasswordManagerAccount> account = [self clickedAccount];
@@ -1753,7 +1793,7 @@ static NSInteger const kDynamicMenuItemTag = 9999;
 }
 
 - (BOOL)validateMenuItem:(NSMenuItem *)menuItem {
-    if (!self.dataSourceProvider.authenticated) {
+    if (!self.isUnlocked) {
         return NO;
     }
     if (menuItem.action == @selector(selectAuthenticationMode:)) {
@@ -1805,7 +1845,12 @@ static NSInteger const kDynamicMenuItemTag = 9999;
         menuItem.state = [iTermUserDefaults shouldSendReturnAfterPassword] ? NSControlStateValueOn : NSControlStateValueOff;
         return YES;
     } else if (menuItem.action == @selector(switchAccount:)) {
-        return self.dataSourceProvider.authenticated && [[self currentDataSource] supportsMultipleAccounts];
+        return self.isUnlocked && [[self currentDataSource] supportsMultipleAccounts];
+    } else if (menuItem.action == @selector(exportPasswords:) ||
+               menuItem.action == @selector(importPasswords:)) {
+        // Only Keychain passwords are exported and imported. Other password managers have their
+        // own export, and importing into a keychain this window isn't showing would be confusing.
+        return self.isUnlocked && self.dataSourceProvider.keychainEnabled;
     }
     return YES;
 }
@@ -1825,19 +1870,25 @@ static NSInteger const kDynamicMenuItemTag = 9999;
 
 #pragma mark - Notifications
 
-+ (void)staticScreenDidLock:(NSNotification *)notification {
+// The data source provider revokes its cached authentication on screen lock itself, since
+// authentication can be obtained without this window ever being opened.
+- (void)instanceScreenDidLock:(NSNotification *)notification {
     if ([iTermPasswordManagerDataSourceProvider requiresAuthenticationAfterScreenLock]) {
-        [self.dataSourceProvider revokeAuthentication];
+        [self closeIfOpen];
     }
 }
 
-- (void)instanceScreenDidLock:(NSNotification *)notification {
-    if ([iTermPasswordManagerDataSourceProvider requiresAuthenticationAfterScreenLock]) {
-        for (NSWindow *sheet in [self.window.sheets copy]) {
-            [self.window endSheet:sheet];
-        }
-        [self closeCurrentSession:nil];
+// Ends any sheets on this window (such as an account editor) and closes it. Does nothing
+// if this open already closed, since a screen lock may also have closed it through its gate.
+// This tracks the open rather than window state, which is also hidden while the app is.
+- (void)closeIfOpen {
+    if (!self.isWindowLoaded || _closedThisOpen) {
+        return;
     }
+    for (NSWindow *sheet in [self.window.sheets copy]) {
+        [self.window endSheet:sheet];
+    }
+    [self closeCurrentSession:nil];
 }
 
 #pragma mark - Private
@@ -1846,17 +1897,86 @@ static NSInteger const kDynamicMenuItemTag = 9999;
     return self.class.dataSource;
 }
 
-- (void)authenticate {
+// The provider's authentication outlives this window, but in every-open mode it does not
+// count until this window's own prompt succeeds. Until then the window shows no accounts.
+- (BOOL)isUnlocked {
+    return _openGate.unlocked;
+}
+
+// Starts a new open: replaces the gate and requests authentication if this open needs it.
+// Returns YES if authentication was requested; its completion loads the accounts.
+- (BOOL)authenticate {
     DLog(@"Request auth if possible");
-    if (self.dataSourceProvider.authenticated && self.dataSourceProvider.mayReuseAuthenticationOnOpen) {
+    _closedThisOpen = NO;
+    iTermPasswordManagerOpenGate *gate = [[iTermPasswordManagerOpenGate alloc] initWithProvider:self.dataSourceProvider];
+    _openGate = gate;
+    __weak __typeof(self) weakSelf = self;
+    __weak iTermPasswordManagerOpenGate *weakGate = gate;
+    gate.didLock = ^{
+        [weakSelf openGateDidLock:weakGate];
+    };
+    if (!gate.needsAuthentication) {
         DLog(@"Already authenticated");
-        return;
+        return NO;
     }
 
-    __weak __typeof(self) weakSelf = self;
+    // Rows, and the search text (which may be an account name), from an earlier open must
+    // not show while this open authenticates.
+    [self clearAccounts];
+    if (self.isWindowLoaded) {
+        _searchField.stringValue = @"";
+        _twoFactorCode.stringValue = @"";
+    }
     [self.dataSourceProvider requestAuthenticationIfNeeded:^(BOOL authenticated) {
-        [weakSelf authenticationDidComplete:authenticated];
+        [weakSelf openAuthenticationDidComplete:authenticated gate:gate];
     }];
+    return YES;
+}
+
+- (void)openAuthenticationDidComplete:(BOOL)success gate:(iTermPasswordManagerOpenGate *)gate {
+    if (gate != _openGate) {
+        // A prompt from an earlier open of this window finished after it was reopened.
+        // The current open has its own prompt; this result does not count for it.
+        DLog(@"Ignore authentication result for a stale open");
+        return;
+    }
+    [_openGate authenticationDidComplete:success];
+    [self authenticationDidComplete:success];
+}
+
+// Authentication was revoked (a failed or cancelled prompt from any window, or a screen
+// lock) while this window was unlocked. Stop showing the rows it already loaded and close
+// it, as a screen lock does, so the next open authenticates again.
+- (void)openGateDidLock:(iTermPasswordManagerOpenGate *)gate {
+    if (gate != _openGate) {
+        return;
+    }
+    DLog(@"Open gate locked. Clear accounts and close.");
+    [self clearAccounts];
+    [self closeIfOpen];
+}
+
+- (void)clearAccounts {
+    if (!self.isWindowLoaded) {
+        return;
+    }
+    // A fetch still in flight checks isUnlocked when it finishes, so it can't refill the table.
+    [self setAccounts:@[] filtered:@[]];
+}
+
+- (BOOL)isOpen {
+    return !_closedThisOpen;
+}
+
+- (void)reopen {
+    DLog(@"Reopen");
+    // A name saved by an earlier open that never authenticated must not be selected now.
+    _accountNameToSelectAfterAuthentication = nil;
+    // authenticate clears the rows if this open must prompt. Otherwise the mode lets the
+    // earlier unlock be reused, so keep showing them while they reload.
+    if (![self authenticate]) {
+        [self reloadAccounts:^{}];
+    }
 }
 
 - (void)authenticationDidComplete:(BOOL)success {
@@ -1909,7 +2029,7 @@ static NSInteger const kDynamicMenuItemTag = 9999;
 
 - (void)fetchPasswordForRow:(NSInteger)index completion:(void (^)(NSString *password, NSString *otp))completion {
     DLog(@"row=%@", @(index));
-    if (!self.dataSourceProvider.authenticated) {
+    if (!self.isUnlocked) {
         DLog(@"passwordForRow: return nil, not authenticated");
         completion(nil, nil);
         return;
@@ -1969,7 +2089,7 @@ static NSInteger const kDynamicMenuItemTag = 9999;
 
 - (NSString *)selectedUserName {
     DLog(@"selectedUserName");
-    if (!self.dataSourceProvider.authenticated) {
+    if (!self.isUnlocked) {
         DLog(@"selectedUserName: return nil, not authenticated");
         return nil;
     }
@@ -2063,15 +2183,20 @@ static NSInteger const kDynamicMenuItemTag = 9999;
     }
 
     NSString *filter = [_searchField stringValue];
-    if (self.dataSourceProvider.authenticated) {
+    if (self.isUnlocked) {
         __weak __typeof(self) weakSelf = self;
         const NSInteger cancelCount = [self incrBusy];
         [self.class fetchAccountsWithWindow:self.window
                                  completion:^(NSArray<id<PasswordManagerAccount>> *accounts) {
             [weakSelf ifCancelCountUnchanged:cancelCount perform:^{
                 [weakSelf decrBusy];
-                [weakSelf setAccounts:accounts
-                             filtered:[weakSelf accounts:accounts filteredBy:filter]];
+                if (!weakSelf.isUnlocked) {
+                    // Locked while the fetch was in flight.
+                    [weakSelf setAccounts:@[] filtered:@[]];
+                } else {
+                    [weakSelf setAccounts:accounts
+                                 filtered:[weakSelf accounts:accounts filteredBy:filter]];
+                }
                 completion();
             }];
         }];
@@ -2332,6 +2457,7 @@ dataCellForTableColumn:(NSTableColumn *)tableColumn
 #pragma mark - NSWindowDelegate
 
 - (void)windowWillClose:(NSNotification *)notification {
+    _closedThisOpen = YES;
     _twoFactorCode.stringValue = @"";
     [_tableView reloadData];
     [self sendWillClose];
@@ -2404,7 +2530,7 @@ static NSArray<NSString *> *gBrowserCachedCombinedAccountNames;
 }
 
 - (void)reallySelectAccountName:(NSString *)name {
-    if (!self.dataSourceProvider.authenticated) {
+    if (!self.isUnlocked) {
         RLog(@"set _accountNameToSelectAfterAuthentication to %@", name);
         _accountNameToSelectAfterAuthentication = [name copy];
         return;

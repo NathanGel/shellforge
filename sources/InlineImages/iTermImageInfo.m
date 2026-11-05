@@ -102,8 +102,9 @@ NSString *const iTermImageDidLoad = @"iTermImageDidLoad";
             queue = dispatch_queue_create("com.iterm2.LazyImageDecoding", DISPATCH_QUEUE_SERIAL);
         });
 
+        // `blocks` is shared by every instance, so it has a lock of its own.
         if (!_dictionary) {
-            @synchronized (self) {
+            @synchronized (blocks) {
                 if (_queuedBlock) {
                     // Move to the head of the queue.
                     NSUInteger index = [blocks indexOfObjectIdenticalTo:_queuedBlock];
@@ -123,24 +124,29 @@ NSString *const iTermImageDidLoad = @"iTermImageDidLoad";
             // This is a slow operation that blocks for a long time.
             iTermImage *image = [iTermImage imageWithCompressedData:self->_data];
             dispatch_sync(dispatch_get_main_queue(), ^{
-                self->_queuedBlock = nil;
-                self->_animatedImage = [[iTermAnimatedImageInfo alloc] initWithImage:image];
-                if (!self->_animatedImage) {
-                    self->_image = image;
+                // The getters read these under the same lock, from any thread.
+                BOOL loaded;
+                @synchronized (self) {
+                    self->_queuedBlock = nil;
+                    self->_animatedImage = [[iTermAnimatedImageInfo alloc] initWithImage:image];
+                    if (!self->_animatedImage) {
+                        self->_image = image;
+                    }
+                    loaded = (self->_image || self->_animatedImage);
                 }
-                if (self->_image || self->_animatedImage) {
+                if (loaded) {
                     RLog(@"Loaded %@", self.uniqueIdentifier);
                     [[NSNotificationCenter defaultCenter] postNotificationName:iTermImageDidLoad object:self];
                 }
             });
         };
         _queuedBlock = [block copy];
-        @synchronized(self) {
+        @synchronized(blocks) {
             [blocks insertObject:_queuedBlock atIndex:0];
         }
         dispatch_async(queue, ^{
             void (^blockToRun)(void) = nil;
-            @synchronized(self) {
+            @synchronized(blocks) {
                 blockToRun = [blocks firstObject];
                 [blocks removeObjectAtIndex:0];
             }

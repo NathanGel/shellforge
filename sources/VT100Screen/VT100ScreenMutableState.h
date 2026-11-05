@@ -10,7 +10,11 @@
 #import "VT100ScreenDelegate.h"
 
 @protocol VT100ScreenConfiguration;
+@class iTermByteBudget;
 @class iTermEchoProbe;
+@class iTermFramerFlowLedger;
+@class iTermExecutorUpdateTickerClient;
+@class iTermMutationQueueJoinState;
 @protocol iTermEchoProbeDelegate;
 @protocol iTermLargeContentProvider;
 @protocol iTermOrderedToken;
@@ -18,6 +22,7 @@
 @class TmuxHistory;
 @class iTermEventuallyConsistentIntervalTree;
 @class iTermResilientCoordinate;
+@class iTermResilientCoordinateRange;
 @protocol iTermResilientCoordinateDataSource;
 
 NS_ASSUME_NONNULL_BEGIN
@@ -57,11 +62,25 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, strong, readwrite) iTermOrderEnforcer *setWorkingDirectoryOrderEnforcer;
 @property (atomic, weak, nullable) id<VT100ScreenSideEffectPerforming> sideEffectPerformer;
 @property (nonatomic, readonly) iTermTokenExecutor *tokenExecutor;
+// Any thread. Set once this session becomes a tmux gateway with task I/O monitors, and kept after
+// that (a reattach reuses it). Tmux lines count against it, by their approximate length, from when
+// they are handed to the main queue until main has handled them.
+@property (atomic, strong, nullable) iTermByteBudget *tmuxInputBudget;
+// Set by VT100Screen once, when it creates this, if it owns its queue. Marked when tokens execute,
+// so the executor update (see -forkExecutorUpdate) gets to the main thread. Sessions that share the
+// queue send updates with a timer of their own instead, as they always have.
+@property (atomic, strong, nullable) iTermExecutorUpdateTickerClient *executorUpdateClient;
+// Whether this session's queue is its own rather than the one every session shares.
+@property (nonatomic, readonly) BOOL ownsQueue;
 @property (nonatomic) BOOL exited;
 @property (nonatomic, strong, readonly, nullable) VT100Terminal *terminal;
 @property (nonatomic, strong) iTermEchoProbe *echoProbe;
 @property (nonatomic, weak, nullable) id<iTermEchoProbeDelegate> echoProbeDelegate;
 @property (nullable, nonatomic, strong) VT100ScreenState *mainThreadCopy;
+
+// Any queue. Returns what executed since the last call (bytes, estimated throughput) and starts
+// over.
+- (VT100ScreenTokenExecutorUpdate *)forkExecutorUpdate;
 
 // Saved-tree RC pool: distinct guid from the primary tree so resize /
 // fold / porthole notifications can target only the right tree's
@@ -71,7 +90,14 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nullable, nonatomic, strong) iTermSavedTreeRCDataSource *savedTreeMutationThreadDataSource;
 @property (nullable, nonatomic, strong) iTermSavedTreeRCDataSource *savedTreeMainThreadDataSource;
 
-- (instancetype)initWithSideEffectPerformer:(id<VT100ScreenSideEffectPerforming>)performer NS_DESIGNATED_INITIALIZER;
+// Runs on a mutation queue of its own when task I/O monitors are on, and on the queue every
+// session shares otherwise.
+- (instancetype)initWithSideEffectPerformer:(id<VT100ScreenSideEffectPerforming>)performer;
+// `queue` must come from +[iTermGCD mutationQueue] or +[iTermGCD newMutationQueue]. `ownsQueue`
+// says which: whether `queue` belongs to this session alone rather than being shared by all.
+- (instancetype)initWithSideEffectPerformer:(id<VT100ScreenSideEffectPerforming>)performer
+                                      queue:(dispatch_queue_t)queue
+                                  ownsQueue:(BOOL)ownsQueue NS_DESIGNATED_INITIALIZER;
 - (VT100ScreenState *)copy;
 
 - (iTermEventuallyConsistentIntervalTree *)mutableIntervalTree;
@@ -87,7 +113,15 @@ NS_ASSUME_NONNULL_BEGIN
 
 #pragma mark - Internal
 
-@property (class, atomic, readonly) BOOL performingJoinedBlock;
+// YES while the main queue runs a joined block for this state's mutation queue. Sessions that share
+// a queue share this.
+@property (atomic, readonly) BOOL performingJoinedBlock;
+// The join state of this state's mutation queue. If the queue is shared and gets locked up in a
+// joined block, any VT100ScreenMutableState on it can consider itself joined while on the main
+// thread. This happens when performBlockWithJoinedThreads is reentrant with two different
+// VT100ScreenMutableState objects (for example, when detaching in tmux mode). With a queue of its
+// own, joining another state from inside a join pauses that state's queue too.
+@property (nonatomic, readonly) iTermMutationQueueJoinState *joinState;
 @property (nonatomic) BOOL terminalEnabled;
 @property (nonatomic, readonly) VT100ScreenState *sanitizingAdapter;
 @property (atomic) BOOL performingSideEffect;
@@ -206,6 +240,10 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)eraseScreenAndRemoveSelection;
 - (void)clearFromAbsoluteLineToEnd:(long long)absLine;
 - (void)clearForComposer;
+// Inserts blank rows at the top of the primary screen so the cursor moves toward the bottom row,
+// taking interval tree objects along with their lines. Only empty rows at the bottom are given
+// up, so no content is lost, and scrollback is untouched. Does nothing in the alternate screen.
+- (void)moveScreenContentToBottom;
 - (void)removeLastLine;
 
 void VT100ScreenEraseCell(screen_char_t *sct,
@@ -452,6 +490,14 @@ basedAtAbsoluteLineNumber:(long long)absoluteLineNumber
 @property (nonatomic) BOOL hasMuteCoprocess;
 @property (nonatomic) BOOL suppressAllOutput;
 
+// Shared with the session's conductor, which reads what flow-controlled frames arrived and
+// executed. Set once when the session is created; used on the PTY and mutation threads.
+@property (atomic, strong, nullable) iTermFramerFlowLedger *flowLedger;
+// Set on a workgroup peer's session whose program is a pane of its leader's framer: everything
+// its token executor runs is recorded here, so the leader's flow control learns when this
+// session has consumed the pane's output.
+@property (atomic, strong, nullable) iTermFramerFlowLedger *consumptionLedger;
+
 // Kind of the most-recently-opened OSC 133;A / 133;P. The delegate methods
 // for `terminalCommandDidStart` and friends consult this to decide whether
 // the matching B closes a real command read (.initial) or a non-input
@@ -465,6 +511,12 @@ basedAtAbsoluteLineNumber:(long long)absoluteLineNumber
 // happens between the A and the B doesn't corrupt the recorded coord.
 // nil means "no pending range".
 @property (nonatomic, strong, nullable) iTermResilientCoordinate *pendingNonInitialPromptStart;
+
+// The text in each excluded subrange when its non-initial prompt closed, keyed by the
+// mutation-thread range object. When the command ends, a subrange whose cells no longer hold
+// that text was erased or typed over (e.g., a right prompt hidden by a long command) and is
+// dropped. Keys are weak, so entries go away with the ranges.
+@property (nonatomic, strong, readonly) NSMapTable<iTermResilientCoordinateRange *, NSString *> *excludedSubrangeTexts;
 
 // YES between an initial OSC 133;A and the B that ends that prompt. A B ends
 // the whole prompt, so a B that closes a right or continuation prompt nested
@@ -523,6 +575,7 @@ basedAtAbsoluteLineNumber:(long long)absoluteLineNumber
 - (void)pruneAidRegistry;
 
 - (void)threadedReadTask:(char *)buffer length:(int)length;
+- (void)flushParserAsynchronously;
 - (void)addTokens:(CVector)vector
       lengthTotal:(int)lengthTotal
 lengthExcludingInBandSignaling:(int)lengthExcludingInBandSignaling
@@ -619,7 +672,7 @@ lengthExcludingInBandSignaling:(int)lengthExcludingInBandSignaling
 
 #pragma mark - SSH
 
-- (NSString *)sshEndBannerTerminatingCount:(NSInteger)count newLocation:(NSString *)sshLocation;
+- (NSString *)sshEndBannerTerminatingCount:(NSInteger)count newLocation:(NSString * _Nullable)sshLocation;
 
 #pragma mark - DVR
 
