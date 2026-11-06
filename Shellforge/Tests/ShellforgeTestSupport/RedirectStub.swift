@@ -32,6 +32,9 @@ final class RedirectURLProtocol: URLProtocol {
             next.url = target
             let response = HTTPURLResponse(url: url, statusCode: 302, httpVersion: "HTTP/1.1", headerFields: ["Location": target.absoluteString])!
             client?.urlProtocol(self, wasRedirectedTo: next, redirectResponse: response)
+            // A delegate that refuses the redirect gets the 302 itself, so the load ends at once
+            // instead of waiting out the timeout. When it follows, URLSession has stopped this load.
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
             client?.urlProtocolDidFinishLoading(self)
             return
         }

@@ -1,0 +1,26 @@
+name: Feedback
+description: How Shellforge is working for you.
+title: "[Feedback] "
+labels: ["feedback"]
+body:
+  - type: textarea
+    id: good
+    attributes:
+      label: What’s working well?
+  - type: textarea
+    id: bad
+    attributes:
+      label: What gets in your way?
+  - type: input
+    id: rating
+    attributes:
+      label: How likely are you to keep using Shellforge? (1 to 5)
+  - type: input
+    id: version
+    attributes:
+      label: Shellforge version
+      description: Shellforge › About Shellforge
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version

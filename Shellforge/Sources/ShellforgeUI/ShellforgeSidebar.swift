@@ -17,28 +17,36 @@ public enum ShellforgeSidebar {
     /// its sheet, for the View menu's ⌘B. `hideSidebar` is the header's Hide Sidebar button: ⌃⌘S.
     /// `zoom` is the app's one text size, which every window's sidebar draws at; its sheets, in
     /// panels of their own, stay at `.standard`. `terminalMatch` is the app's one Settings › Core ›
-    /// Terminal switch. `panelCornerRadius`, when given, draws the sidebar as a floating panel with
-    /// those corners (macOS 26); nil draws the classic sidebar.
+    /// Terminal switch. `feedback` is the app's one feedback prompt, and `showFeedback` hands back how
+    /// this sidebar opens the feedback form, for the Help menu. `panelCornerRadius`, when given, draws
+    /// the sidebar as a floating panel with those corners (macOS 26); nil draws the classic sidebar.
     public static func makeView(model: SidebarModel, chooseFolder: @escaping @MainActor () -> String?, hooks: AgentHooksModel,
                                 machine: MachineMonitor, backpack: BackpackController, zoom: SidebarZoom,
-                                terminalMatch: TerminalMatchSettings, panelCornerRadius: CGFloat? = nil,
+                                terminalMatch: TerminalMatchSettings, feedback: FeedbackPrompt, panelCornerRadius: CGFloat? = nil,
                                 showBackpack: @escaping @MainActor (@escaping @MainActor () -> Void) -> Void = { _ in },
+                                showFeedback: @escaping @MainActor (@escaping @MainActor () -> Void) -> Void = { _ in },
                                 hideSidebar: @escaping @MainActor () -> Void = {}) -> NSView {
         let chrome = SidebarChrome()
         chrome.panelCornerRadius = panelCornerRadius
         // The view owns the presenter, which holds the whole sidebar; `showBackpack` gets one that
         // reaches it weakly, so whatever keeps that — ⌘B's registry — never keeps the sidebar.
-        let presenter = BackpackPresenter()
+        let presenter = SheetPresenter()
+        let feedbackPresenter = SheetPresenter()
         let sidebar = SidebarView(model: model, chooseFolder: chooseFolder, hooks: hooks, machine: machine,
-                                  backpack: backpack, terminalMatch: terminalMatch,
+                                  backpack: backpack, terminalMatch: terminalMatch, feedback: feedback,
                                   chrome: chrome, showBackpack: { [weak presenter] present in
             guard let presenter else { return }
             presenter.present = present
             showBackpack { [weak presenter] in presenter?.present?() }
+        }, showFeedback: { [weak feedbackPresenter] present in
+            guard let feedbackPresenter else { return }
+            feedbackPresenter.present = present
+            showFeedback { [weak feedbackPresenter] in feedbackPresenter?.present?() }
         }, hideSidebar: hideSidebar)
         let host = SidebarHostingView(rootView: ZoomedSidebar(zoom: zoom, sidebar: sidebar))
         host.chrome = chrome
         host.backpackPresenter = presenter
+        host.feedbackPresenter = feedbackPresenter
         host.frame = NSRect(x: 0, y: 0, width: width, height: 400)
         // The root view lays the sidebar out by hand. Flexible margins keep its floating inset from
         // becoming a minimum window height when the window's layout engine is engaged.
@@ -182,12 +190,35 @@ final class SidebarHostingView<Content: View>: NSHostingView<Content>, RowHighli
     /// The share of the window's chrome the sidebar draws by.
     var chrome: SidebarChrome?
     /// How this sidebar opens its Backpack sheet: owned here, so it goes with the view.
-    var backpackPresenter: BackpackPresenter?
+    var backpackPresenter: SheetPresenter?
+    /// How this sidebar opens its feedback form.
+    var feedbackPresenter: SheetPresenter?
 }
 
-/// A sidebar's way to open its Backpack sheet, kept by its view (`ShellforgeSidebar.makeView`).
+/// Calls back once when a window closes, unless stopped first: how a sheet learns it was closed
+/// rather than answered. The panel's own buttons stop it.
 @MainActor
-final class BackpackPresenter {
+final class CloseWatch {
+    private var tokens: [NSObjectProtocol] = []
+
+    func start(on windows: [NSWindow?], then closed: @escaping @MainActor () -> Void) {
+        stop()
+        tokens = windows.compactMap { $0 }.map { window in
+            NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.stop(); closed() }
+            }
+        }
+    }
+
+    func stop() {
+        tokens.forEach(NotificationCenter.default.removeObserver)
+        tokens = []
+    }
+}
+
+/// A sidebar's way to open one of its sheets, kept by its view (`ShellforgeSidebar.makeView`).
+@MainActor
+final class SheetPresenter {
     var present: (@MainActor () -> Void)?
 }
 
@@ -200,8 +231,10 @@ struct SidebarView: View {
     let machine: MachineMonitor
     let backpack: BackpackController
     let terminalMatch: TerminalMatchSettings
+    let feedback: FeedbackPrompt
     @ObservedObject var chrome: SidebarChrome
     let showBackpack: @MainActor (@escaping @MainActor () -> Void) -> Void
+    let showFeedback: @MainActor (@escaping @MainActor () -> Void) -> Void
     let hideSidebar: @MainActor () -> Void
     /// The window the sidebar is drawn in, which the Agent hooks panel hangs from.
     @State private var anchor = WindowAnchor()
@@ -212,7 +245,7 @@ struct SidebarView: View {
         VStack(spacing: 0) {
             // With the window's buttons inside the panel, the header is their row, pinned.
             if let controls = chrome.windowControls { header(controls) }
-            SidebarBanners(model: model)
+            SidebarBanners(model: model, feedback: feedback, giveFeedback: presentFeedback)
             List {
                 if chrome.windowControls == nil { header(nil) }
                 ForEach(model.rows) { row in rowView(row) }
@@ -235,7 +268,7 @@ struct SidebarView: View {
         .tint(Palette.accent)
         .background(WindowReader(anchor: anchor))
         // The View menu's ⌘B opens the sheet on the key window's sidebar: this one says how.
-        .onAppear { showBackpack(presentBackpack) }
+        .onAppear { showBackpack(presentBackpack); showFeedback(presentFeedback) }
         // The Tasks menu's keys that need a sheet: shown as the "+" or the row's menu would.
         .onReceive(model.sheetRequests) { request in
             switch request {
@@ -321,6 +354,17 @@ struct SidebarView: View {
         sheet.present(over: anchor.window) { dismiss in BackpackSheet(model: BackpackSheetModel(backpack: backpack), dismiss: dismiss) }
     }
 
+    /// The feedback form, in the sidebar's one panel. Closing its window any other way than its own
+    /// buttons is a cancel, so a send under way stops and the prompt hears it was not sent.
+    private func presentFeedback() {
+        let watch = CloseWatch()
+        sheet.present(over: anchor.window) { dismiss in
+            let model = FeedbackFormModel.live(prompt: feedback) { watch.stop(); dismiss() }
+            watch.start(on: [anchor.window], then: model.cancel)
+            return FeedbackSheet(model: model)
+        }
+    }
+
     /// The Mac card — what Backpack Mode needs from this Mac — in a panel of its own with Done, until
     /// Shellforge has a Settings window to hold it (AiTerm's Settings › Integrations › Mac).
     private func showMacSettings() {
@@ -329,7 +373,7 @@ struct SidebarView: View {
         let environment = model.environmentModel()
         let agentDefaults = model.agentDefaultsModel()
         sheet.present(over: anchor.window) { dismiss in
-            SettingsPanel(backpack: backpack, integrations: integrations, environment: environment, terminalMatch: terminalMatch,
+            SettingsPanel(backpack: backpack, integrations: integrations, environment: environment, terminalMatch: terminalMatch, feedback: feedback,
                           agentDefaults: agentDefaults, close: dismiss)
         }
     }

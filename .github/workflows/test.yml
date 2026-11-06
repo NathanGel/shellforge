@@ -31,6 +31,22 @@ jobs:
         working-directory: api/library/python/iterm2
         run: python -m mypy iterm2/
 
+  feedback-relay-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Run relay tests
+        run: node --test
+        working-directory: Shellforge/feedback-relay
+
   xcode-tests:
     runs-on: xcode-27
     # Disabled 2026-09-17: the committed prebuilt binary deps were built with

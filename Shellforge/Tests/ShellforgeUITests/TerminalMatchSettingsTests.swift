@@ -33,6 +33,7 @@ import SwiftUI
             let backpack = BackpackController(ports: .inert, settings: BackpackSettings(defaults: nil), toast: { _ in })
             let host = NSHostingView(rootView: SettingsPanel(backpack: backpack, integrations: integrations, environment: nil,
                                                              terminalMatch: settings,
+                                                             feedback: FeedbackPrompt(defaults: ScratchDefaults.make(), channel: .dev),
                                                              agentDefaults: AgentDefaultsSettingsModel(agents: [], catalogue: { _ in [] }, remembered: [:],
                                                                                                        defaults: ScratchDefaults.make()),
                                                              close: {}))

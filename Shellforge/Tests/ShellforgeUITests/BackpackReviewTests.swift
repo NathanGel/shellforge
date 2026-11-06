@@ -41,7 +41,7 @@ import Testing
     /// ⌘B opens the sheet on the key window's sidebar, never an arbitrary one, and a closed window
     /// is forgotten.
     @Test func commandBOpensOnTheKeyWindowsSidebarAndForgetsClosedOnes() {
-        let sheets = BackpackSheets()
+        let sheets = WindowSheets()
         final class Opened { var names: [String] = [] }
         let opened = Opened()
         let b = NSObject()

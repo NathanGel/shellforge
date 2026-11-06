@@ -313,6 +313,8 @@ struct TabRowView: View {
 /// what is being done.
 struct SidebarBanners: View {
     @ObservedObject var model: SidebarModel
+    @ObservedObject var feedback: FeedbackPrompt
+    let giveFeedback: () -> Void
 
     var body: some View {
         if let warning = model.environmentWarning {
@@ -330,6 +332,9 @@ struct SidebarBanners: View {
         if let notice = model.notice {
             SidebarBanner(text: notice, tone: .info)
         }
+        if feedback.showsBanner {
+            FeedbackBanner(prompt: feedback, giveFeedback: giveFeedback)
+        }
     }
 }
 
@@ -342,8 +347,6 @@ struct SidebarBanner: View {
     var vertical: CGFloat = Space.snug
     /// An × at the end that clears the banner; none when nil.
     var dismiss: (() -> Void)?
-    @Environment(\.interfaceScale) private var scale
-    @Environment(\.surface) private var surface
 
     /// The notice's text colour: readable on its tinted ground; the colour is the symbol's.
     static func textInk(for tone: Tone) -> Color {
@@ -381,10 +384,25 @@ struct SidebarBanner: View {
     }
 
     var body: some View {
+        NoticeGround(tone: tone, trailing: trailing, vertical: vertical) {
+            NoticeLine(text: text, tone: tone, dismiss: dismiss)
+        }
+    }
+}
+
+/// A notice's symbol and text, and an × when it can be dismissed.
+struct NoticeLine: View {
+    let text: String
+    let tone: SidebarBanner.Tone
+    var dismiss: (() -> Void)?
+    @Environment(\.interfaceScale) private var scale
+    @Environment(\.surface) private var surface
+
+    var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: scale(Space.snug)) {
-            Image(systemName: Self.symbol(for: tone)).font(Typography.help).foregroundStyle(Self.symbolInk(for: tone))
+            Image(systemName: SidebarBanner.symbol(for: tone)).font(Typography.help).foregroundStyle(SidebarBanner.symbolInk(for: tone))
                 .accessibilityHidden(true)
-            Text(text).font(Typography.help).foregroundStyle(Self.textInk(for: tone)).textSelection(.enabled)
+            Text(text).font(Typography.help).foregroundStyle(SidebarBanner.textInk(for: tone)).textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
             if let dismiss {
                 Button(action: dismiss) {
@@ -395,13 +413,25 @@ struct SidebarBanner: View {
                 .accessibilityLabel("Dismiss")
             }
         }
-        .padding(.horizontal, scale(Space.base))
-        .padding(.vertical, scale(Space.snug))
-        // An inline notice: a tinted, rounded ground, lined up with the rows below it.
-        .background(RoundedRectangle(cornerRadius: scale(Radius.group), style: .continuous).fill(Self.ground(for: tone)))
-        .padding(.leading, scale(Space.inset))
-        .padding(.trailing, scale(trailing))
-        .padding(.vertical, scale(vertical) / 2)
+    }
+}
+
+/// An inline notice's ground: tinted and rounded, lined up with the rows below it.
+struct NoticeGround<Content: View>: View {
+    let tone: SidebarBanner.Tone
+    var trailing: CGFloat = Space.base
+    var vertical: CGFloat = Space.snug
+    @ViewBuilder let content: Content
+    @Environment(\.interfaceScale) private var scale
+
+    var body: some View {
+        content
+            .padding(.horizontal, scale(Space.base))
+            .padding(.vertical, scale(Space.snug))
+            .background(RoundedRectangle(cornerRadius: scale(Radius.group), style: .continuous).fill(SidebarBanner.ground(for: tone)))
+            .padding(.leading, scale(Space.inset))
+            .padding(.trailing, scale(trailing))
+            .padding(.vertical, scale(vertical) / 2)
     }
 }
 

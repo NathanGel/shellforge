@@ -21,6 +21,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 - [The helper (shellforged)](#the-helper-shellforged)
 - [Check for Updates…](#check-for-updates)
 - [Reporting a bug](#reporting-a-bug)
+- [Feedback](#feedback)
 
 ## The sidebar
 
@@ -250,7 +251,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 ## Settings and connections
 
 - **Opening Settings.** Click the sidebar's gear, or right-click the Mac row › Mac Settings….
-  - **Core:** the Mac card (Backpack setup) and the Environment card.
+  - **Core:** the Mac card (Backpack setup), the Environment card and the Feedback switch.
   - **Agents:** one row per installed agent, with its **Default model** and **Default reasoning**.
   - **Services:** Jira (site, email, API token), GitLab (host, token) and GitHub (token).
 - **Connections.**
@@ -265,6 +266,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
   - Only a row you change is saved, on Save. A saved default stays when you start a task with something else.
   - If a saved model is no longer offered, the row says so and the sheets ask you to choose a current model instead of quietly starting another.
 - **Settings looks like System Settings:** Core, Agents and Services are each one grouped box, one row per setting or service.
+- **Feedback.** Settings › Core › Ask for feedback now and then, a switch, on by default, takes effect on Save. Turning it back on waits 90 days before the next note. Help › Send Feedback… works either way.
 - **Terminal.** Settings › Core › Match the terminal to Shellforge, a switch, off by default, takes effect on Save.
   - Every terminal, including tabs opened later, uses Shellforge's colours: a background one step off the sidebar (darker in dark mode, lighter in light mode), the sidebar's text and selection colours, the macOS accent colour for the cursor, and macOS's system colours for the 16 terminal colours, each readable on the background.
   - iTerm2 uses its Minimal theme, so the title bar and window edges match. Settings › Appearance's Theme is greyed out while it is on.
@@ -334,3 +336,14 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 - **Shellforge › About Shellforge › Report a bug** opens Shellforge's bug form on GitHub with the version and macOS filled in. [CONTRIBUTING.md](CONTRIBUTING.md) says how requests are handled.
 - **After a crash**, the next launch offers to report it. **Copy and Report…** copies the report — the crash log, your settings, and your name and email in its message — and opens the bug form, where you paste it. Nothing is sent by itself; GitHub issues are public, so delete what you do not want to share. **Discard** forgets that crash.
 - Error messages that ask you to report a bug, and the AI usage item's **Report a Bug**, lead to the same form.
+
+## Feedback
+
+- **A note in the sidebar.** In a release build, 14 days after you first use Shellforge, a note at the top of the sidebar, under the header, asks what you think. It shows in every window at once. A Development build never shows it.
+  - **Give Feedback** opens the form. **Not Now** hides the note in every window and asks again in 90 days. **Don’t Ask Again** turns the note off; Settings › Core › Ask for feedback now and then turns it back on.
+  - Closing the form without sending counts as Not Now. After you send, the next ask is 180 days away.
+- **Help › Send Feedback…** opens the same form whenever you like, with the note on or off. With no terminal window open, it offers GitHub’s feedback form instead.
+- **The form** asks how Shellforge is for you (a rating from 1 to 5, optional), what is good and what is bad. It says first that feedback becomes a public issue on github.com/NathanGel/shellforge, so leave out names, client details, commands, output, paths and passwords.
+  - Sent through Shellforge, the issue is posted anonymously by a bot, and you can’t edit or delete it yourself. With it go your rating, your two texts, Shellforge’s version and your macOS version. Your IP address is used only for a one-minute rate limit and is not kept.
+  - **While no relay is set up**, Send opens GitHub’s prefilled feedback form in your browser, and the issue is posted under your own GitHub account. A long text is cut to fit the link, and the whole of it is copied to the clipboard.
+- **Nothing is sent by itself.** Nothing leaves your Mac until you press Send, and what you type is never saved to disk.

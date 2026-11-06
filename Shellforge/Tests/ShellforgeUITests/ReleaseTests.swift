@@ -37,9 +37,9 @@ import Testing
 
     /// ⌘B's registry keeps what a window registered only while the window lives: an entry whose
     /// window has gone is dropped, with what it held, the next time the table is used.
-    @Test func aClosedWindowsBackpackPresenterIsReleased() {
+    @Test func aClosedWindowsSheetPresenterIsReleased() {
         final class Probe {}
-        let sheets = BackpackSheets()
+        let sheets = WindowSheets()
         weak var probe: Probe?
         autoreleasepool {
             let window = NSObject(), held = Probe()
@@ -62,7 +62,7 @@ import Testing
         let hooks = AgentHooksModel(integrations: HookIntegrations(home: home, resources: .bundled(resourceURL: nil)), names: [:])
         let machine = MachineMonitor(sensor: InertMachineSensor(), power: InertPower())
         let backpack = BackpackController(ports: .inert, settings: BackpackSettings(defaults: nil), toast: { _ in })
-        let sheets = BackpackSheets()
+        let sheets = WindowSheets()
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 400), styleMask: [.titled],
                               backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -71,7 +71,7 @@ import Testing
             let model = SidebarModel(host: FakeTerminalHost(), document: document, launcher: launcher, jiraSettings: { nil })
             released = model
             window.contentView = ShellforgeSidebar.makeView(model: model, chooseFolder: { nil }, hooks: hooks, machine: machine,
-                                                            backpack: backpack, zoom: SidebarZoom(settings: SidebarLayoutSettings(defaults: ScratchDefaults.make())), terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()),
+                                                            backpack: backpack, zoom: SidebarZoom(settings: SidebarLayoutSettings(defaults: ScratchDefaults.make())), terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()), feedback: FeedbackPrompt(defaults: ScratchDefaults.make(), channel: .dev),
                                                             showBackpack: { [weak window] present in
                 if let window { sheets.register(window, present) }
             })
@@ -95,7 +95,7 @@ import Testing
         let hooks = AgentHooksModel(integrations: HookIntegrations(home: home, resources: .bundled(resourceURL: nil)), names: [:])
         let machine = MachineMonitor(sensor: InertMachineSensor(), power: InertPower())
         let backpack = BackpackController(ports: .inert, settings: BackpackSettings(defaults: nil), toast: { _ in })
-        let sheets = BackpackSheets()
+        let sheets = WindowSheets()
         var models: [WeakModel] = []
         for _ in 0..<30 {
             autoreleasepool {
@@ -105,7 +105,7 @@ import Testing
                                       backing: .buffered, defer: false)
                 window.isReleasedWhenClosed = false
                 window.contentView = ShellforgeSidebar.makeView(model: model, chooseFolder: { nil }, hooks: hooks, machine: machine,
-                                                                backpack: backpack, zoom: SidebarZoom(settings: SidebarLayoutSettings(defaults: ScratchDefaults.make())), terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()),
+                                                                backpack: backpack, zoom: SidebarZoom(settings: SidebarLayoutSettings(defaults: ScratchDefaults.make())), terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()), feedback: FeedbackPrompt(defaults: ScratchDefaults.make(), channel: .dev),
                                                                 showBackpack: { [weak window] present in
                     if let window { sheets.register(window, present) }
                 })

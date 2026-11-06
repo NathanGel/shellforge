@@ -1,0 +1,31 @@
+name = "shellforge-feedback"
+main = "src/index.js"
+compatibility_date = "2026-11-01"
+workers_dev = true
+
+# The relay keeps nothing but a daily counter, so there is nothing to observe.
+[observability]
+enabled = false
+
+[vars]
+# Kill switch: anything other than "true" answers 503. Set it to "false" and
+# redeploy to stop all posting.
+RELAY_ENABLED = "true"
+# The "Shellforge Feedback" GitHub App, installed on NathanGel/shellforge only.
+GITHUB_APP_ID = "5642847"
+GITHUB_INSTALLATION_ID = "179262881"
+
+# Made with `npx wrangler kv namespace create FEEDBACK_KV` (README step 6).
+[[kv_namespaces]]
+binding = "FEEDBACK_KV"
+id = "fd9734f5c39c44d1add5efa1ccc9c528"
+
+[[ratelimits]]
+name = "PER_SENDER"
+namespace_id = "1001"
+simple = { limit = 3, period = 60 }
+
+[[ratelimits]]
+name = "GLOBAL"
+namespace_id = "1002"
+simple = { limit = 10, period = 60 }

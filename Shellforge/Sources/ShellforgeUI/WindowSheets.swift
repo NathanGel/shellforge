@@ -1,8 +1,8 @@
 import Foundation
 
-/// How each window's sidebar opens the Backpack sheet, for the View menu's ⌘B. Only the key
-/// window's sidebar is asked; with no window of ours key there is nothing to open, never an
-/// arbitrary other window.
+/// How each window's sidebar opens one of its sheets (Backpack's, the feedback form), for a menu
+/// command such as the View menu's ⌘B. Only the key window's sidebar is asked; with no window of
+/// ours key there is nothing to open, never an arbitrary other window.
 ///
 /// A presenter that held its window's whole sidebar would keep it, still ticking and refreshing, as
 /// long as its entry stayed. `ShellforgeSidebar.makeView` therefore hands out one that reaches the
@@ -10,7 +10,7 @@ import Foundation
 /// closure; and an entry whose window is gone is dropped each time the table is used. iTerm2's
 /// undo-close keeps a closed window, and its sidebar, alive for a while: its entry stays as long.
 @MainActor
-public final class BackpackSheets {
+public final class WindowSheets {
     private struct Entry { weak var window: AnyObject?; let present: @MainActor () -> Void }
     private var byWindow: [ObjectIdentifier: Entry] = [:]
 

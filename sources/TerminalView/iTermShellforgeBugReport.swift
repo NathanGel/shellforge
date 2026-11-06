@@ -10,10 +10,8 @@ final class iTermShellforgeBugReport: NSObject {
 
     /// The bug-report form, with `title` and the start of `details` filled in when given.
     @objc static func formURL(title: String?, details: String?) -> URL {
-        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
-        let os = ProcessInfo.processInfo.operatingSystemVersion
-        return BugReportLink.form(version: version, macOS: "\(os.majorVersion).\(os.minorVersion).\(os.patchVersion)",
-                                  title: title, details: details)
+        let versions = AppVersions.current
+        return BugReportLink.form(version: versions.version, macOS: versions.macOS, title: title, details: details)
     }
 
     /// Copies the whole `report` — a link can carry only its start — and opens the form.

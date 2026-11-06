@@ -11,15 +11,19 @@ struct SettingsPanel: View {
     let integrations: IntegrationSettingsModel
     var environment: EnvironmentModel?
     let terminalMatch: TerminalMatchSettings
+    @ObservedObject var feedback: FeedbackPrompt
     @ObservedObject var agentDefaults: AgentDefaultsSettingsModel
     let close: @MainActor () -> Void
     @State private var failure: String?
     /// This sheet's own switch, from what is saved when it opens.
     @State private var matchDraft = false
+    @State private var feedbackDraft = true
+
+    static let subtitle = "What Backpack Mode needs from this Mac, the model and reasoning each agent starts with, Jira for New Task’s tickets, GitLab and GitHub for reviews, and whether Shellforge asks for feedback."
 
     var body: some View {
         SheetLayout(title: "Settings", height: Sheet.settingsHeight) {
-            SheetSubtitle("What Backpack Mode needs from this Mac, the model and reasoning each agent starts with, Jira for New Task's tickets, and GitLab and GitHub for reviews.")
+            SheetSubtitle(Self.subtitle)
         } content: {
             VStack(alignment: .leading, spacing: Space.section) {
                 SettingsSection("Core") {
@@ -27,6 +31,8 @@ struct SettingsPanel: View {
                     if let environment { SettingsRowDivider(); EnvironmentCard(model: environment) }
                     SettingsRowDivider()
                     TerminalMatchCard(isOn: $matchDraft)
+                    SettingsRowDivider()
+                    FeedbackPromptCard(isOn: $feedbackDraft)
                 }
                 SettingsSection("Agents") {
                     if agentDefaults.rows.isEmpty {
@@ -54,13 +60,14 @@ struct SettingsPanel: View {
         .task { integrations.testConfigured() }
         .task { await backpack.refreshSetup() }
         .task { await agentDefaults.load() }
-        .onAppear { matchDraft = terminalMatch.isOn }
+        .onAppear { matchDraft = terminalMatch.isOn; feedbackDraft = feedback.isEnabled }
     }
 
     private func save() {
         failure = integrations.save()
         guard failure == nil else { return }
         terminalMatch.save(matchDraft)
+        feedback.save(feedbackDraft)
         agentDefaults.save()
         Task { @MainActor in close() }
     }

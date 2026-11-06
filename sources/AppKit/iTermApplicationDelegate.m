@@ -419,6 +419,28 @@ static NSModalResponse iTermCompareRenderingRunModal(id self, SEL _cmd) {
     tunnelsItem.submenu = [iTermShellforgeSidebar tunnelsMenu];
     [viewMenu addItem:tunnelsItem];
 
+    // Shellforge: Help › Send Feedback…, which works whether or not the sidebar's reminder is on.
+    // The nib doesn't name its Help menu to AppKit, so find it by its iTerm2 Help item and say so.
+    if (!NSApp.helpMenu) {
+        for (NSMenuItem *topLevelItem in NSApp.mainMenu.itemArray) {
+            if ([topLevelItem.submenu it_itemWithIdentifier:@"iTerm2 Help"]) {
+                NSApp.helpMenu = topLevelItem.submenu;
+                break;
+            }
+        }
+    }
+    NSMenu *helpMenu = NSApp.helpMenu;
+    if (!helpMenu) {
+        // Not an assert: a missing Help item is no reason to crash the app at launch.
+        DLog(@"Shellforge: no Help menu found, so Send Feedback… is not added");
+    }
+    [helpMenu addItem:[NSMenuItem separatorItem]];
+    NSMenuItem *feedbackItem = [[[NSMenuItem alloc] initWithTitle:@"Send Feedback…"
+                                                           action:@selector(shellforgeSendFeedback:)
+                                                    keyEquivalent:@""] autorelease];
+    feedbackItem.target = self;
+    [helpMenu addItem:feedbackItem];
+
     NSSize tabColorViewSize = [ColorsMenuItemView preferredSize];
     ColorsMenuItemView *labelTrackView = [[[ColorsMenuItemView alloc]
                                            initWithFrame:NSMakeRect(0, 0, tabColorViewSize.width, tabColorViewSize.height)] autorelease];
@@ -487,6 +509,10 @@ static NSModalResponse iTermCompareRenderingRunModal(id self, SEL _cmd) {
 
 - (IBAction)shellforgeToggleSidebar:(id)sender {
     [[self shellforgeKeyRootView] toggleShellforgeSidebar];
+}
+
+- (IBAction)shellforgeSendFeedback:(id)sender {
+    [iTermShellforgeFeedback sendFeedback];
 }
 
 - (IBAction)shellforgeToggleBackpack:(id)sender {

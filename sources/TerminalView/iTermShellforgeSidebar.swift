@@ -46,13 +46,23 @@ final class iTermShellforgeSidebar: NSObject {
     /// Each model's sidebar view, to ask whether it can be seen. Weak both ways: the window owns both.
     private static let sidebarViews = NSMapTable<SidebarModel, NSView>.weakToWeakObjects()
     /// How each window's sidebar opens the Backpack sheet, for ⌘B.
-    private static let backpackSheets = BackpackSheets()
+    private static let backpackSheets = WindowSheets()
+    /// How each window's sidebar opens the feedback sheet, for Help › Send Feedback….
+    static let feedbackSheets = WindowSheets()
+
+    /// The key window's terminal, and only that: a panel of ours (the sheet, Mac Settings) may be key, and its parent is meant.
+    /// Nil when a window that is no terminal (Settings, Open Quickly) is key.
+    static var keyWindowTerminal: PseudoTerminal? {
+        let window = NSApp.keyWindow.map { $0.sheetParent ?? $0 } ?? NSApp.mainWindow
+        return window?.windowController as? PseudoTerminal
+    }
+
+    /// The key window's terminal, else the current one: for the commands that may reach a background window.
+    static var keyTerminal: PseudoTerminal? { keyWindowTerminal ?? iTermController.sharedInstance()?.currentTerminal }
 
     /// The View menu's Backpack Mode (⌘B): AiTerm's toggle, the sheet on the key window's sidebar.
     @objc static func toggleBackpack(_ sender: Any?) {
-        // A panel of ours (the sheet, Mac Settings) may be key: its parent window is the one meant.
-        let window = NSApp.keyWindow.map { $0.sheetParent ?? $0 } ?? NSApp.mainWindow
-        let terminal = window?.windowController as? PseudoTerminal ?? iTermController.sharedInstance()?.currentTerminal
+        let terminal = keyTerminal
         BackpackToggle(backpack: backpack, presentSheet: { backpackSheets.present(for: terminal) }).run()
     }
 
@@ -61,6 +71,10 @@ final class iTermShellforgeSidebar: NSObject {
 
     /// Every agent's model list, read from the user's own home.
     nonisolated static let catalogue = ModelCatalogue(home: FileManager.default.homeDirectoryForCurrentUser, launcher: launcher)
+
+    /// The app's one feedback prompt: every window's banner and Settings switch share it. A Development build never shows the banner.
+    static let feedback = FeedbackPrompt(defaults: iTermUserDefaults.userDefaults(),
+                                         channel: BuildChannel(infoDictionary: Bundle.main.infoDictionary))
 
     /// The one workspace every window's sidebar shows and changes.
     static let document = WorkspaceDocument(store: WorkspaceStore())
@@ -77,11 +91,16 @@ final class iTermShellforgeSidebar: NSObject {
         windows.add(model, for: windowController)
         model.onEnvironmentReloaded = { environmentChanged() }
         sidebars.add(model)
+        // A window opened after the schedule came due shows the note at once.
+        feedback.refresh()
         watchClicks()
         let view = ShellforgeSidebar.makeView(model: model, chooseFolder: FolderChooser.choose, hooks: hooks, machine: machine,
                                           backpack: backpack, zoom: zoom, terminalMatch: iTermShellforgeTerminalMatch.settings,
+                                          feedback: feedback,
                                           panelCornerRadius: floats ? panelCornerRadius : nil, showBackpack: { [weak windowController] present in
             if let windowController { backpackSheets.register(windowController, present) }
+        }, showFeedback: { [weak windowController] present in
+            if let windowController { feedbackSheets.register(windowController, present) }
         }, hideSidebar: { [weak windowController] in
             (windowController?.contentView as? iTermRootTerminalView)?.toggleShellforgeSidebar()
         })
@@ -588,8 +607,7 @@ extension iTermShellforgeSidebar {
 
     /// The key window's sidebar: a panel of ours (a sheet) may be key, and its parent is meant.
     static var keySidebar: SidebarModel? {
-        let window = NSApp.keyWindow.map { $0.sheetParent ?? $0 } ?? NSApp.mainWindow
-        return windows.model(for: window?.windowController)
+        windows.model(for: keyWindowTerminal)
     }
 }
 

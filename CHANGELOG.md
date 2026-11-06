@@ -11,6 +11,11 @@ it and refuses to release a version that has none.
 
 ### Added
 
+- **Feedback.** In release builds the sidebar now asks for feedback once in a while: after 14 days, then
+  every 90 days after Not Now, or 180 after you send some. Don’t Ask Again, or Settings › Core, turns it
+  off, and Help › Send Feedback… opens the form at any time. The form warns that feedback becomes a
+  public issue, and nothing is sent until you press Send; until a relay is set up it opens GitHub’s
+  prefilled form instead.
 - **New Tab in Home Folder.** A button in the sidebar’s header, and an item in the Tasks menu, open a
   shell in your home folder that belongs to no project. It is listed under Other Tabs.
 - **New Task in the project folder.** New Task’s first control now offers New worktree, Existing
