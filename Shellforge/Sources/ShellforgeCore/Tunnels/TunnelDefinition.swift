@@ -28,9 +28,10 @@ public struct TunnelDefinition: Codable, Equatable, Sendable, Identifiable {
     }
 
     /// What a terminal tab runs to answer ssh for `alias` — a host key, a passphrase, a code — and
-    /// then hold its ports: the supervisor's ssh, without `BatchMode`.
+    /// then hold its ports: the supervisor's ssh, without `BatchMode`. `--` ends ssh's options, as
+    /// the daemon's does: the alias is never read as one.
     public static func tabCommand(alias: String) -> String {
-        "ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ControlMaster=no -o ControlPath=none "
+        "ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ControlMaster=no -o ControlPath=none -- "
             + AgentCommand.shellWord(alias)
     }
 

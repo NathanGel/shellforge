@@ -112,7 +112,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
   - **Options:** "Include Jira ticket details", and "Open ssh <host> beside the agent".
   - **Keys:** ⌘↩ is the main button. ⎋ closes an open list first, then goes back a step.
 - **Agents:** Claude Code, Codex, Grok Build and PI.
-  - Codex runs without approvals or sandbox, and its command preview shows that.
+  - Codex runs without approvals or sandbox, and its command preview shows that. It acts on whatever it reads without asking: a Jira ticket’s text (with “Include Jira ticket details”) or a reviewed merge request’s files and `AGENTS.md`. Someone who can edit those can make it run commands as you. To keep its approvals, replace the preset with a custom agent of the same id.
   - An agent whose command isn't on your login PATH can't be picked, and the sheet says why.
   - Custom agents are JSON files in `~/Library/Application Support/Shellforge/agents/`. A file with a preset's id replaces that preset.
   - Shellforge remembers the last agent per project and the last model per agent.

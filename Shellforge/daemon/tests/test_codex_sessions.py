@@ -1,6 +1,6 @@
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -165,9 +165,10 @@ def test_the_tree_is_relisted_at_most_every_list_interval(tmp_path):
     files = CodexSessionFiles(root, clock=clock)
     assert files.rate_limits()[0]["primary"]["used_percent"] == 10.0
 
-    # A newer rollout in an old day's directory waits for the next full listing...
-    old_day = write_rollout(root, "old-day", [limits(20.0)], day="2001/01/01")
-    os.utime(old_day, ns=(2, 2))
+    # A newer rollout in a recent day's directory -- a session started yesterday -- waits for the
+    # next listing...
+    recent = write_rollout(root, "recent", [limits(20.0)], day=(datetime.now() - timedelta(days=3)).strftime("%Y/%m/%d"))
+    os.utime(recent, ns=(2, 2))
     assert files.rate_limits()[0]["primary"]["used_percent"] == 10.0
     clock.now += LIST_SECONDS
     assert files.rate_limits()[0]["primary"]["used_percent"] == 20.0
@@ -292,3 +293,32 @@ def test_totals_are_not_reread_until_a_rollout_changes(tmp_path, monkeypatch):
     files.tally("t1")
     files.tally("t1")
     assert len(reads) == 1
+
+
+def test_after_the_first_listing_only_recent_days_are_listed(tmp_path, monkeypatch):
+    """The sessions tree holds every rollout Codex ever wrote: listed whole every LIST_SECONDS, with no
+    Codex tab open, it cost a walk of years of directories. Only the first listing walks it -- what
+    was written last before the daemon started may be anywhere -- and the rest list the days since
+    RECENT_DAYS ago, where any rollout written lately is unless a tracked thread's own."""
+    import pathlib
+
+    from shellforged.codex_sessions import RECENT_DAYS
+    root, clock = tmp_path / "sessions", Clock()
+    first = write_rollout(root, "first", [limits(10.0)], day="2001/01/01")
+    os.utime(first, ns=(1, 1))
+    files = CodexSessionFiles(root, clock=clock)
+    assert files.rate_limits()[0]["primary"]["used_percent"] == 10.0, "the first listing walks the tree"
+
+    monkeypatch.setattr(pathlib.Path, "rglob", lambda self, *a, **k: pytest.fail("the whole tree was listed again"))
+    older = write_rollout(root, "older", [limits(20.0)], day="2002/01/01")
+    os.utime(older, ns=(2, 2))
+    edge = write_rollout(root, "edge", [limits(30.0)],
+                         day=(datetime.now() - timedelta(days=RECENT_DAYS)).strftime("%Y/%m/%d"))
+    os.utime(edge, ns=(3, 3))
+    clock.now += LIST_SECONDS
+    assert files.rate_limits()[0]["primary"]["used_percent"] == 30.0
+
+    # A rollout already seen stays among the candidates however old its day: Codex appends to it.
+    os.utime(first, ns=(4, 4))
+    clock.now += LIST_SECONDS
+    assert files.rate_limits()[0]["primary"]["used_percent"] == 10.0

@@ -9,6 +9,22 @@ it and refuses to release a version that has none.
 
 ## 0.7.2 — unreleased
 
+### Fixed
+
+- **Lighter while you aren’t looking.** Line-change badges no longer run git for windows that are
+  hidden, in the Dock or covered, nor for folded projects, and only every 30 seconds while
+  Shellforge is in the background. The Mac’s CPU, memory and battery are read only while a sidebar
+  shows them.
+- **Less work while an agent runs.** The helper no longer rereads agents’ transcripts and Codex’s
+  logs each time a tab’s title changes, which Claude Code does several times a second. A long
+  transcript is read a piece at a time instead of all at once, and only recent days of Codex’s
+  history are scanned.
+- Windows share what they read about `~/.ssh/config` and each project’s git host, instead of
+  rereading it in every window.
+- **Safer with other people’s branches.** A merge request under review can no longer redirect
+  where the first prompt is written with a committed `.shellforge` link. Shellforge’s hook server
+  only answers requests addressed to this Mac, so a web page can’t post fake agent status to it.
+
 ## 0.7.1 — 2026-11-05
 
 ### Changed

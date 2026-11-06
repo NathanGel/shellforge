@@ -219,7 +219,14 @@ async def test_the_daemon_adopts_before_it_listens(make_service, tmp_path):
 
 @pytest.mark.parametrize("command,ours", [
     ("/usr/bin/ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o BatchMode=yes "
+     "-o ControlMaster=no -o ControlPath=none -- db", True),
+    # Started by a daemon from before the `--`: still ours, so a keep-running tunnel survives the update.
+    ("/usr/bin/ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o BatchMode=yes "
      "-o ControlMaster=no -o ControlPath=none db", True),
+    ("/bin/sh /tmp/x/bin/ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 "
+     "-o BatchMode=yes -o ControlMaster=no -o ControlPath=none -- db", True),
+    ("/usr/bin/ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o BatchMode=yes "
+     "-o ControlMaster=no -o ControlPath=none -- -- db", False),
     # The test's fake: a shell script named ssh.
     ("/bin/sh /tmp/x/bin/ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 "
      "-o BatchMode=yes -o ControlMaster=no -o ControlPath=none db", True),

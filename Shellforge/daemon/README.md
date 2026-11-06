@@ -78,6 +78,12 @@ Harness Test's probes (`_shellforge_daemon_test_id`, `_shellforge_test_id`), whi
 receiver answers itself by echoing their id and never hands on, so neither can
 change state on any route.
 
+Every request must name the receiver as its `Host`: `127.0.0.1:<port>` or
+`localhost:<port>`, as every installed hook's URL does. Any other `Host`, or none,
+is a 421 with no body, answered before the body is read: a DNS-rebinding page
+reaches 127.0.0.1 under its own name, which its browser sends, and it can send the
+marker header below.
+
 Every request must carry `X-Shellforge-Hook: 1`; requests without it get a plain
 404, the same as an unknown route, so the receiver never reveals that these
 routes exist to a caller that doesn't know the header (any other local

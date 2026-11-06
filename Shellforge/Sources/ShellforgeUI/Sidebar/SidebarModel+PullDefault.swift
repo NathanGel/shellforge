@@ -35,7 +35,11 @@ extension SidebarModel {
         }
         // Nothing is said for a project removed while git ran.
         guard self.project(id) != nil else { return true }
-        if let branch = result.0, defaultBranches[id] != branch { defaultBranches[id] = branch }
+        if let branch = result.0, defaultBranches[id] != branch {
+            defaultBranches[id] = branch
+            // A window opened next reads it again rather than the branch kept before.
+            repositoryFacts.forget(path)
+        }
         switch result.1 {
         case .success(let outcome):
             // Its own earlier failure goes; another action's error stays.

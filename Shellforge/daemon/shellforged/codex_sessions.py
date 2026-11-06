@@ -11,10 +11,15 @@ from typing import Any
 from .models import TokenTally
 from .usage import finite_number, whole_count
 
-# How often the whole sessions tree is listed again. In between, only the rollouts last seen to be
-# the newest, the tracked threads' own and today's directory are looked at: a new session writes
+# How often the recent days' directories are listed again. In between, only the rollouts last seen
+# to be the newest, the tracked threads' own and today's directory are looked at: a new session writes
 # under today's date, and a resumed one appends to a rollout already known.
 LIST_SECONDS = 30.0
+# How many days before today a listing for the account's rate limits looks in. The tree holds every
+# rollout Codex ever wrote, and it was walked whole every LIST_SECONDS even with no Codex tab open;
+# only the first listing still walks it. A week is the longest rate-limit window: a record older
+# than that says nothing still true.
+RECENT_DAYS = 7
 RECENT_KEPT = 8
 # How many day directories after a thread's own are searched for its children: one long-running
 # thread may outlive a few midnights, and a listing that grew without bound would cost every tick.
@@ -136,8 +141,17 @@ class CodexSessionFiles:
         except (ValueError, TypeError):
             return []
         last = max(date.today(), datetime.now(UTC).date())
+        return self._list_days(first, min(last, first + timedelta(days=CHILD_DAYS)))
+
+    def _list_recent_days(self) -> list[Path]:
+        """The rollouts in the directories of the last RECENT_DAYS days and today, local or UTC."""
+        first = min(date.today(), datetime.now(UTC).date()) - timedelta(days=RECENT_DAYS)
+        return self._list_days(first, max(date.today(), datetime.now(UTC).date()))
+
+    def _list_days(self, first: date, last: date) -> list[Path]:
+        """The rollouts in the day directories from `first` to `last`, both included."""
         found: list[Path] = []
-        for offset in range(min((last - first).days, CHILD_DAYS) + 1):
+        for offset in range((last - first).days + 1):
             with contextlib.suppress(OSError):
                 found += (self.root / f"{first + timedelta(days=offset):%Y/%m/%d}").glob("rollout-*.jsonl")
         return found
@@ -201,11 +215,15 @@ class CodexSessionFiles:
 
     def _newest_rollouts(self, count: int) -> tuple[tuple[Path, int], ...]:
         """The `count` most recently written rollouts with their mtimes, newest first."""
+        # The first listing walks the whole tree: the rollout written last before the daemon started
+        # may be a long-running session's, under the day it began. Later ones keep it among the
+        # candidates and list only the recent days, where any other rollout written since must be.
         if self._listed_at is None or self._clock() - self._listed_at >= LIST_SECONDS:
+            listed = self._list_all() if self._listed_at is None else self._list_recent_days()
             self._listed_at = self._clock()
-            candidates = set(self._list_all())
         else:
-            candidates = {*self._recent, *self._paths.values(), *self._list_today()}
+            listed = self._list_today()
+        candidates = {*self._recent, *self._paths.values(), *listed}
         stamped = [(path, mtime) for path in candidates if (mtime := _mtime(path)) is not None]
         stamped.sort(key=lambda item: item[1], reverse=True)
         self._recent = [path for path, _ in stamped[:RECENT_KEPT]]

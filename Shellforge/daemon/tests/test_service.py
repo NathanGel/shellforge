@@ -67,7 +67,7 @@ async def post_hook(port, path, body):
     (unlike svc.hook_router.handle_hook(...), which every other test calls in-process)."""
     r, w = await asyncio.open_connection("127.0.0.1", port)
     data = json.dumps(body).encode()
-    w.write(f"POST {path} HTTP/1.1\r\nHost: x\r\nX-Shellforge-Hook: 1\r\n"
+    w.write(f"POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Shellforge-Hook: 1\r\n"
             f"Content-Type: application/json\r\nContent-Length: {len(data)}\r\n\r\n".encode() + data)
     await w.drain()
     status_line = await asyncio.wait_for(r.readline(), 2)

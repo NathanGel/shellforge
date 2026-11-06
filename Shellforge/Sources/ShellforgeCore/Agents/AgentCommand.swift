@@ -44,15 +44,26 @@ public enum AgentCommand {
         return parts.joined(separator: " ")
     }
 
+    /// The first prompt's file was not written: `.shellforge`, or the file in it, is a symlink —
+    /// one a checked-out branch (a merge request under review) can commit, to send the write
+    /// anywhere the user can write. As `prepareWorktree` treats `.worktrees`.
+    public struct SymlinkRefused: Error, Equatable, LocalizedError {
+        public let path: String
+        public var errorDescription: String? { "Refusing to write the first prompt through the symlink at \(path)." }
+    }
+
     public static func build(agent: AgentDefinition, model: String, reasoning: String?, prompt: String?, worktreePath: String,
                              launcher: CommandLauncher) throws -> String {
         var parts = invocation(agent: agent, model: model, reasoning: reasoning)
         if let prompt = prompt.map(normalized), !prompt.isEmpty {
             guard agent.prompt == .argument else { throw Unsupported(agent: agent.name) }
             if readsFromFile(prompt, after: parts) {
-                let dir = worktreePath + "/.shellforge"
+                let dir = worktreePath + "/.shellforge", file = dir + "/first-prompt.md"
+                try refuseSymlink(at: dir)
                 try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
-                try prompt.write(toFile: dir + "/first-prompt.md", atomically: true, encoding: .utf8)
+                // A committed link at the file itself is refused too, rather than written over.
+                try refuseSymlink(at: file)
+                try prompt.write(toFile: file, atomically: true, encoding: .utf8)
                 excludeShellforgeDirectory(worktreePath: worktreePath, launcher: launcher)
                 parts.append("\"$(cat .shellforge/first-prompt.md)\"")
             } else {
@@ -60,6 +71,10 @@ public enum AgentCommand {
             }
         }
         return parts.joined(separator: " ")
+    }
+
+    private static func refuseSymlink(at path: String) throws {
+        if (try? FileManager.default.destinationOfSymbolicLink(atPath: path)) != nil { throw SymlinkRefused(path: path) }
     }
 
     /// A pasted Windows line ending is a newline, not the CR that would accept the line early.

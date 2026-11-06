@@ -109,4 +109,43 @@ import Testing
         #expect(forwards.map(\.label) == ["5432 → db.internal:5432", "6379 → cache.internal:6379", "8080 → web.internal:80"])
         #expect(forwards[2].bind == "127.0.0.1")
     }
+
+    // -- the app-wide cache: every window's refresh asks, and only a change reads again --------
+
+    @Test func anUnchangedConfigIsParsedOnce() throws {
+        _ = try write("Host one\n  LocalForward 1111 a:1\n", to: "config.d/one.conf")
+        let config = try write("Include config.d/*.conf\nHost two\n  LocalForward 2222 b:2\n")
+        let cache = SSHConfigCache()
+        #expect(cache.hosts(in: config, home: home).map(\.alias) == ["one", "two"])
+        #expect(cache.hosts(in: config, home: home).map(\.alias) == ["one", "two"])
+        #expect(cache.parseCount == 1)
+    }
+
+    @Test func anEditedIncludeIsReadAgain() throws {
+        let included = try write("Host one\n  LocalForward 1111 a:1\n", to: "config.d/one.conf")
+        let config = try write("Include config.d/*.conf\n")
+        let cache = SSHConfigCache()
+        #expect(cache.hosts(in: config, home: home).first?.forwards.map(\.localPort) == [1111])
+        // A rewrite is a new file: a new inode, whatever the clock's resolution.
+        try "Host one\n  LocalForward 1112 a:1\n".write(to: included, atomically: true, encoding: .utf8)
+        #expect(cache.hosts(in: config, home: home).first?.forwards.map(\.localPort) == [1112])
+        #expect(cache.parseCount == 2)
+    }
+
+    @Test func aFileAddedWhereAnIncludeGlobsIsRead() throws {
+        _ = try write("Host one\n", to: "config.d/one.conf")
+        let config = try write("Include config.d/*.conf\n")
+        let cache = SSHConfigCache()
+        #expect(cache.hosts(in: config, home: home).map(\.alias) == ["one"])
+        _ = try write("Host two\n", to: "config.d/two.conf")
+        #expect(cache.hosts(in: config, home: home).map(\.alias) == ["one", "two"])
+    }
+
+    @Test func aMissingIncludeThatAppearsIsRead() throws {
+        let config = try write("Include extra.conf\nHost one\n")
+        let cache = SSHConfigCache()
+        #expect(cache.hosts(in: config, home: home).map(\.alias) == ["one"])
+        _ = try write("Host two\n", to: "extra.conf")
+        #expect(cache.hosts(in: config, home: home).map(\.alias) == ["two", "one"])
+    }
 }

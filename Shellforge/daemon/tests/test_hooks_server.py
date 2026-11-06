@@ -6,12 +6,17 @@ from shellforged import hooks_server
 from shellforged.hooks_server import HookServer
 
 
+def loopback(port):
+    """The Host line every real hook sends: curl's and fetch's for `http://127.0.0.1:<port>`."""
+    return f"Host: 127.0.0.1:{port}\r\n".encode()
+
+
 async def http(port, method, path, body=None, header=True, iterm_session_id=None):
     r, w = await asyncio.open_connection("127.0.0.1", port)
     data = json.dumps(body).encode() if body is not None else b""
     hook_header = "X-Shellforge-Hook: 1\r\n" if header else ""
     session_header = f"X-Shellforge-iTerm-Session: {iterm_session_id}\r\n" if iterm_session_id else ""
-    w.write(f"{method} {path} HTTP/1.1\r\nHost: x\r\n{hook_header}{session_header}"
+    w.write(f"{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n{hook_header}{session_header}"
             f"Content-Type: application/json\r\nContent-Length: {len(data)}\r\n\r\n".encode() + data)
     await w.drain()
     status_line = await asyncio.wait_for(r.readline(), 2)
@@ -24,7 +29,7 @@ async def mcp(port, body, iterm_session_id=None):
     data = json.dumps(body).encode()
     session_header = f"X-Shellforge-iTerm-Session: {iterm_session_id}\r\n" if iterm_session_id else ""
     w.write(
-        f"POST /mcp HTTP/1.1\r\nHost: x\r\nX-Shellforge-Hook: 1\r\n{session_header}"
+        f"POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Shellforge-Hook: 1\r\n{session_header}"
         f"Content-Type: application/json\r\nContent-Length: {len(data)}\r\n\r\n".encode() + data
     )
     await w.drain()
@@ -42,7 +47,7 @@ async def post_json(port, path, body):
     r, w = await asyncio.open_connection("127.0.0.1", port)
     data = json.dumps(body).encode()
     w.write(
-        f"POST {path} HTTP/1.1\r\nHost: x\r\nX-Shellforge-Hook: 1\r\n"
+        f"POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Shellforge-Hook: 1\r\n"
         f"Content-Type: application/json\r\nContent-Length: {len(data)}\r\n\r\n".encode() + data
     )
     await w.drain()
@@ -141,7 +146,7 @@ async def test_grok_routes_take_the_tab_from_the_header_over_the_body(server, pa
 async def test_an_unusable_content_length_is_a_400(server, length):
     srv, received = server
     r, w = await asyncio.open_connection("127.0.0.1", srv.port)
-    w.write(b"POST /hook/claude HTTP/1.1\r\nX-Shellforge-Hook: 1\r\nContent-Length: " + length + b"\r\n\r\n{}")
+    w.write(b"POST /hook/claude HTTP/1.1\r\n" + loopback(srv.port) + b"X-Shellforge-Hook: 1\r\nContent-Length: " + length + b"\r\n\r\n{}")
     await w.drain()
     assert int((await asyncio.wait_for(r.readline(), 2)).split()[1]) == 400
     w.close()
@@ -221,7 +226,7 @@ async def test_unknown_path_bad_json_and_handler_error(server):
     assert await http(srv.port, "POST", "/nope", {}) == 404
     assert await http(srv.port, "GET", "/hook/claude") == 404
     r, w = await asyncio.open_connection("127.0.0.1", srv.port)
-    w.write(b"POST /hook/codex HTTP/1.1\r\nX-Shellforge-Hook: 1\r\nContent-Length: 3\r\n\r\n{{{")
+    w.write(b"POST /hook/codex HTTP/1.1\r\n" + loopback(srv.port) + b"X-Shellforge-Hook: 1\r\nContent-Length: 3\r\n\r\n{{{")
     await w.drain()
     assert int((await r.readline()).split()[1]) == 400
     w.close()
@@ -233,7 +238,7 @@ async def test_every_hook_route_rejects_non_object_and_malformed_json(path, serv
     srv, _ = server
     assert await http(srv.port, "POST", path, ["not", "an", "object"]) == 400
     r, w = await asyncio.open_connection("127.0.0.1", srv.port)
-    w.write(f"POST {path} HTTP/1.1\r\nX-Shellforge-Hook: 1\r\nContent-Length: 3\r\n\r\n".encode() + b"{{{")
+    w.write(f"POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{srv.port}\r\nX-Shellforge-Hook: 1\r\nContent-Length: 3\r\n\r\n".encode() + b"{{{")
     await w.drain()
     assert int((await r.readline()).split()[1]) == 400
     w.close()
@@ -244,7 +249,7 @@ async def test_missing_hook_header_is_404(path, server):
     srv, received = server
     assert await http(srv.port, "POST", path, {"hook_event_name": "Stop"}, header=False) == 404
     r, w = await asyncio.open_connection("127.0.0.1", srv.port)
-    w.write(b"GET /hook/claude HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n")
+    w.write(f"GET /hook/claude HTTP/1.1\r\nHost: 127.0.0.1:{srv.port}\r\nContent-Length: 0\r\n\r\n".encode())
     await w.drain()
     assert int((await r.readline()).split()[1]) == 404
     await closed_by_server(r)
@@ -278,7 +283,7 @@ async def test_a_head_past_the_cap_is_a_431_before_the_hook_header_is_read(serve
 async def test_a_head_just_under_the_cap_is_served(server):
     srv, received = server
     filler = b"".join(b"X-Filler-%d: x\r\n" % i for i in range(hooks_server.MAX_HEADER_LINES - 3))
-    head = b"POST /hook/claude HTTP/1.1\r\nHost: x\r\n" + filler + b"X-Shellforge-Hook: 1\r\nContent-Length: 2\r\n\r\n{}"
+    head = b"POST /hook/claude HTTP/1.1\r\n" + loopback(srv.port) + filler + b"X-Shellforge-Hook: 1\r\nContent-Length: 2\r\n\r\n{}"
     assert await _status_for_head(srv.port, head) == 200
     await received.delivered(1)
 
@@ -322,7 +327,8 @@ async def test_a_deeply_nested_body_is_a_400(server, caplog, monkeypatch):
     monkeypatch.setattr(hooks_server.json, "loads", too_deep)
     nested = ('{"a":' * 100_000 + "1" + "}" * 100_000).encode()
     r, w = await asyncio.open_connection("127.0.0.1", srv.port)
-    w.write(b"POST /hook/claude HTTP/1.1\r\nX-Shellforge-Hook: 1\r\nContent-Length: %d\r\n\r\n" % len(nested) + nested)
+    w.write(b"POST /hook/claude HTTP/1.1\r\n" + loopback(srv.port)
+            + b"X-Shellforge-Hook: 1\r\nContent-Length: %d\r\n\r\n" % len(nested) + nested)
     await w.drain()
     status_line = await asyncio.wait_for(r.readline(), 2)
     await closed_by_server(r)
@@ -336,7 +342,7 @@ async def test_expect_100_continue_gets_interim_response_then_200(server):
     body = json.dumps({"hook_event_name": "Stop"}).encode()
     r, w = await asyncio.open_connection("127.0.0.1", srv.port)
     w.write(
-        f"POST /hook/claude HTTP/1.1\r\nHost: x\r\nX-Shellforge-Hook: 1\r\n"
+        f"POST /hook/claude HTTP/1.1\r\nHost: 127.0.0.1:{srv.port}\r\nX-Shellforge-Hook: 1\r\n"
         f"Content-Type: application/json\r\nContent-Length: {len(body)}\r\nExpect: 100-continue\r\n\r\n".encode()
     )
     await w.drain()
@@ -359,7 +365,7 @@ async def test_oversized_body_is_rejected_with_413():
     try:
         r, w = await asyncio.open_connection("127.0.0.1", srv.port)
         # Send headers with oversized Content-Length
-        w.write(b"POST /statusline HTTP/1.1\r\nContent-Length: 2000000\r\n\r\n")
+        w.write(b"POST /statusline HTTP/1.1\r\n" + loopback(srv.port) + b"Content-Length: 2000000\r\n\r\n")
         await w.drain()
         status_line = await asyncio.wait_for(r.readline(), 2)
         status = int(status_line.split()[1])
@@ -374,9 +380,65 @@ async def test_pi_oversized_body_is_rejected_with_413():
     await srv.start()
     try:
         r, w = await asyncio.open_connection("127.0.0.1", srv.port)
-        w.write(b"POST /hook/pi HTTP/1.1\r\nX-Shellforge-Hook: 1\r\nContent-Length: 2000000\r\n\r\n")
+        w.write(b"POST /hook/pi HTTP/1.1\r\n" + loopback(srv.port) + b"X-Shellforge-Hook: 1\r\nContent-Length: 2000000\r\n\r\n")
         await w.drain()
         assert int((await asyncio.wait_for(r.readline(), 2)).split()[1]) == 413
         w.close()
     finally:
         await srv.stop()
+
+
+async def _raw_reply(port, head: bytes) -> tuple[int, dict[str, str], bytes]:
+    """The status, headers and body the server answers `head` (and whatever body follows it) with."""
+    r, w = await asyncio.open_connection("127.0.0.1", port)
+    w.write(head)
+    await w.drain()
+    status = int((await asyncio.wait_for(r.readline(), 2)).split()[1])
+    headers = {}
+    while line := (await asyncio.wait_for(r.readline(), 2)).decode().strip():
+        key, _, value = line.partition(":")
+        headers[key.lower()] = value.strip()
+    body = await asyncio.wait_for(r.read(), 2)
+    w.close()
+    return status, headers, body
+
+
+@pytest.mark.parametrize("host", ["evil.example:{port}", "evil.example", "127.0.0.1", "127.0.0.1:1", "localhost:1",
+                                  "127.0.0.1:{port}.evil.example", "", None])
+async def test_a_host_other_than_this_port_on_loopback_is_misdirected(server, host):
+    """A DNS-rebinding page reaches 127.0.0.1 under its own name and can send the marker header, but
+    its browser sends that name as Host: the post is refused unread, with no body to read back."""
+    srv, received = server
+    host_line = "" if host is None else f"Host: {host.format(port=srv.port)}\r\n"
+    status, headers, body = await _raw_reply(srv.port, (
+        f"POST /hook/claude HTTP/1.1\r\n{host_line}X-Shellforge-Hook: 1\r\nContent-Type: application/json\r\n"
+        f"Expect: 100-continue\r\nContent-Length: 2\r\n\r\n").encode())
+    assert status == 421 and body == b"" and headers["content-length"] == "0"
+    await asyncio.sleep(0.05)
+    assert received == []
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1:{port}", "localhost:{port}", "LocalHost:{port}"])
+async def test_this_port_on_loopback_by_either_name_is_served(server, host):
+    srv, received = server
+    data = b'{"hook_event_name": "Stop"}'
+    status, _, _ = await _raw_reply(srv.port, (
+        f"POST /hook/claude HTTP/1.1\r\nHost: {host.format(port=srv.port)}\r\nX-Shellforge-Hook: 1\r\n"
+        f"Content-Type: application/json\r\nContent-Length: {len(data)}\r\n\r\n").encode() + data)
+    assert status == 200
+    await received.delivered(1)
+
+
+async def test_the_installed_hooks_curl_is_served(server):
+    """The hooks the app installs post with curl to `http://127.0.0.1:<port>`, whose Host is that."""
+    import shutil
+    if (curl := shutil.which("curl")) is None:
+        pytest.skip("no curl")
+    srv, received = server
+    proc = await asyncio.create_subprocess_exec(
+        curl, "-s", "-o", "/dev/null", "-w", "%{http_code}", "-m", "2", "-X", "POST", "-H", "Content-Type: application/json",
+        "-H", "X-Shellforge-Hook: 1", "-H", "Expect:", "--data-binary", '{"hook_event_name": "Stop"}',
+        f"http://127.0.0.1:{srv.port}/hook/claude", stdout=asyncio.subprocess.PIPE)
+    out, _ = await proc.communicate()
+    assert out == b"200"
+    await received.delivered(1)

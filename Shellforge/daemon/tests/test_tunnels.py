@@ -167,7 +167,7 @@ async def test_the_ssh_arguments_and_environment_are_the_tunnels_own(ssh_env):
     await wait_until(lambda: os.path.exists(str(ssh_env.log) + ".args"))
     args = open(str(ssh_env.log) + ".args").read().split()
     assert args == ["-N", "-o", "ExitOnForwardFailure=yes", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=3",
-                    "-o", "BatchMode=yes", "-o", "ControlMaster=no", "-o", "ControlPath=none", "db-staging"]
+                    "-o", "BatchMode=yes", "-o", "ControlMaster=no", "-o", "ControlPath=none", "--", "db-staging"]
     assert open(str(ssh_env.log) + ".env").read().strip() == "handed-in"
     await tunnels.stop_all()
 
@@ -469,3 +469,50 @@ async def test_an_exit_watch_that_cannot_use_kqueue_still_sees_the_end(monkeypat
     child = subprocess.Popen(["/bin/sleep", "0.3"])
     await asyncio.wait_for(module.wait_for_exit(child.pid, every=0.05), timeout=3)
     child.wait()
+
+
+def test_the_last_stderr_line_is_read_from_the_logs_end_alone(tmp_path, monkeypatch):
+    """ssh's stderr log grows with every line a long-lived tunnel writes: only its end is read."""
+    import pathlib
+    log = tmp_path / "ssh.log"
+    log.write_bytes(b"debug1: noise\n" * 200_000 + b"Connection to bastion closed by remote host.\n\n")
+    reads = []
+    real_open = pathlib.Path.open
+
+    class Recorded:
+        def __init__(self, stream):
+            self.stream = stream
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self.stream.close()
+
+        def __getattr__(self, name):
+            return getattr(self.stream, name)
+
+        def read(self, size=-1):
+            reads.append(size)
+            return self.stream.read(size)
+
+    monkeypatch.setattr(pathlib.Path, "read_bytes", lambda self: pytest.fail("the whole log was read"))
+    monkeypatch.setattr(pathlib.Path, "open", lambda self, *a, **k: Recorded(real_open(self, *a, **k)))
+    assert TunnelSupervisor._last_line(log) == "Connection to bastion closed by remote host."
+    assert reads and all(0 < size <= 4096 for size in reads)
+    assert TunnelSupervisor._last_line(tmp_path / "missing.log") is None
+    short = tmp_path / "short.log"
+    short.write_bytes(b"Permission denied (publickey).\n")
+    assert TunnelSupervisor._last_line(short) == "Permission denied (publickey)."
+
+
+async def test_an_alias_is_never_read_as_an_option(ssh_env):
+    """The RPC refuses an alias starting with `-`; the supervisor still ends ssh's options with `--`
+    before it, so one that reaches it any other way is a destination, never `-oProxyCommand=`."""
+    events = Events()
+    tunnels = fast(events)
+    await tunnels.start("-oProxyCommand=touch pwned", ssh_env())
+    await wait_until(lambda: os.path.exists(str(ssh_env.log) + ".args"))
+    args = open(str(ssh_env.log) + ".args").read().rstrip("\n")
+    assert args.endswith(" -- -oProxyCommand=touch pwned")
+    await tunnels.stop_all()

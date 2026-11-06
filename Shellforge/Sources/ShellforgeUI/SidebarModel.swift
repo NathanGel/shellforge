@@ -106,6 +106,8 @@ public final class SidebarModel: ObservableObject {
     @Published public internal(set) var diffs: [UUID: DiffStat] = [:]
     /// Where they are read: the one every window shares, unless a test hands in its own.
     lazy var diffStats = DiffStats.shared(launcher: launcher)
+    /// Where each project's provider and default branch are read: shared by every window.
+    lazy var repositoryFacts = Self.sharedRepositoryFacts(launcher: launcher)
     var readingDiffs = false
     /// What the daemon says about the sessions: every dot is read from it.
     @Published public private(set) var sessions = SessionStore()
@@ -357,10 +359,20 @@ public final class SidebarModel: ObservableObject {
                     ? try ExistingWorktrees.adopt(draft: draft, in: project, taken: taken, launcher: launcher)
                     : try TaskWorktrees.create(draft: draft, in: project, launcher: launcher,
                                                cancellation: cancellation, progress: report)
-                let command = try AgentCommand.build(agent: agent, model: draft.model, reasoning: draft.reasoning,
+                let command: String
+                do {
+                    command = try AgentCommand.build(agent: agent, model: draft.model, reasoning: draft.reasoning,
                                                      prompt: AgentCommand.composePrompt(userText: draft.promptText, ticket: draft.ticket,
                                                                                         appendTicket: draft.appendTicket),
                                                      worktreePath: task.worktreePath, launcher: launcher)
+                } catch {
+                    // The first prompt could not be written (a symlinked `.shellforge`, say): nothing
+                    // is saved, and a worktree this create made goes with it.
+                    if !draft.useExisting {
+                        TaskWorktrees.undo(worktree: task.worktreePath, branch: task.branch, project: project, launcher: launcher)
+                    }
+                    throw error
+                }
                 // Cancelled after the worktree was made: take back what this create made.
                 if cancellation?.isCancelled == true {
                     if !draft.useExisting {
@@ -561,6 +573,8 @@ public final class SidebarModel: ObservableObject {
                 if let i = workspace.projects.firstIndex(where: { $0.id == project }) { workspace.projects[i].collapsed.toggle() }
             }
         }
+        // A folded project's badges were not read while it was folded: read them now, not on a tick.
+        if self.project(project)?.collapsed == false { Task { await refreshDiffs() } }
     }
 
     /// Reads each project's provider it does not know yet, off the main thread.
@@ -573,14 +587,12 @@ public final class SidebarModel: ObservableObject {
         guard !unknown.isEmpty else { return }
         providerLookups += unknown.count
         detecting.formUnion(unknown.map(\.id))
-        let launcher = self.launcher
+        let facts = repositoryFacts
         Task {
             let found = await BackgroundWork.run {
                 unknown.map { project -> (UUID, Provider, String?) in
-                    let provider = ProviderDetector.provider(ofRepositoryAt: project.path, launcher: launcher)
-                    // Only a menu that offers Pull names the branch.
-                    return (project.id, provider,
-                            Self.offersPull(provider) ? Repository.defaultBranch(of: project.path, launcher: launcher) : nil)
+                    let read = facts.facts(of: project.path)
+                    return (project.id, read.provider, read.defaultBranch)
                 }
             }
             // One publication for the batch, not one redraw per project.
@@ -593,6 +605,28 @@ public final class SidebarModel: ObservableObject {
             providers = next
             defaultBranches = branches
             detecting.subtract(found.map(\.0))
+        }
+    }
+
+    /// A project's provider and, for one whose menu offers Pull, its default branch.
+    struct ProjectFacts: Equatable, Sendable { var provider: Provider; var defaultBranch: String? }
+
+    /// One for each launcher — the app has one — so a window opened later reads no git for a
+    /// project another window has read.
+    private nonisolated static let sharedFacts = Locked<[ObjectIdentifier: RepositoryFacts<ProjectFacts>]>([:])
+
+    nonisolated static func sharedRepositoryFacts(launcher: CommandLauncher) -> RepositoryFacts<ProjectFacts> {
+        sharedFacts.withLock { all in
+            if let one = all[ObjectIdentifier(launcher)] { return one }
+            // It holds the launcher, so the identifier is never another launcher's.
+            let made = RepositoryFacts<ProjectFacts> { path in
+                let provider = ProviderDetector.provider(ofRepositoryAt: path, launcher: launcher)
+                // Only a menu that offers Pull names the branch.
+                return ProjectFacts(provider: provider,
+                                    defaultBranch: offersPull(provider) ? Repository.defaultBranch(of: path, launcher: launcher) : nil)
+            }
+            all[ObjectIdentifier(launcher)] = made
+            return made
         }
     }
 

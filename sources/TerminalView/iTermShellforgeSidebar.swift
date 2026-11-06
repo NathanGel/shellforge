@@ -25,7 +25,7 @@ final class iTermShellforgeSidebar: NSObject {
                                        names: Dictionary(uniqueKeysWithValues: AgentPresets.all.map { ($0.id, $0.name) }))
 
     /// The Mac's cpu, ram and battery for every window's footer, sampled every five seconds while
-    /// the helper runs.
+    /// the helper runs and some window's sidebar can be seen (`refreshShownSidebars`).
     static let machine = MachineMonitor(sensor: LiveMachineSensor(), power: IOKitPowerSource())
 
     /// AiTerm's Backpack Mode, one for the app: lid sleep through the sudoers rule the Mac card's
@@ -43,6 +43,8 @@ final class iTermShellforgeSidebar: NSObject {
 
     /// Every window's sidebar model, for Backpack's toasts.
     private static let sidebars = NSHashTable<SidebarModel>.weakObjects()
+    /// Each model's sidebar view, to ask whether it can be seen. Weak both ways: the window owns both.
+    private static let sidebarViews = NSMapTable<SidebarModel, NSView>.weakToWeakObjects()
     /// How each window's sidebar opens the Backpack sheet, for ⌘B.
     private static let backpackSheets = BackpackSheets()
 
@@ -76,13 +78,15 @@ final class iTermShellforgeSidebar: NSObject {
         model.onEnvironmentReloaded = { environmentChanged() }
         sidebars.add(model)
         watchClicks()
-        return ShellforgeSidebar.makeView(model: model, chooseFolder: FolderChooser.choose, hooks: hooks, machine: machine,
+        let view = ShellforgeSidebar.makeView(model: model, chooseFolder: FolderChooser.choose, hooks: hooks, machine: machine,
                                           backpack: backpack, zoom: zoom, terminalMatch: iTermShellforgeTerminalMatch.settings,
                                           panelCornerRadius: floats ? panelCornerRadius : nil, showBackpack: { [weak windowController] present in
             if let windowController { backpackSheets.register(windowController, present) }
         }, hideSidebar: { [weak windowController] in
             (windowController?.contentView as? iTermRootTerminalView)?.toggleShellforgeSidebar()
         })
+        sidebarViews.setObject(view, forKey: model)
+        return view
     }
 
     /// The default profile changed to run the login shell in `directory`.
@@ -419,8 +423,17 @@ extension iTermShellforgeSidebar {
             MainActor.assumeIsolated {
                 link.reportsMayHaveChanged()
                 updateDockBadge()
-                // Each task's +n −m: DiffStats keeps an answer 5 s, so this costs git that often.
-                for model in sidebars.allObjects { Task { await model.refreshDiffs() } }
+                refreshShownSidebars()
+            }
+        }
+        // A window uncovered, brought back from the Dock or the app brought forward: its badges and
+        // the Mac's readings are read now, not on the next tick.
+        let shownMayHaveChanged: [Notification.Name] = [NSWindow.didChangeOcclusionStateNotification,
+                                                        NSWindow.didDeminiaturizeNotification,
+                                                        NSApplication.didBecomeActiveNotification]
+        for name in shownMayHaveChanged {
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { refreshShownSidebars() }
             }
         }
         // Room for macOS to fire it with other wakeups: a job's change shows within 1.5 s.
@@ -444,6 +457,23 @@ extension iTermShellforgeSidebar {
                 link.shutdown()
             }
         }
+    }
+
+    /// Each task's +n −m in every sidebar that can be seen — none for a window hidden, in the Dock or
+    /// covered — and the Mac's readings only while one can. DiffStats keeps an answer 5 s, 30 s
+    /// while the app is in the background, so this costs git that often at most.
+    private static func refreshShownSidebars() {
+        let background = !NSApp.isActive
+        var anyShown = false
+        for model in sidebars.allObjects {
+            guard let view = sidebarViews.object(forKey: model), SidebarVisibility.isShowing(view) else { continue }
+            anyShown = true
+            Task { await model.refreshDiffs(background: background) }
+        }
+        if anyShown == machine.paused {
+            DLog("Shellforge: a sidebar shows: \(anyShown); the Mac's readings \(anyShown ? "resume" : "pause")")
+        }
+        machine.setShown(anyShown)
     }
 
     /// Every session in every window, split panes included; the selected one of the selected tab

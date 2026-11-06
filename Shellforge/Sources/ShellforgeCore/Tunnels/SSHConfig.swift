@@ -40,7 +40,33 @@ public struct SSHConfigSource: Sendable {
     /// No config: a model not told where the user's is reads nothing, so no test reads `~/.ssh`.
     public static let none = SSHConfigSource(file: URL(fileURLWithPath: "/dev/null"), home: URL(fileURLWithPath: "/var/empty"))
 
-    public func read() -> [SSHHost] { SSHConfig.hosts(in: file, home: home) }
+    /// The hosts, read again only when a file the last read depended on changed (`SSHConfigCache`).
+    public func read() -> [SSHHost] { SSHConfigCache.shared.hosts(in: file, home: home) }
+}
+
+/// The app's one copy of each config's hosts: every window's refresh asks, and the config and its
+/// includes are read and parsed again only when one of them — or a folder an `Include` globs —
+/// changed, appeared or went since the last read. Thread-safe.
+public final class SSHConfigCache: Sendable {
+    private struct Read { let stamps: FileStamps; let hosts: [SSHHost] }
+    private let kept = Locked<[String: Read]>([:])
+    private let parses = Locked(0)
+
+    public init() {}
+
+    public static let shared = SSHConfigCache()
+
+    /// How many times a config was read and parsed, for tests.
+    var parseCount: Int { parses.withLock { $0 } }
+
+    public func hosts(in file: URL, home: URL) -> [SSHHost] {
+        let key = file.path + "\u{0}" + home.path
+        if let read = kept.withLock({ $0[key] }), read.stamps.areCurrent { return read.hosts }
+        let (hosts, stamps) = SSHConfig.read(file, home: home)
+        parses.withLock { $0 += 1 }
+        kept.withLock { $0[key] = Read(stamps: stamps, hosts: hosts) }
+        return hosts
+    }
 }
 
 public enum SSHConfig {
@@ -60,10 +86,17 @@ public enum SSHConfig {
     /// The concrete `Host` aliases in `file` — none with `*`, `?` or `!` — in file order, each with
     /// its `LocalForward`s. `Include` is followed (relative to `~/.ssh`, globbed), each file once, so
     /// an include loop ends; `Match` blocks are skipped. A missing file has no hosts.
-    public static func hosts(in file: URL, home: URL) -> [SSHHost] {
+    public static func hosts(in file: URL, home: URL) -> [SSHHost] { read(file, home: home).hosts }
+
+    /// The hosts, and the stamps of everything they were read from: each file tried, missing or
+    /// not, under its own name and its target's, and the folder of each `Include` glob, which a
+    /// file added to it changes. Each is stamped before it is read, so a change while reading is
+    /// caught on the next ask.
+    static func read(_ file: URL, home: URL) -> (hosts: [SSHHost], stamps: FileStamps) {
         var reader = Reader(home: home)
         reader.read(file)
-        return reader.order.map { SSHHost(alias: $0, forwards: reader.forwards[$0] ?? []) }
+        let hosts = reader.order.map { SSHHost(alias: $0, forwards: reader.forwards[$0] ?? []) }
+        return (hosts, FileStamps(files: reader.stamped.map(\.0), stamps: reader.stamped.map(\.1)))
     }
 
     private struct Reader {
@@ -71,11 +104,19 @@ public enum SSHConfig {
         var order: [String] = []
         var forwards: [String: [LocalForward]] = [:]
         var visited: Set<String> = []
+        var stamped: [(String, FileStamps.Stamp?)] = []
 
         init(home: URL) { self.home = home }
 
+        mutating func stamp(_ path: String) {
+            guard !stamped.contains(where: { $0.0 == path }) else { return }
+            stamped.append((path, FileStamps.stamp(path)))
+        }
+
         mutating func read(_ file: URL) {
             let path = file.resolvingSymlinksInPath().path
+            stamp(file.path)
+            stamp(path)
             guard visited.insert(path).inserted, visited.count <= 64,
                   let text = try? String(contentsOf: file, encoding: .utf8) else { return }
             var current: [String] = []
@@ -102,11 +143,14 @@ public enum SSHConfig {
 
         /// An `Include` argument as ssh reads it: `~` is the home folder, a relative path is under
         /// `~/.ssh`, and wildcards are globbed, in sorted order.
-        private func expand(_ pattern: String) -> [URL] {
+        private mutating func expand(_ pattern: String) -> [URL] {
             var path = pattern
             if path.hasPrefix("~/") { path = home.path + String(path.dropFirst(1)) }
             else if !path.hasPrefix("/") { path = home.appendingPathComponent(".ssh").path + "/" + path }
-            guard path.contains("*") || path.contains("?") || path.contains("[") else { return [URL(fileURLWithPath: path)] }
+            let wild: (Substring) -> Bool = { $0.contains("*") || $0.contains("?") || $0.contains("[") }
+            guard wild(Substring(path)) else { return [URL(fileURLWithPath: path)] }
+            // The deepest folder above the first wildcard: a file added there changes its date.
+            stamp("/" + path.split(separator: "/").prefix { !wild($0) }.joined(separator: "/"))
             var matches = glob_t()
             defer { globfree(&matches) }
             guard glob(path, 0, nil, &matches) == 0 else { return [] }

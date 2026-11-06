@@ -69,4 +69,36 @@ struct MachineMonitorTests {
         monitor.stop()
         #expect(monitor.lines.map(\.window) == [.ram])
     }
+
+    /// With no sidebar to be seen nothing is sampled; the first to show again samples at once.
+    @Test func pausedWhileNoFooterShows() async {
+        let sensor = CountingSensor(sample(user: 0, idle: 0))
+        let monitor = MachineMonitor(sensor: sensor, power: FakePower(), interval: .seconds(60))
+        monitor.setShown(false)
+        monitor.start()
+        #expect(!monitor.isSampling, "started while hidden, it waits")
+        monitor.setShown(true)
+        #expect(monitor.isSampling)
+        await eventually { sensor.count == 1 }
+        monitor.setShown(false)
+        #expect(!monitor.isSampling)
+        #expect(monitor.paused)
+        monitor.setShown(true)
+        await eventually { sensor.count == 2 }
+        monitor.stop()
+        monitor.setShown(true)
+        #expect(!monitor.isSampling, "stopped stays stopped")
+    }
+}
+
+/// Counts the samples taken.
+private final class CountingSensor: MachineSensor, @unchecked Sendable {
+    private let taken = Locked(0)
+    private let value: MachineSample
+    init(_ value: MachineSample) { self.value = value }
+    var count: Int { taken.withLock { $0 } }
+    func sample() -> MachineSample {
+        taken.withLock { $0 += 1 }
+        return value
+    }
 }

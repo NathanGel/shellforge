@@ -14,7 +14,7 @@ ROUTES = {*HOOK_PARSERS, *STATUSLINE_PARSERS, "/mcp"}
 MAX_BODY = 1 << 20
 # The most header lines, and bytes in the request line and headers together, a request may send.
 # The stream caps each line at 64 KiB; without these, any local process could send distinct headers
-# for the whole read timeout, before the X-Shellforge-Hook check turns it away. A hook sends about six.
+# for the whole read timeout, before the Host and X-Shellforge-Hook checks turn it away. A hook sends about six.
 MAX_HEADER_LINES = 100
 MAX_HEAD_BYTES = 32 << 10
 # How long a client may take to send its whole request before the connection is dropped.
@@ -23,6 +23,10 @@ MCP_PROTOCOL_VERSION = "2025-06-18"
 
 
 class _HeadTooLarge(Exception):
+    pass
+
+
+class _Misdirected(Exception):
     pass
 
 
@@ -63,6 +67,8 @@ class HookServer:
 
             async def _read_request() -> tuple[str, str, dict[str, str], int, bytes]:
                 method, path, headers = await _read_head()
+                if not self._addressed_to_us(headers.get("host")):
+                    raise _Misdirected  # before the body, and before a 100 Continue invites it
                 raw_length = headers.get("content-length", "0") or "0"
                 # -1 marks a length that is not a plain decimal: `int()` alone accepts "-5" and "+3".
                 content_length = int(raw_length) if raw_length.isascii() and raw_length.isdigit() else -1
@@ -78,6 +84,9 @@ class HookServer:
                 method, path, headers, content_length, body = await asyncio.wait_for(_read_request(), self.read_timeout)
             except _HeadTooLarge:
                 await self._reply(writer, 431, "request header fields too large")
+                return
+            except _Misdirected:
+                await self._reply(writer, 421, "")
                 return
 
             if content_length < 0:
@@ -118,6 +127,12 @@ class HookServer:
             pass
         finally:
             writer.close()
+
+    def _addressed_to_us(self, host: str | None) -> bool:
+        """Whether `Host` names this port on loopback, as every hook does (`http://127.0.0.1:<port>`).
+        The marker header alone does not keep a web page out: one that rebinds its own name to
+        127.0.0.1 can send it, but its browser still sends that name as the Host."""
+        return host is not None and host.lower() in (f"127.0.0.1:{self.port}", f"localhost:{self.port}")
 
     @staticmethod
     def _probe_reply(payload: dict[str, Any]) -> str | None:
@@ -206,7 +221,7 @@ class HookServer:
     @staticmethod
     async def _reply(writer: asyncio.StreamWriter, status: int, text: str) -> None:
         reason = {200: "OK", 202: "Accepted", 400: "Bad Request", 404: "Not Found", 413: "Payload Too Large",
-                  431: "Request Header Fields Too Large"}[status]
+                  421: "Misdirected Request", 431: "Request Header Fields Too Large"}[status]
         body = text.encode()
         head = f"HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {len(body)}\r\nConnection: close\r\n\r\n"
         writer.write(head.encode() + body)

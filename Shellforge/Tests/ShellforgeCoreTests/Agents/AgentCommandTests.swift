@@ -60,6 +60,34 @@ import Foundation
         #expect(try String(contentsOfFile: wt + "/.shellforge/first-prompt.md", encoding: .utf8) == long)
     }
 
+    /// A branch under review can commit `.shellforge` as a symlink, or the prompt file in it: the
+    /// launch fails with the path rather than write the prompt wherever the link points.
+    @Test func aSymlinkedShellforgeFolderIsRefused() throws {
+        let fm = FileManager.default
+        let elsewhere = TestScratch.root.appendingPathComponent("elsewhere-\(UUID().uuidString)").path
+        try fm.createDirectory(atPath: wt, withIntermediateDirectories: true)
+        try fm.createDirectory(atPath: elsewhere, withIntermediateDirectories: true)
+        try fm.createSymbolicLink(atPath: wt + "/.shellforge", withDestinationPath: elsewhere)
+        let long = String(repeating: "x", count: 9000)
+        #expect(throws: AgentCommand.SymlinkRefused(path: wt + "/.shellforge")) {
+            try AgentCommand.build(agent: AgentPresets.claude, model: "opus", reasoning: nil, prompt: long, worktreePath: wt, launcher: launcher)
+        }
+        #expect(!fm.fileExists(atPath: elsewhere + "/first-prompt.md"))
+    }
+
+    @Test func aSymlinkedFirstPromptFileIsRefused() throws {
+        let fm = FileManager.default
+        let target = TestScratch.root.appendingPathComponent("target-\(UUID().uuidString)").path
+        try fm.createDirectory(atPath: wt + "/.shellforge", withIntermediateDirectories: true)
+        try "keep".write(toFile: target, atomically: true, encoding: .utf8)
+        try fm.createSymbolicLink(atPath: wt + "/.shellforge/first-prompt.md", withDestinationPath: target)
+        let long = String(repeating: "x", count: 9000)
+        #expect(throws: AgentCommand.SymlinkRefused(path: wt + "/.shellforge/first-prompt.md")) {
+            try AgentCommand.build(agent: AgentPresets.claude, model: "opus", reasoning: nil, prompt: long, worktreePath: wt, launcher: launcher)
+        }
+        #expect(try String(contentsOfFile: target, encoding: .utf8) == "keep")
+    }
+
     /// The command is typed into a tab whose shell may not have started its line editor yet. Until
     /// it does, the terminal is in canonical mode, where macOS keeps at most 1024 bytes of input
     /// (`MAX_CANON`) and silently drops the rest: a 1 kB prompt once lost its closing quote and

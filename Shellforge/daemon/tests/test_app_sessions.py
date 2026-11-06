@@ -110,3 +110,112 @@ async def test_an_untagged_tab_does_not_take_another_tabs_task_from_the_shared_w
     await call(r, w, "sessions.update", {"sessions": [tagged, plain]})
     tasks = {s["sessionId"]: s["taskId"] for s in (await call(r, w, "sessions.list", id_=2))["result"]}
     assert tasks == {"A": "T1", "B": None}
+
+
+class _CountingCodex:
+    """Codex's rollouts, counted: how often a tick asked for the account's limits and a thread's files."""
+
+    def __init__(self):
+        self.limits = self.threads = 0
+
+    def rate_limits(self):
+        self.limits += 1
+        return None
+
+    def context_percent(self, thread_id):
+        self.threads += 1
+        return None
+
+    def tally(self, thread_id):
+        return None
+
+    def retain(self, thread_ids):
+        pass
+
+
+@pytest.fixture
+def throttled(make_service, monkeypatch):
+    """An app-fed service, not started -- no poll loop ticks beside the test -- on a monotonic clock
+    the test moves, with every Claude transcript read and Codex read counted."""
+    now = [100.0]
+    svc = make_service(iterm=AppSessions(), monotonic=lambda: now[0])
+    svc.codex_files = codex = _CountingCodex()
+    reads = []
+    monkeypatch.setattr(svc.claude_tallies, "tally", lambda transcript: reads.append(transcript))
+    return svc, now, reads, codex
+
+
+async def test_a_retitle_alone_reads_the_agents_files_at_most_once_per_poll(throttled):
+    """The app sends sessions.update on every tab-title change, and Claude's spinner retitles its tab
+    several times a second: each is applied and published at once, but the transcripts and rollouts
+    are read no more often than the poll would read them."""
+    from shellforged.service import POLL_SECONDS
+    svc, now, reads, codex = throttled
+    await svc._h_sessions_update({"sessions": [SESSION]})
+    svc.registry.set_transcript("GUID-1", "/t/s.jsonl")
+    await svc._h_sessions_update({"sessions": [SESSION]})
+    assert reads == ["/t/s.jsonl"], "a new transcript is read at once"
+    limits = codex.limits
+    for i in range(20):
+        now[0] += 0.05
+        await svc._h_sessions_update({"sessions": [{**SESSION, "title": f"✳ claude {i}"}]})
+        assert svc.registry.get("GUID-1").title == f"✳ claude {i}"
+    assert reads == ["/t/s.jsonl"] and codex.limits == limits
+    now[0] += POLL_SECONDS
+    await svc._h_sessions_update({"sessions": [{**SESSION, "title": "✳ claude"}]})
+    assert reads == ["/t/s.jsonl"] * 2 and codex.limits == limits + 1
+
+
+# A new tab, another conversation in the same tab, or another agent leave the old transcript behind:
+# only the tab whose cwd moved still has it to read.
+@pytest.mark.parametrize("change,transcript_read", [
+    ({"sessionId": "GUID-2"}, False),  # a new tab, and the old one closed
+    ({"cwd": "/repo/.worktrees/y"}, True),
+    ({"jobPid": 4343}, False),
+    ({"commandLine": "codex", "jobPid": None}, False),
+])
+async def test_a_real_change_to_a_tab_reads_its_files_at_once(throttled, change, transcript_read):
+    svc, now, reads, codex = throttled
+    await svc._h_sessions_update({"sessions": [SESSION]})
+    svc.registry.set_transcript("GUID-1", "/t/s.jsonl")
+    await svc._h_sessions_update({"sessions": [SESSION]})
+    limits, before = codex.limits, len(reads)
+    now[0] += 0.05
+    await svc._h_sessions_update({"sessions": [{**SESSION, **change}]})
+    assert codex.limits == limits + 1
+    assert len(reads) == before + transcript_read
+
+
+async def test_a_poll_or_a_hook_tick_still_reads_the_files_every_time(throttled):
+    svc, now, reads, codex = throttled
+    await svc._h_sessions_update({"sessions": [SESSION]})
+    svc.registry.set_transcript("GUID-1", "/t/s.jsonl")
+    await svc.tick()
+    await svc.tick()
+    assert reads == ["/t/s.jsonl"] * 2
+
+
+async def test_a_full_tick_asked_for_during_a_throttled_one_is_not_served_by_it(throttled):
+    """Callers queued behind a tick share the next; one that wants the files read must not take a
+    retitle's tick, which skipped them, as its own."""
+    svc, now, reads, codex = throttled
+    await svc._h_sessions_update({"sessions": [SESSION]})
+    svc.registry.set_transcript("GUID-1", "/t/s.jsonl")
+    await svc.tick()
+    now[0] += 0.05
+    gate = asyncio.Event()
+    real_snapshot = svc.iterm.snapshot
+
+    async def held_snapshot():
+        await gate.wait()
+        return await real_snapshot()
+
+    svc.iterm.snapshot = held_snapshot
+    first = asyncio.create_task(svc._h_sessions_update({"sessions": [{**SESSION, "title": "a"}]}))
+    await asyncio.sleep(0)
+    light = asyncio.create_task(svc._h_sessions_update({"sessions": [{**SESSION, "title": "b"}]}))
+    full = asyncio.create_task(svc.tick())
+    await asyncio.sleep(0)
+    gate.set()
+    await asyncio.gather(first, light, full)
+    assert reads == ["/t/s.jsonl"] * 2, "the full tick read the transcript"

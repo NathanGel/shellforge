@@ -41,6 +41,21 @@ import Testing
         _ = subscription
     }
 
+    /// A collapsed project's tasks draw no badge and are not read; each keeps its last badge, and
+    /// opening the project reads it at once.
+    @Test func aCollapsedProjectsTasksAreNotRead() async throws {
+        let (model, task) = try await model()
+        await model.refreshDiffs()
+        #expect(model.diffs[task.id] == DiffStat(added: 0, removed: 0))
+        model.toggleCollapsed(task.projectId)
+        #expect(SidebarModel.tasksShowingDiffs(in: model.document.workspace).isEmpty)
+        try "a\nb\n".write(toFile: task.worktreePath + "/new.txt", atomically: true, encoding: .utf8)
+        await model.refreshDiffs()
+        #expect(model.diffs[task.id] == DiffStat(added: 0, removed: 0), "folded: kept, not read")
+        model.toggleCollapsed(task.projectId)
+        #expect(await eventually { model.diffs[task.id] == DiffStat(added: 2, removed: 0) }, "opened: read without a tick")
+    }
+
     /// Nothing changed, no base or no answer: the plain badge and its plain help.
     @Test func theBadgeHelpNamesTheBase() {
         #expect(VSCodeBadge.help(diff: DiffStat(added: 12, removed: 3), base: "main") == "Open in VS Code \u{2014} 12 added, 3 removed against main")

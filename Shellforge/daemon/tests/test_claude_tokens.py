@@ -123,3 +123,53 @@ def test_retain_forgets_conversations_no_tab_runs(tmp_path):
     tallies.tally(str(transcript))
     tallies.retain(set())
     assert tallies._conversations == {}
+
+
+class _RecordedReads:
+    """A file whose reads are recorded, wrapping the one `Path.open` returned."""
+
+    def __init__(self, stream, sizes):
+        self._stream, self._sizes = stream, sizes
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self._stream.close()
+
+    def seek(self, *args):
+        return self._stream.seek(*args)
+
+    def read(self, size=-1):
+        self._sizes.append(size)
+        return self._stream.read(size)
+
+
+def test_a_transcript_is_read_in_bounded_chunks_with_the_same_tally(tmp_path, monkeypatch):
+    """A transcript grows to hundreds of megabytes: its first read must not hold it whole, let alone
+    three times over. Lines straddle the chunks, and one is still being written at the end."""
+    import pathlib
+
+    from shellforged import claude_tokens
+    transcript = tmp_path / "s.jsonl"
+    records = [reply(f"m{i}", fresh=i, read=10 * i, output=1) for i in range(40)]
+    records[7:7] = [{"type": "user", "message": {"content": "x" * 300}}]  # a line longer than a chunk
+    append(transcript, *records)
+    whole = ClaudeTranscriptTallies().tally(str(transcript))
+    last = json.dumps(reply("m99", fresh=5, output=5))
+    append(transcript, last[:30], newline=False)
+
+    sizes: list[int] = []
+    real_open = pathlib.Path.open
+    monkeypatch.setattr(claude_tokens, "READ_CHUNK_BYTES", 64, raising=False)
+    monkeypatch.setattr(pathlib.Path, "open", lambda self, *a, **k: _RecordedReads(real_open(self, *a, **k), sizes))
+    tallies = ClaudeTranscriptTallies()
+    assert tallies.tally(str(transcript)) == whole
+    assert sizes and all(0 < size <= 64 for size in sizes), sizes
+    cursor = tallies._conversations[str(transcript)].cursors[transcript]
+    assert cursor.offset == transcript.stat().st_size and cursor.partial == last[:30].encode()
+
+    with real_open(transcript, "a") as stream:
+        stream.write(last[30:] + "\n")
+    assert tallies.tally(str(transcript)) == TokenTally(whole.input + 5, whole.cached, whole.output + 5)
+    assert cursor.partial == b""

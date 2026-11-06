@@ -13,6 +13,10 @@ from .usage import whole_count
 SYNTHETIC_MODEL = "<synthetic>"
 # What every line carrying a reply's usage contains, so the rest are skipped unparsed.
 _USAGE = b'"usage"'
+# How much of a transcript one read takes. A transcript grows to hundreds of megabytes and its first
+# read starts at 0: read whole, then joined to the partial line and split, it held about three
+# copies of the file at once.
+READ_CHUNK_BYTES = 1 << 20
 
 Stamp = tuple[Path, int, int]  # path, st_ino, st_size
 
@@ -101,14 +105,32 @@ class ClaudeTranscriptTallies:
         cursor = conversation.cursors.setdefault(path, _Cursor(inode))
         if size <= cursor.offset:
             return
+        # A line longer than a chunk -- a tool's output -- is gathered in pieces and joined once it
+        # ends, rather than copied again with each chunk it spans.
+        pending = [cursor.partial]
         try:
             with path.open("rb") as stream:
                 stream.seek(cursor.offset)
-                chunk = stream.read(size - cursor.offset)
+                # In chunks, each line finished in one counted before the next is read: what a read
+                # holds is a chunk and the line it ends inside, not the file.
+                while cursor.offset < size:
+                    chunk = stream.read(min(READ_CHUNK_BYTES, size - cursor.offset))
+                    if not chunk:  # cut short since it was stamped: the rest is read next time
+                        break
+                    cursor.offset += len(chunk)
+                    pending.append(chunk)
+                    if b"\n" in chunk:
+                        *lines, last = b"".join(pending).split(b"\n")
+                        pending = [last]
+                        cls._count(lines, conversation)
         except OSError:
-            return
-        cursor.offset += len(chunk)
-        *lines, cursor.partial = (cursor.partial + chunk).split(b"\n")
+            pass
+        finally:
+            # Whatever was read stays read: a read that failed midway goes on from its last chunk.
+            cursor.partial = b"".join(pending)
+
+    @classmethod
+    def _count(cls, lines: list[bytes], conversation: _Conversation) -> None:
         for line in lines:
             if _USAGE in line and (reply := cls._reply(line)) is not None:
                 reply_id, spent = reply

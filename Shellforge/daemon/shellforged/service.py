@@ -57,6 +57,8 @@ CODEX_READ = "the Codex rollout read"
 CLAUDE_READ = "the Claude transcript read"
 
 T = TypeVar("T")
+# Each tab's (session id, agent, job pid, cwd, agent cwd, transcript), and the Codex thread each runs.
+_FilesKey = tuple[frozenset[tuple[str, str, int | None, str, str | None, str | None]], frozenset[tuple[str, str]]]
 
 
 #: How long a hook that placed nowhere waits for the app's next session list before re-reading.
@@ -104,6 +106,13 @@ class Service:
         self._sleeping_for = POLL_SECONDS
         self._poll_sooner = asyncio.Event()
         self._last_good_tick = 0
+        # The same for the last tick that read the agents' files: a retitle's tick may skip them.
+        self._last_good_read_tick = 0
+        # When the agents' files were last read, on `monotonic`, and what the tabs were then: a
+        # sessions.update reads them again only once POLL_SECONDS have passed or that has changed.
+        self._monotonic = monotonic
+        self._files_read_at = float("-inf")
+        self._files_read_for: _FilesKey | None = None
         self._path_missing = path_missing
         self.subagent_transcripts = SubagentTranscripts()
         self.claude_tallies = ClaudeTranscriptTallies()
@@ -158,7 +167,7 @@ class Service:
             # and starts the 2 s an agent gets: the next poll comes within it, as it would have.
             try:
                 await asyncio.wait_for(self._poll_sooner.wait(), timeout=self._sleeping_for)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
             else:
                 self._poll_sooner.clear()
@@ -268,13 +277,15 @@ class Service:
         await self.tick()
 
     async def _h_sessions_update(self, p: Any) -> dict[str, Any]:
-        """The app's tabs, replacing the last list; answered after the tick that reads them."""
+        """The app's tabs, replacing the last list; answered after the tick that reads them. The app
+        sends one on every retitle -- Claude's spinner retitles several times a second -- so the tick
+        reads the agents' files only when the poll would have, or the tabs changed (`_files_due`)."""
         from .app_sessions import AppSessions, parse_sessions
         sessions = parse_sessions(p)
         if not isinstance(self.iterm, AppSessions):
             raise RpcError(protocol.BAD_PARAMS, "sessions.update needs the app session source")
         self.iterm.replace(sessions)
-        await self.tick()
+        await self.tick(light=True)
         return {"ok": True}
 
     async def _h_mark_seen(self, p: Any) -> dict[str, Any]:
@@ -308,7 +319,9 @@ class Service:
             log.exception("on_session_closed failed for %s", session_id)
 
     # -- polling -------------------------------------------------------------------
-    async def tick(self) -> None:
+    async def tick(self, light: bool = False) -> None:
+        """Reads iTerm2 (or the app's list) into the registry and publishes what changed. A `light`
+        tick reads the agents' files -- transcripts, rollouts -- only when they are due."""
         # The poll loop, iTerm2 notification callbacks, and RPC handlers can
         # all call tick() concurrently; serialize the whole body so a
         # `windows_before` snapshot taken by one call can't be diffed against
@@ -318,26 +331,29 @@ class Service:
         # Callers queued behind one tick share the next: it starts after all of them asked, so it
         # reads everything each would have. The running one does not count -- it may have read
         # iTerm2 before the change its caller is waiting to see -- and neither does a failed one.
+        # A caller that is not `light` is served only by a tick that read the files.
         asked_after = self._ticks_started
         async with self._tick_lock:
-            if self._last_good_tick > asked_after:
+            if (self._last_good_tick if light else self._last_good_read_tick) > asked_after:
                 return
             self._ticks_started += 1
             number = self._ticks_started
-            await self._tick()
+            read_files = await self._tick(light)
             self._last_good_tick = number
+            if read_files:
+                self._last_good_read_tick = number
         # An agent found while the poll loop sleeps the idle 10 s: it polls again within 2 s.
         if self.poll_interval() < self._sleeping_for:
             self._sleeping_for = self.poll_interval()
             self._poll_sooner.set()
 
-    async def _tick(self) -> None:
-        try:
-            await self._read_codex_usage()
-        except Exception:  # noqa: BLE001 - another process's file must not stop session polling
-            log.exception("reading Codex usage failed")
+    async def _tick(self, light: bool) -> bool:
+        """One tick's work; whether it read the agents' files. A light one decides that once it
+        knows the tabs, after the snapshot, so it reads Codex usage there too."""
+        if not light:
+            await self._read_codex_usage_logged()
         if not self.iterm.is_connected():
-            return
+            return not light
         windows_before = {s.window_id for s in self.registry.all()}
         positions_before = {s.session_id: (s.window_id, s.tab_index) for s in self.registry.all()}
         diff = self.registry.apply_snapshot(await self.iterm.snapshot())
@@ -350,14 +366,33 @@ class Service:
         # diffing nothing, and the app stale for that session until something else moved it.
         changed = list(diff.changed)
         try:
-            await self._after_snapshot(diff, windows_before, positions_before, changed)
+            return await self._after_snapshot(diff, windows_before, positions_before, changed, light)
         finally:
             await self.publisher.session_changed(changed)
 
+    async def _read_codex_usage_logged(self) -> None:
+        try:
+            await self._read_codex_usage()
+        except Exception:  # noqa: BLE001 - another process's file must not stop session polling
+            log.exception("reading Codex usage failed")
+
+    def _files_key(self, threads: dict[str, str]) -> _FilesKey:
+        """What decides which of the agents' files a tick reads: each tab's agent, conversation and
+        directories, and the Codex thread it runs. Not its title, its position or whether it is current."""
+        return (frozenset((s.session_id, s.agent, s.job_pid, s.cwd, s.agent_cwd, s.transcript) for s in self.registry.all()),
+                frozenset(threads.items()))
+
+    def _files_due(self, threads: dict[str, str]) -> bool:
+        """Whether a light tick reads the agents' files: POLL_SECONDS since they were last read, as
+        the poll would, or a tab that opened, closed or moved to another conversation or directory."""
+        return (self._monotonic() - self._files_read_at >= POLL_SECONDS
+                or self._files_key(threads) != self._files_read_for)
+
     async def _after_snapshot(self, diff: SnapshotDiff, windows_before: set[str],
-                              positions_before: dict[str, tuple[str, int]], changed: list[str]) -> None:
+                              positions_before: dict[str, tuple[str, int]], changed: list[str], light: bool) -> bool:
         """Announces what the snapshot opened and closed, then reads the corroborating signals, each
-        step guarded so one that raises costs only its own changes. Appends to `changed` as it goes."""
+        step guarded so one that raises costs only its own changes. Appends to `changed` as it goes.
+        Whether it read the agents' files: a light tick skips them unless they are due."""
         # A session moved to another tab or window keeps its id but not its tab's title.
         for s in self.registry.all():
             if positions_before.get(s.session_id, (s.window_id, s.tab_index)) != (s.window_id, s.tab_index):
@@ -385,14 +420,21 @@ class Service:
             # Another process's file must not stop the other tabs.
             with _logged(f"corroborating session {s.session_id}"):
                 self._corroborate(s, threads, changed)
-        with _logged("reading the Codex rollouts"):
-            changed += await self._apply_codex_rollouts(threads)
-        with _logged("reading the Claude transcripts"):
-            changed += await self._apply_claude_tallies()
+        read_files = not light or self._files_due(threads)
+        if read_files:
+            self._files_read_at, self._files_read_for = self._monotonic(), self._files_key(threads)
+            if light:
+                await self._read_codex_usage_logged()
+            with _logged("reading the Codex rollouts"):
+                changed += await self._apply_codex_rollouts(threads)
+            with _logged("reading the Claude transcripts"):
+                changed += await self._apply_claude_tallies()
+        # Both only read when a turn waits on them, and a stat each: every tick.
         with _logged("settling orphaned sessions"):
             changed += self.status.settle_orphans(await self._missing_paths(self.status.orphan_paths()))
         with _logged("releasing dead subagents"):
             changed += self.status.release_dead_subagents(await self._subagent_tails(self.status.subagent_transcripts()))
+        return read_files
 
     def _corroborate(self, s: SessionInfo, threads: dict[str, str], changed: list[str]) -> None:
         """Adds to `changed` what the agent's own files and the tab say of `s` that its hooks have
@@ -455,7 +497,7 @@ class Service:
 
     async def _apply_claude_tallies(self) -> list[str]:
         """The sessions whose Claude conversation has spent more since the last tick. A transcript
-        grows to megabytes and its first read is whole, so it is read on a worker thread, which keeps
+        grows to hundreds of megabytes and its first read starts at 0, so it is read on a worker thread, which keeps
         what it read for the next tick even when this one stops waiting."""
         transcripts = {s.session_id: s.transcript for s in self.registry.all() if s.transcript}
         if not transcripts:

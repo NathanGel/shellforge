@@ -13,8 +13,8 @@ public struct DiffStat: Equatable, Sendable {
 /// long before anyone commits it. Ignored and binary files do not count.
 ///
 /// No one file changes when a diff does — any edit in the tree does — so an answer is kept for
-/// `ttl` seconds, which is what stops every window's tick from running `git diff` over every
-/// worktree each second. The merge-base the diff starts from is tied to the refs it joins, so it is
+/// `ttl` seconds — `backgroundTTL` while the app is not active — which is what stops every window's
+/// tick from running `git diff` over every worktree each second. The merge-base the diff starts from is tied to the refs it joins, so it is
 /// kept until one of them moves; an untracked file's lines are kept against its `lstat`, so an
 /// expired answer reads only the files that changed.
 ///
@@ -64,12 +64,15 @@ public final class DiffStats: Sendable {
     private let git: any GitCommands
     private let now: @Sendable () -> Date
     private let ttl: TimeInterval
+    private let backgroundTTL: TimeInterval
     private let cap: UntrackedCap
     private let kept = Locked(Kept())
 
+    /// `backgroundTTL` is how long an answer stands while nobody is looking: the app is not active.
+    /// It is never shorter than `ttl`.
     public init(git: any GitCommands, now: @escaping @Sendable () -> Date = Date.init, ttl: TimeInterval = 5,
-                untrackedCap: UntrackedCap = .standard) {
-        self.git = git; self.now = now; self.ttl = ttl; self.cap = untrackedCap
+                backgroundTTL: TimeInterval = 30, untrackedCap: UntrackedCap = .standard) {
+        self.git = git; self.now = now; self.ttl = ttl; self.backgroundTTL = max(ttl, backgroundTTL); self.cap = untrackedCap
     }
 
     private static let sharedOne = Locked<DiffStats?>(nil)
@@ -84,11 +87,13 @@ public final class DiffStats: Sendable {
     }
 
     /// The diff of `worktree` against `base`; nil when there is no base, it cannot be found locally
-    /// or as `origin/<base>`, or `worktree` is not a checkout.
-    public func diff(for worktree: String, base: String) -> DiffStat? {
+    /// or as `origin/<base>`, or `worktree` is not a checkout. In the `background` an answer stands
+    /// for `backgroundTTL` rather than `ttl`.
+    public func diff(for worktree: String, base: String, background: Bool = false) -> DiffStat? {
         // A folder gone from disk is no checkout: no git is run for it.
         guard !worktree.isEmpty, !base.isEmpty, FileManager.default.fileExists(atPath: worktree) else { return nil }
         let key = Self.key(worktree, base)
+        let ttl = background ? backgroundTTL : self.ttl
         let (known, stands): (Entry?, Bool) = kept.withLock { kept in
             let known = kept.entries[key], at = now()
             let fresh = known.map { at.timeIntervalSince($0.at) < ttl } ?? false
@@ -110,9 +115,10 @@ public final class DiffStats: Sendable {
     }
 
     /// One pass over the tasks; a task with no answer is absent. What is kept for a task no longer
-    /// among `tasks` is dropped.
-    public func diffs(for tasks: [TaskItem]) -> [UUID: DiffStat] {
-        let live = Set(tasks.map { Self.key($0.worktreePath, $0.baseBranch) })
+    /// among `keeping` — `tasks` when not given — is dropped: a task in a collapsed project is not
+    /// read, but what was read for it stays, so it is ready when the project opens.
+    public func diffs(for tasks: [TaskItem], keeping: [TaskItem]? = nil, background: Bool = false) -> [UUID: DiffStat] {
+        let live = Set((keeping ?? tasks).map { Self.key($0.worktreePath, $0.baseBranch) })
         kept.withLock { kept in
             kept.entries = kept.entries.filter { live.contains($0.key) }
             kept.mergeBases = kept.mergeBases.filter { live.contains($0.key) }
@@ -121,7 +127,7 @@ public final class DiffStats: Sendable {
         }
         var out: [UUID: DiffStat] = [:]
         for task in tasks {
-            if let diff = diff(for: task.worktreePath, base: task.baseBranch) { out[task.id] = diff }
+            if let diff = diff(for: task.worktreePath, base: task.baseBranch, background: background) { out[task.id] = diff }
         }
         return out
     }

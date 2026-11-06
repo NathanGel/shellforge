@@ -51,6 +51,9 @@ SSH_OPTIONS = ["-N", "-o", "ExitOnForwardFailure=yes", "-o", "ServerAliveInterva
 FATAL = ("Address already in use", "forwarding failed", "cannot listen to port", "Permission denied",
          "Host key verification failed", "Could not resolve hostname", "Bad configuration option")
 
+# How much of the end of ssh's stderr log is searched for its last line.
+LAST_LINE_BYTES = 4096
+
 # ssh's lines for a prompt BatchMode refused: the tunnel can be opened in a tab to answer it.
 NEEDS_INPUT = ("Host key verification failed", "passphrase", "verification code", "keyboard-interactive", "password")
 
@@ -133,12 +136,14 @@ def ps_command(pid: int) -> str | None:
 def is_tunnel_ssh(command: str | None, alias: str) -> bool:
     """Whether `command` is exactly this supervisor's ssh for `alias`: an executable named `ssh`
     (first, or second after the interpreter of a script named ssh), then exactly `SSH_OPTIONS` in
-    order, then the alias, and nothing else."""
+    order, then `--` and the alias, and nothing else."""
     parts = (command or "").split()
-    tail = [*SSH_OPTIONS, alias]
-    if len(parts) not in (len(tail) + 1, len(tail) + 2) or parts[-len(tail):] != tail:
-        return False
-    return os.path.basename(parts[-len(tail) - 1]) == "ssh"
+    # With the `--` this supervisor puts before the alias, or without it: an ssh a daemon from before
+    # it started is still ours to adopt.
+    for tail in ([*SSH_OPTIONS, "--", alias], [*SSH_OPTIONS, alias]):
+        if len(parts) in (len(tail) + 1, len(tail) + 2) and parts[-len(tail):] == tail:
+            return os.path.basename(parts[-len(tail) - 1]) == "ssh"
+    return False
 
 
 class _Child:
@@ -424,7 +429,9 @@ class TunnelSupervisor:
             errors = self._log_file(tunnel.alias)
             try:
                 with open(errors, "wb") as stderr:
-                    popen = subprocess.Popen([ssh, *SSH_OPTIONS, tunnel.alias], env=environment, stdin=subprocess.DEVNULL,
+                    # `--` ends ssh's options: the alias is its destination whatever it starts
+                    # with. Nothing follows it, so no command after it is read as an option either.
+                    popen = subprocess.Popen([ssh, *SSH_OPTIONS, "--", tunnel.alias], env=environment, stdin=subprocess.DEVNULL,
                                              stdout=subprocess.DEVNULL, stderr=stderr, start_new_session=True)
             except OSError as exc:
                 await self._set(tunnel, "failed", f"Couldn’t start ssh: {exc}")
@@ -477,7 +484,10 @@ class TunnelSupervisor:
     def _last_line(path: Path) -> str | None:
         """ssh's last non-empty stderr line: what a failed or dropped tunnel says."""
         try:
-            lines = path.read_bytes()[-4096:].decode(errors="replace").splitlines()
+            # Only the end: a tunnel that stays up for weeks keeps appending to the log.
+            with path.open("rb") as stream:
+                stream.seek(max(0, stream.seek(0, os.SEEK_END) - LAST_LINE_BYTES))
+                lines = stream.read(LAST_LINE_BYTES).decode(errors="replace").splitlines()
         except OSError:
             return None
         return next((line.strip() for line in reversed(lines) if line.strip()), None)

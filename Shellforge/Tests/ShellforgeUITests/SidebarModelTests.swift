@@ -447,6 +447,26 @@ import Testing
         #expect(await eventually { sidebar.providers[id] != nil })
         #expect(sidebar.providerLookups == 1)
     }
+
+    /// A window opened later reads no git for a project another window has read: the answer is
+    /// the app's, and stands until the repository's config changes.
+    @Test func aSecondWindowReusesTheFirstWindowsProvider() async throws {
+        let repo = try GitRepoForUI()
+        _ = try repo.launcher.run("/usr/bin/git", ["-C", repo.path, "remote", "add", "origin", "git@github.com:a/b.git"])
+        let document = WorkspaceDocument(store: WorkspaceStore(folder: folder))
+        let first = SidebarModel(host: FakeTerminalHost(), document: document, launcher: repo.launcher, jiraSettings: { nil })
+        await first.addProject(folder: repo.path)
+        let id = try #require(first.tree.projects.first).id
+        #expect(await eventually { first.providers[id] == .github })
+        let facts = first.repositoryFacts, reads = facts.readCount
+        let second = SidebarModel(host: FakeTerminalHost(), document: document, launcher: repo.launcher, jiraSettings: { nil })
+        #expect(await eventually { second.providers[id] == .github })
+        #expect(second.repositoryFacts === facts)
+        #expect(facts.readCount == reads, "the second window ran no git")
+        // A changed remote is read again.
+        _ = try repo.launcher.run("/usr/bin/git", ["-C", repo.path, "remote", "set-url", "origin", "git@gitlab.com:a/b.git"])
+        #expect(facts.facts(of: repo.path).provider == .gitlab)
+    }
 }
 
 /// Which threads a closure ran on, from any thread.

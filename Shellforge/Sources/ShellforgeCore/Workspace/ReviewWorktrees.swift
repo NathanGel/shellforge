@@ -103,7 +103,10 @@ extension GitRepository {
         // AiTerm's five minutes: a checkout killed halfway leaves a locked worktree that every retry
         // is refused over, which is worse than waiting.
         try run(["worktree", "add", "--lock", "--reason", Self.reviewLockReason]
-                + (created ? ["-b", branch, worktreePath, "origin/" + branch] : [worktreePath, branch]), timeout: 300)
+                // `--` ends the options: the path and the branch are never read as one, whatever
+                // they start with. The branch stays a plain name — `refs/heads/<branch>` would check
+                // out a detached HEAD — and `-b`'s value is an argument, not an option.
+                + (created ? ["-b", branch, "--", worktreePath, "origin/" + branch] : ["--", worktreePath, branch]), timeout: 300)
         // So that a plain `git push` from the review lands on origin's branch. Written as config
         // rather than asked of `--track`, which refuses an `origin/<branch>` that
         // `remote.origin.fetch` does not cover — a single-branch clone's. Best-effort: the checkout

@@ -42,9 +42,17 @@ extension SidebarModel {
                 guard launcher.locate(agent.command) != nil else { throw AgentNotInstalled(agent: agent.name) }
                 let review = try ReviewWorktrees.create(draft: draft, in: project, launcher: launcher,
                                                         cancellation: cancellation, progress: report)
-                let command = try AgentCommand.build(agent: agent, model: draft.model, reasoning: draft.reasoning,
+                let command: String
+                do {
+                    command = try AgentCommand.build(agent: agent, model: draft.model, reasoning: draft.reasoning,
                                                      prompt: draft.promptText.isEmpty ? nil : draft.promptText,
                                                      worktreePath: review.worktreePath, launcher: launcher)
+                } catch {
+                    // The branch committed `.shellforge` as a symlink, say: the review is refused, and
+                    // its worktree taken back; the branch stays, as in create.
+                    TaskWorktrees.undo(worktree: review.worktreePath, branch: nil, project: project, launcher: launcher)
+                    throw error
+                }
                 // Cancelled after the worktree was made: take it back; the branch stays, as in create.
                 if cancellation?.isCancelled == true {
                     TaskWorktrees.undo(worktree: review.worktreePath, branch: nil, project: project, launcher: launcher)

@@ -161,6 +161,44 @@ import Testing
         #expect(recording.calls.dropFirst(before).contains { $0[0] == "merge-base" }, "a task left out was forgotten")
     }
 
+    /// While the app is in the background an answer stands 30 s, not 5: the badges are read less
+    /// often while nobody looks, and as often as before once the app is active again.
+    @Test func theBackgroundKeepsAnAnswerLonger() throws {
+        let (repo, worktree) = try makeRepo()
+        let clock = TestClock()
+        let recording = RecordingGit(real: LauncherGit(launcher: repo.launcher))
+        let s = DiffStats(git: recording, now: { clock.now }, ttl: 5, backgroundTTL: 30)
+        #expect(s.diff(for: worktree, base: "main", background: true) == DiffStat(added: 0, removed: 0))
+        try write("x\n", to: worktree + "/new.txt")
+        clock.advance(by: 6)
+        let asked = recording.calls.count
+        #expect(s.diff(for: worktree, base: "main", background: true) == DiffStat(added: 0, removed: 0))
+        #expect(recording.calls.count == asked, "no git within the background's time")
+        #expect(s.diff(for: worktree, base: "main") == DiffStat(added: 1, removed: 0), "the foreground's 5 s are up")
+        try write("x\ny\n", to: worktree + "/new.txt")
+        clock.advance(by: 29)
+        #expect(s.diff(for: worktree, base: "main", background: true) == DiffStat(added: 1, removed: 0))
+        clock.advance(by: 2)
+        #expect(s.diff(for: worktree, base: "main", background: true) == DiffStat(added: 2, removed: 0))
+    }
+
+    /// A task in a collapsed project is not read, but what was read for it is kept for its return.
+    @Test func aTaskKeptButNotPassedIsNotReadNorForgotten() throws {
+        let (repo, first) = try makeRepo()
+        let second = repo.path + "/.worktrees/other"
+        try repo.git("worktree", "add", "-q", "-b", "feat/y", second)
+        let a = TaskItem(projectId: UUID(), title: "a", branch: "feat/x", worktreePath: first, baseBranch: "main")
+        let b = TaskItem(projectId: UUID(), title: "b", branch: "feat/y", worktreePath: second, baseBranch: "main")
+        let recording = RecordingGit(real: LauncherGit(launcher: repo.launcher))
+        let s = DiffStats(git: recording, now: { Date(timeIntervalSince1970: 0) })
+        #expect(s.diffs(for: [a, b]).count == 2)
+        let before = recording.calls.count
+        #expect(s.diffs(for: [a], keeping: [a, b]).keys.sorted() == [a.id])
+        #expect(recording.calls.count == before, "a is fresh, and b is not read")
+        _ = s.diffs(for: [b], keeping: [a, b])
+        #expect(recording.calls.count == before, "b's answer was kept")
+    }
+
     /// Every window asks on the same tick: a read already running is not run again beside it.
     @Test func concurrentAsksRunGitOnce() async throws {
         let (repo, worktree) = try makeRepo()

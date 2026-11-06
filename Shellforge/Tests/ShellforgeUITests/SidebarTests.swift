@@ -22,7 +22,7 @@ import ShellforgeDesign
     }
 
     @Test func theSidebarStretchesWithTheWindowsHeightOnly() throws {
-        #expect(ShellforgeSidebar.makeView(model: try sidebarModel(), chooseFolder: { nil }, hooks: hooks(), machine: MachineMonitor(sensor: InertMachineSensor(), power: InertPower()), backpack: BackpackController(ports: .inert, settings: BackpackSettings(defaults: nil), toast: { _ in }), zoom: SidebarZoom(settings: SidebarLayoutSettings(defaults: ScratchDefaults.make())), terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make())).autoresizingMask == [.height])
+        #expect(ShellforgeSidebar.makeView(model: try sidebarModel(), chooseFolder: { nil }, hooks: hooks(), machine: MachineMonitor(sensor: InertMachineSensor(), power: InertPower()), backpack: BackpackController(ports: .inert, settings: BackpackSettings(defaults: nil), toast: { _ in }), zoom: SidebarZoom(settings: SidebarLayoutSettings(defaults: ScratchDefaults.make())), terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make())).autoresizingMask == [.height, .minYMargin, .maxYMargin])
     }
 
     @Test func theSidebarIsAiTermsWidth() throws {

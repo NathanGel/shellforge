@@ -43,7 +43,7 @@ import Testing
     /// The tab a tunnel is answered in runs ssh as the supervisor does, but able to ask: no BatchMode.
     @Test func theTabCommandRunsTheTunnelAskingForAnswers() {
         #expect(TunnelDefinition.tabCommand(alias: "db-staging")
-                == "ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ControlMaster=no -o ControlPath=none db-staging")
+                == "ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ControlMaster=no -o ControlPath=none -- db-staging")
         #expect(TunnelDefinition.tabCommand(alias: "odd*name").hasSuffix(" 'odd*name'"), "a glob is quoted")
     }
 }

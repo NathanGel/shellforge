@@ -26,11 +26,19 @@ public enum ShellforgeSidebar {
                                 hideSidebar: @escaping @MainActor () -> Void = {}) -> NSView {
         let chrome = SidebarChrome()
         chrome.panelCornerRadius = panelCornerRadius
+        // The view owns the presenter, which holds the whole sidebar; `showBackpack` gets one that
+        // reaches it weakly, so whatever keeps that — ⌘B's registry — never keeps the sidebar.
+        let presenter = BackpackPresenter()
         let sidebar = SidebarView(model: model, chooseFolder: chooseFolder, hooks: hooks, machine: machine,
                                   backpack: backpack, terminalMatch: terminalMatch,
-                                  chrome: chrome, showBackpack: showBackpack, hideSidebar: hideSidebar)
+                                  chrome: chrome, showBackpack: { [weak presenter] present in
+            guard let presenter else { return }
+            presenter.present = present
+            showBackpack { [weak presenter] in presenter?.present?() }
+        }, hideSidebar: hideSidebar)
         let host = SidebarHostingView(rootView: ZoomedSidebar(zoom: zoom, sidebar: sidebar))
         host.chrome = chrome
+        host.backpackPresenter = presenter
         host.frame = NSRect(x: 0, y: 0, width: width, height: 400)
         // The root view lays the sidebar out by hand. Flexible margins keep its floating inset from
         // becoming a minimum window height when the window's layout engine is engaged.
@@ -173,6 +181,14 @@ final class SidebarHostingView<Content: View>: NSHostingView<Content>, RowHighli
     override var mouseDownCanMoveWindow: Bool { false }
     /// The share of the window's chrome the sidebar draws by.
     var chrome: SidebarChrome?
+    /// How this sidebar opens its Backpack sheet: owned here, so it goes with the view.
+    var backpackPresenter: BackpackPresenter?
+}
+
+/// A sidebar's way to open its Backpack sheet, kept by its view (`ShellforgeSidebar.makeView`).
+@MainActor
+final class BackpackPresenter {
+    var present: (@MainActor () -> Void)?
 }
 
 /// AiTerm's sidebar, inside iTerm2's window: the PROJECTS header, each project with its tasks and
