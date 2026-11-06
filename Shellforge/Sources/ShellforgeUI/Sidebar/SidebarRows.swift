@@ -15,6 +15,8 @@ struct SidebarHeader: View {
     var canAddDivider = true
     let showHooks: () -> Void
     let showMacSettings: () -> Void
+    /// A shell of no project, in the home folder.
+    var newHomeTab: () -> Void = {}
     /// ⌃⌘S as a button; while hidden, the window's title bar shows the same icon to bring it back.
     var hideSidebar: () -> Void = {}
     /// Set while the window's buttons sit inside the sidebar: the header shares their row.
@@ -40,6 +42,13 @@ struct SidebarHeader: View {
             .frame(width: SidebarRowLayout.trailingSlot(scale), height: SidebarRowLayout.trailingSlot(scale))
             .help("Settings…")
             .accessibilityLabel("Settings")
+            Button(action: newHomeTab) {
+                Image(systemName: "terminal").font(Typography.label).foregroundStyle(surface.secondaryInk)
+            }
+            .buttonStyle(.plain)
+            .frame(width: SidebarRowLayout.trailingSlot(scale), height: SidebarRowLayout.trailingSlot(scale))
+            .help("New Tab in Home Folder")
+            .accessibilityLabel("New Tab in Home Folder")
             AddMenu(help: "Add project", enabled: true) {
                 Button("Add Project…", action: addProject)
                 Button("Add Divider…", action: addDivider).disabled(!canAddDivider)

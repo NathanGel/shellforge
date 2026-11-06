@@ -253,7 +253,7 @@ struct SidebarView: View {
 
     private func header(_ controls: SidebarWindowControls?) -> SidebarHeader {
         SidebarHeader(addProject: addProject, addDivider: showAddDivider, canAddDivider: model.can(.addDivider),
-                      showHooks: showHooks, showMacSettings: showMacSettings, hideSidebar: hideSidebar,
+                      showHooks: showHooks, showMacSettings: showMacSettings, newHomeTab: { model.openHomeTab() }, hideSidebar: hideSidebar,
                       windowControls: controls)
     }
 

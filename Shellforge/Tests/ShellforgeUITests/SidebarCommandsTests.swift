@@ -146,6 +146,29 @@ import Testing
         #expect(windows.model(for: NSObject()) == nil, "a window of no sidebar: none, never another window's")
         #expect(windows.model(for: nil) == nil)
     }
+
+    @Test func newHomeTabIsAlwaysAvailable() throws {
+        let (none, _, _, _) = try model(projects: [])
+        #expect(none.can(.newHomeTab))
+        let (several, _, _, _) = try model()
+        #expect(several.selectedTaskId == nil)
+        #expect(several.can(.newHomeTab))
+    }
+
+    @Test func newHomeTabOpensAnUntaggedTabInHome() throws {
+        let (model, host, _, _) = try model()
+        model.perform(.newHomeTab)
+        #expect(host.plainOpened == [FileManager.default.homeDirectoryForCurrentUser.path])
+        #expect(host.opened.isEmpty)
+    }
+
+    @Test func menuListsNewTabInHomeFolderWithoutAKey() throws {
+        let items = SidebarCommandMenu.items
+        let terminal = try #require(items.firstIndex { $0.command == .newTerminal })
+        #expect(items[terminal + 1].title == "New Tab in Home Folder")
+        #expect(items[terminal + 1].key == "")
+        #expect(items[terminal + 1].command == .newHomeTab)
+    }
 }
 
 /// macOS acts on some ⌃⌘ keys before any app's menu sees them: ⌃⌘D looked up a word, and Add

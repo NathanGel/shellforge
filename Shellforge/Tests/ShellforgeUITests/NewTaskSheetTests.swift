@@ -64,6 +64,33 @@ import ShellforgeDesign
         #expect(Destination.isShown(onStep: 1) && !Destination.isShown(onStep: 2) && Destination.isShown(onStep: 3))
     }
 
+    @Test func projectFolderDestination() {
+        let project = Project(name: "demo", path: "/tmp/demo")
+        let model = model()
+        model.chooseWorktree(.projectFolder)
+        model.kind.projectBranch = "feat/home"
+        #expect(NewTaskSheet.destination(of: model, step: 1)?.text == "Opens in Shellforge · demo · feat/home")
+        #expect(NewTaskSheet.destination(of: model, step: 1) == Destination.projectFolder(project, branch: "feat/home"))
+    }
+
+    @Test func projectFolderHidesBranchFields() throws {
+        let model = model()
+        model.chooseWorktree(.projectFolder)
+        #expect(NewTaskSheet.projectFolderHelp(project: model.project)
+                == "Runs in demo’s own folder, on the branch it has checked out. Nothing in git changes.")
+        let host = NSHostingView(rootView: NewTaskSheet(model: model, dismiss: {}).seeded(step: 1))
+        host.frame = NSRect(x: 0, y: 0, width: Sheet.width, height: Sheet.height)
+        let window = NSWindow(contentRect: host.frame, styleMask: [], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        host.layoutSubtreeIfNeeded()
+        defer { window.close() }
+        let placeholders = descendants(of: NSTextField.self, in: host).compactMap { ($0.cell as? NSTextFieldCell)?.placeholderString }
+        #expect(placeholders.contains("Describe the task"), "the sheet drew: \(placeholders)")
+        #expect(!placeholders.contains("branch-name"))
+        #expect(descendants(of: NSPopUpButton.self, in: host).isEmpty, "no Type or Base branch popup")
+    }
+
     @Test func anUninstalledAgentsSegmentIsNotSelectable() {
         #expect(AgentSegmented.isSelectable(AgentPresets.claude, available: ["claude"]))
         #expect(!AgentSegmented.isSelectable(AgentPresets.pi, available: ["claude"]))

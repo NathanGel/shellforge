@@ -29,6 +29,29 @@ import Testing
         #expect(sheet.canAdvance(step: 2) && sheet.canAdvance(step: 3))
     }
 
+    @Test func projectFolderNeedsOnlyATitle() async {
+        let sheet = model()
+        sheet.chooseWorktree(.projectFolder)
+        sheet.draft.setBranch("")
+        #expect(!sheet.canAdvance(step: 1))
+        sheet.draft.setTitle("Home")
+        await sheet.loadCatalogue()
+        #expect(sheet.canAdvance(step: 1) && sheet.canAdvance(step: 3))
+        #expect(sheet.kind.slug(of: sheet.draft) == "" && sheet.worktreeSlug == "")
+    }
+
+    @Test func projectFolderReadsItsBranchOnceChosen() async {
+        let sheet = NewTaskModel(project: project, agents: AgentPresets.all, available: ["claude"],
+                                 draft: TaskDraft(baseBranch: "main", agentId: "claude", model: "", reasoning: nil),
+                                 rememberedModels: [:], catalogue: { _ in [] }, branches: { ["main"] }, submit: { _ in },
+                                 projectBranch: { "feat/home" },
+                                 home: TestScratch.root.appendingPathComponent("nt-home-\(UUID().uuidString)"))
+        await sheet.loadProjectBranch()
+        #expect(sheet.kind.projectBranch == "feat/home" && sheet.draft.worktree == .new)
+        sheet.chooseWorktree(.projectFolder)
+        #expect(sheet.draft.worktree == .projectFolder)
+    }
+
     @Test func aMissingAgentCannotBePickedOrCreated() async {
         let sheet = model(available: ["codex"])
         sheet.draft.setTitle("Login")

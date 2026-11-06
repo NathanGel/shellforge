@@ -7,7 +7,19 @@ a patch fixes, a minor adds features, a major changes a saved setup.
 Each version's section is also its GitHub release notes: `Shellforge/scripts/release.sh` publishes
 it and refuses to release a version that has none.
 
-## 0.7.3 — unreleased
+## 0.8.0 — unreleased
+
+### Added
+
+- **New Tab in Home Folder.** A button in the sidebar’s header, and an item in the Tasks menu, open a
+  shell in your home folder that belongs to no project. It is listed under Other Tabs.
+- **New Task in the project folder.** New Task’s first control now offers New worktree, Existing
+  worktree and Project folder. A project-folder task runs its agent in the project’s own folder, on
+  the branch checked out there, and nothing in git changes. A project can have several. Removing
+  one only forgets the task, and its prompts say the folder stays as it is.
+- **Removal failures are logged.** When Remove cannot delete a worktree or keeps a branch, the macOS
+  log (category “removal”) now has the git command and all of its error output, not only the first
+  line the banner shows.
 
 ## 0.7.2 — 2026-11-06
 

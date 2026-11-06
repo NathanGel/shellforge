@@ -160,6 +160,39 @@ import Testing
         #expect(s.sidebar.removals[s.task.id] == nil)
     }
 
+    /// A task in the project's own folder: the folder is the checkout, never Shellforge's to delete.
+    private func projectFolderTask(in s: Setup) throws -> TaskItem {
+        let project = try #require(s.document.workspace.projects.first)
+        let branch = try ProjectFolderTasks.checkedOutBranch(of: project, launcher: s.repo.launcher)
+        let task = TaskItem(projectId: project.id, title: "In place", branch: branch, worktreePath: project.path,
+                            baseBranch: "main", agent: "claude", model: "opus")
+        try s.document.update { $0.tasks.append(task) }
+        s.host.openTab(in: task.worktreePath, taskId: task.id, projectId: project.id, title: "claude", command: nil, environment: [:])
+        return task
+    }
+
+    @Test func removeProjectFolderTaskOnlyForgets() async throws {
+        let s = try await setup([Self.remove])
+        let task = try projectFolderTask(in: s)
+        #expect(await s.sidebar.confirmRemove(taskId: task.id))
+        let asked = try #require(s.prompter.asked.last)
+        #expect(asked.detail == "Removes the task from Shellforge and closes its tabs. The project folder stays as it is:\n\n\(task.worktreePath)")
+        #expect(asked.checkbox == nil)
+        #expect(FileManager.default.fileExists(atPath: task.worktreePath))
+        #expect(try !s.git("for-each-ref", "--format=%(refname)", "refs/heads/" + task.branch).isEmpty)
+        #expect(!s.document.workspace.tasks.contains { $0.id == task.id })
+    }
+
+    @Test func lastTabOfProjectFolderTaskOffersRemoveNotDelete() async throws {
+        let s = try await setup([Self.cancel])
+        let task = try projectFolderTask(in: s)
+        #expect(await s.sidebar.confirmCloseLastTab(taskId: task.id, tab: "p1") == false)
+        let asked = try #require(s.prompter.asked.last)
+        #expect(asked.checkbox == "Also remove the task from Shellforge")
+        #expect(asked.subCheckbox == nil)
+        #expect(asked.detail == "The task stays in the sidebar, to reopen from its row:\n\n\(task.worktreePath)")
+    }
+
     @Test func alsoDeletingTheBranchDeletesAMergedOne() async throws {
         let s = try await setup([Self.removeAndBranch])
         #expect(await s.sidebar.confirmRemove(taskId: s.task.id))

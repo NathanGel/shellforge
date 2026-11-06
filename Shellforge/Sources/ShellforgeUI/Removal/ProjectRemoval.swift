@@ -14,12 +14,16 @@ extension SidebarModel {
         guard let project = project(id) else { return false }
         if let busy = busyReason(of: id) { await refuseRemoval(of: project, because: busy); return false }
         let paths = document.workspace.tasks.filter { $0.projectId == id }.map(\.worktreePath)
+        // Project-folder tasks are the project's own folder, not a worktree to list; each path once.
+        var listed: [String] = []
+        for task in document.workspace.tasks where task.projectId == id && !ProjectFolderTasks.isProjectFolder(task, in: project)
+            && !listed.contains(task.worktreePath) { listed.append(task.worktreePath) }
         let answer = await prompter.ask(AlertPrompt(
             message: "Remove project “\(project.name)”?",
-            detail: paths.isEmpty
+            detail: listed.isEmpty
                 ? "Removes the project from Shellforge. Files are kept and tabs stay open."
                 : "Removes the project, tasks, and terminals from Shellforge. Files and tabs are kept, including these worktrees:\n\n"
-                    + paths.joined(separator: "\n"),
+                    + listed.joined(separator: "\n"),
             buttons: ["Remove", "Cancel"]))
         // Anything can run across the await, a create in the project among them, so it is asked
         // again — and acted on in the same turn, with nothing able to start in between.

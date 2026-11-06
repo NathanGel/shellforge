@@ -56,6 +56,16 @@ import Testing
         #expect(asked.buttons == ["Remove", "Cancel"] && asked.escapeButton == 1 && !asked.defaultDeletes)
     }
 
+    @Test func theAlertSkipsProjectFolderTasksAndRepeatedPaths() async throws {
+        let s = try setup([AlertAnswer(button: 1)])
+        let home = TaskItem(projectId: s.a.id, title: "Home", branch: "main", worktreePath: s.a.path, baseBranch: "main")
+        let twin = TaskItem(projectId: s.a.id, title: "Twin", branch: "fix-login", worktreePath: "/api-worktrees/fix-login", baseBranch: "main")
+        try s.document.update { $0.tasks += [home, twin] }
+        #expect(await s.model.confirmRemove(project: s.a.id) == false)
+        let asked = try #require(s.prompter.asked.first)
+        #expect(asked.detail == "Removes the project, tasks, and terminals from Shellforge. Files and tabs are kept, including these worktrees:\n\n/api-worktrees/fix-login")
+    }
+
     @Test func aProjectWithNoTasksSaysOnlyFilesAndTabsStay() async throws {
         let s = try setup([AlertAnswer(button: 1)])
         _ = await s.model.confirmRemove(project: s.b.id)

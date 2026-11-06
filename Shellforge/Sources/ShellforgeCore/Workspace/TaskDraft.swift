@@ -1,6 +1,9 @@
 // Ported from AiTerm (app/Sources/AiTermCore/Tasks/TaskCreator.swift and Tasks/AgentDraft.swift), GPLv3, Laurens D'Hondt.
 import Foundation
 
+/// Where the task's agent works: a new worktree, one that exists, or the project's own folder.
+public enum WorktreeChoice: Equatable, Sendable { case new, existing, projectFolder }
+
 /// What the New Task sheet is filling in: the task's name and branch, the branch it starts from,
 /// and the agent its first tab runs, with which model, reasoning level and first prompt. AiTerm's
 /// `TaskDraft`, its Jira ticket included.
@@ -16,8 +19,10 @@ public struct TaskDraft: Equatable, Sendable {
     /// The host New Task offered as that pane when it opened; nil when it offered none, so the box
     /// was never shown.
     public var paneHost: String?
+    /// Where the task works; see `choose(_:)`.
+    public private(set) var worktree = WorktreeChoice.new
     /// Continue in a worktree that already exists rather than make one (ExistingWorktrees).
-    public var useExisting = false
+    public var useExisting: Bool { worktree == .existing }
     /// The worktree picked to continue in, while `useExisting`.
     public private(set) var existing: ExistingWorktree?
     private var titleEdited = false, branchEdited = false, typeEdited = false
@@ -68,9 +73,15 @@ public struct TaskDraft: Equatable, Sendable {
         if !titleEdited, let worktree { title = worktree.branch }
     }
 
-    /// Back to a new worktree: a name the picked worktree gave goes, the ticket's (or none) back.
-    public mutating func leaveExisting() {
-        useExisting = false
+    /// Where the task works. Leaving Existing worktree: a name the picked worktree gave goes, the
+    /// ticket's (or none) back.
+    public mutating func choose(_ choice: WorktreeChoice) {
+        let leaving = worktree == .existing && choice != .existing
+        worktree = choice
+        if leaving { clearPickedName() }
+    }
+
+    private mutating func clearPickedName() {
         guard !titleEdited else { return }
         title = ticket?.summary ?? ""
         if !branchEdited { branchName = BranchNaming.branchSlug(key: ticket?.key, summary: ticket?.summary ?? title) }

@@ -132,12 +132,25 @@ public enum TaskWorktrees {
     /// too), and its branch — and nothing else: pass nil for anything that was there before it. A
     /// branch it made was new, with no commits of its own, so nothing of the user's goes.
     public static func undo(worktree path: String?, branch: String?, project: Project, launcher: CommandLauncher) {
+        // Never touch a path that is not directly in the project's `.worktrees/`: the project folder
+        // itself is one such path, and removing it would delete the repository.
+        // Nor through a `.worktrees` that is a symlink: it may lead anywhere.
+        // A refused path returns before the branch goes too: the branch may be the folder's own.
         if let path {
+            guard isInWorktreesFolder(path, project: project),
+                  (try? FileManager.default.destinationOfSymbolicLink(atPath: project.path + "/.worktrees")) == nil else { return }
             _ = try? launcher.run("git", ["-C", project.path, "worktree", "remove", "--force", "--force", path])
             if FileManager.default.fileExists(atPath: path) { try? FileManager.default.removeItem(atPath: path) }
             _ = try? launcher.run("git", ["-C", project.path, "worktree", "prune"])
         }
         if let branch { _ = try? launcher.run("git", ["-C", project.path, "branch", "-D", branch]) }
+    }
+
+    /// Whether `path` is directly inside the project's `.worktrees/`, symlinks resolved.
+    public static func isInWorktreesFolder(_ path: String, project: Project) -> Bool {
+        // Standardised first, so `.worktrees/.` and `.worktrees/x/..` are not taken for a child.
+        let parent = URL(fileURLWithPath: path).standardizedFileURL.deletingLastPathComponent().path
+        return ExistingWorktrees.resolved(parent) == ExistingWorktrees.resolved(project.path + "/.worktrees")
     }
 
     /// Adds `pattern` to the repository's `info/exclude` once, so the worktrees never show as untracked.

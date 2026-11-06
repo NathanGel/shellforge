@@ -46,9 +46,10 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
   - A window sized some other way, such as tiling or a smaller screen, can still end up too narrow. There the sidebar steps aside.
 - **Selection.** The selected row uses the system's selection: the accent while the window is active, grey while it is not.
 - **Banners** are inline notices with an icon; an error stays until you click its ×.
-- **Header.** Projects, then four buttons, left to right:
+- **Header.** Projects, then five buttons, left to right:
   - Agent hooks (the bolt);
   - Settings (the gear);
+  - New Tab in Home Folder (the terminal icon), which opens a shell in `~` that belongs to no project;
   - "+", with Add Project… and Add Divider…;
   - Hide Sidebar, at the far right.
 - **Empty state.** With no projects, the sidebar shows "Add a git repository to start." and an Add Project… button.
@@ -102,11 +103,12 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 - **New Task (⌃⌘N) and New Review (⌃⌘R)** act on the selected task's or terminal's project, else the window's only project. With several projects and nothing selected, they are greyed out.
 - **The New Task sheet** has three steps: Task, Agent and Prompt.
   - **Task:**
-    - **New worktree** or **Existing worktree**;
+    - **New worktree**, **Existing worktree** or **Project folder**;
     - an optional Jira ticket, searched by text, or your open tickets when the search is empty;
     - the task name;
     - for a new worktree: type (feat, fix or chore), new branch and base branch. A picked ticket fills in the name, type and branch.
     - for an existing worktree: which one, newest commit first, from the project's worktrees that are on a branch and not a task yet (made by Shellforge, AiTerm, an agent or by hand). The task is named after its branch unless you type a name. Nothing in git changes: the task continues on that branch as it is.
+    - for the project folder: the task runs in the project’s own folder, on the branch checked out there. Nothing in git changes, and a project can have several such tasks.
   - **Agent:** agent, model and reasoning. The model and reasoning start at the agent's default from Settings › Agents, else the model last used with that agent and that model's own reasoning level.
   - **Prompt:** an optional first prompt. "/" lists the agent's commands and skills.
   - **Options:** "Include Jira ticket details", and "Open ssh <host> beside the agent".
@@ -116,7 +118,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
   - An agent whose command isn't on your login PATH can't be picked, and the sheet says why.
   - Custom agents are JSON files in `~/Library/Application Support/Shellforge/agents/`. A file with a preset's id replaces that preset.
   - Shellforge remembers the last agent per project and the last model per agent.
-- **Worktree and branch.**
+- **Worktree and branch.** (A project-folder task has neither: it uses the project’s own folder and its checked-out branch.)
   - A task works in `<project>/.worktrees/<slug>`, with `.worktrees/` excluded from git.
   - Its branch is `<type>/<key>-<slug>`.
   - A long first prompt goes to `.shellforge/first-prompt.md` in the worktree.
@@ -133,6 +135,8 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 - **Clicking a task** shows its tab. If it has no tab open, a shell opens in its worktree; the agent does not run again.
 - **Rename…** changes only the task's title. The branch and worktree keep their names.
 - **Remove Task… (⌃⌘⌫, or right-click) asks first.** The question shows the worktree, with "Also delete branch" ticked by default.
+  - For a project-folder task, Remove only forgets the task: the folder and its branch stay as they are, and nothing is deleted.
+  - A failed removal, and a branch that stays, are logged in full — each git command and all of its stderr — to the macOS log: `log show --last 1h --predicate 'subsystem == "io.github.nathangel.shellforge" AND category == "removal"'`.
   - Uncommitted changes ask Keep, or Delete Changes and Remove.
   - The task's tabs close first, in every window, through iTerm2's own close.
   - A branch with commits its base lacks asks whether to keep it.
@@ -156,11 +160,12 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 
 ## Tabs and panes
 
+- **New Tab in Home Folder.** Use the header's terminal button or Tasks › New Tab in Home Folder (no key: ⌘T is iTerm2's). It opens and selects a shell in your home folder, listed under **Other Tabs**. It works whenever a terminal window is in front, with or without a project.
 - **A task's tabs** are listed under it when it is selected and has more than one. Tabs of no task are listed under **Other Tabs**.
 - **Closing from the sidebar.** Right-click a tab row, or a task row, for **Close Tab**. On a tab split with ⌘D, the item reads **Close Pane** and closes only the focused pane.
   - Anything running asks first, as ⌘W does.
   - A task row brings its tab to the front before closing a pane of it.
-- **A task's last pane.** Closing it asks first, with **Close Tab** as the default. The task stays in the sidebar with its worktree and branch, and clicking its row opens a shell there again. Tick **Also delete the worktree** to remove the task as well, and **Also delete branch** under it to delete its branch. A review is never offered its branch. Cancel keeps both the pane and the task.
+- **A task's last pane.** Closing it asks first, with **Close Tab** as the default. The task stays in the sidebar with its worktree and branch, and clicking its row opens a shell there again. Tick **Also delete the worktree** to remove the task as well, and **Also delete branch** under it to delete its branch. A review is never offered its branch. Cancel keeps both the pane and the task. For a project-folder task, or a worktree outside `.worktrees/`, the box reads “Also remove the task from Shellforge” and nothing on disk is deleted.
 - **Panes join their task.** A pane split off a task's tab, a project's tab or a terminal's tab joins it. Closing the agent's pane first leaves the task its other pane.
 - **The window stays open.** When a close would leave the window with no tab, a fresh shell tab opens first, in the default folder. This applies to Close Tab, Remove Task and Remove Terminal.
 

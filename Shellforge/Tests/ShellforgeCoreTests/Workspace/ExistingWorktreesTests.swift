@@ -64,7 +64,7 @@ import Testing
         let (repo, _, newer) = try repo()
         let before = try repo.git("worktree", "list", "--porcelain"), branches = try repo.git("branch", "--list")
         var draft = TaskDraft(baseBranch: "main", agentId: "claude", model: "opus", reasoning: nil)
-        draft.useExisting = true
+        draft.choose(.existing)
         draft.pick(existing: try #require(try list(repo).first { $0.branch == "feat/newer" }))
         let task = try ExistingWorktrees.adopt(draft: draft, in: repo.project, launcher: repo.launcher)
         #expect(task.branch == "feat/newer" && task.title == "feat/newer" && task.baseBranch == "main")
@@ -78,7 +78,7 @@ import Testing
         let (repo, older, newer) = try repo()
         let offered = try list(repo)
         var draft = TaskDraft(baseBranch: "main", agentId: "claude", model: "opus", reasoning: nil)
-        draft.useExisting = true
+        draft.choose(.existing)
         draft.pick(existing: try #require(offered.first { $0.branch == "feat/newer" }))
         try FileManager.default.removeItem(atPath: newer)
         #expect(throws: ExistingWorktrees.Refusal.gone("feat/newer")) {

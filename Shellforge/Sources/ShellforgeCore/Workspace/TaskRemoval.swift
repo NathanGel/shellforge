@@ -1,10 +1,16 @@
 // Ported from AiTerm (app/Sources/AiTermCore/Tasks/TaskWorkflow.swift, Git/Repository+Worktrees.swift and Git/Repository.swift), GPLv3, Laurens D'Hondt.
 import Foundation
+import os
+
+let removalLog = Logger(subsystem: "io.github.nathangel.shellforge", category: "removal")
 
 /// Removes a task's worktree and, when asked, its branch: AiTerm's `TaskWorkflow.remove` and the
 /// `Repository` worktree helpers it runs, on Shellforge's `CommandLauncher` git. Blocking: callers
 /// run it off the main actor.
 public enum TaskRemoval {
+    /// Lets the UI's removal write to the same log: `log show --predicate 'category == "removal"'`.
+    public static func log(_ message: String) { removalLog.notice("\(message, privacy: .public)") }
+
     /// Why the branch stayed although its deletion was asked for.
     public enum BranchRefusal: Equatable, Sendable {
         /// It has commits `base` lacks: deleting it would lose them, so the person is asked first.
@@ -53,8 +59,10 @@ public enum TaskRemoval {
     /// worktree still goes: its commits stay on that branch, and its changes were asked about.
     public static func remove(task: TaskItem, project: Project, deleteBranch: Bool, force: Bool,
                               sharedWithAnotherTask: Bool, launcher: CommandLauncher) throws -> Removed {
+        let owned = ownsWorktree(of: task, in: project)
+        removalLog.notice("remove task=\(task.id.uuidString, privacy: .public) worktree=\(task.worktreePath, privacy: .public) branch=\(task.branch, privacy: .public) base=\(task.baseBranch, privacy: .public) deleteBranch=\(deleteBranch, privacy: .public) force=\(force, privacy: .public) owned=\(owned, privacy: .public)")
         // Not Shellforge's worktree: the task goes, the checkout and its branch stay.
-        guard ownsWorktree(of: task, in: project) else { return Removed(branchRefusal: nil) }
+        guard owned else { return Removed(branchRefusal: nil) }
         var switchedBranch: String?
         if FileManager.default.fileExists(atPath: task.worktreePath) {
             switchedBranch = try removeWorktree(at: task.worktreePath, branch: task.branch, in: project.path, force: force,
@@ -62,7 +70,7 @@ public enum TaskRemoval {
         } else {
             // Locked worktrees cannot be pruned until their lock is released. Refused for one that is
             // not locked, which is no reason to stop.
-            _ = try? git(["worktree", "unlock", task.worktreePath], in: project.path, launcher)
+            _ = try? launcher.run("git", ["-C", project.path, "worktree", "unlock", task.worktreePath])
             try git(["worktree", "prune"], in: project.path, launcher)
         }
         // A review's branch is the merge request's: never deleted on request — a caller may ask and
@@ -70,10 +78,14 @@ public enum TaskRemoval {
         if task.kind == .review {
             guard case .kept(let why) = GitRepository(project.path, launcher: launcher)
                 .releaseReviewBranch(task.branch, target: task.baseBranch) else { return Removed(branchRefusal: nil, switchedBranch: switchedBranch) }
+            removalLog.notice("review branch \(task.branch, privacy: .public) kept: \(String(describing: why), privacy: .public)")
             return Removed(branchRefusal: nil, keptBranch: why, switchedBranch: switchedBranch)
         }
         guard deleteBranch else { return Removed(branchRefusal: nil, switchedBranch: switchedBranch) }
-        if let refusal = refusal(toDelete: task) { return Removed(branchRefusal: .other(reason: refusal), switchedBranch: switchedBranch) }
+        if let refusal = refusal(toDelete: task) {
+            removalLog.notice("branch \(task.branch, privacy: .public) kept, refused: \(refusal, privacy: .public)")
+            return Removed(branchRefusal: .other(reason: refusal), switchedBranch: switchedBranch)
+        }
         do {
             // Already-deleted branches are a successful retry.
             let refs = try git(["for-each-ref", "--format=%(refname)", "refs/heads/" + task.branch], in: project.path, launcher)
@@ -87,8 +99,10 @@ public enum TaskRemoval {
             }
             return Removed(branchRefusal: nil, switchedBranch: switchedBranch)
         } catch let failure as GitFailure where failure.message.contains("not fully merged") {
+            removalLog.notice("branch \(task.branch, privacy: .public) kept: notMerged into \(task.baseBranch, privacy: .public)")
             return Removed(branchRefusal: .notMerged(base: task.baseBranch), switchedBranch: switchedBranch)
         } catch let failure as GitFailure {
+            removalLog.notice("branch \(task.branch, privacy: .public) kept: other: \(failure.message, privacy: .public)")
             return Removed(branchRefusal: .other(reason: firstLine(of: failure.message)), switchedBranch: switchedBranch)
         }
     }
@@ -125,6 +139,7 @@ public enum TaskRemoval {
                                      message: "\(worktreePath) has \(name) checked out, not \(branch).")
                 }
                 switchedBranch = name
+                removalLog.notice("worktree \(worktreePath, privacy: .public) has \(name, privacy: .public) checked out instead of \(branch, privacy: .public): switchedBranch")
             }
             try removeRegistered(worktreePath, lockedWith: worktree.lockReason, in: projectPath, force: force, launcher: launcher)
         } else {
@@ -163,8 +178,7 @@ public enum TaskRemoval {
     /// folder git does not know is not Shellforge's to delete.
     private static func deleteLeftover(_ worktreePath: String, in projectPath: String) throws {
         guard FileManager.default.fileExists(atPath: worktreePath) else { return }
-        let parent = URL(fileURLWithPath: worktreePath).deletingLastPathComponent().path
-        guard resolved(parent) == resolved(projectPath + "/.worktrees"),
+        guard TaskWorktrees.isInWorktreesFolder(worktreePath, project: Project(name: "", path: projectPath)),
               (try? FileManager.default.destinationOfSymbolicLink(atPath: projectPath + "/.worktrees")) == nil,
               (try? FileManager.default.destinationOfSymbolicLink(atPath: worktreePath)) == nil else {
             throw GitFailure(command: "remove \(worktreePath)", message: "\(worktreePath) is not a worktree of this project.")
@@ -211,7 +225,11 @@ public enum TaskRemoval {
     @discardableResult
     private static func git(_ args: [String], in directory: String, _ launcher: CommandLauncher) throws -> String {
         let out = try launcher.run("git", ["-C", directory] + args)
-        guard out.status == 0 else { throw GitFailure(command: "git " + args.joined(separator: " "), message: out.stderr) }
+        guard out.status == 0 else {
+            let command = "git " + args.joined(separator: " ")
+            removalLog.notice("\(command, privacy: .public) in \(directory, privacy: .public) failed, status \(out.status, privacy: .public): \(out.stderr, privacy: .public)")
+            throw GitFailure(command: command, message: out.stderr)
+        }
         return out.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 

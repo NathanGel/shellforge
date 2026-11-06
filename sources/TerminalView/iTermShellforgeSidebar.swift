@@ -288,6 +288,18 @@ final class iTermShellforgeHost: TerminalHost {
         return closed
     }
 
+    /// A login shell of no task and no project in `directory`, selected: it lists under Other Tabs.
+    func openPlainTab(in directory: String) {
+        guard let windowController, let base = ProfileModel.sharedInstance()?.defaultBookmark() else { return }
+        let profile = iTermShellforgeSidebar.taskTabProfile(base: base, directory: directory, initialText: nil)
+        iTermSessionLauncher.launchBookmark(profile, in: windowController, style: .tab, withURL: nil,
+                                            hotkeyWindowType: .none, makeKey: true, canActivate: true,
+                                            respectTabbingMode: false, index: nil, command: nil,
+                                            makeSession: nil, didMakeSession: nil, completion: { [weak self] _, _ in
+            MainActor.assumeIsolated { self?.onChange?() }
+        })
+    }
+
     /// A tab of no task — a tunnel answered in a tab — running `command` in `directory`.
     func openTab(in directory: String, title: String, command: String) {
         guard let windowController, let base = ProfileModel.sharedInstance()?.defaultBookmark() else { return }

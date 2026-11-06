@@ -62,6 +62,13 @@ import Testing
         onChange?()
     }
 
+    /// The untagged tabs opened in a folder by the header's New Tab in Home Folder.
+    var plainOpened: [String] = []
+
+    func openPlainTab(in directory: String) {
+        plainOpened.append(directory)
+    }
+
     /// The tabs of no task opened: a tunnel answered in a tab.
     var openedPlain: [(directory: String, title: String, command: String)] = []
 
@@ -604,5 +611,48 @@ extension SidebarModel {
         await #expect(throws: CreationCancelled.self) { try await creating.value }
         #expect(document.workspace.tasks.isEmpty && host.opened.isEmpty)
         #expect(!FileManager.default.fileExists(atPath: "\(repo)/.worktrees/review-feature"))
+    }
+
+    private func projectFolderDraft(_ title: String) -> TaskDraft {
+        var draft = TaskDraft(baseBranch: "main", agentId: "claude", model: "opus", reasoning: nil)
+        draft.setTitle(title)
+        draft.choose(.projectFolder)
+        return draft
+    }
+
+    @Test func newTaskInProjectFolderOpensThere() async throws {
+        let (model, host, document, project) = try await modelWithProject()
+        let folder = try #require(document.workspace.projects.first).path
+        try await model.newTask(draft: projectFolderDraft("Home"), in: project)
+        let task = try #require(document.workspace.tasks.first)
+        #expect(task.worktreePath == folder && task.branch == "main")
+        #expect(host.opened.last?.directory == folder && host.opened.last?.command == "claude --model opus")
+        #expect(!FileManager.default.fileExists(atPath: folder + "/.worktrees"))
+        #expect(try model.launcher.run("git", ["-C", folder, "worktree", "list"]).stdout.split(separator: "\n").count == 1)
+    }
+
+    /// Cancelled after the task was made, nothing is saved and the project's own folder and its
+    /// checked-out branch are untouched: undo's `branch -D` is not path-guarded.
+    @Test func cancelledProjectFolderCreateLeavesFolder() async throws {
+        let (model, host, document, project) = try await modelWithProject()
+        let folder = try #require(document.workspace.projects.first).path
+        try "keep".write(toFile: folder + "/file.txt", atomically: true, encoding: .utf8)
+        let cancellation = CreationCancellation()
+        cancellation.cancel()
+        let draft = projectFolderDraft("Home")
+        await #expect(throws: CreationCancelled.self) {
+            try await CreationContext.$cancellation.withValue(cancellation) { try await model.newTask(draft: draft, in: project) }
+        }
+        #expect(document.workspace.tasks.isEmpty && host.opened.isEmpty)
+        #expect(FileManager.default.fileExists(atPath: folder + "/file.txt") && FileManager.default.fileExists(atPath: folder + "/.git"))
+        #expect(try model.launcher.run("git", ["-C", folder, "rev-parse", "--verify", "--quiet", "refs/heads/main"]).status == 0,
+                "the checked-out branch is still there")
+    }
+
+    @Test func twoProjectFolderTasksAllowed() async throws {
+        let (model, _, document, project) = try await modelWithProject()
+        try await model.newTask(draft: projectFolderDraft("One"), in: project)
+        try await model.newTask(draft: projectFolderDraft("Two"), in: project)
+        #expect(document.workspace.tasks.count == 2)
     }
 }

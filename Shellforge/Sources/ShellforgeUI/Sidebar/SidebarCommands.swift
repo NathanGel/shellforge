@@ -7,7 +7,7 @@ import ShellforgeCore
 
 /// What the sidebar's keyboard shortcuts do (Shellforge/docs/keyboard.md).
 public enum SidebarCommand: Int, CaseIterable, Sendable {
-    case newTask, newReview, addProject, nextTask, previousTask, removeTask, focusView, listView, newTerminal, addDivider
+    case newTask, newReview, addProject, nextTask, previousTask, removeTask, focusView, listView, newTerminal, addDivider, newHomeTab
 }
 
 /// A command that needs one of the sidebar's sheets: the view presents it, as its "+" would.
@@ -45,7 +45,7 @@ extension SidebarModel {
     public func can(_ command: SidebarCommand) -> Bool {
         switch command {
         case .newTask, .newReview, .newTerminal: targetProject != nil
-        case .addProject, .focusView, .listView: true
+        case .addProject, .focusView, .listView, .newHomeTab: true
         // With no project a divider divides nothing, and is not drawn to remove again.
         case .addDivider: !tree.projects.isEmpty
         case .nextTask, .previousTask: !steppableTasks.isEmpty
@@ -60,6 +60,7 @@ extension SidebarModel {
         case .newReview: if let project = targetProject { sheetRequests.send(.newReview(project)) }
         case .addProject: sheetRequests.send(.addProject)
         case .addDivider: sheetRequests.send(.addDivider)
+        case .newHomeTab: openHomeTab()
         case .newTerminal: if let project = targetProject { sheetRequests.send(.newTerminal(project)) }
         case .removeTask: if let task = selectedTaskId { sheetRequests.send(.removeTask(task)) }
         case .nextTask: step(by: 1)
@@ -67,6 +68,11 @@ extension SidebarModel {
         case .focusView: focusView()
         case .listView: setCollapsed { _ in false }
         }
+    }
+
+    /// A shell of no task and no project, in the home folder: it lists under Other Tabs.
+    public func openHomeTab() {
+        host.openPlainTab(in: FileManager.default.homeDirectoryForCurrentUser.path)
     }
 
     /// The next or previous task, wrapping round; from no selection, the first or the last.
@@ -137,6 +143,8 @@ public enum SidebarCommandMenu {
         Item(title: "New Task…", key: "n", modifiers: keys, command: .newTask),
         Item(title: "New Review…", key: "r", modifiers: keys, command: .newReview),
         Item(title: "New Terminal…", key: "t", modifiers: keys, command: .newTerminal),
+        // No key: ⌘T is iTerm2's New Tab, and every ⌃⌘ letter worth having is taken.
+        Item(title: "New Tab in Home Folder", key: "", modifiers: keys, command: .newHomeTab),
         Item(title: "Add Project…", key: "p", modifiers: keys, command: .addProject),
         Item(title: "Add Divider…", key: "g", modifiers: keys, command: .addDivider),
         Item(title: "", key: "", modifiers: [], command: nil),

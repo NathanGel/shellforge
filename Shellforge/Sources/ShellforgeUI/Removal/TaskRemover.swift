@@ -28,8 +28,9 @@ extension SidebarModel {
         defer { removalBoard.asking.remove(id) }
         let isReview = shown.kind == .review
         // A worktree continued from outside `.worktrees/` is not Shellforge's: Remove only forgets.
-        let owned = document.workspace.projects.first(where: { $0.id == shown.projectId })
-            .map { TaskRemoval.ownsWorktree(of: shown, in: $0) } ?? true
+        let shownProject = document.workspace.projects.first(where: { $0.id == shown.projectId })
+        let owned = shownProject.map { TaskRemoval.ownsWorktree(of: shown, in: $0) } ?? true
+        let inProjectFolder = shownProject.map { ProjectFolderTasks.isProjectFolder(shown, in: $0) } ?? false
         // A review's branch is the merge request's: its Remove never offers to delete it — the
         // removal releases it only when nothing would be lost.
         let answer = await prompter.ask(owned ? AlertPrompt(
@@ -41,7 +42,9 @@ extension SidebarModel {
             checkbox: isReview ? nil : "Also delete branch \(shown.branch)",
             defaultDeletes: true)
             : AlertPrompt(message: "Remove \(isReview ? "review" : "task") “\(shown.title)”?",
-                          detail: "Removes the task from Shellforge and closes its tabs. Its worktree stays where it is, on its branch:\n\n\(shown.worktreePath)",
+                          detail: inProjectFolder
+                            ? "Removes the task from Shellforge and closes its tabs. The project folder stays as it is:\n\n\(shown.worktreePath)"
+                            : "Removes the task from Shellforge and closes its tabs. Its worktree stays where it is, on its branch:\n\n\(shown.worktreePath)",
                           buttons: ["Remove", "Cancel"]))
         guard answer.confirmed else { return false }
         return await remove(taskId: id, deleteBranch: answer.checked)
@@ -61,12 +64,15 @@ extension SidebarModel {
         removalBoard.asking.insert(id)
         defer { removalBoard.asking.remove(id) }
         let isReview = shown.kind == .review
-        let owned = document.workspace.projects.first(where: { $0.id == shown.projectId })
-            .map { TaskRemoval.ownsWorktree(of: shown, in: $0) } ?? true
+        let shownProject = document.workspace.projects.first(where: { $0.id == shown.projectId })
+        let owned = shownProject.map { TaskRemoval.ownsWorktree(of: shown, in: $0) } ?? true
+        let inProjectFolder = shownProject.map { ProjectFolderTasks.isProjectFolder(shown, in: $0) } ?? false
         let kind = isReview ? "review" : "task"
         let answer = await prompter.ask(AlertPrompt(
             message: "Close the last \(paneOnly ? "pane" : "tab") of \(kind) “\(shown.title)”?",
-            detail: "The \(kind) stays in the sidebar with its worktree and branch, to reopen from its row:\n\n\(shown.worktreePath)",
+            detail: inProjectFolder && !owned
+                ? "The task stays in the sidebar, to reopen from its row:\n\n\(shown.worktreePath)"
+                : "The \(kind) stays in the sidebar with its worktree and branch, to reopen from its row:\n\n\(shown.worktreePath)",
             buttons: [paneOnly ? "Close Pane" : "Close Tab", "Cancel"],
             // A review's branch is the merge request's: never offered, as Remove never offers it.
             checkbox: owned ? "Also delete the worktree" : "Also remove the \(kind) from Shellforge",
@@ -104,7 +110,7 @@ extension SidebarModel {
             }
             guard host.closeTabs(ofTask: id) else {
                 removalBoard.removals[id] = .stopped("Not removed: its tabs did not close")
-                lastError = "Couldn’t remove the task. Its tabs did not close, so nothing was deleted."
+                report("Couldn’t remove the task. Its tabs did not close, so nothing was deleted.")
                 return false
             }
             let forced = force
@@ -121,8 +127,9 @@ extension SidebarModel {
             removalBoard.removals[id] = nil
             return true
         } catch {
+            TaskRemoval.log("Not removed: task \(id.uuidString)")
             removalBoard.removals[id] = .stopped("Not removed")
-            lastError = "Couldn’t remove the task. " + Self.reason(of: error)
+            report("Couldn’t remove the task. " + Self.reason(of: error))
             return false
         }
     }
@@ -132,9 +139,9 @@ extension SidebarModel {
     private func settleBranch(of task: TaskItem, in project: Project, after result: TaskRemoval.Removed) async {
         // Its agent switched the worktree to a branch of its own: that one, with the work, stays.
         if let switched = result.switchedBranch {
-            lastError = "Branch \(switched) kept: the worktree had it checked out instead of \(task.branch)."
+            report("Branch \(switched) kept: the worktree had it checked out instead of \(task.branch).")
         }
-        if let kept = result.keptBranch { lastError = kept.note(branch: task.branch) }
+        if let kept = result.keptBranch { report(kept.note(branch: task.branch)) }
         switch result.branchRefusal {
         case nil:
             return
@@ -150,11 +157,17 @@ extension SidebarModel {
             do {
                 try await BackgroundWork.run { try TaskRemoval.deleteUnmergedBranch(of: task, in: project, launcher: launcher) }
             } catch {
-                lastError = "Branch \(task.branch) kept: " + Self.reason(of: error)
+                report("Branch \(task.branch) kept: " + Self.reason(of: error))
             }
         case .other(let reason)?:
-            lastError = "Branch \(task.branch) kept: \(reason)"
+            report("Branch \(task.branch) kept: \(reason)")
         }
+    }
+
+    /// Says it in the banner, and keeps it in the log: the banner holds git's first line only.
+    private func report(_ message: String) {
+        TaskRemoval.log(message)
+        lastError = message
     }
 
     /// git's own words, first line: what it refused and why.

@@ -52,11 +52,16 @@ public final class TaskCreation: CreationKind {
     /// The project's worktrees New Task can continue in, as last read (`loadExistingWorktrees`).
     public internal(set) var existing: [ExistingWorktree] = []
     let listExisting: @Sendable () -> [ExistingWorktree]
-    public init(sshHost: String? = nil, listExisting: @escaping @Sendable () -> [ExistingWorktree] = { [] }) {
-        self.sshHost = sshHost; self.listExisting = listExisting
+    /// The branch checked out in the project's own folder, as last read (`loadProjectBranch`);
+    /// empty until then, or when git would not say.
+    public internal(set) var projectBranch = ""
+    let readProjectBranch: @Sendable () -> String
+    public init(sshHost: String? = nil, listExisting: @escaping @Sendable () -> [ExistingWorktree] = { [] },
+                projectBranch: @escaping @Sendable () -> String = { "" }) {
+        self.sshHost = sshHost; self.listExisting = listExisting; self.readProjectBranch = projectBranch
     }
-    /// An existing worktree makes none: nothing to name.
-    public func slug(of draft: TaskDraft) -> String { draft.useExisting ? "" : draft.worktreeSlug }
+    /// Only a new worktree has a directory to name; the others make none.
+    public func slug(of draft: TaskDraft) -> String { draft.worktree == .new ? draft.worktreeSlug : "" }
     public func prompt(of draft: TaskDraft) -> String? {
         AgentCommand.composePrompt(userText: draft.promptText, ticket: draft.ticket, appendTicket: draft.appendTicket)
     }
@@ -332,16 +337,32 @@ extension CreationModel where Kind == TaskCreation {
                             submit: @escaping @MainActor (TaskDraft) async throws -> Void,
                             searchIssues: @escaping @MainActor (String) async throws -> [JiraTicket] = { _ in [] },
                             sshHost: String? = nil,
-                            existingWorktrees: @escaping @Sendable () -> [ExistingWorktree] = { [] }, home: URL) {
-        self.init(kind: TaskCreation(sshHost: sshHost, listExisting: existingWorktrees), project: project, agents: agents, available: available, draft: draft, rememberedModels: rememberedModels,
+                            existingWorktrees: @escaping @Sendable () -> [ExistingWorktree] = { [] },
+                            projectBranch: @escaping @Sendable () -> String = { "" }, home: URL) {
+        self.init(kind: TaskCreation(sshHost: sshHost, listExisting: existingWorktrees, projectBranch: projectBranch), project: project, agents: agents, available: available, draft: draft, rememberedModels: rememberedModels,
                   modelDefaults: modelDefaults, catalogue: catalogue, branches: branches, submit: submit, search: searchIssues, home: home)
     }
 
-    /// New worktree or Existing worktree: the first listed is picked when none is.
-    public func chooseExisting(_ on: Bool) {
-        guard on else { draft.leaveExisting(); return }
-        draft.useExisting = true
-        if let picked = draft.existing { draft.pick(existing: picked) } else if let first = kind.existing.first { draft.pick(existing: first) }
+    /// New worktree, Existing worktree or Project folder. Existing picks the first listed when none
+    /// is picked; Project folder reads the branch the folder has checked out, once, off the main actor.
+    public func chooseWorktree(_ choice: WorktreeChoice) {
+        draft.choose(choice)
+        switch choice {
+        case .new: break
+        case .existing:
+            if let picked = draft.existing { draft.pick(existing: picked) } else if let first = kind.existing.first { draft.pick(existing: first) }
+        case .projectFolder:
+            Task { await loadProjectBranch() }
+        }
+    }
+
+    /// The branch the project's own folder has checked out, for the destination line.
+    public func loadProjectBranch() async {
+        let read = kind.readProjectBranch
+        let found = await BackgroundWork.run { read() }
+        guard !Task.isCancelled else { return }
+        objectWillChange.send()
+        kind.projectBranch = found
     }
 
     /// The worktrees "Existing worktree" lists, read off the main actor. A pick that is no longer

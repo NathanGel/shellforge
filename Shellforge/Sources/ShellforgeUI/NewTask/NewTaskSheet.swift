@@ -88,8 +88,9 @@ struct NewTaskSheet: View {
     private var taskStep: some View {
         VStack(alignment: .leading, spacing: Space.block) {
             // A new worktree, or one that already exists to continue in.
-            SegmentedControl(values: [false, true], selection: Binding(get: { model.draft.useExisting }, set: { model.chooseExisting($0) })) { existing, on in
-                Text(existing ? "Existing worktree" : "New worktree").font(on ? Typography.bodyEmphasis : Typography.body)
+            SegmentedControl(values: [WorktreeChoice.new, .existing, .projectFolder],
+                             selection: Binding(get: { model.draft.worktree }, set: { model.chooseWorktree($0) })) { choice, on in
+                Text(Self.label(of: choice)).font(on ? Typography.bodyEmphasis : Typography.body)
             }
             FormField("Jira ticket (optional)") {
                 SearchPicker(placeholder: model.ticketPlaceholder,
@@ -125,12 +126,24 @@ struct NewTaskSheet: View {
                 Input(placeholder: "Describe the task", text: Binding(get: { model.draft.title }, set: { model.draft.setTitle($0) }))
             }
 
-            if model.draft.useExisting {
-                existingWorktreeField
-            } else {
-                branchFields
+            switch model.draft.worktree {
+            case .new: branchFields
+            case .existing: existingWorktreeField
+            case .projectFolder: HelpText(Self.projectFolderHelp(project: model.project))
             }
         }
+    }
+
+    static func label(of choice: WorktreeChoice) -> String {
+        switch choice {
+        case .new: "New worktree"
+        case .existing: "Existing worktree"
+        case .projectFolder: "Project folder"
+        }
+    }
+
+    static func projectFolderHelp(project: Project) -> String {
+        "Runs in \(project.name)’s own folder, on the branch it has checked out. Nothing in git changes."
     }
 
     /// The worktree to continue in, newest first; its branch is the task's, as it is.
@@ -178,14 +191,20 @@ struct NewTaskSheet: View {
         model.branches.contains(model.draft.baseBranch) || model.draft.baseBranch.isEmpty ? model.branches : [model.draft.baseBranch] + model.branches
     }
 
+    private var destination: Destination? { Self.destination(of: model, step: step) }
+
     /// Where the task opens: its new worktree, on steps 1 and 3 only — finding the unused slug
     /// looks at the disk. Nothing until the task has a name to make a worktree of.
-    private var destination: Destination? {
+    static func destination(of model: NewTaskModel, step: Int) -> Destination? {
         guard Destination.isShown(onStep: step) else { return nil }
-        if model.draft.useExisting { return model.draft.existing.map { .existing(project: model.project, worktree: $0) } }
-        let slug = model.worktreeSlug
-        guard !slug.isEmpty else { return nil }
-        return .worktree(project: model.project, slug: slug, branch: model.draft.branchName.isEmpty ? "" : model.draft.branch)
+        switch model.draft.worktree {
+        case .existing: return model.draft.existing.map { .existing(project: model.project, worktree: $0) }
+        case .projectFolder: return .projectFolder(model.project, branch: model.kind.projectBranch)
+        case .new:
+            let slug = model.worktreeSlug
+            guard !slug.isEmpty else { return nil }
+            return .worktree(project: model.project, slug: slug, branch: model.draft.branchName.isEmpty ? "" : model.draft.branch)
+        }
     }
 
     // -- moving between steps -------------------------------------------------------

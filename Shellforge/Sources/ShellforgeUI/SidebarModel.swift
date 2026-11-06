@@ -21,6 +21,8 @@ public protocol TerminalHost: AnyObject {
     /// Closes every tab tagged with the task, in every window — what removing it starts with. True
     /// once none is left open.
     func closeTabs(ofTask id: UUID) -> Bool
+    /// Opens a tab of no task and no project in `directory`, running the login shell, and selects it.
+    func openPlainTab(in directory: String)
     /// Opens a tab of no task in `directory`, typing `command` into its shell, and selects it.
     func openTab(in directory: String, title: String, command: String)
     /// Opens a terminal row's tab: a plain shell in `directory`, tagged with the terminal and its
@@ -329,6 +331,7 @@ public final class SidebarModel: ObservableObject {
                             existingWorktrees: { [taken = document.workspace.tasks.map(\.worktreePath)] in
                                 (try? ExistingWorktrees.list(project: project, taken: taken, launcher: launcher)) ?? []
                             },
+                            projectBranch: { (try? ProjectFolderTasks.checkedOutBranch(of: project, launcher: launcher)) ?? "" },
                             home: FileManager.default.homeDirectoryForCurrentUser)
     }
 
@@ -354,11 +357,15 @@ public final class SidebarModel: ObservableObject {
                 // Looked for again here: the sheet read what was installed when it opened, and a tab
                 // whose first line is "command not found" is worse than a refusal.
                 guard launcher.locate(agent.command) != nil else { throw AgentNotInstalled(agent: agent.name) }
-                // Continued in a worktree that exists, or one made for it.
-                let task = draft.useExisting
-                    ? try ExistingWorktrees.adopt(draft: draft, in: project, taken: taken, launcher: launcher)
-                    : try TaskWorktrees.create(draft: draft, in: project, launcher: launcher,
-                                               cancellation: cancellation, progress: report)
+                // Continued in a worktree that exists, run in the project's own folder, or in one made for it.
+                let task: TaskItem
+                switch draft.worktree {
+                case .existing: task = try ExistingWorktrees.adopt(draft: draft, in: project, taken: taken, launcher: launcher)
+                case .projectFolder: task = try ProjectFolderTasks.make(draft: draft, in: project, launcher: launcher)
+                case .new:
+                    task = try TaskWorktrees.create(draft: draft, in: project, launcher: launcher,
+                                                    cancellation: cancellation, progress: report)
+                }
                 let command: String
                 do {
                     command = try AgentCommand.build(agent: agent, model: draft.model, reasoning: draft.reasoning,
@@ -368,14 +375,14 @@ public final class SidebarModel: ObservableObject {
                 } catch {
                     // The first prompt could not be written (a symlinked `.shellforge`, say): nothing
                     // is saved, and a worktree this create made goes with it.
-                    if !draft.useExisting {
+                    if draft.worktree == .new {
                         TaskWorktrees.undo(worktree: task.worktreePath, branch: task.branch, project: project, launcher: launcher)
                     }
                     throw error
                 }
                 // Cancelled after the worktree was made: take back what this create made.
                 if cancellation?.isCancelled == true {
-                    if !draft.useExisting {
+                    if draft.worktree == .new {
                         TaskWorktrees.undo(worktree: task.worktreePath, branch: task.branch, project: project, launcher: launcher)
                     }
                     throw CreationCancelled()
@@ -384,7 +391,7 @@ public final class SidebarModel: ObservableObject {
             }
             // Or as the work came back here: still nothing is saved.
             if cancellation?.isCancelled == true {
-                if !draft.useExisting {
+                if draft.worktree == .new {
                     let (path, branch) = (made.0.worktreePath, made.0.branch)
                     await BackgroundWork.run { TaskWorktrees.undo(worktree: path, branch: branch, project: project, launcher: launcher) }
                 }

@@ -13,6 +13,7 @@ checks in the running app that each key below is in the main menu once.
 | ⌃⌘N | New Task… | The target project: the selected task's, else the window's only project. Off with several projects and no task selected. |
 | ⌃⌘R | New Review… | The same target. |
 | ⌃⌘T | New Terminal… | The same target: a plain shell row under the project. |
+| — | New Tab in Home Folder | No key: ⌘T is iTerm2's New Tab. A shell in `~` that belongs to no project, listed under Other Tabs. Works whenever a terminal window is in front. Also the header's terminal button. |
 | ⌃⌘P | Add Project… | — |
 | ⌃⌘G | Add Divider… | A named rule at the end of the project list. (Not ⌃⌘D: macOS keeps it for Look Up.) |
 | ⌃⌘] / ⌃⌘[ | Next Task / Previous Task | The open projects' tasks in sidebar order, wrapping round. From no selection, the first or the last. |

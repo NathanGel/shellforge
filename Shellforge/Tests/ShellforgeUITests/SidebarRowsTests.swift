@@ -107,6 +107,14 @@ import Testing
         #expect(TabRowView.marks([]) == AvatarGroup(marks: [.shell], overflow: 0))
     }
 
+    @Test func untaggedTabIsAnOtherTab() {
+        let project = Project(name: "p", path: "/p")
+        let task = TaskItem(projectId: project.id, title: "t", branch: "feat/t", worktreePath: "/wt/t", baseBranch: "main")
+        let ws = Workspace(projects: [project], tasks: [task])
+        let tree = SidebarTree.build(ws, tabs: [TabSnapshot(id: "s1", tabId: 1, title: "zsh", taskId: nil, projectId: nil)])
+        #expect(tree.otherTabs.map(\.id) == ["s1"])
+    }
+
     @Test func tabsOfNoTaskComeUnderOtherTabs() async throws {
         let host = FakeTerminalHost()
         host.tabs = [TabSnapshot(id: "s9", tabId: 9, title: "zsh", taskId: nil, projectId: nil)]

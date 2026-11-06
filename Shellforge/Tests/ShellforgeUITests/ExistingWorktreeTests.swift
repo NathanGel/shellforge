@@ -36,7 +36,7 @@ import Testing
         await sheet.loadExistingWorktrees()
         #expect(sheet.kind.existing.map(\.branch) == ["feat/resume"])
         var draft = TaskDraft(baseBranch: "main", agentId: "claude", model: "opus", reasoning: nil)
-        draft.useExisting = true
+        draft.choose(.existing)
         draft.pick(existing: sheet.kind.existing[0])
         try await model.newTask(draft: draft, in: project)
         let task = try #require(document.workspace.tasks.first)
@@ -50,7 +50,7 @@ import Testing
     @Test func stepOneNeedsAPickedWorktree() {
         let kind = TaskCreation()
         var draft = TaskDraft(baseBranch: "main", agentId: "claude", model: "opus", reasoning: nil)
-        draft.useExisting = true
+        draft.choose(.existing)
         #expect(!kind.firstStepDone(draft))
         draft.pick(existing: ExistingWorktree(path: "/r/.worktrees/x", branch: "feat/x", kind: .task, lastCommit: nil))
         #expect(kind.firstStepDone(draft))
@@ -94,17 +94,27 @@ import Testing
         let project = try #require(document.workspace.projects.first).id
         let sheet = try #require(model.makeNewTaskModel(for: project))
         await sheet.loadExistingWorktrees()
-        sheet.chooseExisting(true)
+        sheet.chooseWorktree(.existing)
         #expect(sheet.draft.existing?.branch == "feat/resume" && sheet.draft.title == "feat/resume")
         #expect(sheet.canAdvance(step: 1))
         let picked = try #require(sheet.draft.existing)
         #expect(ExistingWorktreeLabel.place(of: picked, in: sheet.project) == sheet.project.name + "/.worktrees/resume")
-        sheet.chooseExisting(false)
+        sheet.chooseWorktree(.new)
         #expect(!sheet.draft.useExisting && sheet.draft.title == "", "the worktree's name goes with it")
         sheet.draft.setTitle("Login")
         #expect(sheet.kind.slug(of: sheet.draft) == "login")
-        sheet.chooseExisting(true)
+        sheet.chooseWorktree(.existing)
         #expect(sheet.draft.title == "Login", "a typed name stays")
+    }
+
+    /// A task in the project's own folder does not hide, or add, a worktree: the main checkout is never listed.
+    @Test func projectFolderTaskDoesNotListMainCheckout() throws {
+        let repo = try repo()
+        let project = Project(name: "demo", path: repo.path)
+        let before = try ExistingWorktrees.list(project: project, taken: [], launcher: repo.launcher)
+        let home = TaskItem(projectId: project.id, title: "Home", branch: "main", worktreePath: repo.path, baseBranch: "main")
+        let after = try ExistingWorktrees.list(project: project, taken: [home.worktreePath], launcher: repo.launcher)
+        #expect(after == before && after.map(\.branch) == ["feat/resume"])
     }
 
     /// Remove on a task continued outside `.worktrees/` asks only to forget it: no delete, no branch box.
@@ -139,7 +149,7 @@ import Testing
         // Another window made a task of it, saved under the other spelling, after this sheet listed it.
         try document.update { $0.tasks.append(TaskItem(projectId: project.id, title: "theirs", branch: picked.branch, worktreePath: other, baseBranch: "main")) }
         var draft = TaskDraft(baseBranch: "main", agentId: "claude", model: "opus", reasoning: nil)
-        draft.useExisting = true
+        draft.choose(.existing)
         draft.pick(existing: picked)
         await #expect(throws: ExistingWorktrees.Refusal.taken(picked.branch)) { try await model.newTask(draft: draft, in: project.id) }
         #expect(document.workspace.tasks.count == 1)
@@ -171,7 +181,7 @@ import Testing
         let picked = try #require(sheet.kind.existing.first)
         model.removalBoard.adopting.insert(ExistingWorktrees.resolved(picked.path))
         var draft = TaskDraft(baseBranch: "main", agentId: "claude", model: "opus", reasoning: nil)
-        draft.useExisting = true
+        draft.choose(.existing)
         draft.pick(existing: picked)
         await #expect(throws: ExistingWorktrees.Refusal.taken(picked.branch)) { try await model.newTask(draft: draft, in: project.id) }
         #expect(document.workspace.tasks.isEmpty && host.opened.isEmpty)
