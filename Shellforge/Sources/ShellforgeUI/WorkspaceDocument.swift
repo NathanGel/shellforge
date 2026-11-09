@@ -11,6 +11,10 @@ public final class WorkspaceDocument: ObservableObject {
     /// What went wrong loading the workspace, in words for the sidebar; nil when it loaded cleanly.
     public let loadProblem: String?
 
+    /// The one window rearranging the sidebar, if any. Weak and in memory only: closing that window
+    /// frees the lock.
+    public weak var rearranger: SidebarModel?
+
     private let store: WorkspaceStore
     /// False when the file could not be read or set aside: saving would overwrite the user's data.
     private let canSave: Bool

@@ -43,7 +43,9 @@ extension SidebarModel {
     }
 
     public func can(_ command: SidebarCommand) -> Bool {
-        switch command {
+        // The mode is for rearranging and nothing else; Done or Cancel first.
+        if isRearranging, command != .newHomeTab { return false }
+        return switch command {
         case .newTask, .newReview, .newTerminal: targetProject != nil
         case .addProject, .focusView, .listView, .newHomeTab: true
         // With no project a divider divides nothing, and is not drawn to remove again.

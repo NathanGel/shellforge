@@ -94,6 +94,10 @@ public final class SidebarModel: ObservableObject {
     /// last refresh: published so a change to either redraws, as the tree's does.
     @Published private(set) var drawnTabId: String?
     @Published private(set) var drawnDividers: [SidebarDivider] = []
+    /// The order being rearranged, held until Done (SidebarModel+Rearrange.swift); nil outside the mode.
+    @Published public internal(set) var rearrange: RearrangeDraft?
+    /// The project being dragged in the mode: only its header is drawn while it is.
+    @Published public var draggingProject: UUID?
     @Published public internal(set) var selectedTaskId: UUID?
     /// The terminal row shown, when the selected tab is a terminal's (Terminals/).
     @Published public internal(set) var selectedTerminalId: UUID?
@@ -301,9 +305,10 @@ public final class SidebarModel: ObservableObject {
     /// says whether it is a fallback. The app calls it after a Reload or a changed rc file.
     public func environmentChanged() {
         let launcher = self.launcher
-        Task {
+        // Weak: a window closed before the login shell answers is not kept alive (nor its rearrange lock).
+        Task { [weak self] in
             let source = await BackgroundWork.run { launcher.environment.source }
-            environmentWarning = Self.warning(source)
+            self?.environmentWarning = Self.warning(source)
         }
     }
 
@@ -613,6 +618,7 @@ public final class SidebarModel: ObservableObject {
     /// empty state comes first. Exactly one row is selected: the current tab when it is listed, else
     /// the task it belongs to (AiTerm's one painter, one row).
     public var rows: [SidebarRow] {
+        if let draft = rearrange { return rearrangeRows(draft) }
         var rows: [SidebarRow] = tree.projects.isEmpty ? [.empty] : []
         let current = host.selectedTabId
         let workspace = document.workspace
@@ -677,13 +683,15 @@ public final class SidebarModel: ObservableObject {
         providerLookups += unknown.count
         detecting.formUnion(unknown.map(\.id))
         let facts = repositoryFacts
-        Task {
+        // Weak: a window closed while git answers is not kept alive by the lookup.
+        Task { [weak self] in
             let found = await BackgroundWork.run {
                 unknown.map { project -> (UUID, Provider, String?) in
                     let read = facts.facts(of: project.path)
                     return (project.id, read.provider, read.defaultBranch)
                 }
             }
+            guard let self else { return }
             // One publication for the batch, not one redraw per project.
             var next = providers, branches = defaultBranches
             // A project removed while git ran is not written back.
