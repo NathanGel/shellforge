@@ -408,6 +408,12 @@ public final class SidebarModel: ObservableObject {
         let secrets = self.secrets, runner = tools.runner
         // The sheet's Cancel and its step line, read here: they do not follow the work to its queue.
         let cancellation = CreationContext.cancellation, report = CreationContext.report
+        // A Project folder task on another branch: the folder is switched first, or the task moves to
+        // the worktree that has the branch.
+        let draft = try await { () async throws -> TaskDraft in
+            guard draft.worktree == .projectFolder, let branch = draft.folderBranch else { return draft }
+            return try await prepareProjectFolder(draft: draft, branch: branch, project: project, taken: taken)
+        }()
         // One Create per existing worktree, in every window, from before anything is written there.
         let reserved = draft.useExisting ? draft.existing.map { ExistingWorktrees.resolved($0.path) } : nil
         if let reserved, let picked = draft.existing {

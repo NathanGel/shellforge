@@ -295,6 +295,8 @@ public final class CreationModel<Kind: CreationKind>: ObservableObject, Identifi
             return true
         } catch is CreationCancelled {
             cancelled = true
+        } catch is CreationDeclined {
+            // Answered Cancel to a question: the sheet stays as it was.
         } catch {
             self.error = CreationFailure(error)
         }
@@ -382,6 +384,16 @@ extension CreationModel where Kind == TaskCreation {
         case .projectFolder:
             Task { await loadProjectBranch() }
         }
+    }
+
+    /// The Project folder branch field: the branch typed, else the one checked out.
+    public var folderBranchText: String { draft.folderBranch ?? kind.projectBranch }
+
+    /// The branch the folder is switched to before the task starts. The one already checked out,
+    /// or nothing, is no switch.
+    public func setFolderBranch(_ text: String) {
+        let branch = text.trimmingCharacters(in: .whitespaces)
+        draft.folderBranch = branch.isEmpty || branch == kind.projectBranch ? nil : branch
     }
 
     /// The branch the project's own folder has checked out, for the destination line.

@@ -73,10 +73,26 @@ import ShellforgeDesign
         #expect(NewTaskSheet.destination(of: model, step: 1) == Destination.projectFolder(project, branch: "feat/home"))
     }
 
+    @Test func projectFolderBranchStartsAsTheCheckedOutOne() {
+        let model = model()
+        model.chooseWorktree(.projectFolder)
+        model.kind.projectBranch = "main"
+        #expect(model.folderBranchText == "main")
+        #expect(model.draft.folderBranch == nil)
+        model.setFolderBranch("feat/other")
+        #expect(model.draft.folderBranch == "feat/other")
+        #expect(NewTaskSheet.destination(of: model, step: 1)?.text == "Opens in Shellforge · demo · feat/other")
+        #expect(NewTaskSheet.projectFolderHelp(project: model.project, switchingTo: "feat/other")
+                == "Runs in demo’s own folder, switched to feat/other first. Uncommitted changes come along unless they clash with it; then Shellforge asks.")
+        // Typing the checked-out branch back is no switch at all.
+        model.setFolderBranch(" main ")
+        #expect(model.draft.folderBranch == nil)
+    }
+
     @Test func projectFolderHidesBranchFields() throws {
         let model = model()
         model.chooseWorktree(.projectFolder)
-        #expect(NewTaskSheet.projectFolderHelp(project: model.project)
+        #expect(NewTaskSheet.projectFolderHelp(project: model.project, switchingTo: nil)
                 == "Runs in demo’s own folder, on the branch it has checked out. Nothing in git changes.")
         let host = NSHostingView(rootView: NewTaskSheet(model: model, dismiss: {}).seeded(step: 1))
         host.frame = NSRect(x: 0, y: 0, width: Sheet.width, height: Sheet.height)
@@ -88,6 +104,7 @@ import ShellforgeDesign
         let placeholders = descendants(of: NSTextField.self, in: host).compactMap { ($0.cell as? NSTextFieldCell)?.placeholderString }
         #expect(placeholders.contains("Describe the task"), "the sheet drew: \(placeholders)")
         #expect(!placeholders.contains("branch-name"))
+        #expect(placeholders.contains("branch"), "the sheet drew: \(placeholders)")
         #expect(descendants(of: NSPopUpButton.self, in: host).isEmpty, "no Type or Base branch popup")
     }
 

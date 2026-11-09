@@ -25,6 +25,8 @@ public struct TaskDraft: Equatable, Sendable {
     public var useExisting: Bool { worktree == .existing }
     /// The worktree picked to continue in, while `useExisting`.
     public private(set) var existing: ExistingWorktree?
+    /// The branch a Project folder task switches the folder to first; nil keeps the one checked out.
+    public var folderBranch: String?
     private var titleEdited = false, branchEdited = false, typeEdited = false
 
     public var branch: String { "\(branchType.rawValue)/\(branchName)" }

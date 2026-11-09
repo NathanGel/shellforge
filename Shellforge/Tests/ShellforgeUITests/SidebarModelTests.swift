@@ -679,6 +679,105 @@ extension SidebarModel {
         #expect(try model.launcher.run("git", ["-C", folder, "worktree", "list"]).stdout.split(separator: "\n").count == 1)
     }
 
+    // -- Project folder on another branch -------------------------------------------------
+
+    private func git(_ model: SidebarModel, _ folder: String, _ args: String...) throws -> String {
+        let out = try model.launcher.run("git", ["-C", folder] + args)
+        guard out.status == 0 else { throw GitFailure(command: "git " + args.joined(separator: " "), message: out.stderr) }
+        return out.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func projectFolderDraft(_ title: String, branch: String) -> TaskDraft {
+        var draft = projectFolderDraft(title)
+        draft.folderBranch = branch
+        return draft
+    }
+
+    @Test func projectFolderSwitchesToAnExistingBranchWithoutAsking() async throws {
+        let (model, _, document, project) = try await modelWithProject()
+        let folder = try #require(document.workspace.projects.first).path
+        try git(model, folder, "branch", "feat/a")
+        let prompter = ScriptedPrompter([])
+        model.prompter = prompter
+        try await model.newTask(draft: projectFolderDraft("Home", branch: "feat/a"), in: project)
+        #expect(try #require(document.workspace.tasks.first).branch == "feat/a")
+        #expect(try git(model, folder, "symbolic-ref", "--short", "HEAD") == "feat/a")
+        #expect(prompter.asked.isEmpty)
+    }
+
+    @Test func projectFolderOffersToCreateAMissingBranch() async throws {
+        let (model, _, document, project) = try await modelWithProject()
+        let folder = try #require(document.workspace.projects.first).path
+        let prompter = ScriptedPrompter([AlertAnswer(button: 0)])
+        model.prompter = prompter
+        try await model.newTask(draft: projectFolderDraft("Home", branch: "feat/new"), in: project)
+        #expect(prompter.asked.first?.message == "“feat/new” doesn’t exist yet.")
+        #expect(prompter.asked.first?.buttons == ["Create Branch", "Cancel"])
+        #expect(try #require(document.workspace.tasks.first).branch == "feat/new")
+        #expect(try git(model, folder, "symbolic-ref", "--short", "HEAD") == "feat/new")
+    }
+
+    @Test func cancellingTheCreateLeavesTheFolderAlone() async throws {
+        let (model, host, document, project) = try await modelWithProject()
+        let folder = try #require(document.workspace.projects.first).path
+        model.prompter = ScriptedPrompter([AlertAnswer(button: 1)])
+        await #expect(throws: CreationDeclined.self) {
+            try await model.newTask(draft: projectFolderDraft("Home", branch: "feat/new"), in: project)
+        }
+        #expect(document.workspace.tasks.isEmpty && host.opened.isEmpty)
+        #expect(try git(model, folder, "symbolic-ref", "--short", "HEAD") == "main")
+    }
+
+    @Test func clashingChangesOfferAStash() async throws {
+        let (model, _, document, project) = try await modelWithProject()
+        let folder = try #require(document.workspace.projects.first).path
+        try git(model, folder, "switch", "-q", "-c", "feat/a")
+        try "theirs".write(toFile: folder + "/file.txt", atomically: true, encoding: .utf8)
+        try git(model, folder, "add", "file.txt")
+        try git(model, folder, "commit", "-q", "-m", "theirs")
+        try git(model, folder, "switch", "-q", "main")
+        try "mine".write(toFile: folder + "/file.txt", atomically: true, encoding: .utf8)
+        let prompter = ScriptedPrompter([AlertAnswer(button: 0)])
+        model.prompter = prompter
+        try await model.newTask(draft: projectFolderDraft("Fix", branch: "feat/a"), in: project)
+        #expect(prompter.asked.first?.buttons == ["Stash and Switch", "Cancel"])
+        #expect(try git(model, folder, "symbolic-ref", "--short", "HEAD") == "feat/a")
+        #expect(try git(model, folder, "stash", "list").contains("Shellforge: before “Fix”"))
+        #expect(document.workspace.tasks.count == 1)
+    }
+
+    @Test func aBranchInAnotherWorktreeOffersThatWorktree() async throws {
+        let (model, host, document, project) = try await modelWithProject()
+        let folder = try #require(document.workspace.projects.first).path
+        let other = folder + "-other"
+        try git(model, folder, "worktree", "add", "-q", "-b", "feat/b", other)
+        let prompter = ScriptedPrompter([AlertAnswer(button: 0)])
+        model.prompter = prompter
+        try await model.newTask(draft: projectFolderDraft("Home", branch: "feat/b"), in: project)
+        #expect(prompter.asked.first?.buttons == ["Use That Worktree", "Cancel"])
+        let task = try #require(document.workspace.tasks.first)
+        #expect(ExistingWorktrees.resolved(task.worktreePath) == ExistingWorktrees.resolved(other) && task.branch == "feat/b")
+        #expect(host.opened.last.map { ExistingWorktrees.resolved($0.directory) } == ExistingWorktrees.resolved(other))
+        #expect(try git(model, folder, "symbolic-ref", "--short", "HEAD") == "main")
+    }
+
+    @Test func switchingUnderAnotherRunningTaskAsksFirst() async throws {
+        let (model, host, document, project) = try await modelWithProject()
+        let folder = try #require(document.workspace.projects.first).path
+        try git(model, folder, "branch", "feat/a")
+        try await model.newTask(draft: projectFolderDraft("Running"), in: project)
+        let running = try #require(document.workspace.tasks.first)
+        host.tabs.append(TabSnapshot(id: "t1", tabId: 1, title: "Running", taskId: running.id, projectId: project))
+        host.onChange?()
+        let prompter = ScriptedPrompter([AlertAnswer(button: 1)])
+        model.prompter = prompter
+        await #expect(throws: CreationDeclined.self) {
+            try await model.newTask(draft: projectFolderDraft("Second", branch: "feat/a"), in: project)
+        }
+        #expect(prompter.asked.first?.message == "“Running” is also working in this folder.")
+        #expect(try git(model, folder, "symbolic-ref", "--short", "HEAD") == "main")
+    }
+
     /// Cancelled after the task was made, nothing is saved and the project's own folder and its
     /// checked-out branch are untouched: undo's `branch -D` is not path-guarded.
     @Test func cancelledProjectFolderCreateLeavesFolder() async throws {

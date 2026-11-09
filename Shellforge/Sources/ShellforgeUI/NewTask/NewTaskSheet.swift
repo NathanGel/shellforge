@@ -135,7 +135,7 @@ struct NewTaskSheet: View {
             switch model.draft.worktree {
             case .new: branchFields
             case .existing: existingWorktreeField
-            case .projectFolder: HelpText(Self.projectFolderHelp(project: model.project))
+            case .projectFolder: projectFolderField
             }
         }
     }
@@ -148,8 +148,17 @@ struct NewTaskSheet: View {
         }
     }
 
-    static func projectFolderHelp(project: Project) -> String {
-        "Runs in \(project.name)’s own folder, on the branch it has checked out. Nothing in git changes."
+    static func projectFolderHelp(project: Project, switchingTo branch: String?) -> String {
+        guard let branch else { return "Runs in \(project.name)’s own folder, on the branch it has checked out. Nothing in git changes." }
+        return "Runs in \(project.name)’s own folder, switched to \(branch) first. Uncommitted changes come along unless they clash with it; then Shellforge asks."
+    }
+
+    /// The branch the folder works on: the one checked out, or another to switch to first.
+    private var projectFolderField: some View {
+        FormField("Branch") {
+            Input(placeholder: "branch", text: Binding(get: { model.folderBranchText }, set: { model.setFolderBranch($0) }), monospaced: true)
+            HelpText(Self.projectFolderHelp(project: model.project, switchingTo: model.draft.folderBranch))
+        }
     }
 
     /// The worktree to continue in, newest first; its branch is the task's, as it is.
@@ -205,7 +214,7 @@ struct NewTaskSheet: View {
         guard Destination.isShown(onStep: step) else { return nil }
         switch model.draft.worktree {
         case .existing: return model.draft.existing.map { .existing(project: model.project, worktree: $0) }
-        case .projectFolder: return .projectFolder(model.project, branch: model.kind.projectBranch)
+        case .projectFolder: return .projectFolder(model.project, branch: model.folderBranchText)
         case .new:
             let slug = model.worktreeSlug
             guard !slug.isEmpty else { return nil }

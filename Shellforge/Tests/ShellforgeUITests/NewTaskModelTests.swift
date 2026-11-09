@@ -161,6 +161,16 @@ import Testing
         #expect(sheet.cancelled && sheet.error == nil && !sheet.creating)
     }
 
+    /// A question answered Cancel during the create keeps the sheet open, its draft as it was.
+    @Test func aDeclinedCreateKeepsTheSheetOpen() async {
+        let sheet = model(submit: { _ in throw CreationDeclined() })
+        sheet.draft.setTitle("Login")
+        await sheet.loadCatalogue()
+        #expect(await sheet.create() == false)
+        #expect(!sheet.cancelled && sheet.error == nil && !sheet.creating)
+        #expect(sheet.draft.title == "Login")
+    }
+
     /// While it runs the sheet says what it is doing.
     @Test func aCreateReportsItsStep() async {
         let sheet = model(submit: { _ in

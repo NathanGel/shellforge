@@ -15,6 +15,14 @@ it and refuses to release a version that has none.
   back to Shellforge, when your Mac wakes, or when you start a task or review, not only in a new
   window. How often it asks is unchanged.
 
+### Added
+
+- **A branch for Project folder tasks.** New Task’s Project folder option now has a Branch field. It
+  starts as the branch checked out; type another and the folder switches to it before the agent
+  starts. When git can’t simply switch, Shellforge asks: stash clashing changes, create a branch
+  that doesn’t exist yet, use the worktree that already has the branch, or switch anyway while
+  another task works in the folder. Cancel leaves the folder as it was and the sheet open.
+
 ### Changed
 
 - **Feedback says what it is for.** The sidebar note and the form now say that feedback decides
