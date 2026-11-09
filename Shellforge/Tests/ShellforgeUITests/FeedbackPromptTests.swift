@@ -43,6 +43,28 @@ import Testing
         #expect(prompt.showsBanner)
     }
 
+    /// Someone who never opens a window or relaunches still sees it when they come back to the app.
+    @Test func showsWhenAWatchedNotificationArrives() {
+        let defaults = ScratchDefaults.make(), clock = TestClock(Date(timeIntervalSince1970: 1_000_000))
+        let center = NotificationCenter(), back = Notification.Name("back")
+        let prompt = make(defaults, clock)
+        prompt.refresh(on: [back], from: center)
+        clock.advance(by: 14 * Self.day)
+        #expect(!prompt.showsBanner)
+        center.post(name: back, object: nil)
+        #expect(prompt.showsBanner)
+    }
+
+    @Test func aWatchedNotificationBeforeItIsDueShowsNothing() {
+        let defaults = ScratchDefaults.make(), clock = TestClock(Date(timeIntervalSince1970: 1_000_000))
+        let center = NotificationCenter(), back = Notification.Name("back")
+        let prompt = make(defaults, clock)
+        prompt.refresh(on: [back], from: center)
+        clock.advance(by: 14 * Self.day - 1)
+        center.post(name: back, object: nil)
+        #expect(!prompt.showsBanner)
+    }
+
     @Test func devBuildNeverShows() {
         let defaults = ScratchDefaults.make(), clock = TestClock(Date(timeIntervalSince1970: 1_000_000))
         let prompt = make(defaults, clock, channel: .dev)

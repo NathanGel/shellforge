@@ -9,6 +9,12 @@ it and refuses to release a version that has none.
 
 ## 0.9.1 — unreleased
 
+### Fixed
+
+- **The feedback note shows up without a relaunch.** Once it is due, it now appears when you switch
+  back to Shellforge, when your Mac wakes, or when you start a task or review, not only in a new
+  window. How often it asks is unchanged.
+
 ## 0.9.0 — 2026-11-09
 
 ### Added

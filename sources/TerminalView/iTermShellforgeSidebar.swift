@@ -73,8 +73,15 @@ final class iTermShellforgeSidebar: NSObject {
     nonisolated static let catalogue = ModelCatalogue(home: FileManager.default.homeDirectoryForCurrentUser, launcher: launcher)
 
     /// The app's one feedback prompt: every window's banner and Settings switch share it. A Development build never shows the banner.
-    static let feedback = FeedbackPrompt(defaults: iTermUserDefaults.userDefaults(),
-                                         channel: BuildChannel(infoDictionary: Bundle.main.infoDictionary))
+    /// It checks again when Shellforge comes to the front and when the Mac wakes, so someone who keeps
+    /// one window open for weeks still sees it once it is due.
+    static let feedback: FeedbackPrompt = {
+        let prompt = FeedbackPrompt(defaults: iTermUserDefaults.userDefaults(),
+                                    channel: BuildChannel(infoDictionary: Bundle.main.infoDictionary))
+        prompt.refresh(on: [NSApplication.didBecomeActiveNotification], from: .default)
+        prompt.refresh(on: [NSWorkspace.didWakeNotification], from: NSWorkspace.shared.notificationCenter)
+        return prompt
+    }()
 
     /// The one workspace every window's sidebar shows and changes.
     static let document = WorkspaceDocument(store: WorkspaceStore())
@@ -388,6 +395,8 @@ final class iTermShellforgeHost: TerminalHost {
         }, completion: { [weak self, weak windowController] session, ok in
             MainActor.assumeIsolated {
                 self?.onChange?()
+                // A new task or review is a natural pause, with the sidebar in view.
+                if ok { iTermShellforgeSidebar.feedback.refresh() }
                 // An agent that takes its prompt typed in gets it once it has settled; armed above.
                 if ok, let launch {
                     iTermShellforgeSignals.type(launch, into: session) { [weak windowController] in

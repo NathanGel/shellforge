@@ -14,6 +14,8 @@ import ShellforgeCore
     private let channel: BuildChannel
     private let now: @Sendable () -> Date
     private let firstSeen: Date
+    /// Kept for as long as the prompt lives: the app's one lives as long as the app.
+    private var observers: [any NSObjectProtocol] = []
 
     public init(defaults: UserDefaults, channel: BuildChannel, now: @escaping @Sendable () -> Date = Date.init) {
         self.defaults = defaults; self.channel = channel; self.now = now
@@ -30,6 +32,20 @@ import ShellforgeCore
     public func refresh() {
         showsBanner = FeedbackSchedule.isDue(firstSeen: firstSeen, nextAsk: defaults.object(forKey: Self.nextAskKey) as? Date,
                                              enabled: isEnabled, channel: channel, now: now())
+    }
+
+    /// Checks again each time one of `names` is posted on `center`: someone who keeps one window open
+    /// for weeks, and never relaunches, sees the banner when they come back to the app.
+    public func refresh(on names: [Notification.Name], from center: NotificationCenter) {
+        for name in names {
+            observers.append(center.addObserver(forName: name, object: nil, queue: nil) { [weak self] _ in
+                guard Thread.isMainThread else {
+                    Task { @MainActor in self?.refresh() }
+                    return
+                }
+                MainActor.assumeIsolated { self?.refresh() }
+            })
+        }
     }
 
     public func notNow() { wait(FeedbackSchedule.notNowDelay) }
