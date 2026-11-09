@@ -811,3 +811,39 @@ def test_a_stop_after_needs_input_ends_the_turn_as_without_children(clock):
     eng.apply_event("s1", hook("needsInput"))
     eng.apply_event("s1", hook("done", running_subagents=frozenset()))
     assert reg.get("s1").state == "done", "a Stop says what the turn is doing now, as without children"
+
+
+def test_a_report_stamps_the_clock_and_sets_the_state(eng, clock):
+    engine, reg = eng
+    assert engine.reported("s1") is False
+    clock.now = 321.0
+    assert engine.apply_report("s1", "needsInput") == ["s1"]
+    assert reg.get("s1").state == "needsInput"
+    assert reg.get("s1").reported_at == 321.0
+    assert engine.reported("s1") is True
+
+
+def test_a_report_of_the_same_state_still_stamps_the_first_time(eng, clock):
+    engine, reg = eng
+    assert engine.apply_report("s1", "done") == ["s1"]
+    clock.now = 400.0
+    assert engine.apply_report("s1", "done") == ["s1"]  # the stamp moved: a change to announce
+    assert engine.apply_report("s1", "done") == []
+    assert engine.apply_report("gone", "done") == []
+    assert engine.reported("gone") is False
+
+
+def test_identical_reports_restamp_at_most_once_a_second(eng, clock):
+    engine, reg = eng
+    clock.now = 500.0
+    assert engine.apply_report("s1", "working") == ["s1"]
+    for at in (500.2, 500.6, 501.0):
+        clock.now = at
+        assert engine.apply_report("s1", "working") == []
+        assert reg.get("s1").reported_at == 500.0
+    clock.now = 501.1
+    assert engine.apply_report("s1", "working") == ["s1"]
+    assert reg.get("s1").reported_at == 501.1
+    clock.now = 501.2  # a change is announced at once
+    assert engine.apply_report("s1", "done") == ["s1"]
+    assert reg.get("s1").reported_at == 501.2

@@ -5,7 +5,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Any, NamedTuple
 
-from .models import HARNESSES, ITERM_SESSION_FIELD, AgentKind, TokenTally, Transition, Usage
+from .models import AGENT_ID, HARNESSES, ITERM_SESSION_FIELD, AgentKind, State, TokenTally, Transition, Usage
 from .usage import finite_number, parse_claude_rate_limits, whole_count
 
 NEEDS_INPUT_NOTIFICATIONS = {"permission_prompt", "agent_needs_input", "elicitation_dialog", "elicitation_url_dialog"}
@@ -388,3 +388,30 @@ HOOK_PARSERS: dict[str, HookParser] = {h.hook_route: _HOOK_PARSER[h.agent] for h
 # The status-line shims' routes, each with the agent it reports on and the parser for its payload.
 STATUSLINE_PARSERS: dict[str, tuple[AgentKind, StatusLineParser]] = {
     h.statusline_route: (h.agent, _STATUSLINE_PARSER[h.agent]) for h in HARNESSES if h.statusline_route}
+
+
+# The route a custom agent's hooks post exact status reports to (`shellforge-status`), and the states
+# a report may name, as the daemon spells them.
+STATUS_ROUTE = "/status"
+REPORT_STATES: dict[str, State] = {"working": "working", "needs-input": "needsInput", "done": "done"}
+
+
+@dataclass(frozen=True, slots=True)
+class StatusReport:
+    """What a custom agent says its tab is doing. `agent_id` is the agent the post claims to be,
+    checked against the tab it lands on; `iterm_session_id` is the header's, never the body's."""
+    state: State
+    agent_id: str | None
+    iterm_session_id: str | None
+
+
+def parse_status_report(p: dict[str, Any]) -> StatusReport | None:
+    """The report in a post to `STATUS_ROUTE`, or None for one that names no known state or an
+    `agent` that is not a valid agent id."""
+    raw_state = p.get("state")
+    if not isinstance(raw_state, str) or (state := REPORT_STATES.get(raw_state)) is None:
+        return None
+    agent_id = p.get("agent")
+    if agent_id is not None and (not isinstance(agent_id, str) or AGENT_ID.fullmatch(agent_id) is None):
+        return None
+    return StatusReport(state, agent_id, _nonempty_string(p.get(ITERM_SESSION_FIELD)))

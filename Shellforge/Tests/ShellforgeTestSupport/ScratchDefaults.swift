@@ -10,8 +10,12 @@ import ShellforgeCore
 /// domain is often handed to an object that outlives the test's own scope.
 public enum ScratchDefaults {
     public static func make() -> UserDefaults {
-        let path = folder.appendingPathComponent(UUID().uuidString).path
-        return UserDefaults(suiteName: path)!
+        UserDefaults(suiteName: suiteName())!
+    }
+
+    /// A fresh suite's name: a path in the run's scratch folder.
+    public static func suiteName() -> String {
+        folder.appendingPathComponent(UUID().uuidString).path
     }
 
     /// Made, and its removal registered, on first use.

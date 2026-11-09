@@ -57,7 +57,7 @@ public struct AgentHooksView: View {
     }
 
     /// The preset's agent, for its mark.
-    static func agent(_ id: String) -> SessionAgent { SessionAgent(rawValue: id) ?? .shell }
+    static func agent(_ id: String) -> SessionAgent { SessionAgent(agentId: id) }
 
     /// The state as the sheet says it.
     static func words(_ state: HookState) -> String {

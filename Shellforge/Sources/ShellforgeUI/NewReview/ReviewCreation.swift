@@ -54,10 +54,10 @@ extension CreationModel where Kind == ReviewCreation {
                             codeHost: CodeHost,
                             searchMergeRequests: @escaping @MainActor (String) async throws -> [MergeRequest],
                             submit: @escaping @MainActor (ReviewDraft) async throws -> Void,
-                            home: URL) {
+                            home: URL, runner: URL? = nil, quiet: Set<String> = []) {
         self.init(kind: ReviewCreation(codeHost: codeHost), project: project, agents: agents, available: available, draft: draft,
                   rememberedModels: rememberedModels, modelDefaults: modelDefaults, catalogue: catalogue, branches: branches, submit: submit,
-                  search: searchMergeRequests, home: home)
+                  search: searchMergeRequests, home: home, runner: runner, quiet: quiet)
     }
 
     var codeHost: CodeHost { kind.codeHost }

@@ -14,6 +14,13 @@ struct VendorMark: View {
     /// The underscore's own stroke weight — fixed for the same reason as `promptGap`: a fraction of
     /// `size` would vanish to sub-pixel at the smallest mark this glyph is drawn at.
     private static let underscoreWeight: CGFloat = 1.5
+
+    /// The SF Symbol of the generic mark every agent that isn't built in draws; nil for the others.
+    static func genericSymbol(for agent: SessionAgent) -> String? {
+        if case .custom = agent { return "sparkles" }
+        return nil
+    }
+
     var body: some View {
         ZStack {
             switch agent {
@@ -31,6 +38,9 @@ struct VendorMark: View {
                 Circle().fill(Palette.markInk)
                 Icon(.piBadge, size: size * LogoFit.pi.scale, tint: Palette.markPaper)
                     .offset(x: size * LogoFit.pi.dx, y: size * LogoFit.pi.dy)
+            case .custom:
+                Circle().fill(Palette.markInk)
+                Icon(.symbol(Self.genericSymbol(for: agent) ?? ""), size: size * LogoFit.generic.scale, tint: Palette.markPaper)
             case .shell:
                 Circle().fill(Palette.markInk)
                 // The `>_` prompt glyph from the canvas: a bold chevron and a short underscore.
@@ -73,6 +83,9 @@ struct LogoFit {
     /// of centre (+0.02 of the diameter), pulled back with `dx`; centred within 0.005 of the diameter
     /// afterward.
     static let grok = LogoFit(scale: 0.70, dx: -0.02)
+    /// The generic agent mark's sparkles: an SF Symbol, which keeps its own width at the point size,
+    /// so a smaller box than a logo's keeps its stars clear of the disc's edge.
+    static let generic = LogoFit(scale: 0.5)
     /// The square's mass sits in its left leg.
     static let pi = LogoFit(scale: 0.48, dx: 0.036)
     /// The chevrons climb to the top right.

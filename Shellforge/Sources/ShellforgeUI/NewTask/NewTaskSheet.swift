@@ -40,11 +40,17 @@ struct NewTaskSheet: View {
                     case 2: AgentStep(model: model)
                     default:
                         VStack(alignment: .leading, spacing: Space.block) {
-                            PromptStep(text: $model.draft.promptText, agentId: model.draft.agentId, completions: model.completions)
-                                .zIndex(1)
-                            if model.draft.ticket != nil {
-                                Toggle("Include Jira ticket details", isOn: $model.draft.appendTicket)
-                                    .toggleStyle(.checkbox).font(Typography.body)
+                            // An agent that starts without a prompt says so: a prompt, or the
+                            // ticket's details, would go nowhere.
+                            if let note = model.noPromptNote {
+                                HelpText(note)
+                            } else {
+                                PromptStep(text: $model.draft.promptText, agentId: model.draft.agentId, completions: model.completions)
+                                    .zIndex(1)
+                                if model.draft.ticket != nil {
+                                    Toggle("Include Jira ticket details", isOn: $model.draft.appendTicket)
+                                        .toggleStyle(.checkbox).font(Typography.body)
+                                }
                             }
                             if let host = model.draft.paneHost {
                                 Toggle("Open ssh \(host) beside the agent", isOn: $model.draft.openSSH)
@@ -55,12 +61,12 @@ struct NewTaskSheet: View {
                 }
                 // The prompt's popup hangs over the command preview: AiTerm's FrontToBackStack.
                 .zIndex(1)
-                if step > 1 { CommandBlock(caption: "Command", command: model.previewCommand) }
+                if step > 1 { CommandPreview(preview: model.commandPreview) }
                 if Destination.isShown(onStep: step), let destination { DestinationLine(destination) }
             }
         } footer: {
             CreationFooter(step: step, error: model.error,
-                           missingAgentNote: Self.footerNote(agents: model.agents, available: model.availableAgents),
+                           missingAgentNote: Self.footerNote(agents: model.agents, available: model.availableAgents, quiet: model.quietAgents),
                            createLabel: "Create Task", creating: model.creating,
                            progress: model.progress, cancelling: model.cancelling,
                            canAdvance: model.canAdvance(step: step),
@@ -79,8 +85,8 @@ struct NewTaskSheet: View {
 
     /// As AiTerm's footer: why Create is dead, said only when no agent can run at all; the Agent
     /// step names the missing ones either way.
-    static func footerNote(agents: [AgentDefinition], available: Set<String>) -> String? {
-        available.isEmpty ? NewTaskModel.missingAgentNote(agents: agents, available: available) : nil
+    static func footerNote(agents: [AgentDefinition], available: Set<String>, quiet: Set<String> = []) -> String? {
+        available.isEmpty ? NewTaskModel.missingAgentNote(agents: agents, available: available, quiet: quiet) : nil
     }
 
     // -- step 1: task ---------------------------------------------------------------

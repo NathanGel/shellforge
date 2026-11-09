@@ -341,3 +341,20 @@ async def test_no_request_starts_once_stop_has_begun(server):
     await asyncio.wait_for(serving, 2)
     await asyncio.sleep(0.01)  # time for a request, had one been started, to run
     assert started == []
+
+
+async def test_a_caller_handler_is_told_the_peers_pid_and_whether_it_left(server):
+    """The pid is the kernel's for the connection (LOCAL_PEERPID): here, this test process."""
+    seen = []
+
+    async def who(params, caller):
+        seen.append(caller)
+        return {"pid": caller.pid, "gone": caller.gone()}
+
+    server.register_with_caller("who", who)
+    r, w = await _client(server.path)
+    assert (await _call(r, w, {"id": 1, "method": "who", "params": None}))["result"] == {"pid": os.getpid(), "gone": False}
+    w.close()
+    await wait_until(lambda: server.client_count == 0)
+    assert seen[0].gone()
+    assert "who" in server.methods

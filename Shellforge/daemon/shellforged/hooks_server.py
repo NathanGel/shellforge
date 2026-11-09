@@ -6,11 +6,11 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from .hook_events import HOOK_PARSERS, STATUSLINE_PARSERS
+from .hook_events import HOOK_PARSERS, STATUS_ROUTE, STATUSLINE_PARSERS
 from .models import ITERM_SESSION_FIELD
 
 log = logging.getLogger(__name__)
-ROUTES = {*HOOK_PARSERS, *STATUSLINE_PARSERS, "/mcp"}
+ROUTES = {*HOOK_PARSERS, *STATUSLINE_PARSERS, STATUS_ROUTE, "/mcp"}
 MAX_BODY = 1 << 20
 # The most header lines, and bytes in the request line and headers together, a request may send.
 # The stream caps each line at 64 KiB; without these, any local process could send distinct headers

@@ -10,6 +10,11 @@ struct StatusMark: View {
     /// count chips pass `scale(Size.statusMarkSmall)`. Every measurement below is a fraction of it,
     /// and at 10 they are the values this view was written with.
     let size: CGFloat
+    /// The daemon is guessing the state from the terminal (`TaskStatus.isGuessed`): the tooltip says so.
+    var guessed = false
+    static let guessedHelp = "Status guessed from the terminal"
+    /// The mark's tooltip: only a guessed state has one.
+    static func help(guessed: Bool) -> String? { guessed ? guessedHelp : nil }
     /// Replaces the `onSelection: Bool` this view used to take: a selected row's surface is
     /// `.accent`, and `isOnAccent` is exactly the condition the mark used to be handed directly.
     @Environment(\.surface) private var surface
@@ -45,6 +50,15 @@ struct StatusMark: View {
                 Circle().fill(Palette.done)
             }
         }.frame(width: size, height: size)
+        .modifier(OptionalHelp(text: Self.help(guessed: guessed)))
+    }
+}
+
+/// A tooltip only when there is something to say: an empty `.help` still registers one.
+private struct OptionalHelp: ViewModifier {
+    let text: String?
+    func body(content: Content) -> some View {
+        if let text { content.help(text) } else { content }
     }
 }
 

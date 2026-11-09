@@ -1,0 +1,27 @@
+#!/bin/zsh -f
+# hooks/shellforge-status <working|needs-input|done> — a custom agent's own hooks call this to report
+# its state to the Shellforge helper: one quiet POST to the local /status route.
+# Always exits 0, prints nothing, never reads stdin, and gives up within 0.8 s if the helper is down
+# or silent, so it can never fail or slow the agent's hook. Finds the port the way the other shims do.
+# SHELLFORGE_AGENT_ID (the custom agent's id) is sent as "agent" so the helper can check it against the
+# tab's agent. The body is built only from the checked state and id, so it needs no escaping.
+set -u
+STATE="${1-}"
+case $STATE in working|needs-input|done) ;; *) exit 0 ;; esac
+[[ $# -le 1 ]] || exit 0
+PORT=""
+SUPPORT="$HOME/Library/Application Support/Shellforge"
+[ -f "$SUPPORT/hook-port" ] && { PORT="$(<"$SUPPORT/hook-port")" 2>/dev/null; }
+# Only a port, 1-65535 in digits, goes into the URL: a zsh pattern, so the check forks nothing.
+[[ $PORT == <1-65535> ]] || exit 0
+AGENT="${SHELLFORGE_AGENT_ID-}"
+# The session id goes into a header: anything but a plain id (a CR/LF could add a header) is sent as empty.
+SID="${ITERM_SESSION_ID-}"
+[[ $SID =~ '^[A-Za-z0-9:._-]{0,128}$' ]] || SID=""
+BODY="{\"state\": \"$STATE\"}"
+if [[ $AGENT =~ '^[A-Za-z0-9_-]{1,64}$' ]]; then
+  BODY="{\"state\": \"$STATE\", \"agent\": \"$AGENT\"}"
+fi
+# curl -q first: ignore ~/.curlrc; --noproxy '*': the report goes to 127.0.0.1, never a proxy.
+curl -q -s --noproxy '*' --connect-timeout 0.3 -m 0.8 -X POST -H 'Content-Type: application/json' -H 'X-Shellforge-Hook: 1' -H "X-Shellforge-iTerm-Session: $SID" -H 'Expect:' --data-binary "$BODY" "http://127.0.0.1:$PORT/status" >/dev/null 2>&1
+exit 0

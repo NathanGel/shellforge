@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 
-from .models import PROJECT_TAG, TASK_TAG, AgentKind, RawSession, SessionInfo, State, TokenTally, classify_agent
+from .models import PROJECT_TAG, TASK_TAG, RawSession, SessionAgentKind, SessionInfo, State, TokenTally, classify_session
 
 
 @dataclass(slots=True)
@@ -57,11 +57,13 @@ class SessionRegistry:
             if info.agent == old.agent and info.job_pid == old.job_pid:
                 info.model, info.reasoning, info.agent_cwd = old.model, old.reasoning, old.agent_cwd
                 info.context_percent, info.tokens, info.transcript = old.context_percent, old.tokens, old.transcript
+                info.reported_at = old.reported_at
             if info != old:
                 self._sessions[r.session_id] = info
                 diff.changed.append(r.session_id)
             else:
-                old.title = info.title  # not part of the comparison, but the status engine reads it
+                # Not part of the comparison, but the status engine reads them.
+                old.title, old.output_bytes, old.attention = info.title, info.output_bytes, info.attention
         for sid in list(self._sessions):
             if sid not in seen:
                 del self._sessions[sid]
@@ -79,8 +81,8 @@ class SessionRegistry:
             session_id=r.session_id, window_id=r.window_id, tab_index=r.tab_index,
             task_id=r.user_vars.get(TASK_TAG) or self._window_task.get(r.window_id),
             project_id=r.user_vars.get(PROJECT_TAG) or self._window_project.get(r.window_id),
-            agent=classify_agent(r.command_line), model=None, state="idle",
-            title=r.title or "", cwd=r.cwd or "", job_pid=r.job_pid,
+            agent=classify_session(r.command_line, r.custom_agent), model=None, state="idle",
+            title=r.title or "", cwd=r.cwd or "", job_pid=r.job_pid, output_bytes=r.output_bytes, attention=r.attention,
             # Read back from the map rather than from `r`, so a snapshot in which iTerm2
             # marks nothing current leaves the last known answer standing instead of
             # un-marking every tab (and broadcasting the churn).
@@ -93,6 +95,13 @@ class SessionRegistry:
         if s is None or s.state == state:
             return False
         s.state = state
+        return True
+
+    def set_reported(self, session_id: str, at: float) -> bool:
+        s = self._sessions.get(session_id)
+        if s is None or s.reported_at == at:
+            return False
+        s.reported_at = at
         return True
 
     def set_agent_cwd(self, session_id: str, cwd: str | None) -> bool:
@@ -150,7 +159,7 @@ class SessionRegistry:
     def by_job_pid(self, pid: int) -> SessionInfo | None:
         return next((s for s in self._sessions.values() if s.job_pid == pid), None)
 
-    def by_cwd_and_agent(self, cwd: str, agent: AgentKind) -> list[SessionInfo]:
+    def by_cwd_and_agent(self, cwd: str, agent: SessionAgentKind) -> list[SessionInfo]:
         # Either directory counts: an agent that chdirs (Claude entering a worktree, Codex
         # told to work elsewhere) no longer shares the shell's cwd, which is all iTerm2
         # reports, and its own directory is what its hook posts carry.

@@ -27,6 +27,20 @@ import Testing
         #expect(loaded.problem == nil)
     }
 
+    /// The ready-made agents are named, so New Task leaves them out of its “isn’t installed” note.
+    @Test func theReadyMadeAgentsAreNamed() throws {
+        let shipped = folder.appendingPathComponent("ready-made", isDirectory: true)
+        try FileManager.default.createDirectory(at: shipped, withIntermediateDirectories: true)
+        let aider = AgentDefinition(id: "aider", name: "Aider", command: "aider", prompt: .typed)
+        try JSONEncoder().encode(aider).write(to: shipped.appendingPathComponent("aider.json"))
+        var mine = AgentPresets.claude
+        mine.id = "mine"
+        try registry.save(mine)
+        let loaded = AgentFiles.load(AgentRegistry(folder: folder, readyMade: shipped, trash: { _ in }))
+        #expect(loaded.agents.map(\.id) == AgentPresets.all.map(\.id) + ["aider", "mine"])
+        #expect(loaded.readyMade == ["aider"])
+    }
+
     @Test func aBrokenFileIsSaidAndTheRestStillLoad() throws {
         var mine = AgentPresets.claude
         mine.id = "mine"

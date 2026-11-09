@@ -101,7 +101,9 @@ async def emitted(make_service, monkeypatch) -> dict[str, str]:
 
     iterm = FakeIterm(connected=False)
     svc = make_service(iterm=iterm, supervisor={"cookies_from_app": True, "apply_cookie": lambda cookie, key: None,
-                                                "reconnect_sleep": no_pause})
+                                                "reconnect_sleep": no_pause},
+                       # Every process on one terminal: the take below comes from the PI tab's.
+                       tty_of=lambda pid: 1)
     await svc.start()
     app = App(*await asyncio.open_unix_connection(svc.rpc.path))
     events: dict[str, dict[str, Any]] = {}
@@ -164,6 +166,13 @@ async def emitted(make_service, monkeypatch) -> dict[str, str]:
         replies["sessions.setTitles"] = await app.call("sessions.setTitles", {"titles": [{"sessionId": pi, "title": "feat/wire"}]})
         replies["sessions.markSeen"] = await app.call("sessions.markSeen", {"taskId": TASK_ID})
         replies["interface.setMatchItermBackground"] = await app.call("interface.setMatchItermBackground", {"matchItermBackground": True})
+        # A tab running an agent the user defined: the app names it, and the daemon calls it custom:<id>.
+        gemini = await iterm.user_opens_tab(terminal_window, WORKTREE)
+        iterm.sessions[gemini].custom_agent = "gemini"
+        await iterm.user_runs(gemini, "node /opt/homebrew/bin/gemini", job_pid=4343, title="gemini")
+        await svc.tick()
+        # Its hooks have reported once, which switches the daemon's guess for the tab off.
+        svc.status.apply_report(gemini, "working")
         replies["sessions.list"] = await app.call("sessions.list")
         replies["usage.get"] = await app.call("usage.get")
         # A tunnel whose ssh is not on the handed-in PATH: it fails at once, the same way every run.
@@ -194,6 +203,11 @@ async def emitted(make_service, monkeypatch) -> dict[str, str]:
         mark = app.mark()
         await app.send("[]")
         errors[protocol.PROTOCOL] = await app.first(mark, lambda m: "error" in m and m.get("id") is None)
+        # Last on this connection, so the request ids before them stay as they were.
+        # An agent launched through shellforge-run: armed by the app, taken once by the runner in that tab.
+        replies["agents.armLaunch"] = await app.call("agents.armLaunch", {
+            "sessionId": pi, "agentId": "gemini", "environment": {"GEMINI_API_KEY": "placeholder"}})
+        replies["agents.takeLaunch"] = await app.call("agents.takeLaunch", {"session": f"w0t0p0:{pi}", "agentId": "gemini"})
 
         mark = app.mark()
         await iterm.disconnect()
@@ -206,7 +220,8 @@ async def emitted(make_service, monkeypatch) -> dict[str, str]:
         try:
             replies["sessions.update"] = await shellforge.call("sessions.update", {"sessions": [{
                 "sessionId": "SESSION-GUID", "windowId": "w1", "tabIndex": 0, "commandLine": "pi", "jobPid": 4242,
-                "title": "pi", "cwd": WORKTREE, "active": True, "taskId": TASK_ID, "projectId": PROJECT_ID}]})
+                "title": "pi", "cwd": WORKTREE, "active": True, "taskId": TASK_ID, "projectId": PROJECT_ID,
+                "agentId": "gemini", "outputBytes": 1024, "attention": 2}]})
         finally:
             await shellforge.close()
         methods = svc.rpc.methods

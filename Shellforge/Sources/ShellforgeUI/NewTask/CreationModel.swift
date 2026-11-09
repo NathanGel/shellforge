@@ -128,6 +128,11 @@ public final class CreationModel<Kind: CreationKind>: ObservableObject, Identifi
     private let home: URL
     /// The agents whose CLIs the login shell finds, read when the sheet opens.
     public let availableAgents: Set<String>
+    /// The agents the sheet doesn't name when their CLIs are missing: the ready-made ones, which ship
+    /// whether or not they are installed.
+    public let quietAgents: Set<String>
+    /// `shellforge-run`, which the command preview starts every agent that isn't built in with.
+    let runner: URL?
 
     private let rememberedModels: [String: String]
     /// Settings › Agents' defaults, by agent id; they come before `rememberedModels`.
@@ -149,8 +154,10 @@ public final class CreationModel<Kind: CreationKind>: ObservableObject, Identifi
                 branches: @escaping @Sendable () -> [String],
                 submit: @escaping @MainActor (Kind.Draft) async throws -> Void,
                 search: @escaping @MainActor (String) async throws -> [Kind.Item] = { _ in [] },
-                home: URL) {
+                home: URL, runner: URL? = nil, quiet: Set<String> = []) {
         self.kind = kind
+        self.runner = runner
+        self.quietAgents = quiet
         self.home = home
         self.searchItems = search
         self.project = project
@@ -178,17 +185,38 @@ public final class CreationModel<Kind: CreationKind>: ObservableObject, Identifi
         return unused
     }
 
-    /// The exact command the task will run, built without touching the disk.
-    public var previewCommand: String {
-        AgentCommand.previewCommand(agent: agent, model: draft.model, reasoning: draft.reasoning,
-                                    prompt: kind.prompt(of: draft))
+    /// The exact command the task will run, as `AgentLaunch` will make it, built without touching
+    /// the disk or reading a secret; or, when it can't be built, why — the words Create would refuse
+    /// in, which the sheet says on a line of their own rather than as a command.
+    public var commandPreview: (command: String?, problem: String?) {
+        do {
+            return (try AgentLaunch.previewCommand(agent: agent, model: draft.model, reasoning: draft.reasoning,
+                                                   prompt: kind.prompt(of: draft), runner: runner), nil)
+        } catch {
+            return (nil, error.localizedDescription)
+        }
     }
+
+    /// The command alone: empty when it can't be built.
+    public var previewCommand: String { commandPreview.command ?? "" }
 
     public var selectedModelIsCurrent: Bool { catalogueLoaded && models.contains { $0.id == draft.model } }
 
-    /// Whether the draft's agent can run: its CLI is installed and its model is one the catalogue
-    /// still offers.
-    public var agentIsReady: Bool { availableAgents.contains(draft.agentId) && selectedModelIsCurrent }
+    /// The draft's agent takes no model: it isn't built in, lists none, and its list has loaded
+    /// empty. The sheet hides Model and Reasoning, and the agent starts with no model flag.
+    public var takesNoModel: Bool {
+        catalogueLoaded && models.isEmpty && agent.takesNoModel
+    }
+
+    /// What the Prompt step says in place of the prompt, for an agent that starts without one
+    /// (`PromptDelivery.noPrompt`): a prompt typed there would go nowhere. Nil for any other agent.
+    public var noPromptNote: String? {
+        agent.prompt == .noPrompt ? "This agent starts without a prompt." : nil
+    }
+
+    /// Whether the draft's agent can run: its CLI is installed, and its model is one the catalogue
+    /// still offers, or it takes none.
+    public var agentIsReady: Bool { availableAgents.contains(draft.agentId) && (selectedModelIsCurrent || takesNoModel) }
 
     /// Step 1 needs what its kind asks — a name, for a task; the agent and prompt steps need an
     /// agent that can run.
@@ -318,12 +346,11 @@ public final class CreationModel<Kind: CreationKind>: ObservableObject, Identifi
     }
 
     /// Names the missing CLIs and where Settings installs them; nothing when every one is there.
-    public static func missingAgentNote(agents: [AgentDefinition], available: Set<String>) -> String? {
-        let missing = agents.filter { !available.contains($0.id) }.map(\.name)
-        guard let last = missing.last else { return nil }
-        let names = missing.count == 1 ? last : missing.dropLast().joined(separator: ", ") + " and " + last
-        return names + (missing.count == 1 ? " isn’t installed. Install it" : " aren’t installed. Install them")
-            + ", then click Reload in Settings › Core › Environment."
+    /// `quiet` agents — the ready-made ones — are left out.
+    public static func missingAgentNote(agents: [AgentDefinition], available: Set<String>, quiet: Set<String> = []) -> String? {
+        let missing = agents.filter { !available.contains($0.id) && !quiet.contains($0.id) }.map(\.name)
+        guard missing.count > 1 else { return missing.first.map { AgentNotInstalled(agent: $0).localizedDescription } }
+        return AgentListModel.listed(missing) + " aren’t installed. Install them, then click Reload in Settings › Core › Environment."
     }
 }
 
@@ -338,9 +365,10 @@ extension CreationModel where Kind == TaskCreation {
                             searchIssues: @escaping @MainActor (String) async throws -> [JiraTicket] = { _ in [] },
                             sshHost: String? = nil,
                             existingWorktrees: @escaping @Sendable () -> [ExistingWorktree] = { [] },
-                            projectBranch: @escaping @Sendable () -> String = { "" }, home: URL) {
+                            projectBranch: @escaping @Sendable () -> String = { "" }, home: URL, runner: URL? = nil, quiet: Set<String> = []) {
         self.init(kind: TaskCreation(sshHost: sshHost, listExisting: existingWorktrees, projectBranch: projectBranch), project: project, agents: agents, available: available, draft: draft, rememberedModels: rememberedModels,
-                  modelDefaults: modelDefaults, catalogue: catalogue, branches: branches, submit: submit, search: searchIssues, home: home)
+                  modelDefaults: modelDefaults, catalogue: catalogue, branches: branches, submit: submit, search: searchIssues, home: home,
+                  runner: runner, quiet: quiet)
     }
 
     /// New worktree, Existing worktree or Project folder. Existing picks the first listed when none

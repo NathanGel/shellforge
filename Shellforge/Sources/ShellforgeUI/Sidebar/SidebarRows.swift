@@ -205,6 +205,10 @@ struct TaskRowView: View {
     let selected: Bool
     let agents: [SessionAgent]
     let status: SessionState
+    /// The status is guessed from the terminal: its dot's tooltip says so.
+    var guessed = false
+    /// What each agent mark's tooltip calls its agent.
+    var agentName: @MainActor (SessionAgent) -> String = { $0.rawValue }
     /// Its removal, running or stopped; nil when none.
     var removal: RowRemoval? = nil
     let activate: () -> Void
@@ -220,7 +224,7 @@ struct TaskRowView: View {
     var body: some View {
         SelectableRow(selected: selected, activate: activate) {
             HStack(spacing: scale(Space.inset)) {
-                AvatarGroupView(group: Self.marks(agents))
+                AvatarGroupView(group: Self.marks(agents), name: agentName)
                 VStack(alignment: .leading, spacing: scale(Space.tight)) {
                     RowTitle(node.task.title)
                     // A removal says so in the badge line's place and at its height, so the row keeps its own.
@@ -245,7 +249,7 @@ struct TaskRowView: View {
                     }
                 }
                 Spacer(minLength: scale(Space.tight))
-                StatusMark(status: status, size: SidebarRowLayout.trailingGlyph(scale))
+                StatusMark(status: status, size: SidebarRowLayout.trailingGlyph(scale), guessed: guessed)
                     .frame(width: SidebarRowLayout.trailingSlot(scale))
             }
         }
@@ -282,6 +286,10 @@ struct TabRowView: View {
     let selected: Bool
     let agents: [SessionAgent]
     let status: SessionState
+    /// The status is guessed from the terminal: its dot's tooltip says so.
+    var guessed = false
+    /// What each agent mark's tooltip calls its agent.
+    var agentName: @MainActor (SessionAgent) -> String = { $0.rawValue }
     let activate: () -> Void
     var close: () -> Void = {}
     /// "Close Tab", or "Close Pane" on a tab split with ⌘D.
@@ -291,10 +299,10 @@ struct TabRowView: View {
     var body: some View {
         SelectableRow(selected: selected, activate: activate) {
             HStack(spacing: scale(Space.inset)) {
-                AvatarGroupView(group: Self.marks(agents))
+                AvatarGroupView(group: Self.marks(agents), name: agentName)
                 RowTitle(tab.title)
                 Spacer(minLength: scale(Space.tight))
-                StatusMark(status: status, size: SidebarRowLayout.trailingGlyph(scale))
+                StatusMark(status: status, size: SidebarRowLayout.trailingGlyph(scale), guessed: guessed)
                     .frame(width: SidebarRowLayout.trailingSlot(scale))
             }
         }

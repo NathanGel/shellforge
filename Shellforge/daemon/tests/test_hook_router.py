@@ -321,3 +321,64 @@ async def test_a_statusline_tick_carrying_only_a_transcript_is_remembered(hooks)
     await hooks.post("/statusline", {"session_id": "c", "cwd": "/wt", "_shellforge_iterm_session_id": sid,
                                      "transcript_path": "/p/c.jsonl"})
     assert hooks.registry.get(sid).transcript == "/p/c.jsonl"
+
+
+def custom_tab(hooks, agent="gemini", sid="s1", command="-zsh"):
+    """One tab the app says runs custom agent `agent`; its id as iTerm2 spells it in $ITERM_SESSION_ID."""
+    raw = RawSession(sid, "w1", 0, command, 101, "", "/wt", {"shellforge_task": "t1"}, custom_agent=agent)
+    hooks.registry.apply_snapshot([raw])
+    hooks.resolver.snapshot_applied()
+    return sid, f"w0t0p0:{sid}"
+
+
+async def test_report_sets_state(hooks):
+    sid, iterm = custom_tab(hooks)
+    for wire, state in (("working", "working"), ("needs-input", "needsInput"), ("done", "done")):
+        await hooks.post("/status", {"state": wire, "agent": "gemini", "_shellforge_iterm_session_id": iterm})
+        assert hooks.state(sid) == state
+    assert hooks.registry.get(sid).reported_at == 1000.0
+    assert [p["state"] for _, p in hooks.events] == ["working", "needsInput", "done"]
+    assert all(p["reportedAt"] == 1000.0 for _, p in hooks.events)
+    assert hooks.ticks == 0
+
+
+async def test_report_on_built_in_tab_ignored(hooks):
+    [sid] = hooks.tabs(("s1", "claude", 101))
+    await hooks.post("/status", {"state": "working", "_shellforge_iterm_session_id": f"w0t0p0:{sid}"})
+    assert hooks.state(sid) == "idle"
+    assert hooks.registry.get(sid).reported_at is None
+    assert hooks.events == []
+
+
+async def test_mismatched_agent_dropped(hooks):
+    sid, iterm = custom_tab(hooks, "gemini")
+    await hooks.post("/status", {"state": "working", "agent": "aider", "_shellforge_iterm_session_id": iterm})
+    assert hooks.state(sid) == "idle"
+    assert hooks.registry.get(sid).reported_at is None
+
+
+async def test_report_without_a_tab_is_dropped(hooks):
+    sid, _ = custom_tab(hooks)
+    await hooks.post("/status", {"state": "working"})
+    assert hooks.state(sid) == "idle"
+    assert hooks.ticks == 0
+
+
+async def test_unplaced_report_waits_one_tick(hooks):
+    [sid] = hooks.tabs(("s1", "-zsh", 101))
+
+    async def becomes_custom():
+        raw = RawSession(sid, "w1", 0, "-zsh", 101, "", "/wt", {"shellforge_task": "t1"}, custom_agent="gemini")
+        hooks.registry.apply_snapshot([raw])
+
+    hooks.on_tick = becomes_custom
+    await hooks.post("/status", {"state": "working", "agent": "gemini", "_shellforge_iterm_session_id": f"w0t0p0:{sid}"})
+    assert hooks.ticks == 1
+    assert hooks.state(sid) == "working"
+
+
+async def test_unplaced_report_that_never_places_is_dropped_after_one_tick(hooks):
+    [sid] = hooks.tabs(("s1", "-zsh", 101))
+    await hooks.post("/status", {"state": "working", "_shellforge_iterm_session_id": f"w0t0p0:{sid}"})
+    assert hooks.ticks == 1
+    assert hooks.state(sid) == "idle"

@@ -79,13 +79,39 @@ final class iTermShellforgeSidebar: NSObject {
     /// The one workspace every window's sidebar shows and changes.
     static let document = WorkspaceDocument(store: WorkspaceStore())
 
+    /// What the app bundle gives the agents: `shellforge-status`, `shellforge-run` and the ready-made agents.
+    static let agentTools = AgentTools.bundled(resourceURL: Bundle.main.resourceURL, bundlePath: Bundle.main.bundlePath)
+
+    /// The agents as last read, for the helper's reports: which custom agent a tab runs.
+    private(set) static var agents: [AgentDefinition] = AgentPresets.all
+
+    /// The agents in the agents folder, the ready-made ones and the presets, read now.
+    private static func loadAgents() -> (agents: [AgentDefinition], problem: String?, readyMade: Set<String>) {
+        let loaded = AgentFiles.load(AgentRegistry(readyMade: agentTools.readyMade))
+        agents = loaded.agents
+        return loaded
+    }
+
+    /// Settings › Agents added, changed or removed an agent: every window's New Task, and the
+    /// helper's reports, use the agents as they are now.
+    static func agentsChanged() {
+        DLog("Shellforge: agents changed; reloading them for every window")
+        let loaded = loadAgents()
+        for model in sidebars.allObjects {
+            model.reloadAgents(loaded.agents, readyMade: loaded.readyMade)
+            if let problem = loaded.problem { model.lastError = problem }
+        }
+        link.reportsMayHaveChanged()
+    }
+
     /// A new sidebar for `windowController`'s window.
     @objc static func makeView(for windowController: PseudoTerminal) -> NSView {
         let host = iTermShellforgeHost(windowController: windowController)
         // Read for each new window: an agent file added since shows in that window's New Task.
-        let loaded = AgentFiles.load(AgentRegistry())
+        let loaded = loadAgents()
         let model = SidebarModel(host: host, document: document, launcher: launcher, feed: link,
-                                 agents: loaded.agents, catalogue: { try catalogue.models(for: $0) }, sshConfig: .user)
+                                 agents: loaded.agents, catalogue: { try catalogue.models(for: $0) }, sshConfig: .user,
+                                 readyMade: loaded.readyMade, secrets: Keychain.shared, tools: agentTools)
         if let problem = loaded.problem { model.lastError = problem }
         model.prompter = ModalPrompter()
         windows.add(model, for: windowController)
@@ -97,7 +123,9 @@ final class iTermShellforgeSidebar: NSObject {
         let view = ShellforgeSidebar.makeView(model: model, chooseFolder: FolderChooser.choose, hooks: hooks, machine: machine,
                                           backpack: backpack, zoom: zoom, terminalMatch: iTermShellforgeTerminalMatch.settings,
                                           feedback: feedback,
-                                          panelCornerRadius: floats ? panelCornerRadius : nil, showBackpack: { [weak windowController] present in
+                                          panelCornerRadius: floats ? panelCornerRadius : nil,
+                                          agentTools: agentTools, agentsChanged: { agentsChanged() },
+                                          showBackpack: { [weak windowController] present in
             if let windowController { backpackSheets.register(windowController, present) }
         }, showFeedback: { [weak windowController] present in
             if let windowController { feedbackSheets.register(windowController, present) }
@@ -336,8 +364,10 @@ final class iTermShellforgeHost: TerminalHost {
     /// The tunnels' ports are exported before the command, in the line typed into the shell: an
     /// iTerm2 profile has no environment of its own to carry them.
     /// `beside`, when given, runs in a pane split off to the right of the agent's, in the same folder.
+    /// `launch`'s environment, secrets included, is armed for the new session before its shell starts
+    /// and types `command`, for the `shellforge-run` at the head of it to take.
     func openTab(in directory: String, taskId: UUID, projectId: UUID, title: String, command: String?, environment: [String: String],
-                 beside: String?) {
+                 beside: String?, launch: AgentLaunch?) {
         guard let windowController, let base = ProfileModel.sharedInstance()?.defaultBookmark() else { return }
         let profile = iTermShellforgeSidebar.taskTabProfile(base: base, directory: directory,
                                                             initialText: TabCommand.exporting(environment, then: command).map(TabCommand.initialText))
@@ -347,9 +377,23 @@ final class iTermShellforgeHost: TerminalHost {
                                             makeSession: nil, didMakeSession: { session in
             session.genericScope.setValue(taskId.uuidString.lowercased(), forVariableNamed: ShellforgeTags.task)
             session.genericScope.setValue(projectId.uuidString.lowercased(), forVariableNamed: ShellforgeTags.project)
-        }, completion: { [weak self] session, ok in
+            // Only a launch through shellforge-run takes anything from the helper.
+            if let launch, launch.needsArming {
+                DLog("Shellforge: arming a launch for a new task tab")
+                let guid: String = session.guid
+                MainActor.assumeIsolated {
+                    iTermShellforgeSidebar.link.armLaunch(session: guid, agentId: launch.agentId, environment: launch.environment)
+                }
+            }
+        }, completion: { [weak self, weak windowController] session, ok in
             MainActor.assumeIsolated {
                 self?.onChange?()
+                // An agent that takes its prompt typed in gets it once it has settled; armed above.
+                if ok, let launch {
+                    iTermShellforgeSignals.type(launch, into: session) { [weak windowController] in
+                        iTermShellforgeSidebar.windows.model(for: windowController)?.typedPromptAbandoned(agentId: launch.agentId, title: title)
+                    }
+                }
                 guard let beside else { return }
                 guard ok else { self?.onSplitRefused?(title); return }
                 self?.split(session, running: beside, in: directory, base: base, title: title)
@@ -441,6 +485,15 @@ extension iTermShellforgeSidebar {
     @objc static func startHelper() {
         // ModernTests run inside the app; a test run must not start, adopt or stop a real helper.
         guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
+        // shellforge-status and shellforge-run find the hook server by this file; a custom agent may
+        // need it before any built-in's hooks are installed, which also record it. Off the main thread.
+        DispatchQueue.global(qos: .utility).async {
+            do {
+                try ShimPort.record(ShellforgePaths.hookPort)
+            } catch {
+                DLog("Shellforge: couldn’t record the hook port")
+            }
+        }
         link.start()
         machine.start()
         // A launch after a crash with lid sleep left off turns it back on first, then reads setup.
@@ -449,14 +502,17 @@ extension iTermShellforgeSidebar {
         // the Agent hooks sheet is opened.
         Task { await hooks.refresh() }
         // jobPid and commandLine change with no notification; the tick reads them, and only a
-        // changed list is sent.
-        tick = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
+        // changed list is sent. In the common modes, so it keeps firing while a menu is open or a
+        // window is dragged or resized.
+        let reportTick = Timer(timeInterval: 1, repeats: true) { _ in
             MainActor.assumeIsolated {
                 link.reportsMayHaveChanged()
                 updateDockBadge()
                 refreshShownSidebars()
             }
         }
+        RunLoop.main.add(reportTick, forMode: .common)
+        tick = reportTick
         // A window uncovered, brought back from the Dock or the app brought forward: its badges and
         // the Mac's readings are read now, not on the next tick.
         let shownMayHaveChanged: [Notification.Name] = [NSWindow.didChangeOcclusionStateNotification,
@@ -510,14 +566,19 @@ extension iTermShellforgeSidebar {
     /// Every session in every window, split panes included; the selected one of the selected tab
     /// is active.
     static func allReports() -> [SessionReport] {
-        iTermController.sharedInstance().terminals().flatMap { window -> [SessionReport] in
+        // Each task's agent, by task: a task's tab reports it while its program, or shellforge-run
+        // starting it, is in the foreground (`AgentIdentity.customAgent`).
+        let taskAgents = Dictionary(document.workspace.tasks.map { ($0.id, $0.agent) }, uniquingKeysWith: { first, _ in first })
+        return iTermController.sharedInstance().terminals().flatMap { window -> [SessionReport] in
             let current = window.currentSession()?.guid
             let windowId = window.terminalGuid ?? ""
             return window.tabs().enumerated().flatMap { index, tab in
                 tab.sessions().map { session in
                     let scope = session.genericScope
                     return SessionReport.reading(sessionId: session.guid, windowId: windowId, tabIndex: index,
-                                                active: session.guid == current) { scope.value(forVariableName: $0) }
+                                                active: session.guid == current, value: { scope.value(forVariableName: $0) },
+                                                taskAgent: { taskAgents[$0] ?? nil }, agents: agents,
+                                                signals: { iTermShellforgeSignals.signals($0) })
                 }
             }
         }

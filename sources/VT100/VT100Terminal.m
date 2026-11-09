@@ -3220,6 +3220,10 @@ static BOOL VT100TokenIsTmux(VT100Token *token) {
             [self executeProgramStatus:token];
             break;
 
+        case XTERMCC_RXVT_EXTENSION:
+            [self executeRxvtExtension:token];
+            break;
+
         case XTERMCC_SET_PALETTE:
             [self executeXtermSetPalette:token];
             break;
@@ -4823,6 +4827,28 @@ static NSString *VT100TerminalCompactFloat(CGFloat value) {
     if (report) {
         [_delegate terminalReportProgramStatus:report];
     }
+}
+
+// Shellforge: OSC 777 (urxvt), as agents ring for attention: notify;title;body posts a notification
+// as OSC 9 does. Every other OSC 777 command is ignored.
+- (void)executeRxvtExtension:(VT100Token *)token {
+    NSString *message = [VT100Terminal userNotificationMessageForOSC777Payload:token.string ?: @""];
+    if (message) {
+        [_delegate terminalPostUserNotification:message rich:NO];
+    }
+}
+
++ (nullable NSString *)userNotificationMessageForOSC777Payload:(NSString *)payload {
+    NSArray<NSString *> *parts = [payload componentsSeparatedByString:@";"];
+    if (parts.count < 2 || ![parts[0] isEqualToString:@"notify"]) {
+        return nil;
+    }
+    NSString *title = parts[1];
+    NSString *body = parts.count > 2 ? [[parts subarrayWithRange:NSMakeRange(2, parts.count - 2)] componentsJoinedByString:@";"] : @"";
+    if (title.length == 0) {
+        return body.length ? body : nil;
+    }
+    return body.length ? [NSString stringWithFormat:@"%@: %@", title, body] : title;
 }
 
 // OSC 21337: Tab status

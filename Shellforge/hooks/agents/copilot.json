@@ -1,0 +1,33 @@
+{
+  "id": "copilot",
+  "name": "GitHub Copilot CLI",
+  "command": "copilot",
+  "arguments": [
+    [
+      "-i",
+      "{prompt}"
+    ]
+  ],
+  "prompt": "argument",
+  "models": {
+    "fixed": {
+      "_0": []
+    }
+  },
+  "reasoningLevels": [],
+  "environment": {},
+  "secrets": {},
+  "status": {
+    "eventProtocol": {}
+  },
+  "statusSetup": {
+    "file": "~/.copilot/hooks/shellforge.json",
+    "snippet": "{\n  \"version\": 1,\n  \"hooks\": {\n    \"userPromptSubmitted\": [\n      {\n        \"type\": \"command\",\n        \"bash\": \"{shellforge-status} working\",\n        \"timeoutSec\": 5\n      }\n    ],\n    \"postToolUse\": [\n      {\n        \"type\": \"command\",\n        \"bash\": \"{shellforge-status} working\",\n        \"timeoutSec\": 5\n      }\n    ],\n    \"notification\": [\n      {\n        \"type\": \"command\",\n        \"matcher\": \"permission_prompt|elicitation_dialog\",\n        \"bash\": \"{shellforge-status} needs-input\",\n        \"timeoutSec\": 5\n      }\n    ],\n    \"agentStop\": [\n      {\n        \"type\": \"command\",\n        \"bash\": \"{shellforge-status} done\",\n        \"timeoutSec\": 5\n      }\n    ]\n  }\n}"
+  },
+  "x-sources": [
+    "https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference",
+    "https://docs.github.com/en/copilot/how-tos/copilot-cli/use-hooks",
+    "https://docs.github.com/en/copilot/reference/hooks-configuration"
+  ],
+  "x-statusSetupNote": "Save as its own file in ~/.copilot/hooks/. The notification hook is limited to permission prompts and questions; other notifications are ignored."
+}

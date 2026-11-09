@@ -46,7 +46,7 @@ import Testing
         #expect(Set(manifest.errorCodes) == Set(DaemonError.Code.daemonCodes.map(\.rawValue)))
         // Read leniently — one the app does not know is a shell, or idle — so only this says that
         // the daemon has grown one.
-        #expect(Set(manifest.sessionAgents) == Set(SessionAgent.allCases.map(\.rawValue)))
+        #expect(Set(manifest.sessionAgents) == Set(SessionAgent.builtIns.map(\.rawValue) + ["shell"]))
         #expect(Set(manifest.sessionStates) == Set(SessionState.allCases.map(\.rawValue)))
     }
 
@@ -83,6 +83,9 @@ import Testing
             // ctl's, and usage.get also the liveness check: read as the models the app shares with it.
             case .sessionsList: try Self.expectSame(read([SessionInfo].self), #require(result["result"]))
             case .usageGet: try Self.expectSame(read(UsageSnapshot.self), #require(result["result"]))
+            case .agentsArmLaunch: #expect(try read(DaemonClient.OkResult.self).ok == field("ok") as? Bool)
+            // shellforge-run's: the environment the runner execs the agent with.
+            case .agentsTakeLaunch: #expect(try field("environment") as? [String: String] == ["GEMINI_API_KEY": "placeholder"])
             case .tunnelsStart, .tunnelsStop, .tunnelsHold: #expect(try read(DaemonClient.OkResult.self).ok == field("ok") as? Bool)
             // ctl's: read as the model the app keeps each tunnel in.
             case .tunnelsList: try Self.expectSame(read([TunnelInfo].self), #require(result["result"]))

@@ -1,7 +1,7 @@
 import pytest
 from shellforged.models import (
     AGENT_BINARIES, END_OF_TURN_SURVIVES_CWD_LOSS, HARNESS_BY_AGENT, USAGE_VENDORS, Frame, SessionInfo, TokenTally, Usage,
-    UsageWindow, classify_agent,
+    UsageWindow, classify_agent, classify_session, custom_agent_id,
 )
 
 
@@ -70,7 +70,7 @@ def test_session_info_json_is_camel_case_and_drops_job_pid():
         "sessionId": "s1", "windowId": "w1", "tabIndex": 0, "taskId": "t1", "projectId": None,
         "agent": "claude", "model": "claude-opus-5", "reasoning": None,
         "state": "working", "title": "✳ Claude Code", "cwd": "/repo",
-        "agentCwd": "/repo/.worktrees/x", "active": False, "contextPercent": None, "tokens": None,
+        "agentCwd": "/repo/.worktrees/x", "active": False, "contextPercent": None, "tokens": None, "reportedAt": None,
     }
 
 
@@ -108,3 +108,21 @@ def test_grok_is_classified(command_line):
                                           "grok-1.0.44", "grok-macos-", "grok-v1-macos-aarch64"])
 def test_grok_lookalikes_stay_shell(command_line):
     assert classify_agent(command_line) == "shell"
+
+
+@pytest.mark.parametrize(("command", "custom", "expected"), [
+    ("node /opt/homebrew/bin/gemini", "gemini", "custom:gemini"),
+    ("claude", "gemini", "claude"),
+    ("-zsh", None, "shell"),
+    ("gemini", "bad id", "shell"),
+    ("gemini", "a" * 64, "custom:" + "a" * 64),
+    ("gemini", "a" * 65, "shell"),
+    ("gemini", "", "shell"),
+])
+def test_a_session_is_a_built_in_else_the_custom_agent_the_app_names_else_a_shell(command, custom, expected):
+    assert classify_session(command, custom) == expected
+
+
+def test_a_custom_kind_gives_back_its_id():
+    assert custom_agent_id("custom:gemini") == "gemini"
+    assert custom_agent_id("claude") is None

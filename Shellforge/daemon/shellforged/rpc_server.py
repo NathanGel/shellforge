@@ -3,12 +3,34 @@ import asyncio
 import logging
 import os
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any
 
 from . import protocol
 
 log = logging.getLogger(__name__)
 Handler = Callable[[Any], Awaitable[Any]]
+# macOS's <sys/un.h>: the pid of the process at the other end of a Unix socket, as of its connect.
+SOL_LOCAL = 0
+LOCAL_PEERPID = 2
+
+
+@dataclass(frozen=True, slots=True)
+class Caller:
+    """The process a request came from: its pid as the kernel gave it for the connection (None where
+    it could not be read), and whether that connection has since closed."""
+    pid: int | None
+    gone: Callable[[], bool]
+
+
+CallerHandler = Callable[[Any, Caller], Awaitable[Any]]
+
+
+def peer_pid(writer: asyncio.StreamWriter) -> int | None:
+    try:
+        return int(writer.get_extra_info("socket").getsockopt(SOL_LOCAL, LOCAL_PEERPID))
+    except (AttributeError, OSError, TypeError, ValueError):
+        return None
 
 
 class AlreadyRunning(RuntimeError):
@@ -27,7 +49,7 @@ class RpcError(Exception):
 class RpcServer:
     def __init__(self, path: str):
         self.path = path
-        self._handlers: dict[str, Handler] = {}
+        self._handlers: dict[str, CallerHandler] = {}
         self._server: asyncio.AbstractServer | None = None
         self._clients: set[asyncio.StreamWriter] = set()
         # Requests being answered. Held here because the loop keeps only weak references to tasks.
@@ -42,6 +64,10 @@ class RpcServer:
         return len(self._clients)
 
     def register(self, method: str, handler: Handler) -> None:
+        self._handlers[method] = lambda params, _caller: handler(params)
+
+    def register_with_caller(self, method: str, handler: CallerHandler) -> None:
+        """A handler that is also told who is asking (`Caller`)."""
         self._handlers[method] = handler
 
     @property
@@ -131,13 +157,14 @@ class RpcServer:
 
     async def _serve(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         self._clients.add(writer)
+        caller = Caller(peer_pid(writer), writer.is_closing)
         try:
             while line := await reader.readline():
                 if self._stopping:
                     break  # stop() has cancelled what was running; nothing may start after it
                 # Each request is answered on its own, so a slow one -- a createTask waiting on
                 # iTerm2 -- does not hold up, and time out, the ones sent after it.
-                task = asyncio.get_running_loop().create_task(self._answer(line, writer))
+                task = asyncio.get_running_loop().create_task(self._answer(line, writer, caller))
                 self._requests.add(task)
                 task.add_done_callback(self._answered)
         except (ConnectionError, RuntimeError, ValueError):
@@ -151,8 +178,8 @@ class RpcServer:
             self._clients.discard(writer)
             writer.close()
 
-    async def _answer(self, line: bytes, writer: asyncio.StreamWriter) -> None:
-        reply = await self._handle_line(line)
+    async def _answer(self, line: bytes, writer: asyncio.StreamWriter, caller: Caller) -> None:
+        reply = await self._handle_line(line, caller)
         # Written in the step the handler returned in, before anything else can run: a reply is
         # one write, so two can't interleave, and the workspace.snapshot reply goes out ahead of
         # every event broadcast after its handler read the state it reports.
@@ -166,7 +193,7 @@ class RpcServer:
         if not task.cancelled() and (exc := task.exception()) is not None:
             log.error("answering a request failed", exc_info=exc)
 
-    async def _handle_line(self, line: bytes) -> dict[str, Any]:
+    async def _handle_line(self, line: bytes, caller: Caller) -> dict[str, Any]:
         try:
             msg = protocol.decode(line)
         except protocol.ProtocolError as exc:
@@ -179,7 +206,7 @@ class RpcServer:
         if handler is None:
             return protocol.error(request_id, protocol.UNKNOWN_METHOD, str(method))
         try:
-            result = await handler(msg.get("params"))
+            result = await handler(msg.get("params"), caller)
         except RpcError as exc:
             return protocol.error(request_id, exc.code, exc.message)
         except Exception as exc:  # noqa: BLE001 - surfaced to the client

@@ -31,6 +31,11 @@ public enum DaemonMethod: String, CaseIterable, Sendable {
     /// Not sent by the app, which has every tunnel from the snapshot and `tunnel.changed`.
     case tunnelsList = "tunnels.list"
     case tunnelsHold = "tunnels.hold"
+    /// An agent's environment and secrets for one launch in one tab, which `shellforge-run` there
+    /// takes once, within a minute.
+    case agentsArmLaunch = "agents.armLaunch"
+    /// Not sent by the app: shellforge-run's.
+    case agentsTakeLaunch = "agents.takeLaunch"
 }
 
 /// An event the daemon broadcasts that Shellforge reads. Any other name — the iTerm2 bridge's, or a

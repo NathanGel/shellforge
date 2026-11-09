@@ -5,7 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from shellforged.app_sessions import AppSessions
+from shellforged.app_sessions import AppSessions, parse_sessions
+from shellforged.rpc_server import RpcError
 from tests.test_service import call
 
 SESSION = {"sessionId": "GUID-1", "windowId": "w1", "tabIndex": 0, "commandLine": "claude --model opus",
@@ -28,6 +29,20 @@ async def test_an_update_is_what_the_daemon_tracks(app_stack):
     sessions = (await call(r, w, "sessions.list", id_=2))["result"]
     assert [(s["sessionId"], s["taskId"], s["agent"], s["cwd"]) for s in sessions] == \
         [("GUID-1", "t1", "claude", "/repo/.worktrees/x")]
+
+
+def test_the_agent_id_and_terminal_signals_parse_and_default_to_none():
+    got = parse_sessions({"sessions": [{**SESSION, "agentId": "gemini", "outputBytes": 10, "attention": 2}]})[0]
+    assert (got.custom_agent, got.output_bytes, got.attention) == ("gemini", 10, 2)
+    bare = parse_sessions({"sessions": [SESSION]})[0]
+    assert (bare.custom_agent, bare.output_bytes, bare.attention) == (None, None, None)
+
+
+@pytest.mark.parametrize("extra", [{"outputBytes": -1}, {"outputBytes": True}, {"attention": "3"}, {"attention": -1}, {"agentId": 5}])
+def test_a_wrong_agent_id_or_signal_is_bad_params(extra):
+    with pytest.raises(RpcError) as raised:
+        parse_sessions({"sessions": [{**SESSION, **extra}]})
+    assert raised.value.code == "bad_params"
 
 
 async def test_a_tab_left_out_of_the_next_update_is_forgotten(app_stack):

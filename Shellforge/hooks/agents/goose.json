@@ -1,0 +1,26 @@
+{
+  "id": "goose",
+  "name": "Goose",
+  "command": "goose",
+  "arguments": [
+    [
+      "session"
+    ]
+  ],
+  "prompt": "typed",
+  "models": {
+    "fixed": {
+      "_0": []
+    }
+  },
+  "reasoningLevels": [],
+  "environment": {},
+  "secrets": {},
+  "status": {
+    "terminal": {}
+  },
+  "x-sources": [
+    "https://goose-docs.ai/docs/guides/goose-cli-commands",
+    "https://goose-docs.ai/docs/guides/context-engineering/hooks"
+  ]
+}

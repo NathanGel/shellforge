@@ -11,7 +11,7 @@ struct AgentDefaultsCard: View {
 
     var body: some View {
         SettingsCard(title: row.agent.name, status: status) {
-            VendorMark(agent: SessionAgent(rawValue: row.id) ?? .shell, size: Size.control)
+            VendorMark(agent: SessionAgent(agentId: row.id), size: Size.control)
         } chips: {
             EmptyView()
         } actions: {

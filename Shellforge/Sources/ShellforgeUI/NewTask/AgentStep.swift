@@ -37,35 +37,41 @@ struct AgentStep<Kind: CreationKind>: View {
             FormField("Agent") {
                 AgentSegmented(agents: model.agents, available: model.availableAgents,
                                selection: Binding(get: { model.draft.agentId }, set: { model.selectAgent($0) }))
-                if let note = CreationModel<Kind>.missingAgentNote(agents: model.agents, available: model.availableAgents) {
+                if let note = CreationModel<Kind>.missingAgentNote(agents: model.agents, available: model.availableAgents,
+                                                                   quiet: model.quietAgents) {
                     HelpText(note, tone: .warning)
                 }
             }
 
-            HStack(alignment: .top, spacing: Space.gap) {
-                FormField("Model") {
-                    if model.models.isEmpty {
-                        HelpText(Self.modelPlaceholder(agentId: model.draft.agentId, catalogueLoaded: model.catalogueLoaded,
-                                                       failure: model.catalogueFailure))
-                            // A note where the dropdown will be, not an empty field: it only keeps the row's height.
-                            .frame(maxWidth: .infinity, minHeight: Size.control, alignment: .leading)
-                    } else {
-                        Select(values: modelChoices, selection: Binding(get: { selectedModel ?? unselectedModel }, set: { model.setModel($0.id) }),
-                               label: { $0.label }, detail: { $0.detail })
-                    }
-                }.frame(maxWidth: .infinity)
-                // A model can publish no reasoning levels at all — Haiku's catalogue entry says
-                // `thinking: none` — and then there is no flag to pass and nothing to pick.
-                if !efforts.isEmpty {
-                    FormField("Reasoning") {
-                        Select(values: efforts, selection: Binding(get: { model.draft.reasoning ?? efforts.first ?? "" },
-                                                                   set: { model.draft.reasoning = $0 }),
-                               label: { $0.capitalized })
-                    }.frame(maxWidth: .infinity)
-                }
-            }
+            // An agent that takes no model has nothing to pick here.
+            if !model.takesNoModel { modelFields }
 
             if let detail = selectedModel?.detail, !detail.isEmpty { HelpText(detail) }
+        }
+    }
+
+    private var modelFields: some View {
+        HStack(alignment: .top, spacing: Space.gap) {
+            FormField("Model") {
+                if model.models.isEmpty {
+                    HelpText(Self.modelPlaceholder(agentId: model.draft.agentId, catalogueLoaded: model.catalogueLoaded,
+                                                   failure: model.catalogueFailure))
+                        // A note where the dropdown will be, not an empty field: it only keeps the row's height.
+                        .frame(maxWidth: .infinity, minHeight: Size.control, alignment: .leading)
+                } else {
+                    Select(values: modelChoices, selection: Binding(get: { selectedModel ?? unselectedModel }, set: { model.setModel($0.id) }),
+                           label: { $0.label }, detail: { $0.detail })
+                }
+            }.frame(maxWidth: .infinity)
+            // A model can publish no reasoning levels at all — Haiku's catalogue entry says
+            // `thinking: none` — and then there is no flag to pass and nothing to pick.
+            if !efforts.isEmpty {
+                FormField("Reasoning") {
+                    Select(values: efforts, selection: Binding(get: { model.draft.reasoning ?? efforts.first ?? "" },
+                                                               set: { model.draft.reasoning = $0 }),
+                           label: { $0.capitalized })
+                }.frame(maxWidth: .infinity)
+            }
         }
     }
 }

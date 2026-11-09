@@ -300,6 +300,7 @@ void iTermAsciiDataSet(AsciiData *asciiData, const char *bytes, int length, Scre
                 @(XTERMCC_SET_POINTER_SHAPE):       @"XTERMCC_SET_POINTER_SHAPE",
                 @(XTERMCC_SET_TAB_STATUS):          @"XTERMCC_SET_TAB_STATUS",
                 @(XTERMCC_PROGRAM_STATUS):          @"XTERMCC_PROGRAM_STATUS",
+                @(XTERMCC_RXVT_EXTENSION):          @"XTERMCC_RXVT_EXTENSION",
 
                 @(XTERMCC_FINAL_TERM):              @"XTERMCC_FINAL_TERM",
                 @(XTERMCC_FRAMER_WRAPPER):          @"XTERMCC_FRAMER_WRAPPER",

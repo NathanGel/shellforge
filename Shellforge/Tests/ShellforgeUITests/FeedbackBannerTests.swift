@@ -63,7 +63,7 @@ import Testing
     }
 
     @Test func theSettingsSubtitleIsExact() {
-        #expect(SettingsPanel.subtitle == "What Backpack Mode needs from this Mac, the model and reasoning each agent starts with, Jira for New Task’s tickets, GitLab and GitHub for reviews, and whether Shellforge asks for feedback.")
+        #expect(SettingsPanel.subtitle == "What Backpack Mode needs from this Mac, which agents Shellforge can start and the model and reasoning each starts with, Jira for New Task’s tickets, GitLab and GitHub for reviews, and whether Shellforge asks for feedback.")
     }
 
     @Test func closeWatchCallsBackOnceUntilStopped() {

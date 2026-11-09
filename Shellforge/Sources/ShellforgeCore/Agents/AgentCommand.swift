@@ -18,16 +18,101 @@ public enum AgentCommand {
         s.range(of: "^[A-Za-z0-9_@%+:,./-][A-Za-z0-9_@%+=:,./-]*$", options: .regularExpression) != nil ? s : shellQuote(s)
     }
 
-    /// The invocation without its prompt argument — shared by `build` and `previewCommand` so the
-    /// footer preview can never drift from the command that is actually run. Every word goes
-    /// through `shellWord`: the model and reasoning come from catalogues the app does not write.
-    static func invocation(agent: AgentDefinition, model: String, reasoning: String?) -> [String] {
-        agent.launchWords(model: model, reasoning: reasoning).map(shellWord)
+    /// One word of the command, as parts: the agent's own text, and where the first prompt goes.
+    /// Each part is quoted on its own, so `--prompt={prompt}` comes out as `--prompt='fix it'`.
+    enum Piece: Equatable {
+        case text(String)
+        case prompt
     }
 
-    /// An agent whose first prompt does not travel as the command's last word: written to its
-    /// input or typed into it once it runs. Every preset takes it as a word; the other two arrive
-    /// with custom agents (M3).
+    /// The words of the invocation, each in parts. The prompt goes where `{prompt}` stands in the
+    /// agent's arguments, or is the last word when none does; with no prompt, or for an agent that
+    /// doesn't take it as an argument, it isn't there. Shared by `build` and `previewCommand`, so
+    /// the footer preview can never drift from the command that is actually run. The model and
+    /// reasoning come from catalogues the app does not write, so every part is quoted as needed.
+    static func pieces(agent: AgentDefinition, model: String, reasoning: String?, hasPrompt: Bool) -> [[Piece]] {
+        let hasPrompt = hasPrompt && agent.prompt == .argument
+        var out = agent.launchPieces(model: model, reasoning: reasoning, hasPrompt: hasPrompt)
+        if hasPrompt, !out.contains(where: { $0.contains(.prompt) }) { out.append([.prompt]) }
+        return out
+    }
+
+    /// A word of the command that can't be typed safely. A control character acts as a keystroke
+    /// even inside quotes (^U erases the open quote, CR runs the rest of the line), and a backslash
+    /// ends the quote for fish, which reads `\'` as an escape.
+    public struct UnsafeWord: Error, Equatable, LocalizedError {
+        public enum Reason: Equatable, Sendable { case control, backslash }
+        public let field: String
+        public let reason: Reason
+        public var errorDescription: String? {
+            switch reason {
+            case .control: "The \(field) holds a control character, which can’t be typed into a terminal safely. Remove it in Settings › Agents."
+            case .backslash: "The \(field) holds a backslash, which not every shell reads the same inside quotes. Remove it in Settings › Agents."
+            }
+        }
+    }
+
+    static func refuseUnsafe(_ text: String, field: String, backslash: Bool) throws {
+        if text.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7F }) { throw UnsafeWord(field: field, reason: .control) }
+        if backslash, text.contains("\\") { throw UnsafeWord(field: field, reason: .backslash) }
+    }
+
+    /// The prompt as typed: a pasted Windows line ending is a newline, and nothing at all is nil.
+    static func normalizedPrompt(_ prompt: String?) -> String? {
+        prompt.map { $0.replacingOccurrences(of: "\r\n", with: "\n") }.flatMap { $0.isEmpty ? nil : $0 }
+    }
+
+    /// The command's words, checked, and where the prompt goes. `prefix` is what the line starts
+    /// with when it goes behind `shellforge-run`, whose every word is then quoted and which has no
+    /// backslash: the limit on a typed line is on the whole of it.
+    struct Plan {
+        var pieces: [[Piece]]
+        /// The prompt typed in the line, or nil.
+        var inline: String?
+        /// The prompt that goes through `.shellforge/first-prompt.md`, or nil.
+        var file: String?
+        var quoteAll: Bool
+        var prefix: String
+
+        var line: String { prefix + AgentCommand.line(pieces, inline: inline, quoteAll: quoteAll) }
+    }
+
+    static func plan(agent: AgentDefinition, model: String, reasoning: String?, prompt: String?, prefix: String?) throws -> Plan {
+        let backslash = prefix != nil
+        try refuseUnsafe(agent.command, field: "command", backslash: backslash)
+        for word in agent.arguments.joined() { try refuseUnsafe(word, field: "arguments", backslash: backslash) }
+        try refuseUnsafe(model, field: "model", backslash: backslash)
+        if let reasoning { try refuseUnsafe(reasoning, field: "reasoning level", backslash: backslash) }
+        let prompt = normalizedPrompt(prompt)
+        if prompt != nil, agent.prompt == .stdin { throw Unsupported(agent: agent.name) }
+        let words = pieces(agent: agent, model: model, reasoning: reasoning, hasPrompt: prompt != nil)
+        var plan = Plan(pieces: words, inline: nil, file: nil, quoteAll: prefix != nil, prefix: prefix ?? "")
+        guard let prompt, agent.prompt == .argument else { return plan }
+        plan.inline = prompt
+        if readsFromFile(prompt, plan: plan) {
+            plan.inline = nil
+            plan.file = prompt
+        }
+        return plan
+    }
+
+    private static let promptFileExpansion = "\"$(cat .shellforge/first-prompt.md)\""
+
+    /// `words` as the line a shell reads them from. `inline` is the prompt typed in the line, or nil
+    /// for the file's expansion. Plain text is left bare when the shell would read it back unchanged;
+    /// `quoteAll` quotes every part, for a line whose words must stay words (`shellforge-run`).
+    static func line(_ words: [[Piece]], inline: String?, quoteAll: Bool = false) -> String {
+        words.map { word in
+            word.map { piece -> String in
+                switch piece {
+                case .text(let text): return quoteAll ? shellQuote(text) : shellWord(text)
+                case .prompt: return inline.map(shellQuote) ?? promptFileExpansion
+                }
+            }.joined()
+        }.joined(separator: " ")
+    }
+
+    /// An agent whose first prompt can't be passed: one that reads it from its standard input.
     public struct Unsupported: Error, Equatable, LocalizedError {
         public let agent: String
         public var errorDescription: String? { "\(agent) takes its first prompt in a way Shellforge can’t pass yet." }
@@ -37,11 +122,11 @@ public enum AgentCommand {
     /// through the file shows the `$(cat …)` form the real build would produce, instead of
     /// pretending the prompt is inline. For the New Task footer (spec 4.4), where no worktree exists yet.
     public static func previewCommand(agent: AgentDefinition, model: String, reasoning: String?, prompt: String?) -> String {
-        var parts = invocation(agent: agent, model: model, reasoning: reasoning)
-        if let prompt = prompt.map(normalized), !prompt.isEmpty {
-            parts.append(readsFromFile(prompt, after: parts) ? "\"$(cat .shellforge/first-prompt.md)\"" : shellQuote(prompt))
-        }
-        return parts.joined(separator: " ")
+        let prompt = normalizedPrompt(prompt)
+        let words = pieces(agent: agent, model: model, reasoning: reasoning, hasPrompt: prompt != nil)
+        guard let prompt, agent.prompt == .argument else { return line(words, inline: nil) }
+        let inline = Plan(pieces: words, inline: prompt, file: nil, quoteAll: false, prefix: "")
+        return line(words, inline: readsFromFile(prompt, plan: inline) ? nil : prompt)
     }
 
     /// The first prompt's file was not written: `.shellforge`, or the file in it, is a symlink —
@@ -54,31 +139,29 @@ public enum AgentCommand {
 
     public static func build(agent: AgentDefinition, model: String, reasoning: String?, prompt: String?, worktreePath: String,
                              launcher: CommandLauncher) throws -> String {
-        var parts = invocation(agent: agent, model: model, reasoning: reasoning)
-        if let prompt = prompt.map(normalized), !prompt.isEmpty {
-            guard agent.prompt == .argument else { throw Unsupported(agent: agent.name) }
-            if readsFromFile(prompt, after: parts) {
-                let dir = worktreePath + "/.shellforge", file = dir + "/first-prompt.md"
-                try refuseSymlink(at: dir)
-                try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
-                // A committed link at the file itself is refused too, rather than written over.
-                try refuseSymlink(at: file)
-                try prompt.write(toFile: file, atomically: true, encoding: .utf8)
-                excludeShellforgeDirectory(worktreePath: worktreePath, launcher: launcher)
-                parts.append("\"$(cat .shellforge/first-prompt.md)\"")
-            } else {
-                parts.append(shellQuote(prompt))
-            }
-        }
-        return parts.joined(separator: " ")
+        try prepare(agent: agent, model: model, reasoning: reasoning, prompt: prompt, prefix: nil,
+                    worktreePath: worktreePath, launcher: launcher).line
+    }
+
+    /// The plan, with the prompt's file written when it goes through one. `.typed` and `.noPrompt`
+    /// leave the prompt out; `.stdin` can't take one.
+    static func prepare(agent: AgentDefinition, model: String, reasoning: String?, prompt: String?, prefix: String?,
+                        worktreePath: String, launcher: CommandLauncher) throws -> Plan {
+        let plan = try plan(agent: agent, model: model, reasoning: reasoning, prompt: prompt, prefix: prefix)
+        guard let file = plan.file else { return plan }
+        let dir = worktreePath + "/.shellforge", path = dir + "/first-prompt.md"
+        try refuseSymlink(at: dir)
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        // A committed link at the file itself is refused too, rather than written over.
+        try refuseSymlink(at: path)
+        try file.write(toFile: path, atomically: true, encoding: .utf8)
+        excludeShellforgeDirectory(worktreePath: worktreePath, launcher: launcher)
+        return plan
     }
 
     private static func refuseSymlink(at path: String) throws {
         if (try? FileManager.default.destinationOfSymbolicLink(atPath: path)) != nil { throw SymlinkRefused(path: path) }
     }
-
-    /// A pasted Windows line ending is a newline, not the CR that would accept the line early.
-    private static func normalized(_ prompt: String) -> String { prompt.replacingOccurrences(of: "\r\n", with: "\n") }
 
     /// Whether the command reads `prompt` from `.shellforge/first-prompt.md` instead of carrying it.
     /// An inline prompt is typed into the terminal, where quoting does not stop a control character
@@ -88,8 +171,8 @@ public enum AgentCommand {
     ///
     /// A backslash goes through the file too: the tab runs the account's login shell, and fish reads
     /// `\'` and `\\` as escapes even inside single quotes, where zsh and bash read them as they are.
-    private static func readsFromFile(_ prompt: String, after invocation: [String]) -> Bool {
-        (invocation + [shellQuote(prompt)]).joined(separator: " ").utf8.count > inlineLimit
+    private static func readsFromFile(_ prompt: String, plan: Plan) -> Bool {
+        plan.line.utf8.count > inlineLimit
             || prompt.unicodeScalars.contains { $0 != "\n" && ($0.value < 0x20 || $0.value == 0x7F) }
             || prompt.contains("\\")
     }

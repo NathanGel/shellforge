@@ -8,6 +8,10 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 AgentKind = Literal["claude", "codex", "grok", "pi", "shell"]
+# What a session runs: an AgentKind, or `custom:<id>` for an agent the user defined.
+SessionAgentKind = str
+CUSTOM_PREFIX = "custom:"
+AGENT_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 State = Literal["idle", "working", "needsInput", "done"]
 # What a hook says happened to a turn. Metadata (model, reasoning, context, cwd) is not a kind: it
 # rides along on any event and is applied separately. `promptStart`/`promptEnd` bracket a PI input
@@ -125,6 +129,24 @@ def _coordinate(d: dict[str, Any], key: str) -> float:
     return float(value)
 
 
+def custom_kind(agent_id: str) -> str | None:
+    """`custom:<id>` for a valid id, else None."""
+    return CUSTOM_PREFIX + agent_id if AGENT_ID.fullmatch(agent_id) else None
+
+
+def custom_agent_id(kind: str) -> str | None:
+    """The id in a `custom:<id>` kind, None for any other (a built-in's) kind."""
+    return kind.removeprefix(CUSTOM_PREFIX) if kind.startswith(CUSTOM_PREFIX) else None
+
+
+def classify_session(command_line: str | None, custom_agent: str | None) -> SessionAgentKind:
+    """A built-in agent the command line names wins; else the custom agent the app says the tab
+    runs, if its id is valid; else a plain shell."""
+    if (builtin := classify_agent(command_line)) != "shell":
+        return builtin
+    return (custom_kind(custom_agent) if custom_agent else None) or "shell"
+
+
 @dataclass
 class RawSession:
     session_id: str
@@ -137,6 +159,11 @@ class RawSession:
     user_vars: dict[str, str] = field(default_factory=dict)
     # True for the session iTerm2 reports as current in its window, at the moment of the snapshot.
     active: bool = False
+    # The id of the user-defined agent the app says this tab runs, and the terminal signals it
+    # reads for it (bytes of output so far, and the bell/attention count).
+    custom_agent: str | None = None
+    output_bytes: int | None = None
+    attention: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,7 +200,7 @@ class SessionInfo:
     tab_index: int
     task_id: str | None
     project_id: str | None
-    agent: AgentKind
+    agent: SessionAgentKind
     model: str | None
     state: State
     # The tab's process title, which only the status engine reads (a Codex spinner). Left out of
@@ -198,6 +225,12 @@ class SessionInfo:
     # Where a Claude conversation writes its transcript, which its tokens are summed from. Neither
     # sent nor compared: only the service's tally reads it.
     transcript: str | None = field(default=None, compare=False)
+    # The tab's terminal signals, which only the status engine reads: neither sent nor compared.
+    output_bytes: int | None = field(default=None, compare=False)
+    attention: int | None = field(default=None, compare=False)
+    # When a custom agent's hooks last reported its state exactly, on the daemon's clock; None until
+    # the first report, and the guess from the terminal signals is off from then on.
+    reported_at: float | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -206,6 +239,7 @@ class SessionInfo:
             "reasoning": self.reasoning, "state": self.state, "title": self.title, "cwd": self.cwd, "agentCwd": self.agent_cwd,
             "active": self.active, "contextPercent": self.context_percent,
             "tokens": self.tokens.to_json() if self.tokens else None,
+            "reportedAt": self.reported_at,
         }
 
 

@@ -59,6 +59,16 @@ def support_dir() -> Path:
     return Path.home() / "Library" / "Application Support" / "Shellforge"
 
 
+def write_atomically(path: Path, text: str) -> None:
+    """`text` in `path`, never half-written: a reader sees the old file or the new one."""
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        temporary.write_text(text)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 #: Not 47821, the port of the daemon this one was copied from, so both can run on one Mac.
 DEFAULT_HOOK_PORT = 47831
 
@@ -130,6 +140,8 @@ async def run_daemon(ns: argparse.Namespace) -> None:
     folder = support_dir()
     folder.mkdir(parents=True, exist_ok=True)
     info = folder / "daemon.json"
+    # Before daemon.json, which says the helper is up: `hooks/shellforge-run` runs under this Python.
+    write_atomically(folder / "helper-python", sys.executable)
     info.write_text(json.dumps({"pid": os.getpid(), "socket": ns.socket, "hookPort": svc.hooks.port, "version": __version__}))
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):

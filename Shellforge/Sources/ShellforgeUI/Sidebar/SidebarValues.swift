@@ -62,6 +62,17 @@ public struct DividerRowItem: Equatable, Sendable {
     public let canMoveDown: Bool
 }
 
+extension TaskStatus {
+    /// Whether a row's dot is a guess from the terminal: its state isn't idle, and every session in
+    /// that state is one no hook has reported for (`SessionInfo.statusIsGuessed`). A dot an exact
+    /// report decides is not a guess, whatever else the row holds.
+    public static func isGuessed(_ sessions: [SessionInfo]) -> Bool {
+        let state = aggregate(sessions.map(\.state))
+        guard state != .idle else { return false }
+        return sessions.filter { $0.state == state }.allSatisfy(\.statusIsGuessed)
+    }
+}
+
 // Ported from AiTerm (app/Sources/AiTermCore/Sidebar/SidebarModel.swift: TaskStatus.label).
 extension SessionState {
     /// The status as VoiceOver reads it on a row (the dot itself draws nothing for idle).

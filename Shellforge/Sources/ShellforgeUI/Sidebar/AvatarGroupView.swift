@@ -18,6 +18,8 @@ struct AvatarGroupView: View {
     /// draw. A group with one mark still takes this width, so every row's title starts at the same x.
     private var columnWidth: CGFloat { size * 2 + scale(Self.overlap) }
     let group: AvatarGroup
+    /// What each mark's tooltip calls its agent (`SidebarModel.agentName`).
+    var name: @MainActor (SessionAgent) -> String = { $0.rawValue }
     /// Replaces the `ring: Color` this view used to take. The ring is painted *over* the avatar
     /// behind it, so it needs `Surface.occludingBackground` — an opaque colour — rather than a
     /// wash, which would let the stacked mark show through.
@@ -26,6 +28,7 @@ struct AvatarGroupView: View {
         HStack(spacing: scale(Self.overlap)) {
             ForEach(Array(group.marks.enumerated()), id: \.offset) { _, agent in
                 VendorMark(agent: agent, size: size).overlay(Circle().stroke(surface.occludingBackground, lineWidth: Self.ringWidth))
+                    .help(name(agent))
             }
             if group.overflow > 0 {
                 ZStack { Circle().fill(Palette.controlActive); Text("+\(group.overflow)").font(Typography.micro).foregroundStyle(Palette.text) }

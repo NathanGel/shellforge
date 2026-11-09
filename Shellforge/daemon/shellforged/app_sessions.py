@@ -35,12 +35,20 @@ def parse_sessions(params: Any) -> list[RawSession]:
                 raise RpcError(protocol.BAD_PARAMS, f"sessions[{i}].{key} is missing or not a {kind.__name__}")
             return value
 
+        def count(key: str, entry: dict[str, Any] = entry, i: int = i) -> int | None:
+            value: int | None = need(key, int, True, entry, i)
+            if value is not None and value < 0:
+                raise RpcError(protocol.BAD_PARAMS, f"sessions[{i}].{key} must not be negative")
+            return value
+
         tags = {tag: value for tag, value in ((TASK_TAG, need("taskId", str, True)), (PROJECT_TAG, need("projectId", str, True)))
                 if value is not None}
         parsed.append(RawSession(session_id=need("sessionId", str), window_id=need("windowId", str),
                                  tab_index=need("tabIndex", int), command_line=need("commandLine", str, True),
                                  job_pid=need("jobPid", int, True), title=need("title", str), cwd=need("cwd", str),
-                                 user_vars=tags, active=need("active", bool)))
+                                 user_vars=tags, active=need("active", bool),
+                                 custom_agent=need("agentId", str, True), output_bytes=count("outputBytes"),
+                                 attention=count("attention")))
     return parsed
 
 

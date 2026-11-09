@@ -62,6 +62,74 @@ import Testing
         #expect(await sheet.create() == false)
     }
 
+    /// An agent of no models — none listed, none to read — is ready once its empty list has loaded,
+    /// and starts with no model flag. A built-in with no models still waits for one.
+    @Test func modelLessAgentCanCreate() async {
+        let goose = AgentDefinition(id: "goose", name: "Goose", command: "goose", models: .fixed([]))
+        let sheet = NewTaskModel(project: project, agents: AgentPresets.all + [goose], available: ["claude", "goose"],
+                                 draft: TaskDraft(baseBranch: "main", agentId: "goose", model: "", reasoning: nil),
+                                 rememberedModels: [:], catalogue: { _ in [] }, branches: { ["main"] }, submit: { _ in },
+                                 home: TestScratch.root.appendingPathComponent("nt-home-\(UUID().uuidString)"))
+        sheet.draft.setTitle("Login")
+        #expect(!sheet.agentIsReady, "not before its list has loaded")
+        await sheet.loadCatalogue()
+        #expect(sheet.takesNoModel && sheet.agentIsReady && sheet.canAdvance(step: 3))
+        sheet.selectAgent("claude")
+        await sheet.loadCatalogue()
+        #expect(!sheet.takesNoModel && !sheet.agentIsReady)
+    }
+
+    /// M3: an agent that starts with no prompt says so on the Prompt step instead of offering a
+    /// prompt it would drop; any other agent offers the prompt.
+    @Test func aNoPromptAgentSaysItStartsWithout() async {
+        let quiet = AgentDefinition(id: "quiet", name: "Quiet", command: "quiet", prompt: .noPrompt)
+        let sheet = NewTaskModel(project: project, agents: AgentPresets.all + [quiet], available: ["claude", "quiet"],
+                                 draft: TaskDraft(baseBranch: "main", agentId: "quiet", model: "", reasoning: nil),
+                                 rememberedModels: [:], catalogue: { _ in [] }, branches: { ["main"] }, submit: { _ in },
+                                 home: TestScratch.root.appendingPathComponent("nt-home-\(UUID().uuidString)"))
+        #expect(sheet.noPromptNote == "This agent starts without a prompt.")
+        sheet.selectAgent("claude")
+        #expect(sheet.noPromptNote == nil)
+    }
+
+    /// The ready-made agents ship whether or not their CLIs are installed: the note names only the
+    /// built-ins and the person's own agents that are missing.
+    @Test func missingNoteLeavesOutReadyMade() {
+        let aider = AgentDefinition(id: "aider", name: "Aider", command: "aider")
+        let mine = AgentDefinition(id: "mytool", name: "My Tool", command: "mytool")
+        let builtIns: Set<String> = ["claude", "codex", "grok", "pi"]
+        #expect(NewTaskModel.missingAgentNote(agents: AgentPresets.all + [aider, mine], available: builtIns, quiet: ["aider"])
+                == "My Tool isn’t installed. Install it, then click Reload in Settings › Core › Environment.")
+        #expect(NewTaskModel.missingAgentNote(agents: AgentPresets.all + [aider], available: builtIns, quiet: ["aider"]) == nil)
+        #expect(NewTaskModel.missingAgentNote(agents: AgentPresets.all + [aider], available: ["claude", "codex", "grok"], quiet: ["aider"])
+                == "PI isn’t installed. Install it, then click Reload in Settings › Core › Environment.")
+    }
+
+    /// The footer shows the line `AgentLaunch` will type: an agent that isn't built in goes through
+    /// `shellforge-run`.
+    @Test func previewGoesThroughTheRunner() {
+        let goose = AgentDefinition(id: "goose", name: "Goose", command: "goose", arguments: [["run", "-t", "{prompt}"]])
+        let runner = URL(fileURLWithPath: "/Applications/Shellforge.app/Contents/Resources/hooks/shellforge-run")
+        var draft = TaskDraft(baseBranch: "main", agentId: "goose", model: "", reasoning: nil)
+        draft.promptText = "fix it"
+        let sheet = NewTaskModel(project: project, agents: AgentPresets.all + [goose], available: ["goose"], draft: draft,
+                                 rememberedModels: [:], catalogue: { _ in [] }, branches: { ["main"] }, submit: { _ in },
+                                 home: TestScratch.root.appendingPathComponent("nt-home-\(UUID().uuidString)"), runner: runner)
+        #expect(sheet.previewCommand == "'\(runner.path)' goose -- 'goose' 'run' '-t' 'fix it'")
+        #expect(sheet.commandPreview.problem == nil)
+    }
+
+    /// A command that can't be built is a problem said on its own line, never shown as a command.
+    @Test func aPreviewThatCannotBeBuiltIsAProblemNotACommand() {
+        let goose = AgentDefinition(id: "goose", name: "Goose", command: "goose")
+        let sheet = NewTaskModel(project: project, agents: AgentPresets.all + [goose], available: ["goose"],
+                                 draft: TaskDraft(baseBranch: "main", agentId: "goose", model: "", reasoning: nil),
+                                 rememberedModels: [:], catalogue: { _ in [] }, branches: { ["main"] }, submit: { _ in },
+                                 home: TestScratch.root.appendingPathComponent("nt-home-\(UUID().uuidString)"))
+        #expect(sheet.commandPreview.command == nil)
+        #expect(sheet.commandPreview.problem == "Shellforge couldn’t find shellforge-run in its app bundle.")
+    }
+
     @Test func createRunsOnceWhilePressedTwice() async {
         final class Count { var value = 0 }
         let submitted = Count()

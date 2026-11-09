@@ -204,9 +204,10 @@ extension GitRepository {
 public enum ReviewWorktrees {
     /// `cancellation` stops it as it stops a task's create, taking back the half-made worktree; the
     /// branch stays, as a review's branch may have been there before. `progress` hears its step.
+    /// `modelRequired` is false for an agent that takes no model (`AgentDefinition.takesNoModel`).
     public static func create(draft: ReviewDraft, in project: Project, launcher: CommandLauncher,
                               cancellation: CreationCancellation? = nil,
-                              progress: (@Sendable (CreationStep) -> Void)? = nil) throws -> TaskItem {
+                              progress: (@Sendable (CreationStep) -> Void)? = nil, modelRequired: Bool = true) throws -> TaskItem {
         if cancellation?.isCancelled == true { throw CreationCancelled() }
         progress?(.creatingWorktree(runsHook: TaskWorktrees.hasCheckoutHook(project: project, launcher: launcher)))
         // One slug for the create and its undo; and an undo takes back only a worktree this made.
@@ -215,7 +216,7 @@ public enum ReviewWorktrees {
         let pathWasThere = FileManager.default.fileExists(atPath: path)
         do {
             return try create(draft: draft, in: project, slug: slug,
-                              git: LauncherGit(launcher: launcher, cancellation: cancellation), launcher: launcher)
+                              git: LauncherGit(launcher: launcher, cancellation: cancellation), launcher: launcher, modelRequired: modelRequired)
         } catch let cancelled as CreationCancelled {
             // The worktree is added locked: a double force takes it, and the branch stays.
             TaskWorktrees.undo(worktree: pathWasThere ? nil : path, branch: nil, project: project, launcher: launcher)
@@ -224,9 +225,9 @@ public enum ReviewWorktrees {
     }
 
     static func create(draft: ReviewDraft, in project: Project, slug: String? = nil, git: any GitCommands,
-                       launcher: CommandLauncher) throws -> TaskItem {
+                       launcher: CommandLauncher, modelRequired: Bool = true) throws -> TaskItem {
         guard !draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw TaskWorktrees.Refusal.emptyTitle }
-        guard !draft.model.isEmpty else { throw TaskWorktrees.Refusal.emptyModel }
+        guard !modelRequired || !draft.model.isEmpty else { throw TaskWorktrees.Refusal.emptyModel }
         guard !draft.branch.trimmingCharacters(in: .whitespaces).isEmpty,
               BranchNaming.isValid(draft.branch, launcher: launcher) else { throw TaskWorktrees.Refusal.invalidBranch(draft.branch) }
         let slug = slug ?? BranchNaming.unused(BranchNaming.reviewSlug(branch: draft.branch), in: project.path)

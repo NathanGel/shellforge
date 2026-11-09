@@ -20,9 +20,12 @@ public enum ShellforgeSidebar {
     /// Terminal switch. `feedback` is the app's one feedback prompt, and `showFeedback` hands back how
     /// this sidebar opens the feedback form, for the Help menu. `panelCornerRadius`, when given, draws
     /// the sidebar as a floating panel with those corners (macOS 26); nil draws the classic sidebar.
+    /// `agentTools` is what the app bundle gives the agents, for Settings › Agents, and
+    /// `agentsChanged` is told each time Settings › Agents adds, changes or removes one.
     public static func makeView(model: SidebarModel, chooseFolder: @escaping @MainActor () -> String?, hooks: AgentHooksModel,
                                 machine: MachineMonitor, backpack: BackpackController, zoom: SidebarZoom,
                                 terminalMatch: TerminalMatchSettings, feedback: FeedbackPrompt, panelCornerRadius: CGFloat? = nil,
+                                agentTools: AgentTools = .none, agentsChanged: @escaping @MainActor () -> Void = {},
                                 showBackpack: @escaping @MainActor (@escaping @MainActor () -> Void) -> Void = { _ in },
                                 showFeedback: @escaping @MainActor (@escaping @MainActor () -> Void) -> Void = { _ in },
                                 hideSidebar: @escaping @MainActor () -> Void = {}) -> NSView {
@@ -42,7 +45,7 @@ public enum ShellforgeSidebar {
             guard let feedbackPresenter else { return }
             feedbackPresenter.present = present
             showFeedback { [weak feedbackPresenter] in feedbackPresenter?.present?() }
-        }, hideSidebar: hideSidebar)
+        }, hideSidebar: hideSidebar, agentTools: agentTools, agentsChanged: agentsChanged)
         let host = SidebarHostingView(rootView: ZoomedSidebar(zoom: zoom, sidebar: sidebar))
         host.chrome = chrome
         host.backpackPresenter = presenter
@@ -236,6 +239,8 @@ struct SidebarView: View {
     let showBackpack: @MainActor (@escaping @MainActor () -> Void) -> Void
     let showFeedback: @MainActor (@escaping @MainActor () -> Void) -> Void
     let hideSidebar: @MainActor () -> Void
+    let agentTools: AgentTools
+    let agentsChanged: @MainActor () -> Void
     /// The window the sidebar is drawn in, which the Agent hooks panel hangs from.
     @State private var anchor = WindowAnchor()
     @State private var sheet = PanelSlot()
@@ -316,7 +321,8 @@ struct SidebarView: View {
                 .listRowSeparator(.hidden)
         case .terminal(let node, let selected):
             TerminalRowView(node: node, selected: selected, agents: model.avatars(forTerminal: node.id),
-                            status: model.status(ofTerminal: node.id), activate: { model.select(terminal: node.id) },
+                            status: model.status(ofTerminal: node.id), guessed: model.statusIsGuessed(ofTerminal: node.id),
+                            agentName: model.agentName, activate: { model.select(terminal: node.id) },
                             rename: { showRenameTerminal(node.terminal) }, remove: { model.removeTerminal(node.id) },
                             menuExtras: AnyView(OpenInMenuItems(folder: model.project(node.terminal.projectId)?.path ?? "")))
                 .listRowSeparator(.hidden)
@@ -330,7 +336,8 @@ struct SidebarView: View {
                 .listRowSeparator(.hidden)
         case .task(let node, let selected):
             TaskRowView(node: node, selected: selected, agents: model.avatars(forTask: node.id),
-                        status: model.status(ofTask: node.id), removal: model.removals[node.id],
+                        status: model.status(ofTask: node.id), guessed: model.statusIsGuessed(ofTask: node.id), agentName: model.agentName,
+                        removal: model.removals[node.id],
                         activate: { model.select(task: node.id) },
                         remove: { Task { await model.confirmRemove(taskId: node.id) } },
                         rename: { showRename(.task, name: node.task.title) { model.renameTask(node.id, to: $0) } },
@@ -339,7 +346,8 @@ struct SidebarView: View {
                 .listRowSeparator(.hidden)
         case .tab(let tab, let selected):
             TabRowView(tab: tab, selected: selected, agents: model.avatars(forTab: tab.id),
-                       status: model.status(ofTab: tab.id), activate: { model.select(tab: tab.id) },
+                       status: model.status(ofTab: tab.id), guessed: model.statusIsGuessed(ofTab: tab.id), agentName: model.agentName,
+                       activate: { model.select(tab: tab.id) },
                        close: { model.closeTab(tab.id) }, closeTitle: model.closeTitle(ofTab: tab.id))
                 .listRowSeparator(.hidden)
         case .otherTabsHeading:
@@ -372,9 +380,14 @@ struct SidebarView: View {
                                                     gitHub: model.gitHubSettings())
         let environment = model.environmentModel()
         let agentDefaults = model.agentDefaultsModel()
+        // The agents' secrets live in the Keychain, and nowhere else.
+        let agents = AgentListModel(registry: AgentRegistry(readyMade: agentTools.readyMade), secrets: Keychain.shared,
+                                    launcher: model.launcher, tasks: { [model] in model.document.workspace.tasks },
+                                    prompter: model.prompter, tools: agentTools, store: model.$sessions.eraseToAnyPublisher(),
+                                    changed: agentsChanged)
         sheet.present(over: anchor.window) { dismiss in
             SettingsPanel(backpack: backpack, integrations: integrations, environment: environment, terminalMatch: terminalMatch, feedback: feedback,
-                          agentDefaults: agentDefaults, close: dismiss)
+                          agentDefaults: agentDefaults, agents: agents, close: dismiss)
         }
     }
 

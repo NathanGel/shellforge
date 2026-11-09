@@ -4228,6 +4228,7 @@ webViewConfiguration:(WKWebViewConfiguration *)webViewConfiguration
 // "restart", which is done by first calling revive and then replaceTerminatedShellWithNewInstance.
 - (void)terminate {
     RLog(@"terminate called from %@", [NSThread callStackSymbols]);
+    [iTermShellforgeSignals ended:self.guid];  // Shellforge: its counters and typed prompt go with it.
     // tmuxMode is cleared below, before observers are notified.
     const BOOL wasTmuxClient = (self.tmuxMode == TMUX_CLIENT);
     [self forgetAITitleState];
@@ -20428,6 +20429,7 @@ static NSString *PTYSessionDECRQCRANoLabel(void) {
                           visibly:(BOOL)flashBell
                     showIndicator:(BOOL)showBellIndicator
                             quell:(BOOL)quell {
+    [iTermShellforgeSignals attention:self.guid];  // Shellforge: a bell asks a custom agent's user.
     if ([self shouldIgnoreBellWhichIsAudible:audibleBell
                                      visible:flashBell]) {
         return;
@@ -21407,6 +21409,10 @@ static const NSTimeInterval PTYSessionFocusReportBellSquelchTimeIntervalThreshol
     [self screenNeedsRedraw];
 }
 
+- (void)screenShellforgeAttentionRequested {
+    [iTermShellforgeSignals attention:self.guid];
+}
+
 - (void)screenPostUserNotification:(NSString * _Nonnull)message rich:(BOOL)rich {
     NSDictionary<NSString *, NSString *> *decoded = nil;
     if (rich) {
@@ -21485,13 +21491,20 @@ static const NSTimeInterval PTYSessionFocusReportBellSquelchTimeIntervalThreshol
 
     if (update.numberOfBytesExecutedExcludingInBandSignaling > 0) {
         DLog(@"Session %@ (%@) is processing", self, _nameController.presentationSessionTitle);
-        if (![self haveResizedRecently]) {
+        const BOOL resizedRecently = [self haveResizedRecently];
+        if (!resizedRecently) {
             _lastOutputIgnoringOutputAfterResizing = [NSDate timeIntervalSinceReferenceDate];
         }
         // If you're in an interactive app in another tab it'll draw itself on
         // jiggle but we shouldn't count that as activity.
         if (self.shell.winSizeController.timeSinceLastJiggle > 0.25) {
             _newOutput = YES;
+            if (!resizedRecently) {
+                // Shellforge: counted for a custom agent's guessed status; a counter, no allocation.
+                [iTermShellforgeSignals output:self.guid
+                                         bytes:update.numberOfBytesExecutedExcludingInBandSignaling
+                                    sinceInput:[NSDate timeIntervalSinceReferenceDate] - _lastInput];
+            }
             if (_eventTriggerEvaluator.hasIdleTrigger || _eventTriggerEvaluator.hasActivityAfterIdleTrigger) {
                 [_eventTriggerEvaluator outputReceived];
             }

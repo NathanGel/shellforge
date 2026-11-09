@@ -26,7 +26,7 @@ extension SidebarModel {
                                    codeHost: MergeRequestSearch.host(for: read.0),
                                    searchMergeRequests: ReviewCreationModel.searcher(gitLab: read.1, gitHub: read.2, remote: read.0),
                                    submit: { [weak self] draft in try await self?.newReview(draft: draft, in: projectId) },
-                                   home: FileManager.default.homeDirectoryForCurrentUser)
+                                   home: FileManager.default.homeDirectoryForCurrentUser, runner: tools.runner, quiet: readyMadeAgents)
     }
 
     /// AiTerm's review create: the merge request's branch in a worktree of its own, the agent's
@@ -35,21 +35,23 @@ extension SidebarModel {
         guard let project = document.workspace.projects.first(where: { $0.id == projectId }) else { throw ProjectGone() }
         guard let agent = agents.first(where: { $0.id == draft.agentId }) else { return }
         let launcher = self.launcher
+        let secrets = self.secrets, runner = tools.runner
         let cancellation = CreationContext.cancellation, report = CreationContext.report
         // Held for Remove Project from the start of git's work until the task is saved.
-        let made = try await whileCreating(in: projectId) { () async throws -> (TaskItem, String) in
-            let made = try await BackgroundWork.run { () throws -> (TaskItem, String) in
+        let made = try await whileCreating(in: projectId) { () async throws -> (TaskItem, AgentLaunch) in
+            let made = try await BackgroundWork.run { () throws -> (TaskItem, AgentLaunch) in
                 guard launcher.locate(agent.command) != nil else { throw AgentNotInstalled(agent: agent.name) }
                 let review = try ReviewWorktrees.create(draft: draft, in: project, launcher: launcher,
-                                                        cancellation: cancellation, progress: report)
-                let command: String
+                                                        cancellation: cancellation, progress: report, modelRequired: !agent.takesNoModel)
+                let launch: AgentLaunch
                 do {
-                    command = try AgentCommand.build(agent: agent, model: draft.model, reasoning: draft.reasoning,
-                                                     prompt: draft.promptText.isEmpty ? nil : draft.promptText,
-                                                     worktreePath: review.worktreePath, launcher: launcher)
+                    launch = try AgentLaunch.make(agent: agent, model: draft.model, reasoning: draft.reasoning,
+                                                  prompt: draft.promptText.isEmpty ? nil : draft.promptText,
+                                                  worktreePath: review.worktreePath, launcher: launcher, secrets: secrets, runner: runner)
                 } catch {
-                    // The branch committed `.shellforge` as a symlink, say: the review is refused, and
-                    // its worktree taken back; the branch stays, as in create.
+                    // The branch committed `.shellforge` as a symlink, or a secret isn't in the
+                    // Keychain, say: the review is refused, and its worktree taken back; the branch
+                    // stays, as in create.
                     TaskWorktrees.undo(worktree: review.worktreePath, branch: nil, project: project, launcher: launcher)
                     throw error
                 }
@@ -58,7 +60,7 @@ extension SidebarModel {
                     TaskWorktrees.undo(worktree: review.worktreePath, branch: nil, project: project, launcher: launcher)
                     throw CreationCancelled()
                 }
-                return (review, command)
+                return (review, launch)
             }
             // Or as the work came back here: still nothing is saved.
             if cancellation?.isCancelled == true {
@@ -75,7 +77,7 @@ extension SidebarModel {
         }
         selectedTaskId = made.0.id
         selectedTerminalId = nil
-        host.openTab(in: made.0.worktreePath, taskId: made.0.id, projectId: projectId, title: made.0.title, command: made.1,
-                     environment: openingTaskTab(in: projectId))
+        host.openTab(in: made.0.worktreePath, taskId: made.0.id, projectId: projectId, title: made.0.title, command: made.1.command,
+                     environment: openingTaskTab(in: projectId), beside: nil, launch: made.1)
     }
 }

@@ -473,6 +473,12 @@ typedef NS_ENUM(NSUInteger, PTYSessionResizePermission) {
 - (void)screenCopyStringToPasteboard:(NSString * _Nonnull)string;
 - (void)screenReportPasteboard:(NSString * _Nonnull)pasteboard completion:(void (^ _Nonnull)(void))completion;
 - (void)screenPostUserNotification:(NSString * _Nonnull)string rich:(BOOL)rich;
+// Shellforge: the program asked for attention with a notification (OSC 9, OSC 777 notify, OSC 1337
+// Notification), whether or not the profile lets it post one. Optional, so iTerm2's own delegates
+// and test fakes need nothing; the caller checks respondsToSelector:.
+@optional
+- (void)screenShellforgeAttentionRequested;
+@required
 // Called while joined. Don't let `mutableState` escape.
 - (void)screenSync:(VT100ScreenMutableState * _Nonnull)mutableState;
 - (void)screenUpdateCommandUseWithGuid:(NSString * _Nonnull)screenmarkGuid

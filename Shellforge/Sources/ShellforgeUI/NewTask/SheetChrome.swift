@@ -255,29 +255,64 @@ struct StepBar: View {
     }
 }
 
-/// Claude Code / Codex, with the vendor marks. An agent whose CLI is not on the login shell's
-/// `PATH` cannot be picked, and says so.
+/// Claude Code / Codex, with the vendor marks: segments for up to `maxSegments` agents, a dropdown
+/// beyond. An agent whose CLI is not on the login shell's `PATH` cannot be picked, and says so.
 struct AgentSegmented: View {
     let agents: [AgentDefinition]
     let available: Set<String>
     @Binding var selection: String
+
+    /// The most agents shown as segments; more would not fit the sheet's width.
+    static let maxSegments = 4
+
+    static func isSegmented(_ agents: [AgentDefinition]) -> Bool { agents.count <= maxSegments }
 
     /// Only an installed CLI can be picked. With none installed every segment is disabled: each
     /// would open a window that prints "command not found". An unknown answer — the login shell
     /// failed — arrives here as every agent, never as none (`AgentIntegrations.availableAgents`).
     static func isSelectable(_ agent: AgentDefinition, available: Set<String>) -> Bool { available.contains(agent.id) }
 
+    /// The dropdown's agents: those that can be picked, and the one picked, so the field can show it.
+    static func dropdownChoices(_ agents: [AgentDefinition], available: Set<String>, selection: String) -> [AgentDefinition] {
+        agents.filter { isSelectable($0, available: available) || $0.id == selection }
+    }
+
     var body: some View {
+        if Self.isSegmented(agents) { segments } else { dropdown }
+    }
+
+    private var segments: some View {
         SegmentedControl(values: agents.map(\.id), selection: $selection,
                        isSelectable: { id in agents.first { $0.id == id }.map { Self.isSelectable($0, available: available) } ?? false },
                        help: { id in
                            guard let agent = agents.first(where: { $0.id == id }), !Self.isSelectable(agent, available: available) else { return nil }
-                           return "\(agent.name) isn’t installed. Install it, then click Reload in Settings › Core › Environment."
+                           return AgentNotInstalled(agent: agent.name).localizedDescription
                        }) { id, on in
             HStack(spacing: Space.snug) {
-                VendorMark(agent: SessionAgent(rawValue: id) ?? .shell, size: Size.vendorMark)
+                VendorMark(agent: SessionAgent(agentId: id), size: Size.vendorMark)
                 Text(agents.first { $0.id == id }?.name ?? id).font(on ? Typography.bodyEmphasis : Typography.body)
             }
+        }
+    }
+
+    private var dropdown: some View {
+        let choices = Self.dropdownChoices(agents, available: available, selection: selection)
+        let byId = Dictionary(choices.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return Select(values: choices.map(\.id), selection: $selection, label: { byId[$0]?.name ?? $0 },
+                      detail: { id in
+                          byId[id].flatMap { Self.isSelectable($0, available: available) ? nil : AgentNotInstalled(agent: $0.name).localizedDescription }
+                      })
+    }
+}
+
+/// The command the task will run, or — when it can't be built — why, as a warning of its own.
+struct CommandPreview: View {
+    let preview: (command: String?, problem: String?)
+    var body: some View {
+        if let command = preview.command {
+            CommandBlock(caption: "Command", command: command)
+        } else if let problem = preview.problem {
+            HelpText(problem, tone: .warning)
         }
     }
 }

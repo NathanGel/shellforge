@@ -229,3 +229,43 @@ def test_the_tunnel_ledger_lives_beside_the_socket(sock_dir, tmp_path, monkeypat
         blocker.close()
     assert os.path.exists(os.path.join(sock_dir, "tunnels.json"))
     assert not (home / "Library/Application Support/Shellforge/tunnels.json").exists()
+
+
+async def test_the_helper_writes_its_python_for_shellforge_run(monkeypatch, tmp_path, sock_dir):
+    """`shellforge-run` runs under the helper's own Python, which it finds in `helper-python`."""
+    import shellforged.__main__ as entry
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    support = tmp_path / "Library/Application Support/Shellforge"
+    support.mkdir(parents=True)
+    (support / "helper-python").write_text("/an/older/python\n")
+    ns = build_parser().parse_args(["run", "--socket", os.path.join(sock_dir, "p.sock"), "--hook-port", "0"])
+    daemon = asyncio.create_task(entry.run_daemon(ns))
+    try:
+        await wait_until(lambda: os.path.exists(support / "daemon.json"))
+        assert (support / "helper-python").read_text() == sys.executable
+    finally:
+        daemon.cancel()
+        await asyncio.gather(daemon, return_exceptions=True)
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            asyncio.get_running_loop().remove_signal_handler(sig)
+
+
+def test_helper_python_is_replaced_whole(tmp_path, monkeypatch):
+    """Written beside and moved into place: a reader never sees half a path, and nothing is left behind."""
+    import shellforged.__main__ as entry
+
+    target = tmp_path / "helper-python"
+    target.write_text("/old/python")
+    replaced = []
+    real_replace = os.replace
+
+    def replace(source, destination):
+        assert target.read_text() == "/old/python"  # untouched until the move
+        replaced.append((os.path.dirname(source), destination))
+        real_replace(source, destination)
+
+    monkeypatch.setattr(entry.os, "replace", replace)
+    entry.write_atomically(target, "/new/python")
+    assert target.read_text() == "/new/python" and replaced == [(str(tmp_path), target)]
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["helper-python"]

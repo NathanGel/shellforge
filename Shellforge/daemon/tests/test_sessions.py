@@ -12,7 +12,7 @@ def test_first_snapshot_opens_sessions_with_agent_and_tag():
     assert reg.get("s1").to_json() == ({
         "sessionId": "s1", "windowId": "w1", "tabIndex": 0, "taskId": "t1", "projectId": None,
         "agent": "claude", "model": None, "reasoning": None, "state": "idle", "title": "zsh", "cwd": "/home",
-        "agentCwd": None, "active": False, "contextPercent": None, "tokens": None})
+        "agentCwd": None, "active": False, "contextPercent": None, "tokens": None, "reportedAt": None})
 
 
 def test_untagged_session_in_tagged_window_inherits_task():
@@ -243,3 +243,53 @@ def test_a_folder_matches_whichever_way_a_symlink_spells_it(tmp_path):
     r.apply_snapshot([raw("s1", cmd="claude", cwd=str(link / "repo"))])
     assert [s.session_id for s in r.by_cwd_and_agent(str(real), "claude")] == ["s1"]
     assert r.by_cwd_and_agent(str(tmp_path / "elsewhere"), "claude") == []
+
+
+def test_a_custom_agent_the_app_names_is_a_custom_session():
+    reg = SessionRegistry()
+    r = raw(cmd="node /opt/homebrew/bin/gemini")
+    r.custom_agent = "gemini"
+    reg.apply_snapshot([r])
+    assert reg.get("s1").agent == "custom:gemini"
+    assert reg.get("s1").to_json()["agent"] == "custom:gemini"
+
+
+def test_a_change_only_to_the_terminal_signals_is_no_diff_but_is_kept():
+    reg = SessionRegistry()
+    first = raw()
+    first.output_bytes, first.attention = 1, 0
+    reg.apply_snapshot([first])
+    second = raw()
+    second.output_bytes, second.attention = 99, 3
+    assert reg.apply_snapshot([second]).changed == []
+    assert (reg.get("s1").output_bytes, reg.get("s1").attention) == (99, 3)
+    assert "outputBytes" not in reg.get("s1").to_json() and "attention" not in reg.get("s1").to_json()
+
+
+def test_reported_at_survives_the_same_job():
+    reg = SessionRegistry()
+    first = raw()
+    first.custom_agent = "gemini"
+    reg.apply_snapshot([first])
+    assert reg.set_reported("s1", 50.0) is True
+    assert reg.set_reported("s1", 50.0) is False
+    assert reg.set_reported("nope", 50.0) is False
+    second = raw()
+    second.custom_agent = "gemini"
+    assert reg.apply_snapshot([second]).changed == []
+    assert reg.get("s1").reported_at == 50.0
+    assert reg.get("s1").to_json()["reportedAt"] == 50.0
+
+
+def test_reported_at_clears_when_the_job_is_replaced():
+    reg = SessionRegistry()
+    first = raw(pid=100)
+    first.custom_agent = "gemini"
+    reg.apply_snapshot([first])
+    reg.set_reported("s1", 50.0)
+    second = raw(pid=200)
+    second.custom_agent = "gemini"
+    diff = reg.apply_snapshot([second])
+    assert diff.replaced == ["s1"]
+    assert reg.get("s1").reported_at is None
+    assert reg.get("s1").to_json()["reportedAt"] is None

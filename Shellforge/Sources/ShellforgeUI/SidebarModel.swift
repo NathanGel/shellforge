@@ -16,8 +16,12 @@ public protocol TerminalHost: AnyObject {
     /// Opens a tab in `directory`, running the login shell, tagged with the task and project, and
     /// selects it. `command` is typed into its shell once it starts: the task's agent. `environment`
     /// is set in that shell first: the project's running tunnels' ports.
+    /// `launch` is what started the agent (`AgentLaunch.make`), nil for a plain shell. Its
+    /// environment, secrets included, is armed for the new session (`DaemonLink.armLaunch`) before
+    /// `command` is typed; its `typedPrompt`, when there is one, is pasted once the agent is ready
+    /// (`TypedPromptDriver`), and an agent that exits first is told to `SidebarModel.typedPromptAbandoned`.
     func openTab(in directory: String, taskId: UUID, projectId: UUID, title: String, command: String?, environment: [String: String],
-                 beside: String?)
+                 beside: String?, launch: AgentLaunch?)
     /// Closes every tab tagged with the task, in every window — what removing it starts with. True
     /// once none is left open.
     func closeTabs(ofTask id: UUID) -> Bool
@@ -43,7 +47,8 @@ public protocol TerminalHost: AnyObject {
 extension TerminalHost {
     /// A task's tab with nothing beside its agent.
     func openTab(in directory: String, taskId: UUID, projectId: UUID, title: String, command: String?, environment: [String: String]) {
-        openTab(in: directory, taskId: taskId, projectId: projectId, title: title, command: command, environment: environment, beside: nil)
+        openTab(in: directory, taskId: taskId, projectId: projectId, title: title, command: command, environment: environment, beside: nil,
+                launch: nil)
     }
 }
 
@@ -68,6 +73,9 @@ public protocol SessionFeed: AnyObject {
     /// Each tunnel call's outcome, once, as it happens: a refusal is said as the sidebar's error,
     /// and the same tunnel's next success clears it.
     var tunnelOutcomePublisher: AnyPublisher<TunnelOutcome, Never> { get }
+    /// The last launch the helper couldn't be armed for, in a sentence with no secret in it; nil
+    /// once the next one is armed.
+    var launchErrorPublisher: AnyPublisher<String?, Never> { get }
     func markSeen(task: UUID)
     /// A terminal's tabs, by their sessions: they carry no task.
     func markSeen(sessions: [String])
@@ -138,8 +146,15 @@ public final class SidebarModel: ObservableObject {
     let host: TerminalHost
     let document: WorkspaceDocument
     let launcher: CommandLauncher
-    /// The agents New Task offers.
-    public let agents: [AgentDefinition]
+    /// The agents New Task offers; Settings › Agents' changes come in through `reloadAgents`.
+    @Published public private(set) var agents: [AgentDefinition]
+    /// The ids of the ready-made agents among them: shipped whether or not their CLIs are installed,
+    /// so New Task doesn't name each one that isn't.
+    public private(set) var readyMadeAgents: Set<String>
+    /// Where the agents' secrets are read at launch, off the main actor: the app's is `Keychain.shared`.
+    let secrets: any SecretStore & Sendable
+    /// What the app bundle gives the agents: `shellforge-run`, for every agent that isn't built in.
+    let tools: AgentTools
     /// An agent's model list, read off the main actor.
     let catalogue: @Sendable (AgentDefinition) throws -> [AgentModel]
     /// Read the saved Jira, GitLab and GitHub connections: the Keychain and the defaults. Tests hand
@@ -147,8 +162,10 @@ public final class SidebarModel: ObservableObject {
     let jiraSettings: @Sendable () -> JiraConfig?
     let gitLabSettings: @Sendable () -> GitLabConfig?
     let gitHubSettings: @Sendable () -> GitHubConfig?
-    /// Read Settings › Agents' saved defaults, by agent id; read as each sheet opens.
-    let modelDefaults: @Sendable () -> [String: ModelPreference]
+    /// Read Settings › Agents' saved defaults, for these agent ids; read as each sheet opens.
+    let readModelDefaults: @Sendable ([String]) -> [String: ModelPreference]
+    /// The shown agents' saved defaults, by agent id.
+    func modelDefaults() -> [String: ModelPreference] { readModelDefaults(agents.map(\.id)) }
     private var subscription: AnyCancellable?
     let feed: SessionFeed?
     private var feedSubscriptions: [AnyCancellable] = []
@@ -165,6 +182,8 @@ public final class SidebarModel: ObservableObject {
     }
     /// The tunnel error the banner shows, by its tunnel: that tunnel's next success clears it.
     private var shownTunnelError: (alias: String, message: String)?
+    /// The launch error the banner shows: the next launch armed clears it, while it is still shown.
+    private var shownLaunchError: String?
     /// The tab selected at the last refresh: moving to another is opening it.
     private var lastSelectedTab: String?
 
@@ -175,17 +194,25 @@ public final class SidebarModel: ObservableObject {
                 gitLabSettings: @escaping @Sendable () -> GitLabConfig? = { GitLabSettings.load() },
                 gitHubSettings: @escaping @Sendable () -> GitHubConfig? = { GitHubSettings.load() },
                 modelDefaults: (@Sendable () -> [String: ModelPreference])? = nil,
-                sshConfig: SSHConfigSource = .none) {
+                sshConfig: SSHConfigSource = .none, readyMade: Set<String> = [], secrets: any SecretStore & Sendable = MemorySecretStore(),
+                tools: AgentTools = .none) {
         self.host = host
         self.sshConfig = sshConfig
         self.jiraSettings = jiraSettings
         self.gitLabSettings = gitLabSettings
         self.gitHubSettings = gitHubSettings
-        self.modelDefaults = modelDefaults ?? { [ids = agents.map(\.id)] in ModelSettings.loadAll(for: ids) }
+        if let modelDefaults {
+            readModelDefaults = { @Sendable _ in modelDefaults() }
+        } else {
+            readModelDefaults = { @Sendable ids in ModelSettings.loadAll(for: ids) }
+        }
         removalBoard = RemovalBoard.shared(for: document)
         self.document = document
         self.launcher = launcher
         self.agents = agents
+        self.readyMadeAgents = readyMade
+        self.secrets = secrets
+        self.tools = tools
         self.catalogue = catalogue
         self.feed = feed
         lastError = document.loadProblem
@@ -205,6 +232,7 @@ public final class SidebarModel: ObservableObject {
                 feed.tunnelOutcomePublisher.sink { [weak self] outcome in
                     MainActor.assumeIsolated { self?.take(outcome) }
                 },
+                feed.launchErrorPublisher.sink { [weak self] error in MainActor.assumeIsolated { self?.take(launchError: error) } },
                 feed.statusPublisher.sink { [weak self] status in
                     MainActor.assumeIsolated {
                         guard let self else { return }
@@ -232,6 +260,41 @@ public final class SidebarModel: ObservableObject {
             if lastError == shown.message { lastError = nil }
             shownTunnelError = nil
         }
+    }
+
+    /// A launch's arm failure shown as the error; the next armed launch clears it, unless an error
+    /// said since by something else is showing.
+    private func take(launchError error: String?) {
+        if let error {
+            lastError = error
+            shownLaunchError = error
+        } else if let shown = shownLaunchError {
+            if lastError == shown { lastError = nil }
+            shownLaunchError = nil
+        }
+    }
+
+    /// Settings › Agents added, changed or removed an agent: the next New Task or New Review offers
+    /// the agents as they are now. `readyMade` names the ready-made ones among them.
+    public func reloadAgents(_ agents: [AgentDefinition], readyMade: Set<String>) {
+        if agents != self.agents { self.agents = agents }
+        readyMadeAgents = readyMade
+    }
+
+    /// What a row's mark is called: a built-in's name, a custom agent's as its definition names it —
+    /// its id once the agent is gone — and “Shell”.
+    public func agentName(_ agent: SessionAgent) -> String {
+        switch agent {
+        case .shell: return "Shell"
+        case .custom(let id): return agents.first { $0.id == id }?.name ?? id
+        default: return AgentPresets.all.first { $0.id == agent.rawValue }?.name ?? agent.rawValue
+        }
+    }
+
+    /// The host gave up typing a task's first prompt because its agent exited first: said briefly,
+    /// as nothing went into what is now the tab's shell.
+    public func typedPromptAbandoned(agentId: String, title: String) {
+        show(notice: "\(agentName(SessionAgent(agentId: agentId))) exited before its first prompt could be typed in \(title).")
     }
 
     /// Reads the environment as the launcher now has it — reading it first if it has not been — and
@@ -332,7 +395,7 @@ public final class SidebarModel: ObservableObject {
                                 (try? ExistingWorktrees.list(project: project, taken: taken, launcher: launcher)) ?? []
                             },
                             projectBranch: { (try? ProjectFolderTasks.checkedOutBranch(of: project, launcher: launcher)) ?? "" },
-                            home: FileManager.default.homeDirectoryForCurrentUser)
+                            home: FileManager.default.homeDirectoryForCurrentUser, runner: tools.runner, quiet: readyMadeAgents)
     }
 
     /// AiTerm's create: the worktree on the draft's branch, the agent's command (its first prompt
@@ -342,6 +405,7 @@ public final class SidebarModel: ObservableObject {
         guard let project = document.workspace.projects.first(where: { $0.id == projectId }) else { throw ProjectGone() }
         guard let agent = agents.first(where: { $0.id == draft.agentId }) else { return }
         let launcher = self.launcher, taken = document.workspace.tasks.map(\.worktreePath)
+        let secrets = self.secrets, runner = tools.runner
         // The sheet's Cancel and its step line, read here: they do not follow the work to its queue.
         let cancellation = CreationContext.cancellation, report = CreationContext.report
         // One Create per existing worktree, in every window, from before anything is written there.
@@ -352,29 +416,32 @@ public final class SidebarModel: ObservableObject {
         }
         defer { if let reserved { removalBoard.adopting.remove(reserved) } }
         // Held for Remove Project from the start of git's work until the task is saved.
-        let made = try await whileCreating(in: projectId) { () async throws -> (TaskItem, String) in
-            let made = try await BackgroundWork.run { () throws -> (TaskItem, String) in
+        let made = try await whileCreating(in: projectId) { () async throws -> (TaskItem, AgentLaunch) in
+            let made = try await BackgroundWork.run { () throws -> (TaskItem, AgentLaunch) in
                 // Looked for again here: the sheet read what was installed when it opened, and a tab
                 // whose first line is "command not found" is worse than a refusal.
                 guard launcher.locate(agent.command) != nil else { throw AgentNotInstalled(agent: agent.name) }
                 // Continued in a worktree that exists, run in the project's own folder, or in one made for it.
-                let task: TaskItem
+                let task: TaskItem, modelRequired = !agent.takesNoModel
                 switch draft.worktree {
-                case .existing: task = try ExistingWorktrees.adopt(draft: draft, in: project, taken: taken, launcher: launcher)
-                case .projectFolder: task = try ProjectFolderTasks.make(draft: draft, in: project, launcher: launcher)
+                case .existing:
+                    task = try ExistingWorktrees.adopt(draft: draft, in: project, taken: taken, launcher: launcher, modelRequired: modelRequired)
+                case .projectFolder: task = try ProjectFolderTasks.make(draft: draft, in: project, launcher: launcher, modelRequired: modelRequired)
                 case .new:
                     task = try TaskWorktrees.create(draft: draft, in: project, launcher: launcher,
-                                                    cancellation: cancellation, progress: report)
+                                                    cancellation: cancellation, progress: report, modelRequired: modelRequired)
                 }
-                let command: String
+                let launch: AgentLaunch
                 do {
-                    command = try AgentCommand.build(agent: agent, model: draft.model, reasoning: draft.reasoning,
-                                                     prompt: AgentCommand.composePrompt(userText: draft.promptText, ticket: draft.ticket,
-                                                                                        appendTicket: draft.appendTicket),
-                                                     worktreePath: task.worktreePath, launcher: launcher)
+                    // Its secrets are read here, off the main actor: a Keychain read can wait on a prompt.
+                    launch = try AgentLaunch.make(agent: agent, model: draft.model, reasoning: draft.reasoning,
+                                                  prompt: AgentCommand.composePrompt(userText: draft.promptText, ticket: draft.ticket,
+                                                                                     appendTicket: draft.appendTicket),
+                                                  worktreePath: task.worktreePath, launcher: launcher, secrets: secrets, runner: runner)
                 } catch {
-                    // The first prompt could not be written (a symlinked `.shellforge`, say): nothing
-                    // is saved, and a worktree this create made goes with it.
+                    // The first prompt could not be written (a symlinked `.shellforge`, say), a secret
+                    // isn't in the Keychain, or `shellforge-run` is missing: nothing is saved, and a
+                    // worktree this create made goes with it.
                     if draft.worktree == .new {
                         TaskWorktrees.undo(worktree: task.worktreePath, branch: task.branch, project: project, launcher: launcher)
                     }
@@ -387,7 +454,7 @@ public final class SidebarModel: ObservableObject {
                     }
                     throw CreationCancelled()
                 }
-                return (task, command)
+                return (task, launch)
             }
             // Or as the work came back here: still nothing is saved.
             if cancellation?.isCancelled == true {
@@ -417,8 +484,9 @@ public final class SidebarModel: ObservableObject {
         selectedTerminalId = nil
         // The pane the sheet offered, never one the config grew since it opened.
         let beside = draft.openSSH ? draft.paneHost.map(SSHConfig.paneCommand(alias:)) : nil
-        host.openTab(in: made.0.worktreePath, taskId: made.0.id, projectId: projectId, title: made.0.title, command: made.1,
-                     environment: openingTaskTab(in: projectId), beside: beside)
+        // The line typed is the launch's, exactly as made: quoted there, and never again.
+        host.openTab(in: made.0.worktreePath, taskId: made.0.id, projectId: projectId, title: made.0.title, command: made.1.command,
+                     environment: openingTaskTab(in: projectId), beside: beside, launch: made.1)
     }
 
     /// Shows the task: its first open tab, or a new one in its worktree when none is open.
@@ -647,6 +715,9 @@ public final class SidebarModel: ObservableObject {
 
     public func status(ofTask id: UUID) -> SessionState { sessions.status(ofTask: id) }
     public func status(ofTab id: String) -> SessionState { sessions.status(ofTab: id) }
+    /// Whether the task's or tab's dot is guessed from the terminal, for its tooltip.
+    public func statusIsGuessed(ofTask id: UUID) -> Bool { TaskStatus.isGuessed(sessions.sessions(ofTask: id)) }
+    public func statusIsGuessed(ofTab id: String) -> Bool { TaskStatus.isGuessed(sessions.sessions(ofTab: id)) }
 
     /// Every terminal row's tabs in this window.
     var terminalTabs: [TabSnapshot] { tree.projects.flatMap(\.terminals).flatMap(\.tabs) }

@@ -58,6 +58,16 @@ import Testing
         #expect(model.footerRow == nil)
     }
 
+    @Test func aCustomAgentsTaskKeepsItsAgentRow() async throws {
+        let (model, _, feed, alpha, _) = try await sidebar()
+        try model.document.update { workspace in
+            if let i = workspace.tasks.firstIndex(where: { $0.id == alpha }) { workspace.tasks[i].agent = "gemini" }
+        }
+        say(feed, [])
+        model.select(task: alpha)
+        #expect(model.footerRow?.agent == .custom("gemini"), "a custom task's own agent stands in for its closed tab")
+    }
+
     @Test func aClosedTasksContextStays() async throws {
         let (model, _, feed, alpha, _) = try await sidebar()
         say(feed, [session("a", task: alpha, agent: .claude, context: 40)])

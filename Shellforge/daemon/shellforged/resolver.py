@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .claude_sessions import ClaudeSessionFiles
-from .models import HARNESS_BY_AGENT, AgentKind
+from .models import HARNESS_BY_AGENT, AgentKind, SessionAgentKind
 from .sessions import SessionRegistry
 
 
@@ -109,7 +109,7 @@ class SessionResolver:
         for key in [key for key, pinned in self._pins.items() if pinned == iterm_session_id]:
             del self._pins[key]
 
-    def _by_cwd(self, cwd: str | None, agent: AgentKind) -> str | None:
+    def _by_cwd(self, cwd: str | None, agent: SessionAgentKind) -> str | None:
         if not cwd:
             return None
         s = self.registry.most_recent(self.registry.by_cwd_and_agent(cwd, agent))

@@ -100,6 +100,33 @@ final class DaemonClientTests {
         try await client.startTunnel(alias: "db-staging", environment: ["SSH_AUTH_SOCK": "/tmp/agent.sock", "PATH": "/usr/bin"])
     }
 
+    /// A launch through `shellforge-run`: the tab, the agent and its environment, which the runner in
+    /// that tab takes from the helper once.
+    @Test func armLaunchSendsItsParams() async throws {
+        server.handler = { req in
+            #expect(req["method"] as? String == "agents.armLaunch")
+            let params = req["params"] as? [String: Any]
+            #expect(params?["sessionId"] as? String == "SESSION-GUID")
+            #expect(params?["agentId"] as? String == "gemini")
+            #expect(params?["environment"] as? [String: String] == ["GEMINI_API_KEY": "placeholder"])
+            return ["id": req["id"]!, "result": ["ok": true]]
+        }
+        try client.connect()
+        #expect(server.waitForClient(timeout: 2))
+        try await client.armLaunch(session: "SESSION-GUID", agentId: "gemini", environment: ["GEMINI_API_KEY": "placeholder"])
+    }
+
+    /// An agent with no environment is still armed: the runner always sets `SHELLFORGE_AGENT_ID`.
+    @Test func anEmptyEnvironmentIsStillSent() async throws {
+        server.handler = { req in
+            #expect((req["params"] as? [String: Any])?["environment"] as? [String: String] == [:])
+            return ["id": req["id"]!, "result": ["ok": true]]
+        }
+        try client.connect()
+        #expect(server.waitForClient(timeout: 2))
+        try await client.armLaunch(session: "SESSION-GUID", agentId: "goose", environment: [:])
+    }
+
     @Test func aTunnelThatKeepsRunningSaysSoWithItsStart() async throws {
         server.handler = { req in
             #expect((req["params"] as? [String: Any])?["keepRunning"] as? Bool == true)

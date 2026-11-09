@@ -8,7 +8,7 @@ extension SidebarModel {
     public var footerRow: UsageTaskRow? {
         if let id = selectedTaskId {
             let task = document.workspace.tasks.first { $0.id == id }
-            let fallback = task?.agent.flatMap(SessionAgent.init(rawValue:)) ?? .shell
+            let fallback = task?.agent.map(SessionAgent.init(agentId:)) ?? .shell
             return UsageRows.taskRow(sessions: sessions.sessions(ofTask: id), fallback: fallback,
                                      contexts: contexts.percents(forRow: .task(id)), preferring: host.selectedTabId)
         }

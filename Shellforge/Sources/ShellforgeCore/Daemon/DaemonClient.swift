@@ -475,6 +475,7 @@ public final class DaemonClient: Sendable {
     struct TunnelParams: Encodable { var alias: String }
     struct TunnelHoldParams: Encodable { var alias: String, port: Int, bind: String? }
     struct OkResult: Decodable { var ok: Bool }
+    struct ArmLaunchParams: Encodable { var sessionId: String, agentId: String, environment: [String: String] }
 
     /// The daemon's state, which is also yielded as `.snapshot` in the event stream: the daemon
     /// writes it with no pause after reading its state, so it is a barrier between the events
@@ -517,5 +518,13 @@ public final class DaemonClient: Sendable {
 
     public func stopTunnel(alias: String) async throws {
         _ = try await request(.tunnelsStop, params: TunnelParams(alias: alias), as: OkResult.self)
+    }
+
+    /// Arms `agentId`'s launch in the tab `session` (its iTerm2 session id) with `environment`, secrets
+    /// included: `shellforge-run` in that tab takes it from the helper once, within a minute, so no
+    /// value is typed into the shell. Never logged: a failure logs only the helper's code and words.
+    public func armLaunch(session: String, agentId: String, environment: [String: String]) async throws {
+        _ = try await request(.agentsArmLaunch, params: ArmLaunchParams(sessionId: session, agentId: agentId, environment: environment),
+                              as: OkResult.self)
     }
 }

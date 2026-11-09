@@ -1,7 +1,8 @@
+import Foundation
 import Testing
 @testable import ShellforgeCore
 
-@Suite struct AgentLaunchTests {
+@Suite struct AgentDefinitionTests {
     @Test func claudeLaunchesAsInAiTerm() {
         #expect(AgentPresets.claude.launchWords(model: "opus", reasoning: "high")
             == ["claude", "--model", "opus", "--effort", "high"])
@@ -43,5 +44,46 @@ import Testing
     @Test func theFourPresetsComeInAiTermsOrder() {
         #expect(AgentPresets.all.map(\.id) == ["claude", "codex", "grok", "pi"])
         #expect(AgentPresets.all.map(\.status) == [.preset("claude"), .preset("codex"), .preset("grok"), .preset("pi")])
+    }
+
+    @Test func oldFileDecodes() throws {
+        let old = #"""
+        {"id": "mine", "name": "Mine", "command": "mine", "arguments": [["-x"]], "prompt": "argument",
+         "models": {"fixed": {"_0": ["a"]}}, "reasoningLevels": [], "environment": {}, "secrets": {}, "status": {"terminal": {}}}
+        """#
+        let agent = try JSONDecoder().decode(AgentDefinition.self, from: Data(old.utf8))
+        #expect(agent.statusSetup == nil && agent.status == .terminal && agent.prompt == .argument)
+        let again = try String(decoding: JSONEncoder().encode(agent), as: UTF8.self)
+        #expect(!again.contains("statusSetup"))
+    }
+
+    @Test func statusSetupRoundTrips() throws {
+        var agent = AgentDefinition(id: "g", name: "G", command: "g", status: .eventProtocol)
+        agent.statusSetup = .init(file: "~/.g/settings.json", snippet: "{shellforge-status} done")
+        let back = try JSONDecoder().decode(AgentDefinition.self, from: JSONEncoder().encode(agent))
+        #expect(back == agent)
+    }
+
+    @Test func noneRawValueIsNone() throws {
+        #expect(AgentDefinition.PromptDelivery.noPrompt.rawValue == "none")
+        #expect(try JSONDecoder().decode(AgentDefinition.PromptDelivery.self, from: Data("\"none\"".utf8)) == .noPrompt)
+    }
+
+    @Test func splitHandlesQuotes() {
+        #expect(ShellWords.split("a 'b c' \"d\"") == ["a", "b c", "d"])
+        #expect(ShellWords.split("a 'b") == nil)
+        #expect(ShellWords.split("a \"b") == nil)
+        #expect(ShellWords.split(#"x\ y 'it'\''s' "q\"r" ''"#) == ["x y", "it's", "q\"r", ""])
+        #expect(ShellWords.split("  ") == [])
+    }
+
+    @Test func splitReadsWhatQuoteWrote() {
+        let nasty = "a 'b' $HOME `x`; \\ \"z\""
+        #expect(ShellWords.split(ShellWords.quote(nasty)) == [nasty])
+    }
+
+    @Test func builtInsAreTheFourPresets() {
+        #expect(["claude", "codex", "grok", "pi"].allSatisfy(AgentPresets.isBuiltIn))
+        #expect(!AgentPresets.isBuiltIn("shell") && !AgentPresets.isBuiltIn("gemini"))
     }
 }

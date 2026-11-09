@@ -6,11 +6,17 @@ import ShellforgeCore
 /// Review before Shellforge has an editor for them. A file that cannot be read is said, once, and
 /// the others load regardless.
 public enum AgentFiles {
-    public static func load(_ registry: AgentRegistry) -> (agents: [AgentDefinition], problem: String?) {
-        guard let loaded = try? registry.load() else { return (AgentPresets.all, nil) }
-        let files = loaded.problems.map(\.file)
-        guard !files.isEmpty else { return (loaded.agents, nil) }
+    /// `readyMade` names the ready-made agents among them, for `SidebarModel.reloadAgents`.
+    public static func load(_ registry: AgentRegistry) -> (agents: [AgentDefinition], problem: String?, readyMade: Set<String>) {
+        guard let loaded = try? registry.load() else { return (AgentPresets.all, nil, []) }
+        return (loaded.agents, problemSentence(files: loaded.problems.map(\.file)),
+                Set(loaded.origins.filter { $0.value == .readyMade }.keys))
+    }
+
+    /// Names the agent files that couldn’t be read; nil when every one could.
+    static func problemSentence(files: [String]) -> String? {
+        guard !files.isEmpty else { return nil }
         let lead = files.count == 1 ? "An agent file couldn’t be read" : "\(files.count) agent files couldn’t be read"
-        return (loaded.agents, "\(lead): \(files.joined(separator: ", ")). The other agents loaded.")
+        return "\(lead): \(files.joined(separator: ", ")). The other agents loaded."
     }
 }

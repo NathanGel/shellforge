@@ -227,6 +227,7 @@ typedef enum {
     XTERMCC_SET_POINTER_SHAPE,
     XTERMCC_SET_TAB_STATUS,
     XTERMCC_PROGRAM_STATUS,
+    XTERMCC_RXVT_EXTENSION,  // OSC 777 (urxvt's perl extensions); only notify;title;body is acted on
 
     // If a sequence is split into multiple tokens, the first will be one of the above whose name
     // includes MULTITOKEN_HEADER, then zero or more of these, and then XTERMCC_MULTITOKEN_END.

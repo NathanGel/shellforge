@@ -11,6 +11,10 @@ struct TerminalRowView: View {
     let selected: Bool
     let agents: [SessionAgent]
     let status: SessionState
+    /// The status is guessed from the terminal: its dot's tooltip says so.
+    var guessed = false
+    /// What each agent mark's tooltip calls its agent.
+    var agentName: @MainActor (SessionAgent) -> String = { $0.rawValue }
     let activate: () -> Void
     var rename: () -> Void = {}
     var remove: () -> Void = {}
@@ -20,10 +24,10 @@ struct TerminalRowView: View {
     var body: some View {
         SelectableRow(selected: selected, activate: activate) {
             HStack(spacing: scale(Space.inset)) {
-                AvatarGroupView(group: Self.marks(agents))
+                AvatarGroupView(group: Self.marks(agents), name: agentName)
                 RowTitle(node.terminal.name)
                 Spacer(minLength: scale(Space.tight))
-                StatusMark(status: status, size: SidebarRowLayout.trailingGlyph(scale))
+                StatusMark(status: status, size: SidebarRowLayout.trailingGlyph(scale), guessed: guessed)
                     .frame(width: SidebarRowLayout.trailingSlot(scale))
             }
         }

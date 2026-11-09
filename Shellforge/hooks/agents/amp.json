@@ -1,0 +1,22 @@
+{
+  "id": "amp",
+  "name": "Amp",
+  "command": "amp",
+  "arguments": [],
+  "prompt": "typed",
+  "models": {
+    "fixed": {
+      "_0": []
+    }
+  },
+  "reasoningLevels": [],
+  "environment": {},
+  "secrets": {},
+  "status": {
+    "terminal": {}
+  },
+  "x-sources": [
+    "https://ampcode.com/docs/cli",
+    "https://ampcode.com/manual/plugin-api"
+  ]
+}

@@ -47,9 +47,10 @@ public enum ExistingWorktrees {
 
     /// The task for the draft's picked worktree, checked against git again first: a worktree gone
     /// from disk, or taken by a task since the sheet listed it, is refused. Nothing in git changes.
-    public static func adopt(draft: TaskDraft, in project: Project, taken: [String] = [], launcher: CommandLauncher) throws -> TaskItem {
+    public static func adopt(draft: TaskDraft, in project: Project, taken: [String] = [], launcher: CommandLauncher,
+                             modelRequired: Bool = true) throws -> TaskItem {
         guard !draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw TaskWorktrees.Refusal.emptyTitle }
-        guard !draft.model.isEmpty else { throw TaskWorktrees.Refusal.emptyModel }
+        guard !modelRequired || !draft.model.isEmpty else { throw TaskWorktrees.Refusal.emptyModel }
         guard let picked = draft.existing else { throw Refusal.noneChosen }
         if Set(taken.map(resolved)).contains(resolved(picked.path)) { throw Refusal.taken(picked.branch) }
         let listed = try GitRepository(project.path, launcher: launcher).worktrees()

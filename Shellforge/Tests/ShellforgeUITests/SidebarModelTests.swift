@@ -11,7 +11,7 @@ import Testing
     var selectedTabId: String?
     var onChange: (@MainActor () -> Void)?
     var opened: [(directory: String, taskId: UUID, projectId: UUID, title: String, command: String?, environment: [String: String],
-                  beside: String?)] = []
+                  beside: String?, launch: AgentLaunch?)] = []
     var onSplitRefused: (@MainActor @Sendable (String) -> Void)?
     /// iTerm2 refusing the split: a tmux tab, a window too small.
     var refusesSplit = false
@@ -52,8 +52,8 @@ import Testing
     }
 
     func openTab(in directory: String, taskId: UUID, projectId: UUID, title: String, command: String?, environment: [String: String],
-                 beside: String?) {
-        opened.append((directory, taskId, projectId, title, command, environment, beside))
+                 beside: String?, launch: AgentLaunch?) {
+        opened.append((directory, taskId, projectId, title, command, environment, beside, launch))
         if beside != nil, refusesSplit { onSplitRefused?(title) }
         nextTab += 1
         let tab = TabSnapshot(id: "s\(nextTab)", tabId: nextTab, title: title, taskId: taskId, projectId: projectId)
@@ -131,6 +131,8 @@ import Testing
     var storePublisher: AnyPublisher<SessionStore, Never> { $store.eraseToAnyPublisher() }
     let tunnelOutcomes = PassthroughSubject<TunnelOutcome, Never>()
     var tunnelOutcomePublisher: AnyPublisher<TunnelOutcome, Never> { tunnelOutcomes.eraseToAnyPublisher() }
+    @Published var launchError: String?
+    var launchErrorPublisher: AnyPublisher<String?, Never> { $launchError.eraseToAnyPublisher() }
     func markSeen(task: UUID) { seen.append(task) }
     var seenSessions: [[String]] = []
     func markSeen(sessions: [String]) { seenSessions.append(sessions) }
@@ -192,6 +194,49 @@ import Testing
         await #expect { _ = try await sidebar.loadJiraProjects() } throws: {
             ($0 as? ActionUnavailable)?.message == "Connect Jira in Settings to choose a Jira project."
         }
+    }
+
+    /// A launch the helper couldn't be armed for is the sidebar's error; the next one armed clears
+    /// it, and only it: an error said since by something else stays.
+    @Test func aLaunchThatCouldNotBeArmedIsTheSidebarsError() throws {
+        let repo = try GitRepoForUI()
+        let feed = FakeFeed()
+        let sidebar = SidebarModel(host: FakeTerminalHost(), document: WorkspaceDocument(store: WorkspaceStore(folder: folder)),
+                                   launcher: repo.launcher, feed: feed, jiraSettings: { nil })
+        feed.launchError = "Couldn’t start gemini: Shellforge’s helper isn’t connected."
+        #expect(sidebar.lastError == "Couldn’t start gemini: Shellforge’s helper isn’t connected.")
+        feed.launchError = nil
+        #expect(sidebar.lastError == nil)
+        feed.launchError = "Couldn’t start gemini: Shellforge’s helper isn’t connected."
+        sidebar.lastError = "The project was removed."
+        feed.launchError = nil
+        #expect(sidebar.lastError == "The project was removed.")
+    }
+
+    /// With the app's own link and no helper: the arm's failure is said in a sentence that holds no
+    /// secret.
+    @Test func anArmFailureIsSaidWithoutTheSecret() throws {
+        let repo = try GitRepoForUI()
+        let link = DaemonLink(daemonDir: nil, findPython: { nil }, reports: { [] })
+        let sidebar = SidebarModel(host: FakeTerminalHost(), document: WorkspaceDocument(store: WorkspaceStore(folder: folder)),
+                                   launcher: repo.launcher, feed: link, jiraSettings: { nil })
+        link.armLaunch(session: "S", agentId: "gemini", environment: ["GEMINI_API_KEY": "placeholder-secret-value"])
+        #expect(sidebar.lastError == "Couldn’t start gemini: Shellforge’s helper isn’t connected.")
+        #expect(sidebar.lastError?.contains("placeholder-secret-value") == false)
+        // A window opened later doesn't say an old launch's failure.
+        let later = SidebarModel(host: FakeTerminalHost(), document: WorkspaceDocument(store: WorkspaceStore(folder: folder)),
+                                 launcher: repo.launcher, feed: link, jiraSettings: { nil })
+        #expect(later.lastError == nil)
+    }
+
+    /// A typed-in prompt that never went because its agent ended first is said, briefly.
+    @Test func aTypedPromptAbandonedByItsAgentIsSaid() throws {
+        let repo = try GitRepoForUI()
+        let sidebar = SidebarModel(host: FakeTerminalHost(), document: WorkspaceDocument(store: WorkspaceStore(folder: folder)),
+                                   launcher: repo.launcher, agents: AgentPresets.all + [AgentDefinition(id: "aider", name: "Aider", command: "aider")],
+                                   jiraSettings: { nil })
+        sidebar.typedPromptAbandoned(agentId: "aider", title: "Fix login")
+        #expect(sidebar.notice == "Aider exited before its first prompt could be typed in Fix login.")
     }
 
     private func model(_ host: FakeTerminalHost, repo: GitRepoForUI, document: WorkspaceDocument? = nil) -> SidebarModel {
@@ -523,11 +568,14 @@ extension SidebarModel {
 @MainActor @Suite struct NewTaskWiringTests {
     private let folder = TestScratch.root.appendingPathComponent("shellforge-wiring-\(UUID().uuidString)")
 
-    private func modelWithProject(installed: [String] = ["claude"]) async throws -> (SidebarModel, FakeTerminalHost, WorkspaceDocument, UUID) {
+    private func modelWithProject(installed: [String] = ["claude"], agents: [AgentDefinition] = AgentPresets.all,
+                                  secrets: any SecretStore & Sendable = MemorySecretStore(),
+                                  tools: AgentTools = .none) async throws -> (SidebarModel, FakeTerminalHost, WorkspaceDocument, UUID) {
         let repo = try GitRepoForUI(installed: installed)
         let host = FakeTerminalHost()
         let document = WorkspaceDocument(store: WorkspaceStore(folder: folder))
-        let model = SidebarModel(host: host, document: document, launcher: repo.launcher, catalogue: { _ in [] }, jiraSettings: { nil })
+        let model = SidebarModel(host: host, document: document, launcher: repo.launcher, agents: agents, catalogue: { _ in [] },
+                                 jiraSettings: { nil }, secrets: secrets, tools: tools)
         await model.addProject(folder: repo.path)
         return (model, host, document, try #require(document.workspace.projects.first).id)
     }
@@ -647,6 +695,106 @@ extension SidebarModel {
         #expect(FileManager.default.fileExists(atPath: folder + "/file.txt") && FileManager.default.fileExists(atPath: folder + "/.git"))
         #expect(try model.launcher.run("git", ["-C", folder, "rev-parse", "--verify", "--quiet", "refs/heads/main"]).status == 0,
                 "the checked-out branch is still there")
+    }
+
+    private let runner = URL(fileURLWithPath: "/Applications/Shell Forge.app/Contents/Resources/hooks/shellforge-run")
+    private var tools: AgentTools { AgentTools(statusCommand: nil, runner: runner, readyMade: nil, translocated: false) }
+
+    private func gemini(prompt: AgentDefinition.PromptDelivery = .argument, secrets: [String: String] = ["GEMINI_API_KEY": "agent.gemini.GEMINI_API_KEY"]) -> AgentDefinition {
+        AgentDefinition(id: "gemini", name: "Gemini CLI", command: "gemini", arguments: prompt == .argument ? [["-i", "{prompt}"]] : [],
+                        prompt: prompt, secrets: secrets)
+    }
+
+    private func geminiDraft(_ title: String, prompt: String = "fix it") -> TaskDraft {
+        var draft = TaskDraft(baseBranch: "main", agentId: "gemini", model: "", reasoning: nil)
+        draft.setTitle(title)
+        draft.promptText = prompt
+        return draft
+    }
+
+    /// The secret goes to the host as the launch's environment, for the helper to arm; the typed
+    /// command is the quoted runner's, and never holds the value.
+    @Test func newTaskWithSecretsArmsTheLaunch() async throws {
+        let store = MemorySecretStore()
+        store.set(AgentSecrets.key(agent: "gemini", variable: "GEMINI_API_KEY"), "placeholder-secret-value")
+        let (model, host, _, project) = try await modelWithProject(installed: ["claude", "gemini"], agents: AgentPresets.all + [gemini()],
+                                                                   secrets: store, tools: tools)
+        try await model.newTask(draft: geminiDraft("Login"), in: project)
+        let opened = try #require(host.opened.last)
+        let launch = try #require(opened.launch)
+        #expect(launch.agentId == "gemini")
+        #expect(launch.environment["GEMINI_API_KEY"] == "placeholder-secret-value")
+        let command = try #require(opened.command)
+        #expect(command == launch.command, "the command typed is the launch's, as made")
+        #expect(command.hasPrefix(AgentCommand.shellQuote(runner.path) + " gemini -- "))
+        #expect(!command.contains("placeholder-secret-value"))
+    }
+
+    /// A typed-in prompt rides with the launch, for the host to paste once the agent is up; the
+    /// command starts the agent bare.
+    @Test func typedPromptGoesToTheHostNotTheCommand() async throws {
+        let (model, host, _, project) = try await modelWithProject(installed: ["claude", "gemini"],
+                                                                   agents: AgentPresets.all + [gemini(prompt: .typed, secrets: [:])], tools: tools)
+        try await model.newTask(draft: geminiDraft("Login", prompt: "fix the login page"), in: project)
+        let opened = try #require(host.opened.last)
+        #expect(opened.launch?.typedPrompt == "fix the login page")
+        #expect(opened.command == AgentCommand.shellQuote(runner.path) + " gemini -- 'gemini'")
+        #expect(opened.command?.contains("login page") == false)
+    }
+
+    /// A secret the Keychain doesn't hold refuses the create in a sentence naming the variable, and
+    /// nothing is saved or opened.
+    @Test func missingSecretRefusesWithItsSentence() async throws {
+        let (model, host, document, project) = try await modelWithProject(installed: ["claude", "gemini"], agents: AgentPresets.all + [gemini()],
+                                                                          tools: tools)
+        await #expect(throws: AgentSecrets.Missing(agent: "Gemini CLI", variable: "GEMINI_API_KEY")) {
+            try await model.newTask(draft: geminiDraft("Login"), in: project)
+        }
+        #expect(AgentSecrets.Missing(agent: "Gemini CLI", variable: "GEMINI_API_KEY").localizedDescription
+                == "Gemini CLI’s secret GEMINI_API_KEY isn’t in the Keychain. Set it again in Settings › Agents.")
+        #expect(document.workspace.tasks.isEmpty && host.opened.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: try #require(document.workspace.projects.first).path + "/.worktrees/login"))
+    }
+
+    /// Settings › Agents' changes reach the next New Task: an agent added since is offered and starts.
+    @Test func reloadAgentsReachesNewTask() async throws {
+        let (model, host, _, project) = try await modelWithProject(installed: ["claude", "gemini"], tools: tools)
+        #expect(model.makeNewTaskModel(for: project)?.agents.map(\.id) == AgentPresets.all.map(\.id))
+        model.reloadAgents(AgentPresets.all + [gemini(secrets: [:])], readyMade: [])
+        #expect(model.agents.map(\.id).last == "gemini")
+        #expect(model.makeNewTaskModel(for: project)?.availableAgents.contains("gemini") == true)
+        try await model.newTask(draft: geminiDraft("Login"), in: project)
+        #expect(host.opened.last?.launch?.agentId == "gemini")
+    }
+
+    /// The four built-ins start exactly as before, with nothing to arm.
+    @Test func aBuiltInsLaunchIsItsPlainCommand() async throws {
+        let (model, host, _, project) = try await modelWithProject(tools: tools)
+        var draft = TaskDraft(baseBranch: "main", agentId: "claude", model: "opus", reasoning: "high")
+        draft.setTitle("Login")
+        draft.promptText = "fix it"
+        try await model.newTask(draft: draft, in: project)
+        let opened = try #require(host.opened.last)
+        #expect(opened.command == "claude --model opus --effort high 'fix it'")
+        #expect(opened.launch?.environment.isEmpty == true && opened.launch?.typedPrompt == nil)
+        #expect(opened.launch?.needsArming == false, "a built-in's tab arms nothing")
+    }
+
+    /// A custom agent's launch is armed.
+    @Test func aCustomLaunchIsArmed() async throws {
+        let (model, host, _, project) = try await modelWithProject(installed: ["claude", "gemini"],
+                                                                   agents: AgentPresets.all + [gemini(secrets: [:])], tools: tools)
+        try await model.newTask(draft: geminiDraft("Login"), in: project)
+        #expect(host.opened.last?.launch?.needsArming == true)
+    }
+
+    /// With no `shellforge-run` handed in, New Task refuses a custom agent in words rather than
+    /// typing a line that can't work, and nothing is saved.
+    @Test func aCustomLaunchWithNoRunnerIsRefused() async throws {
+        let (model, host, document, project) = try await modelWithProject(installed: ["claude", "gemini"],
+                                                                          agents: AgentPresets.all + [gemini(secrets: [:])])
+        await #expect(throws: AgentLaunch.RunnerMissing()) { try await model.newTask(draft: geminiDraft("Login"), in: project) }
+        #expect(document.workspace.tasks.isEmpty && host.opened.isEmpty)
     }
 
     @Test func twoProjectFolderTasksAllowed() async throws {

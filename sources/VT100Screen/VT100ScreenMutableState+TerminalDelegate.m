@@ -1773,6 +1773,12 @@ typedef struct {
 
 - (void)terminalPostUserNotification:(NSString *)message rich:(BOOL)rich {
     DLog(@"begin %@", message);
+    // Shellforge: a request for attention counts for an agent's status even where notifications are off.
+    [self addSideEffect:^(id<VT100ScreenDelegate> _Nonnull delegate) {
+        if ([delegate respondsToSelector:@selector(screenShellforgeAttentionRequested)]) {
+            [delegate screenShellforgeAttentionRequested];
+        }
+    } name:@"shellforge attention"];
     if (!self.config.postUserNotifications) {
         DLog(@"Declining to allow terminal to post user notification %@", message);
         return;

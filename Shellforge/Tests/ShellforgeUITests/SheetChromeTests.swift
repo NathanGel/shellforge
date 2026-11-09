@@ -3,6 +3,7 @@ import SwiftUI
 import Testing
 @testable import ShellforgeTestSupport
 import ShellforgeDesign
+import ShellforgeCore
 @testable import ShellforgeUI
 
 /// macOS 26's sheets: the buttons sit on the sheet itself, with no band or rule of their own.
@@ -30,6 +31,19 @@ import ShellforgeDesign
             #expect(difference < 0.01, "row \(y) of \(rep.pixelsHigh): \(pixel) against the body's \(body)")
             if difference >= 0.01 { return }
         }
+    }
+
+    /// Up to four agents are segments; beyond that, a dropdown of those that can run, and the one picked.
+    @Test func pickerIsSegmentedUpToFour() {
+        let aider = AgentDefinition(id: "aider", name: "Aider", command: "aider")
+        let goose = AgentDefinition(id: "goose", name: "Goose", command: "goose")
+        #expect(AgentSegmented.maxSegments == 4)
+        #expect(AgentSegmented.isSegmented(AgentPresets.all))
+        #expect(!AgentSegmented.isSegmented(AgentPresets.all + [aider]))
+        let agents = AgentPresets.all + [aider, goose]
+        #expect(AgentSegmented.dropdownChoices(agents, available: ["claude", "goose"], selection: "claude").map(\.id) == ["claude", "goose"])
+        #expect(AgentSegmented.dropdownChoices(agents, available: ["goose"], selection: "claude").map(\.id) == ["claude", "goose"],
+                "the agent picked stays listed, so the field shows it")
     }
 
     /// One field needs no 560 pt sheet: Rename, New Terminal and Add Divider fit their content.

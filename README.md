@@ -14,8 +14,9 @@ Shellforge is a fork of [iTerm2](https://iterm2.com) that puts [AiTerm](https://
 sidebar inside every terminal window:
 
 - **Projects → tasks → tabs.** A task is a git worktree with an agent (Claude Code, Codex, Grok,
-  PI) running in its tab; a review is one for a merge request.
-- **Live status** from the agents' own hooks: working, waiting on you, done.
+  PI, a ready-made one such as Gemini CLI or Aider, or your own) running in its tab; a review is
+  one for a merge request.
+- **Live status** from the agents' own hooks, or guessed from the terminal for an agent without them: working, waiting on you, done.
 - **Jira, GitLab and GitHub:** tickets in New Task, merge requests in New Review, `+n −m` on every
   task.
 - **SSH tunnels** per project, started and stopped from the sidebar, and a project's SSH host
@@ -40,6 +41,16 @@ agent hooks, and moving over from AiTerm. Shellforge updates itself from **Shell
 Updates…**.
 
 **Requirements:** a Mac with Apple silicon on macOS 13 or newer, and Python 3.11 or newer.
+
+## Installing
+
+Drag Shellforge from the disk image to Applications. The app is signed but not notarized by Apple,
+so macOS refuses to open it the first time. Either:
+
+- right-click Shellforge in Applications, choose **Open**, then **Open** again; or
+- run `xattr -dr com.apple.quarantine /Applications/Shellforge.app` once.
+
+After that it opens like any other app.
 
 ## Docs
 

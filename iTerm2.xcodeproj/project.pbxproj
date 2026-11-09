@@ -765,6 +765,7 @@
 		3EB88252C886C05D366D3A5A /* repl_banner-pt-BR.txt in Resources */ = {isa = PBXBuildFile; fileRef = 618643F126AA9B1E7BC5FC39 /* repl_banner-pt-BR.txt */; };
 		40B5A3E6804AF3C70E1FA488 /* CompanionBrowserFrameSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07A8A9A5AE787B6797A610B2 /* CompanionBrowserFrameSource.swift */; };
 		41087F6965EAA157F08289C5 /* iTermCursorBlinkFadeCurveIcon.m in Sources */ = {isa = PBXBuildFile; fileRef = 7057439196C1E9D6AFF58395 /* iTermCursorBlinkFadeCurveIcon.m */; };
+		413CE066A4C48AB7E99AD180 /* iTermShellforgeSignals.swift in Sources */ = {isa = PBXBuildFile; fileRef = E31D7850296F1646CD2F53E0 /* iTermShellforgeSignals.swift */; };
 		41492F4D37C01DC1A53345DD /* FramerPaneJobManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC740B139D1CC20555A4AF60 /* FramerPaneJobManager.swift */; };
 		42D424F7D51EB10F0800BB84 /* SessionProvenanceRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = B92F80C10022DEB4FD02A6F7 /* SessionProvenanceRegistry.swift */; };
 		42F2D87F2FE321DC2722C7DA /* iTermTabStatusController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB45F0B45FE4C94EC43DF952 /* iTermTabStatusController.swift */; };
@@ -9047,6 +9048,7 @@
 		E2F4FBFFB7556EFAE2CFB347 /* Conductor+Panes.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = "Conductor+Panes.swift"; sourceTree = "<group>"; };
 		E300468361106B82C9C9DF62 /* FlowControlMonitorWindowController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = FlowControlMonitorWindowController.swift; sourceTree = "<group>"; };
 		E314DB340B9B495F8F6D1578 /* mul */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; name = mul; path = mul.lproj/PasteView.xcstrings; sourceTree = "<group>"; };
+		E31D7850296F1646CD2F53E0 /* iTermShellforgeSignals.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = iTermShellforgeSignals.swift; sourceTree = "<group>"; };
 		E3C1692FB633AACA44AD2625 /* WorkgroupUsageToolbarItem.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WorkgroupUsageToolbarItem.swift; sourceTree = "<group>"; };
 		E4FCBB8A80DB478BBE9D21E5 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.xib; name = Base; path = Base.lproj/MinimalFindView.xib; sourceTree = "<group>"; };
 		E5255A7A21B4425481DC8012 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.xib; name = Base; path = Base.lproj/TmuxDashboard.xib; sourceTree = "<group>"; };
@@ -13391,6 +13393,7 @@
 				9017D92D04ABF4EF3FC05999 /* iTermAccessibilitySelectionReplacement.swift */,
 				549AB34D98B0F7595015C26B /* iTermAutoresizingFloorAuditor.swift */,
 				D5AD6635F8454EAFAC0FA5EC /* iTermShellforgeFeedback.swift */,
+				E31D7850296F1646CD2F53E0 /* iTermShellforgeSignals.swift */,
 			);
 			path = TerminalView;
 			sourceTree = "<group>";
@@ -20531,6 +20534,7 @@
 				C6BCD760F1153A3393F7FACF /* PromptRepaintLookahead.swift in Sources */,
 				E7CD84DFBE9453970FFD90B7 /* iTermTemporaryDoubleBufferedGridController+Testing.h in Sources */,
 				22FE0BF4F9EDDA456F581E6B /* iTermShellforgeFeedback.swift in Sources */,
+				413CE066A4C48AB7E99AD180 /* iTermShellforgeSignals.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -1,6 +1,7 @@
 import pytest
 from shellforged.models import TokenTally, UsageWindow
 from shellforged.hook_events import (
+    STATUS_ROUTE, REPORT_STATES, StatusReport, parse_status_report,
     StatusLine, parse_claude_hook, parse_codex_hook, parse_claude_statusline, parse_grok_hook, parse_grok_statusline,
     parse_pi_hook,
 )
@@ -492,3 +493,28 @@ def test_pi_reports_the_sessions_tally():
 @pytest.mark.parametrize("tokens", [None, "x", {"input": 1}, {"input": "1", "output": 2}])
 def test_pi_tokens_are_none_when_unusable(tokens):
     assert parse_pi_hook({**PI_BASE, "hook_event_name": "tokens", "tokens": tokens}).tokens is None
+
+
+def test_the_status_route_and_its_states():
+    assert STATUS_ROUTE == "/status"
+    assert REPORT_STATES == {"working": "working", "needs-input": "needsInput", "done": "done"}
+
+
+@pytest.mark.parametrize("state,expected", [("working", "working"), ("needs-input", "needsInput"), ("done", "done")])
+def test_a_status_report_names_its_state(state, expected):
+    assert parse_status_report({"state": state}) == StatusReport(expected, None, None)
+
+
+def test_a_status_report_keeps_its_agent_and_takes_the_tab_only_from_the_private_field():
+    report = parse_status_report({"state": "done", "agent": "gemini", "iterm_session_id": "w0t0p0:forged",
+                                  "_shellforge_iterm_session_id": "w0t0p0:tab"})
+    assert report == StatusReport("done", "gemini", "w0t0p0:tab")
+    assert parse_status_report({"state": "done", "iterm_session_id": "w0t0p0:forged"}).iterm_session_id is None
+
+
+@pytest.mark.parametrize("payload", [
+    {"state": "working", "agent": 'a"b'}, {"state": "working", "agent": ["gemini"]}, {"state": "working", "agent": 3},
+    {"state": "sleeping"}, {"state": ["done"]}, {"state": None}, {},
+])
+def test_a_malformed_status_report_is_none(payload):
+    assert parse_status_report(payload) is None

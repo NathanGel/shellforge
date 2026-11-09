@@ -224,4 +224,56 @@ import Foundation
         #expect(try String(contentsOfFile: worktree + "/.shellforge/first-prompt.md", encoding: .utf8) == prompt)
         #expect(AgentCommand.previewCommand(agent: AgentPresets.claude, model: "opus", reasoning: nil, prompt: prompt) == command)
     }
+
+    private func agent(_ prompt: AgentDefinition.PromptDelivery, _ arguments: [[String]]) -> AgentDefinition {
+        AgentDefinition(id: "gemini", name: "Gemini CLI", command: "gemini", arguments: arguments, prompt: prompt)
+    }
+
+    @Test func promptGoesWherePlaceholderIs() throws {
+        let gemini = agent(.argument, [["-i", "{prompt}"], ["--yolo"]])
+        #expect(try AgentCommand.build(agent: gemini, model: "m", reasoning: nil, prompt: "fix it", worktreePath: wt, launcher: launcher)
+                == "gemini -i 'fix it' --yolo")
+        #expect(AgentCommand.previewCommand(agent: gemini, model: "m", reasoning: nil, prompt: "fix it") == "gemini -i 'fix it' --yolo")
+        // No prompt: the group that holds the placeholder is left out.
+        #expect(AgentCommand.previewCommand(agent: gemini, model: "m", reasoning: nil, prompt: nil) == "gemini --yolo")
+    }
+
+    @Test func promptWithNoPlaceholderIsTheLastWord() {
+        #expect(AgentCommand.previewCommand(agent: agent(.argument, [["--yolo"]]), model: "m", reasoning: nil, prompt: "go") == "gemini --yolo 'go'")
+    }
+
+    @Test func promptInsideAWord() throws {
+        let a = agent(.argument, [["--prompt={prompt}"]])
+        #expect(try AgentCommand.build(agent: a, model: "m", reasoning: nil, prompt: "fix it", worktreePath: wt, launcher: launcher)
+                == "gemini --prompt='fix it'")
+        try FileManager.default.createDirectory(atPath: wt, withIntermediateDirectories: true)
+        let long = String(repeating: "x", count: 2000)
+        #expect(try AgentCommand.build(agent: a, model: "m", reasoning: nil, prompt: long, worktreePath: wt, launcher: launcher)
+                == "gemini --prompt=\"$(cat .shellforge/first-prompt.md)\"")
+    }
+
+    @Test func longPromptUsesTheFileAtThePlaceholder() throws {
+        try FileManager.default.createDirectory(atPath: wt, withIntermediateDirectories: true)
+        let a = agent(.argument, [["-p", "{prompt}"], ["--yolo"]])
+        let long = String(repeating: "y", count: 2000)
+        let built = try AgentCommand.build(agent: a, model: "m", reasoning: nil, prompt: long, worktreePath: wt, launcher: launcher)
+        #expect(built == "gemini -p \"$(cat .shellforge/first-prompt.md)\" --yolo")
+        #expect(AgentCommand.previewCommand(agent: a, model: "m", reasoning: nil, prompt: long) == built)
+        #expect(try String(contentsOfFile: wt + "/.shellforge/first-prompt.md", encoding: .utf8) == long)
+    }
+
+    @Test func typedAndNoneLeaveThePromptOut() throws {
+        for delivery in [AgentDefinition.PromptDelivery.typed, .noPrompt] {
+            let a = agent(delivery, [["--yolo"]])
+            #expect(try AgentCommand.build(agent: a, model: "m", reasoning: nil, prompt: "hello", worktreePath: wt, launcher: launcher) == "gemini --yolo")
+            #expect(AgentCommand.previewCommand(agent: a, model: "m", reasoning: nil, prompt: "hello") == "gemini --yolo")
+        }
+        #expect(!FileManager.default.fileExists(atPath: wt + "/.shellforge/first-prompt.md"))
+    }
+
+    @Test func stdinStillUnsupported() {
+        #expect(throws: AgentCommand.Unsupported(agent: "Gemini CLI")) {
+            try AgentCommand.build(agent: agent(.stdin, []), model: "m", reasoning: nil, prompt: "hi", worktreePath: wt, launcher: launcher)
+        }
+    }
 }

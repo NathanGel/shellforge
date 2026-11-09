@@ -7,7 +7,41 @@ a patch fixes, a minor adds features, a major changes a saved setup.
 Each version's section is also its GitHub release notes: `Shellforge/scripts/release.sh` publishes
 it and refuses to release a version that has none.
 
-## 0.8.1 — unreleased
+## 0.9.0 — unreleased
+
+### Added
+
+- **Any agent.** Settings › Agents lists every agent a task can start, and Add Agent… adds your own:
+  its command, how the first prompt gets in (as an argument, or typed in once the agent has settled),
+  environment variables, and secrets. Secrets are kept only in the Keychain and reach the agent
+  through `shellforge-run`, so no value is ever in the typed line, the scrollback or your shell
+  history. Each agent’s row has Edit…, and its … menu holds Duplicate, and Remove for your own agent
+  or Restore Default for a changed one. Changes reach New Task in every window at once.
+- **Ready-made agents.** Aider, Amp, GitHub Copilot CLI, Gemini CLI, Goose and OpenCode come set up:
+  install one and it appears in New Task and New Review. One you haven’t installed isn’t named in
+  New Task’s “not installed” note. With more than four agents, the picker becomes a menu.
+- **A status dot for every agent.** An agent without Shellforge hooks gets its dot guessed from its
+  terminal: working while it prints, done about 30 seconds after it stops, and needs input when it
+  rings the bell or posts a notification (OSC 9, or OSC 777 `notify`). Your typing doesn’t count,
+  and the dot’s tooltip says the status is guessed. For an exact dot, an agent’s own hooks can run
+  `shellforge-status`: the agent’s form shows the lines to add, and Test checks that a report
+  arrives. OSC 777 `notify` now also posts a notification wherever OSC 9 would.
+
+### Changed
+
+- **Agent secrets come from the Keychain.** An agent whose file declares `secrets` now gets each one
+  from the Keychain, and won’t start until each is set in Settings › Agents. A file that names its
+  own Keychain entry for a secret keeps it, as long as the name starts with `agent.`: an agent can
+  never be handed the Jira, GitLab or GitHub token, or the Backpack password.
+- **Agent files you wrote yourself start as before.** One whose id has more than letters, digits,
+  `-` and `_` still starts, as it did, but without an exact status; to give it an environment or
+  secrets, give it such an id.
+
+### Installing
+
+- Shellforge is signed but not notarized by Apple, so macOS refuses to open it the first time.
+- Right-click Shellforge in Applications, choose Open, then Open again.
+- Or run `xattr -dr com.apple.quarantine /Applications/Shellforge.app` once.
 
 ## 0.8.0 — 2026-11-06
 

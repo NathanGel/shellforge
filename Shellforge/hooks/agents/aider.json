@@ -1,0 +1,21 @@
+{
+  "id": "aider",
+  "name": "Aider",
+  "command": "aider",
+  "arguments": [],
+  "prompt": "typed",
+  "models": {
+    "fixed": {
+      "_0": []
+    }
+  },
+  "reasoningLevels": [],
+  "environment": {},
+  "secrets": {},
+  "status": {
+    "terminal": {}
+  },
+  "x-sources": [
+    "https://aider.chat/docs/config/options.html"
+  ]
+}

@@ -5,8 +5,8 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from .hook_events import HOOK_PARSERS, STATUSLINE_PARSERS
-from .models import AgentKind
+from .hook_events import HOOK_PARSERS, STATUS_ROUTE, STATUSLINE_PARSERS, StatusReport, parse_status_report
+from .models import AgentKind, SessionInfo, custom_agent_id
 from .publisher import Publisher
 from .resolver import SessionResolver
 from .status import StatusEngine
@@ -35,6 +35,9 @@ class HookRouter:
         self._last_tick_start = float("-inf")
 
     async def handle_hook(self, path: str, body: dict[str, Any]) -> dict[str, Any] | None:
+        if path == STATUS_ROUTE:
+            await self._handle_report(body)
+            return None
         if (statusline := STATUSLINE_PARSERS.get(path)) is not None:
             agent, parse = statusline
             tick = parse(body, int(self.clock()))
@@ -78,6 +81,37 @@ class HookRouter:
             changed += self.status.apply_event(sid, ev)
         await self.publisher.session_changed(changed)
         return None
+
+    async def _handle_report(self, body: dict[str, Any]) -> None:
+        """A custom agent's exact report, placed by the tab's iTerm2 id alone: it names no
+        conversation and no directory. A tab the registry does not yet know as custom waits for one tick."""
+        if (report := parse_status_report(body)) is None or report.iterm_session_id is None:
+            return
+        iterm_id = report.iterm_session_id.rpartition(":")[2]
+        sid = self._report_tab(report, iterm_id)
+        if sid is None and self._report_tab_unplaced(iterm_id) and await self._tick_for_unplaced():
+            sid = self._report_tab(report, iterm_id)
+        if sid is None:
+            log.debug("status report for no custom tab: %s", report.agent_id)
+            return
+        await self.publisher.session_changed(self.status.apply_report(sid, report.state))
+
+    def _report_session(self, iterm_id: str) -> SessionInfo | None:
+        """The session of a tab, by the iTerm2 id a report carries."""
+        return self.resolver.registry.get(iterm_id)
+
+    def _report_tab(self, report: StatusReport, iterm_id: str) -> str | None:
+        """The tab a report belongs on: a custom tab, and the agent the report names if it names one."""
+        s = self._report_session(iterm_id)
+        if s is None or (tab_agent := custom_agent_id(s.agent)) is None:
+            return None
+        return s.session_id if report.agent_id in (None, tab_agent) else None
+
+    def _report_tab_unplaced(self, iterm_id: str) -> bool:
+        """Whether a tick could still place the report: its tab is unknown or still a plain shell, which
+        is not the same as one that is a built-in agent's or another custom agent's."""
+        s = self._report_session(iterm_id)
+        return s is None or s.agent == "shell"
 
     async def _tick_for_unplaced(self) -> bool:
         """Waits for a tick that began after the caller's post arrived, so that a tab the registry

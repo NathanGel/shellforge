@@ -126,6 +126,11 @@ extension SidebarModel {
         TaskStatus.aggregate(tabs(ofTerminal: id).map { status(ofTab: $0.id) })
     }
 
+    /// Whether the terminal's dot is guessed from the terminal, for its tooltip.
+    public func statusIsGuessed(ofTerminal id: UUID) -> Bool {
+        TaskStatus.isGuessed(tabs(ofTerminal: id).flatMap { sessions.sessions(ofTab: $0.id) })
+    }
+
     private func tabs(ofTerminal id: UUID) -> [TabSnapshot] {
         tree.projects.lazy.flatMap(\.terminals).first { $0.id == id }?.tabs ?? []
     }

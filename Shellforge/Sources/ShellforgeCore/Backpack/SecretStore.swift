@@ -9,8 +9,13 @@ public protocol SecretStore {
     @discardableResult func set(_ key: String, _ value: String?) -> Bool
 }
 
-public final class MemorySecretStore: SecretStore {
-    var values: [String: String] = [:]
+/// Sendable, so a launch can read it off the main actor as it reads the Keychain.
+public final class MemorySecretStore: SecretStore, Sendable {
+    private let storage = Locked<[String: String]>([:])
+    var values: [String: String] {
+        get { storage.withLock { $0 } }
+        set { storage.withLock { $0 = newValue } }
+    }
     public init() {}
     public func get(_ key: String) -> String? { values[key] }
     @discardableResult public func set(_ key: String, _ value: String?) -> Bool { values[key] = value; return true }

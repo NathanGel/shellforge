@@ -57,6 +57,26 @@ struct StatusMarkTests {
         return Double(matching) / Double(sampled)
     }
 
+    /// Only a dot the daemon is guessing says so: a custom agent's that no hook has reported for.
+    @Test func guessedTooltipOnlyWhenGuessed() {
+        func session(_ agent: SessionAgent, _ state: SessionState = .working, reportedAt: Double? = nil, id: String = "s1") -> SessionInfo {
+            SessionInfo(sessionId: id, windowId: "w", tabIndex: 0, taskId: nil, projectId: nil, agent: agent, model: nil, state: state,
+                        title: "t", cwd: "/", reportedAt: reportedAt)
+        }
+        #expect(StatusMark.guessedHelp == "Status guessed from the terminal")
+        let unreported = [session(.custom("gemini"))]
+        #expect(TaskStatus.isGuessed(unreported))
+        #expect(StatusMark.help(guessed: TaskStatus.isGuessed(unreported)) == "Status guessed from the terminal")
+        #expect(!TaskStatus.isGuessed([session(.custom("gemini"), reportedAt: 1_800_000_000)]))
+        #expect(!TaskStatus.isGuessed([session(.claude)]))
+        #expect(StatusMark.help(guessed: false) == nil, "no tooltip at all, not an empty one")
+        // Idle says nothing to guess; and a row whose dot comes from an exact report is not a guess.
+        #expect(!TaskStatus.isGuessed([session(.custom("gemini"), .idle)]))
+        #expect(!TaskStatus.isGuessed([session(.custom("gemini")), session(.claude, .needsInput, id: "s2")]))
+        #expect(!TaskStatus.isGuessed([session(.custom("gemini")), session(.claude, .working, id: "s2")]))
+        #expect(TaskStatus.isGuessed([session(.custom("gemini"), .needsInput), session(.claude, .working, id: "s2")]))
+    }
+
     @Test func doneIsASolidBlueDot() throws {
         #expect(try solidFillRatio(for: .done, color: Palette.done) > 0.98)
     }

@@ -9,6 +9,9 @@ public final class DaemonLink: ObservableObject {
     @Published public private(set) var status: HelperStatus = .starting
     /// The last tunnel call the helper refused, as the sidebar's error banner says it.
     @Published public private(set) var tunnelError: String?
+    /// The last launch the helper couldn't be armed for, as the sidebar's error says it: that agent's
+    /// `shellforge-run` will find nothing and say so in its tab. Cleared by the next launch armed.
+    @Published public private(set) var launchError: String?
     /// Each tunnel call's outcome once, as it happens: a window opened later hears none of the old.
     private let outcomes = PassthroughSubject<TunnelOutcome, Never>()
     public var tunnelOutcomes: AnyPublisher<TunnelOutcome, Never> { outcomes.eraseToAnyPublisher() }
@@ -131,21 +134,52 @@ public final class DaemonLink: ObservableObject {
         tunnelCall("stop", alias, client) { _ = try await client.stopTunnel(alias: alias) }
     }
 
-    /// What the banner says of a failed tunnel call: a `DaemonError` — the helper's refusal, or the
-    /// client's own word for a lost connection, "isn't connected" — in the words its code has; a
-    /// cancelled call or an unreadable reply as what it is; an error with words of its own in
-    /// them; and anything else plainly as the connection dropping. Never "The operation couldn't
-    /// be completed".
-    nonisolated static func tunnelMessage(_ verb: String, _ alias: String, _ error: Error) -> String {
-        let reason: String
-        switch error {
-        case is DaemonError: reason = error.localizedDescription
-        case is CancellationError: reason = "the call was cancelled."
-        case is DecodingError: reason = "the helper’s reply couldn’t be read."
-        case let worded as LocalizedError where worded.errorDescription != nil: reason = worded.errorDescription!
-        default: reason = "the connection to Shellforge’s helper dropped."
+    /// Arms `agentId`'s launch in the tab `session` with `environment`, secrets included, for the
+    /// `shellforge-run` typed there to take. A refusal, or no helper to ask, is the sidebar's error.
+    public func armLaunch(session: String, agentId: String, environment: [String: String]) {
+        guard let client else {
+            // As `DaemonError.userMessage` says a client with no connection.
+            launchError = "Couldn’t start \(agentId): Shellforge’s helper isn’t connected."
+            return
         }
-        return "Couldn’t \(verb) tunnel \(alias): \(reason)"
+        Task {
+            do {
+                try await client.armLaunch(session: session, agentId: agentId, environment: environment)
+                guard self.client === client else { return }
+                launchError = nil
+            } catch {
+                guard self.client === client else { return }
+                launchError = Self.launchMessage(agentId, error)
+                if let error = error as? DaemonError, error.isMismatch {
+                    refused = client
+                    status = .helperMismatch
+                }
+            }
+        }
+    }
+
+    nonisolated static func launchMessage(_ agentId: String, _ error: Error) -> String {
+        "Couldn’t start \(agentId): \(reason(error))"
+    }
+
+    /// What the banner says of a failed tunnel call (`reason`).
+    nonisolated static func tunnelMessage(_ verb: String, _ alias: String, _ error: Error) -> String {
+        "Couldn’t \(verb) tunnel \(alias): \(reason(error))"
+    }
+
+    /// Why a call failed, as a banner says it: a `DaemonError` — the helper's refusal, or the
+    /// client's own word for a lost connection, "isn't connected" — in the words its code has
+    /// (`DaemonError.userMessage`); a cancelled call or an unreadable reply as what it is; an error
+    /// with words of its own in them; and anything else plainly as the connection dropping. Never
+    /// "The operation couldn't be completed".
+    nonisolated static func reason(_ error: Error) -> String {
+        switch error {
+        case let error as DaemonError: error.userMessage
+        case is CancellationError: "the call was cancelled."
+        case is DecodingError: "the helper’s reply couldn’t be read."
+        case let worded as LocalizedError where worded.errorDescription != nil: worded.errorDescription!
+        default: "the connection to Shellforge’s helper dropped."
+        }
     }
 
     /// A tunnel call, its refusal said rather than dropped; a helper this app cannot speak to is a
@@ -207,4 +241,6 @@ extension DaemonLink: SessionFeed {
     public var statusPublisher: AnyPublisher<HelperStatus, Never> { $status.eraseToAnyPublisher() }
     public var storePublisher: AnyPublisher<SessionStore, Never> { $store.eraseToAnyPublisher() }
     public var tunnelOutcomePublisher: AnyPublisher<TunnelOutcome, Never> { tunnelOutcomes }
+    /// From the next change on: a window opened later doesn't say an old launch's failure.
+    public var launchErrorPublisher: AnyPublisher<String?, Never> { $launchError.dropFirst().eraseToAnyPublisher() }
 }

@@ -3,9 +3,9 @@ import Foundation
 /// A task that runs its agent in the project's own folder, on whatever is checked out there: no
 /// worktree is made, and none is ever removed.
 public enum ProjectFolderTasks {
-    public static func make(draft: TaskDraft, in project: Project, launcher: CommandLauncher) throws -> TaskItem {
+    public static func make(draft: TaskDraft, in project: Project, launcher: CommandLauncher, modelRequired: Bool = true) throws -> TaskItem {
         guard !draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw TaskWorktrees.Refusal.emptyTitle }
-        guard !draft.model.isEmpty else { throw TaskWorktrees.Refusal.emptyModel }
+        guard !modelRequired || !draft.model.isEmpty else { throw TaskWorktrees.Refusal.emptyModel }
         let branch = try checkedOutBranch(of: project, launcher: launcher)
         return TaskItem(projectId: project.id, title: draft.title, branch: branch, worktreePath: project.path,
                         baseBranch: draft.baseBranch, agent: draft.agentId, model: draft.model, reasoning: draft.reasoning,

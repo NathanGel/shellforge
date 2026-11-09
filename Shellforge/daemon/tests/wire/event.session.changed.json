@@ -9,6 +9,7 @@
     "model": "claude-opus-5",
     "projectId": null,
     "reasoning": "high",
+    "reportedAt": null,
     "sessionId": "s2",
     "state": "working",
     "tabIndex": 0,

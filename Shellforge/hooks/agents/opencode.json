@@ -1,0 +1,27 @@
+{
+  "id": "opencode",
+  "name": "OpenCode",
+  "command": "opencode",
+  "arguments": [
+    [
+      "--prompt",
+      "{prompt}"
+    ]
+  ],
+  "prompt": "argument",
+  "models": {
+    "fixed": {
+      "_0": []
+    }
+  },
+  "reasoningLevels": [],
+  "environment": {},
+  "secrets": {},
+  "status": {
+    "terminal": {}
+  },
+  "x-sources": [
+    "https://docs.opencode.ai/docs/cli/",
+    "https://opencode.ai/docs/plugins/"
+  ]
+}

@@ -26,6 +26,9 @@ ORPHAN_SETTLE_SECONDS = 10.0
 # writing nothing at all.
 SUBAGENT_QUIET_SECONDS = 45 * 60.0
 
+# How long a custom agent's report stamp is left alone while its state stays the same.
+REPORT_RESTAMP_SECONDS = 1.0
+
 
 def path_is_missing(path: str) -> bool:
     """Whether a session's directory is really gone: removed (ENOENT), or a component of it is no
@@ -156,6 +159,26 @@ class StatusEngine:
             # spinner the previous turn showed.
             turn.deferred_done = turn.spun = False
         return released + ([session_id] if self.reg.set_state(session_id, kind) else [])
+
+    def apply_report(self, session_id: str, state: State) -> list[str]:
+        """An exact report from a custom agent's hooks: the state it says, stamped with the time.
+        Returns the sessions that changed."""
+        changed = self.reg.set_state(session_id, state)
+        # Re-stamped only on a change or once the stamp is a second old, so a burst of identical
+        # reports costs at most one broadcast a second.
+        now = self._clock()
+        stamp = (s := self.reg.get(session_id)) is not None and (
+            changed or s.reported_at is None or now - s.reported_at > REPORT_RESTAMP_SECONDS)
+        return [session_id] if (stamp and self.reg.set_reported(session_id, now)) or changed else []
+
+    def apply_guess(self, session_id: str, state: State) -> list[str]:
+        """A state guessed from a custom agent's terminal (see `AutoStatus`): not a report, so it
+        stamps nothing and the guessing goes on. Returns the sessions that changed."""
+        return [session_id] if self.reg.set_state(session_id, state) else []
+
+    def reported(self, session_id: str) -> bool:
+        """Whether the session has had a report, which turns the guess from terminal signals off."""
+        return (s := self.reg.get(session_id)) is not None and s.reported_at is not None
 
     def apply_metadata(self, session_id: str, *, model: str | None = None, reasoning: str | None = None,
                        context: int | None = None, cwd: str | None = None, tokens: TokenTally | None = None,

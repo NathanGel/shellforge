@@ -43,6 +43,12 @@
       "window.closed": "event.window.closed.json"
     },
     "replies": {
+      "agents.armLaunch": [
+        "reply.agents.armLaunch.json"
+      ],
+      "agents.takeLaunch": [
+        "reply.agents.takeLaunch.json"
+      ],
       "interface.setMatchItermBackground": [
         "reply.interface.setMatchItermBackground.json"
       ],
@@ -105,6 +111,8 @@
   },
   "maxFrameBytes": 1048576,
   "methods": [
+    "agents.armLaunch",
+    "agents.takeLaunch",
     "interface.setMatchItermBackground",
     "iterm.provideCookie",
     "iterm.status",

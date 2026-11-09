@@ -36,7 +36,7 @@ struct NewReviewSheet: View {
                 }
                 // The lists and the prompt's popup hang over the command preview and the destination.
                 .zIndex(1)
-                if step > 1 { CommandBlock(caption: "Command", command: model.previewCommand) }
+                if step > 1 { CommandPreview(preview: model.commandPreview) }
                 if let destination = Self.destination(step: step, project: model.project, slug: model.worktreeSlug,
                                                       branch: model.draft.branch) {
                     DestinationLine(destination)
@@ -44,7 +44,8 @@ struct NewReviewSheet: View {
             }
         } footer: {
             CreationFooter(step: step, error: model.error,
-                           missingAgentNote: NewTaskSheet.footerNote(agents: model.agents, available: model.availableAgents),
+                           missingAgentNote: NewTaskSheet.footerNote(agents: model.agents, available: model.availableAgents,
+                                                                     quiet: model.quietAgents),
                            createLabel: "Create Review", creating: model.creating,
                            progress: model.progress, cancelling: model.cancelling,
                            canAdvance: Self.canAdvance(step: step, model: model),

@@ -8,6 +8,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 - [Projects](#projects)
 - [Dividers](#dividers)
 - [Tasks and reviews](#tasks-and-reviews)
+- [Agents](#agents)
 - [Tabs and panes](#tabs-and-panes)
 - [Terminals](#terminals)
 - [Footer](#footer)
@@ -114,10 +115,11 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
   - **Prompt:** an optional first prompt. "/" lists the agent's commands and skills.
   - **Options:** "Include Jira ticket details", and "Open ssh <host> beside the agent".
   - **Keys:** ⌘↩ is the main button. ⎋ closes an open list first, then goes back a step.
-- **Agents:** Claude Code, Codex, Grok Build and PI.
+- **Agents:** Claude Code, Codex, Grok Build and PI are built in; six ready-made agents and your own are in [Agents](#agents).
   - Codex runs without approvals or sandbox, and its command preview shows that. It acts on whatever it reads without asking: a Jira ticket’s text (with “Include Jira ticket details”) or a reviewed merge request’s files and `AGENTS.md`. Someone who can edit those can make it run commands as you. To keep its approvals, replace the preset with a custom agent of the same id.
   - An agent whose command isn't on your login PATH can't be picked, and the sheet says why.
-  - Custom agents are JSON files in `~/Library/Application Support/Shellforge/agents/`. A file with a preset's id replaces that preset.
+  - Custom agents are JSON files in `~/Library/Application Support/Shellforge/agents/`, which Settings › Agents writes for you. A file with a preset's id replaces that preset.
+  - Beyond four agents, the picker is a menu instead of segments.
   - Shellforge remembers the last agent per project and the last model per agent.
 - **Worktree and branch.** (A project-folder task has neither: it uses the project’s own folder and its checked-out branch.)
   - A task works in `<project>/.worktrees/<slug>`, with `.worktrees/` excluded from git.
@@ -158,6 +160,40 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
   - ⌃⌘] and ⌃⌘[ step through the open projects' tasks, wrapping round. They never open a tab.
   - **Focus View (⌃⌘A)** opens the projects with a task or terminal waiting on you, folds the rest, and shows the first one.
   - **List View (⌃⌘L)** opens every project.
+
+## Agents
+
+Any coding agent that runs in a terminal can start a task, not only the four built in.
+
+- **Settings › Agents** lists every agent, in three kinds:
+  - **built in:** Claude Code, Codex, Grok Build and PI, with their own hooks (the bolt) as before;
+  - **ready-made:** Aider, Amp, GitHub Copilot CLI, Gemini CLI, Goose and OpenCode, shipped with Shellforge and offered once installed. One that isn’t installed stays out of New Task’s “not installed” note;
+  - **your own:** added with **Add Agent…**.
+  - Each row shows the agent’s mark and name, whether it is installed and how its status is read (“Installed · Exact status”), **Edit…**, and a **…** menu with **Duplicate**, and **Remove** for your own agent or **Restore Default** for a changed built-in or ready-made one.
+  - Changes to agents are saved at once, not on Settings’ Save. They reach New Task and New Review in every window straight away.
+- **The form** (Add Agent… or Edit…) has:
+  - **Name**;
+  - **Command:** the program, then its fixed arguments. `{model}`, `{reasoning}` and `{cwd}` are filled in when a task starts. An agent with no models of its own skips Model and Reasoning in New Task;
+  - **How the first prompt gets in:** As an argument, Typed in after it starts, or None;
+  - **Environment variables** and **Secrets**;
+  - **Status:** Automatic or Exact (not for a built-in agent, whose hooks report).
+  - Problems show as you type: a missing name or one already taken, an unclosed quote, a command that isn’t on your login PATH, an argument prompt with no `{prompt}`, a variable set twice. A preview shows the line a task will type.
+- **How the prompt gets in.**
+  - **As an argument:** where `{prompt}` stands, for example `-p {prompt}`. A long or awkward prompt goes through `.shellforge/first-prompt.md`, as for the built-in agents.
+  - **Typed in after it starts:** Shellforge starts the agent, waits until the agent itself is running (not `shellforge-run` still fetching its settings) and has printed and gone quiet, or for 8 seconds of it running, then pastes the prompt once and presses Return. It types only into the agent: while another program is in front it waits, and after 30 seconds without the agent it gives up. If `shellforge-run` fails or the agent exits first, nothing is typed into the shell left behind; when the agent exited, the sidebar says so.
+  - **None:** the agent starts with no prompt.
+- **Environment and secrets.**
+  - A secret’s value is kept only in the Keychain, never in the agent’s file. A variable whose name looks like a secret (`TOKEN`, `API_KEY`, `PASSWORD`…) must be a secret.
+  - Every agent that isn’t built in, and a built-in one with an environment of its own, starts through `shellforge-run` in the app bundle. It takes the environment from Shellforge’s helper just before the agent starts, so no value is in the typed line, the scrollback or your shell history.
+  - A secret with no value stops New Task with a sentence naming it.
+  - A secret’s Keychain entry is `agent.<id>.<VARIABLE>`, as the form writes it; an agent file you wrote yourself may name its own entry, starting with `agent.`, and the form keeps that name until you rename the secret or type a new value. Any other name is read as `agent.<id>.<VARIABLE>`, so an agent can’t be handed Shellforge’s own Jira, GitLab or GitHub token or Backpack password.
+  - An agent file you wrote yourself whose id has more than letters, digits, `-` and `_` starts as it did before, unwrapped; it can’t have an environment or secrets until its id is one of those.
+- **Status.** Any agent’s tab gets the status dot, in two ways:
+  - **Automatic:** guessed from the agent’s terminal, with nothing to set up. The dot goes **working** while the agent prints steadily, **done** about 30 seconds after it stops, and **needs input** when it rings the bell or posts a notification (OSC 9, or OSC 777 `notify`). Your typing, and the terminal echoing it, doesn’t count, though an agent that redraws its screen on every key can look working while you type. A guessed dot’s tooltip says “Status guessed from the terminal”.
+  - **Exact:** the agent’s own hooks run `shellforge-status working`, `needs-input` or `done`. The form shows the lines to add, with the full path into the app, or a snippet for the agent’s settings file where Shellforge knows it (Gemini CLI, GitHub Copilot CLI), and **Copy**. **Test** waits for a report from a task with this agent. While macOS runs Shellforge from a temporary copy, the form warns instead of showing a path that would be gone after it quits.
+  - **Which tabs get a dot:** a task’s tab reports the task’s own agent while that agent, or `shellforge-run` starting it, is the program running in it; a shell, an editor or a build there gets no guessed dot. A tab of no task gets a dot when the program running in it is the command of exactly one agent that isn’t built in. The built-in agents keep reporting through their own hooks.
+- **Restore Default** (a changed built-in or ready-made agent) asks, then removes your changes to its command, environment and secrets.
+- **Remove** (your own agent) asks first and names the tasks that use it. They stay in the sidebar but can’t start it again. Its secrets are deleted from the Keychain.
 
 ## Tabs and panes
 
@@ -252,7 +288,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 
 - **Opening Settings.** Click the sidebar's gear, or right-click the Mac row › Mac Settings….
   - **Core:** the Mac card (Backpack setup), the Environment card and the Feedback switch.
-  - **Agents:** one row per installed agent, with its **Default model** and **Default reasoning**.
+  - **Agents:** every agent, built in, ready-made and your own, to add, edit, duplicate or remove ([Agents](#agents)); then one row per installed agent, with its **Default model** and **Default reasoning**.
   - **Services:** Jira (site, email, API token), GitLab (host, token) and GitHub (token).
 - **Connections.**
   - Tokens are kept only in the Keychain, and URLs must be https.

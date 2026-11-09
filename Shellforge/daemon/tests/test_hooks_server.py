@@ -103,7 +103,7 @@ async def closed_by_server(r):
 
 def test_the_routes_derive_from_the_harness_table():
     assert hooks_server.ROUTES == {"/hook/claude", "/hook/codex", "/hook/grok", "/hook/pi", "/mcp",
-                                   "/statusline", "/statusline/grok"}
+                                   "/status", "/statusline", "/statusline/grok"}
 
 
 async def test_post_routes_deliver_body(server):
@@ -442,3 +442,11 @@ async def test_the_installed_hooks_curl_is_served(server):
     out, _ = await proc.communicate()
     assert out == b"200"
     await received.delivered(1)
+
+
+async def test_the_status_route_needs_the_hook_header_and_delivers_with_one(server):
+    srv, received = server
+    assert await http(srv.port, "POST", "/status", {"state": "working"}, header=False) == 404
+    assert await http(srv.port, "POST", "/status", {"state": "working"}, iterm_session_id="w0t0p0:tab") == 200
+    await received.delivered(1)
+    assert received == [("/status", {"state": "working", "_shellforge_iterm_session_id": "w0t0p0:tab"})]

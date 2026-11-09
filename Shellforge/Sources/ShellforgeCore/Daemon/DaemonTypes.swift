@@ -2,12 +2,67 @@
 // from Models.swift), GPLv3, Laurens D'Hondt.
 import Foundation
 
-/// Which agent a session runs. A skewed daemon can send a raw value this app has never heard of;
-/// decoding it to `.shell` keeps that one session from failing the whole `DaemonSnapshot`.
-public enum SessionAgent: String, Codable, Equatable, CaseIterable, Sendable {
+/// Which agent a session runs: one of the four built-ins, a plain shell, or an agent the user
+/// defined, which the daemon names `custom:<id>`. A skewed daemon can send a raw value this app has
+/// never heard of; decoding it to `.shell` keeps that one session from failing the whole
+/// `DaemonSnapshot`.
+public enum SessionAgent: Hashable, Codable, Sendable {
     case claude, codex, grok, pi, shell
+    case custom(String)
+
+    public static let builtIns: [SessionAgent] = [.claude, .codex, .grok, .pi]
+    private static let customPrefix = "custom:"
+
+    /// An id a custom agent may have, as the daemon's `AGENT_ID` and the agent file's name allow.
+    static func isValidId(_ id: String) -> Bool {
+        (1...64).contains(id.utf8.count) && id.utf8.allSatisfy {
+            ($0 >= 0x30 && $0 <= 0x39) || ($0 >= 0x41 && $0 <= 0x5A) || ($0 >= 0x61 && $0 <= 0x7A) || $0 == 0x5F || $0 == 0x2D
+        }
+    }
+
+    public init?(rawValue: String) {
+        switch rawValue {
+        case "claude": self = .claude
+        case "codex": self = .codex
+        case "grok": self = .grok
+        case "pi": self = .pi
+        case "shell": self = .shell
+        default:
+            guard rawValue.hasPrefix(Self.customPrefix) else { return nil }
+            let id = String(rawValue.dropFirst(Self.customPrefix.count))
+            guard Self.isValidId(id) else { return nil }
+            self = .custom(id)
+        }
+    }
+
+    /// A built-in's case, or `.custom(id)` for any other id.
+    public init(agentId: String) {
+        self = Self.builtIns.first { $0.rawValue == agentId } ?? .custom(agentId)
+    }
+
+    public var rawValue: String {
+        switch self {
+        case .claude: "claude"
+        case .codex: "codex"
+        case .grok: "grok"
+        case .pi: "pi"
+        case .shell: "shell"
+        case .custom(let id): Self.customPrefix + id
+        }
+    }
+
+    /// The id of a custom agent; nil for a built-in and for a shell.
+    public var customId: String? {
+        if case .custom(let id) = self { id } else { nil }
+    }
+
     public init(from decoder: Decoder) throws {
         self = SessionAgent(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .shell
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        try c.encode(rawValue)
     }
 }
 
@@ -37,6 +92,12 @@ public struct SessionInfo: Codable, Equatable, Identifiable, Sendable {
     /// What this tab's conversation has spent, its subagents and background workers included. The
     /// tab's own — the daemon never shares it across sibling tabs, as it does a context fill.
     public var tokens: TokenTally? = nil
+    /// When the daemon last had an exact report of this tab's state from its agent's hooks, as seconds
+    /// since 1970 on its clock; nil until the first one.
+    public var reportedAt: Double? = nil
+    /// Whether the daemon is still guessing this tab's state from its terminal output: a custom
+    /// agent's tab that no hook has reported for yet.
+    public var statusIsGuessed: Bool { agent.customId != nil && reportedAt == nil }
     public var id: String { sessionId }
     /// The task tag as the id it names. The app writes `uuidString`, but a tag read back from
     /// a session is a string, so it is compared as a UUID rather than by spelling.
@@ -46,11 +107,12 @@ public struct SessionInfo: Codable, Equatable, Identifiable, Sendable {
 
     public init(sessionId: String, windowId: String, tabIndex: Int, taskId: String?, projectId: String?,
                 agent: SessionAgent, model: String?, reasoning: String? = nil, state: SessionState, title: String, cwd: String,
-                agentCwd: String? = nil, active: Bool = false, contextPercent: Int? = nil, tokens: TokenTally? = nil) {
+                agentCwd: String? = nil, active: Bool = false, contextPercent: Int? = nil, tokens: TokenTally? = nil,
+                reportedAt: Double? = nil) {
         self.sessionId = sessionId; self.windowId = windowId; self.tabIndex = tabIndex; self.taskId = taskId
         self.projectId = projectId; self.agent = agent; self.model = model; self.reasoning = reasoning
         self.state = state; self.title = title; self.cwd = cwd; self.agentCwd = agentCwd; self.active = active
-        self.contextPercent = contextPercent; self.tokens = tokens
+        self.contextPercent = contextPercent; self.tokens = tokens; self.reportedAt = reportedAt
     }
 }
 
@@ -78,6 +140,7 @@ extension SessionInfo {
         // Read leniently: a tally this app cannot read — a count too large for an `Int`, a daemon of
         // another shape — costs only these counts, not the session and the snapshot it came in.
         tokens = (try? c.decodeIfPresent(TokenTally.self, forKey: .tokens)) ?? nil
+        reportedAt = try c.decodeIfPresent(Double.self, forKey: .reportedAt)
     }
 }
 
@@ -152,14 +215,19 @@ public struct SessionReport: Codable, Equatable, Sendable {
     public var commandLine: String?, jobPid: Int?
     public var title: String, cwd: String, active: Bool
     public var taskId: String?, projectId: String?
+    /// The id of the custom agent the tab runs, and the terminal signals read for it: bytes of
+    /// output so far, and the bell count.
+    public var agentId: String?, outputBytes: Int?, attention: Int?
 
     /// Takes the ids as UUIDs so they are spelled one way: the daemon matches them as strings, and
     /// the sidebar's session tags are lowercase (`DaemonClient.wireId`).
     public init(sessionId: String, windowId: String, tabIndex: Int, commandLine: String?, jobPid: Int?, title: String,
-                cwd: String, active: Bool, task: UUID?, project: UUID?) {
+                cwd: String, active: Bool, task: UUID?, project: UUID?,
+                agentId: String? = nil, outputBytes: Int? = nil, attention: Int? = nil) {
         self.sessionId = sessionId; self.windowId = windowId; self.tabIndex = tabIndex; self.commandLine = commandLine
         self.jobPid = jobPid; self.title = title; self.cwd = cwd; self.active = active
         self.taskId = task.map(DaemonClient.wireId); self.projectId = project.map(DaemonClient.wireId)
+        self.agentId = agentId; self.outputBytes = outputBytes; self.attention = attention
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -174,6 +242,9 @@ public struct SessionReport: Codable, Equatable, Sendable {
         try c.encode(active, forKey: .active)
         try c.encode(taskId, forKey: .taskId)
         try c.encode(projectId, forKey: .projectId)
+        try c.encode(agentId, forKey: .agentId)
+        try c.encode(outputBytes, forKey: .outputBytes)
+        try c.encode(attention, forKey: .attention)
     }
 }
 
@@ -245,6 +316,10 @@ extension SessionReport {
         public static let path = "path"
     }
 
+    private static func taskTag(_ value: (String) -> Any?) -> UUID? {
+        (value(ShellforgeTags.task) as? String).flatMap(UUID.init(uuidString:))
+    }
+
     /// One session's report from its placement and a lookup of its variables (`Variable`, and the
     /// task and project tags). A job pid of 0 or less is no job; a tag that is not a UUID is no tag.
     public static func reading(sessionId: String, windowId: String, tabIndex: Int, active: Bool,
@@ -256,7 +331,22 @@ extension SessionReport {
                              title: value(Variable.title) as? String ?? "",
                              cwd: value(Variable.path) as? String ?? "",
                              active: active,
-                             task: (value(ShellforgeTags.task) as? String).flatMap(UUID.init(uuidString:)),
+                             task: taskTag(value),
                              project: (value(ShellforgeTags.project) as? String).flatMap(UUID.init(uuidString:)))
+    }
+
+    /// As `reading`, and for a tab that runs a custom agent (`AgentIdentity.customAgent`) the agent's
+    /// id and the terminal signals read for it. A built-in agent's tab carries none: its own hooks report.
+    public static func reading(sessionId: String, windowId: String, tabIndex: Int, active: Bool,
+                               value: (String) -> Any?, taskAgent: (UUID) -> String?, agents: [AgentDefinition],
+                               signals: (String) -> TerminalSignals?) -> SessionReport {
+        var report = reading(sessionId: sessionId, windowId: windowId, tabIndex: tabIndex, active: active, value: value)
+        guard let id = AgentIdentity.customAgent(taskAgent: taskTag(value).flatMap(taskAgent), commandLine: report.commandLine, agents: agents)
+        else { return report }
+        report.agentId = id
+        let s = signals(sessionId)
+        report.outputBytes = s?.outputBytes ?? 0
+        report.attention = s?.attention ?? 0
+        return report
     }
 }

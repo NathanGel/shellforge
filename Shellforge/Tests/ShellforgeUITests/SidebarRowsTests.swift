@@ -38,6 +38,23 @@ import Testing
         }
     }
 
+    /// A custom agent's tab draws the generic mark, named for its agent; once the agent is removed,
+    /// by its id.
+    @Test func customSessionShowsTheGenericMarkNamed() throws {
+        let feed = FakeFeed()
+        let (model, _) = try model(feed: feed)
+        model.reloadAgents(AgentPresets.all + [AgentDefinition(id: "gemini", name: "Gemini CLI", command: "gemini")], readyMade: [])
+        let task = UUID()
+        feed.sayAll([(.working, "s1", task, .custom("gemini"))])
+        #expect(model.avatars(forTask: task) == [.custom("gemini")])
+        #expect(VendorMark.genericSymbol(for: .custom("gemini")) == "sparkles")
+        #expect(VendorMark.genericSymbol(for: .claude) == nil && VendorMark.genericSymbol(for: .shell) == nil)
+        #expect(model.agentName(.custom("gemini")) == "Gemini CLI")
+        model.reloadAgents(AgentPresets.all, readyMade: [])
+        #expect(model.agentName(.custom("gemini")) == "gemini")
+        #expect(model.agentName(.claude) == "Claude Code" && model.agentName(.shell) == "Shell")
+    }
+
     @Test func anEmptyWorkspaceShowsTheEmptyState() throws {
         let (model, _) = try model()
         #expect(titles(model.rows) == ["empty"])

@@ -4,6 +4,7 @@ import Testing
 @testable import ShellforgeUI
 @testable import ShellforgeCore
 import AppKit
+import Combine
 import SwiftUI
 
 /// Settings › Core › Terminal: off until switched on and saved; Cancel changes nothing.
@@ -36,6 +37,11 @@ import SwiftUI
                                                              feedback: FeedbackPrompt(defaults: ScratchDefaults.make(), channel: .dev),
                                                              agentDefaults: AgentDefaultsSettingsModel(agents: [], catalogue: { _ in [] }, remembered: [:],
                                                                                                        defaults: ScratchDefaults.make()),
+                                                             agents: AgentListModel(registry: AgentRegistry(folder: TestScratch.root.appendingPathComponent("agents-\(UUID().uuidString)")),
+                                                                                    secrets: MemorySecretStore(),
+                                                                                    launcher: CommandLauncher(resolve: { ResolvedEnvironment(variables: ["PATH": "/nowhere"], source: .loginShell("/bin/zsh")) }),
+                                                                                    tasks: { [] }, prompter: ScriptedPrompter([]), tools: .none,
+                                                                                    store: Empty().eraseToAnyPublisher(), changed: {}),
                                                              close: {}))
             host.frame = NSRect(x: 0, y: 0, width: 600, height: 900)
             host.layoutSubtreeIfNeeded()

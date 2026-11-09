@@ -3,6 +3,12 @@
 public enum AgentPresets {
     public static let all = [claude, codex, grok, pi]
 
+    /// Whether `id` is one of the four built-ins, whose detection, hooks and usage are keyed by it.
+    public static func isBuiltIn(_ id: String) -> Bool { all.contains { $0.id == id } }
+
+    /// The ids a person's own agent may not take: the built-ins, and the plain shell.
+    public static let reservedIds: Set<String> = Set(all.map(\.id)).union(["shell"])
+
     public static let claude = AgentDefinition(
         id: "claude", name: "Claude Code", command: "claude",
         arguments: [["--model", "{model}"], ["--effort", "{reasoning}"]],

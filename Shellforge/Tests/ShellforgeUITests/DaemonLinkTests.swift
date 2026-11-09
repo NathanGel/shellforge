@@ -238,11 +238,30 @@ import Testing
         #expect(await eventually { link.tunnelError?.hasPrefix("Couldn’t stop tunnel web") == true })
     }
 
+    /// No helper to arm: the sidebar says so, for `shellforge-run` will find nothing in the tab.
+    @Test func armingWithNoHelperIsSaid() {
+        let link = DaemonLink(daemonDir: nil, findPython: { nil }, reports: { [] })
+        link.armLaunch(session: "S", agentId: "gemini", environment: ["API_KEY": "placeholder"])
+        #expect(link.launchError == "Couldn’t start gemini: Shellforge’s helper isn’t connected.")
+    }
+
+    @Test func anArmedLaunchReachesTheHelperAndARefusalIsSaid() async throws {
+        let server = rejectingServer(code: "bad_params", method: "agents.armLaunch")
+        let link = DaemonLink(socketPath: server.path, daemonDir: nil, findPython: { nil }, reports: { [] })
+        defer { link.shutdown(); server.stop() }
+        link.supervisorChanged(.listening(pid: 1))
+        #expect(await eventually { link.status == .connected })
+        link.armLaunch(session: "S", agentId: "gemini", environment: ["API_KEY": "placeholder"])
+        #expect(await eventually { link.launchError == "Couldn’t start gemini: Shellforge’s helper couldn’t read the request." })
+        let armed = server.received.first { $0["method"] as? String == "agents.armLaunch" }?["params"] as? [String: Any]
+        #expect(armed?["sessionId"] as? String == "S" && armed?["agentId"] as? String == "gemini")
+    }
+
     /// The daemon's answer to `sessions.update`, as a fake server gives it.
-    private func rejectingServer(code: String) -> FakeSocketServer {
+    private func rejectingServer(code: String, method: String = "sessions.update") -> FakeSocketServer {
         let server = FakeSocketServer(path: "/tmp/sf-link-\(UUID().uuidString.prefix(8)).sock")
         server.handler = { req in
-            req["method"] as? String == "sessions.update"
+            req["method"] as? String == method
                 ? ["id": req["id"]!, "error": ["code": code, "message": "no"]]
                 : Self.snapshotReply(req)
         }

@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from typing import Any, TypeVar
 
 from . import protocol
+from .auto_status import AutoStatus
 from .claude_sessions import ClaudeSessionFiles
 from .claude_subagents import SubagentTranscripts, TranscriptTail
 from .claude_tokens import ClaudeTranscriptTallies
@@ -16,12 +17,14 @@ from .codex_sessions import CodexSessionFiles
 from .connection import ItermSupervisor
 from .hook_router import HookRouter
 from .hooks_server import HookServer
-from .iterm_port import ItermPort
+from .iterm_port import ItermPort, ItermUnavailable
+from .launch_env import TAKE_WAIT_SECONDS, LaunchEnvironments
 from .offload import run_detached
 from .publisher import Publisher
 from .resolver import SessionResolver
 from .rpc_params import frame_param, guard, optional_param, param, require_iterm
-from .rpc_server import RpcError, RpcServer
+from .proc_tty import controlling_tty
+from .rpc_server import Caller, RpcError, RpcServer
 from .models import HARNESS_BY_AGENT, SessionInfo, TokenTally
 from .sessions import SessionRegistry, SnapshotDiff
 from .status import StatusEngine, path_is_missing
@@ -41,6 +44,9 @@ def _logged(step: str) -> Iterator[None]:
 
 
 POLL_SECONDS = 2.0
+# How long `stop` waits for the poll loop after each cancel, and how many cancels it sends.
+STOP_WAIT_SECONDS = 0.4  # x3 stays under the app's 2 s grace before it kills the daemon
+STOP_CANCEL_ATTEMPTS = 3
 # With no agent in any session there is nothing a poll would find every 2 s: Codex's rate limits
 # for the footer are read this often instead. A hook or a sessions.update still ticks at once.
 IDLE_POLL_SECONDS = 10.0
@@ -73,7 +79,8 @@ class Service:
     def __init__(self, iterm: ItermPort, rpc: RpcServer, hooks: HookServer, claude_files: ClaudeSessionFiles,
                  clock: Callable[[], float], codex_files: CodexSessionFiles | None = None,
                  supervisor: ItermSupervisor | None = None, path_missing: Callable[[str], bool] = path_is_missing,
-                 monotonic: Callable[[], float] = time.monotonic, tunnel_ledger: Path | None = None):
+                 monotonic: Callable[[], float] = time.monotonic, tunnel_ledger: Path | None = None,
+                 tty_of: Callable[[int], int | None] = controlling_tty):
         self.iterm, self.rpc, self.hooks = iterm, rpc, hooks
         # `clock` is the wall clock, in seconds. Fractional: the status engine stamps each hook with
         # it and compares the stamp with a session file's mtime, which a whole second would blur.
@@ -84,6 +91,7 @@ class Service:
         from .app_sessions import AppSessions
         self.registry = SessionRegistry(inherit_window_tags=not isinstance(iterm, AppSessions))
         self.status = StatusEngine(self.registry, clock, monotonic)
+        self.auto_status = AutoStatus(monotonic)
         self.usage = UsageStore()
         self.resolver = SessionResolver(self.registry, claude_files)
         self.publisher = Publisher(rpc.broadcast, self.registry, self.usage)
@@ -93,7 +101,12 @@ class Service:
         self.supervisor.on_connected = self.windows.forget_titles
         from .tunnels import TunnelSupervisor
         self.tunnels = TunnelSupervisor(rpc.broadcast, clock=clock, ledger=tunnel_ledger)
+        self.launches = LaunchEnvironments(monotonic)
+        # A process's controlling terminal: an armed launch is taken only from the tab's own.
+        self._tty_of = tty_of
         self._poll_task: asyncio.Task[None] | None = None
+        self._stopping = False
+        self._stop_cancels = 0  # cancels `stop` has sent, for the test of the normal case
         # window.setFrame and window.activate each leave a state the next one replaces, and the app
         # sends them from separate tasks; requests are answered concurrently, so they take this in
         # turn, in the order they came, and the last one sent is the one that stays.
@@ -140,14 +153,26 @@ class Service:
             await self.rpc.stop()
             raise
         await self.supervisor.start()
+        self._stopping = False
         self._poll_task = asyncio.get_running_loop().create_task(self._poll_forever())
 
     async def stop(self) -> None:
         # Before anything else: no ssh the app started may outlive it holding its ports.
         await self.tunnels.stop_all()
+        self._stopping = True
         if (task := self._poll_task) is not None and task is not asyncio.current_task():
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+            # A cancel can be swallowed (wait_for racing the event it waits on), so it is repeated
+            # while the task lives, and the wait for it is bounded: a stop never hangs on the loop.
+            for _ in range(STOP_CANCEL_ATTEMPTS):
+                self._stop_cancels += 1
+                task.cancel()
+                done, _pending = await asyncio.wait({task}, timeout=STOP_WAIT_SECONDS)
+                if done:
+                    break
+            else:
+                log.error("the poll loop did not stop")
+            if task.done() and not task.cancelled():
+                task.exception()  # retrieved, so it is not reported as never read
         await self.supervisor.stop()
         await self.hooks.stop()
         await self.rpc.stop()
@@ -157,7 +182,7 @@ class Service:
         return POLL_SECONDS if any(s.agent != "shell" for s in self.registry.all()) else IDLE_POLL_SECONDS
 
     async def _poll_forever(self) -> None:
-        while True:
+        while not self._stopping:
             try:
                 await self.tick()
             except Exception:  # noqa: BLE001
@@ -171,6 +196,8 @@ class Service:
                 pass
             else:
                 self._poll_sooner.clear()
+                if self._stopping:
+                    return
                 await asyncio.sleep(POLL_SECONDS)
 
     # -- RPC ---------------------------------------------------------------
@@ -195,6 +222,8 @@ class Service:
         r("tunnels.stop", self._h_tunnels_stop)
         r("tunnels.list", self._h_tunnels_list)
         r("tunnels.hold", self._h_tunnels_hold)
+        r("agents.armLaunch", self._h_arm_launch)
+        self.rpc.register_with_caller("agents.takeLaunch", self._h_take_launch)
 
     async def _h_snapshot(self, _p: Any) -> dict[str, Any]:
         try:
@@ -258,6 +287,52 @@ class Service:
         await self.tunnels.hold(alias, port, bind)
         return {"ok": True}
 
+    # Neither of these logs its params, and no error they raise names a value: the environment holds
+    # the agent's secrets (`launch_env.py`).
+    async def _h_arm_launch(self, p: Any) -> dict[str, Any]:
+        """`{sessionId, agentId, environment}`: the app is starting `agentId` in the tab `sessionId`
+        through `shellforge-run`, which takes `environment` from here once (`agents.takeLaunch`)."""
+        session_id, agent_id = param(p, "sessionId", str), param(p, "agentId", str)
+        environment = param(p, "environment", dict)
+        if not session_id or not agent_id:
+            raise RpcError(protocol.BAD_PARAMS, "sessionId and agentId must not be empty")
+        if not all(_is_variable(k, v) for k, v in environment.items()):
+            raise RpcError(protocol.BAD_PARAMS, "environment must map variable names to strings without NUL")
+        self.launches.arm(session_id, agent_id, environment)
+        return {"ok": True}
+
+    async def _h_take_launch(self, p: Any, caller: Caller) -> dict[str, Any]:
+        """`{session, agentId}`: `shellforge-run`'s, with the tab's `$ITERM_SESSION_ID`. The environment
+        armed for it, once; `not_found` when nothing was armed within TAKE_WAIT_SECONDS, it expired, or
+        the caller isn't a process of that tab (`_take_allowed`), which leaves the arm for the tab's own."""
+        session, agent_id = param(p, "session", str), param(p, "agentId", str)
+
+        async def allowed(tab: str) -> bool | None:
+            return await self._take_allowed(tab, caller)
+
+        environment = await self.launches.take(session, agent_id, timeout=TAKE_WAIT_SECONDS, check=allowed)
+        if environment is None:
+            raise RpcError(protocol.NOT_FOUND, "nothing armed for this tab and agent")
+        return {"environment": environment}
+
+    async def _take_allowed(self, tab: str, caller: Caller) -> bool | None:
+        """Whether `caller` may take `tab`'s arm: it is still connected, and its controlling terminal,
+        read from its pid as the kernel gave it for the socket, is the terminal of the tab's job. The
+        session id alone is no proof: any process of this user can read another tab's environment.
+        None while the tab's terminal isn't known (no job pid from the app yet); anything else unknown
+        is a no."""
+        if caller.gone() or caller.pid is None or (caller_tty := self._tty_of(caller.pid)) is None:
+            return False
+        try:
+            info = await self.iterm.session_info(tab)
+        except (ItermUnavailable, KeyError):
+            info = None
+        tab_tty = self._tty_of(info.job_pid) if info is not None and info.job_pid else None
+        if tab_tty is None:
+            return None
+        # Asked again after the await: a caller that left meanwhile mustn't spend the arm.
+        return tab_tty == caller_tty and not caller.gone()
+
     async def _h_tunnels_list(self, _p: Any) -> list[dict[str, Any]]:
         return self.tunnels.list()
 
@@ -285,6 +360,7 @@ class Service:
         if not isinstance(self.iterm, AppSessions):
             raise RpcError(protocol.BAD_PARAMS, "sessions.update needs the app session source")
         self.iterm.replace(sessions)
+        self.launches.changed()  # a take waiting to learn its tab's terminal looks again
         await self.tick(light=True)
         return {"ok": True}
 
@@ -403,6 +479,7 @@ class Service:
         for sid in diff.replaced:
             with _logged(f"resetting the turn of replaced session {sid}"):
                 self.status.reset_turn(sid)
+                self.auto_status.forget(sid)
         for sid in diff.opened:
             with _logged(f"announcing opened session {sid}"):
                 if opened := self.registry.get(sid):
@@ -441,8 +518,15 @@ class Service:
         not, and to `threads` the Codex thread it runs, by session. A step that raises keeps the
         changes before it. The Codex rollout is not read here: see `_apply_codex_rollouts`."""
         if s.agent == "shell":
+            self.auto_status.forget(s.session_id)
             if s.state != "idle":
                 changed += self.status.agent_exited(s.session_id)
+            return
+        if s.agent not in HARNESS_BY_AGENT:  # a custom agent: its exact reports win, else guess from its terminal
+            if self.status.reported(s.session_id):
+                self.auto_status.forget(s.session_id)
+            elif (guess := self.auto_status.observe(s.session_id, s.state, s.output_bytes, s.attention)):
+                changed += self.status.apply_guess(s.session_id, guess)
             return
         corroboration = HARNESS_BY_AGENT[s.agent].corroboration
         if corroboration == "claude_file":
@@ -576,7 +660,7 @@ class Service:
         """Drops what each part keeps of a closed session, each on its own: one that raises keeps
         only its own state, not the others'."""
         for what, forget in (("window state", self.windows.forget_session), ("turn", self.status.reset_turn),
-                             ("bindings", self.resolver.forget)):
+                             ("bindings", self.resolver.forget), ("terminal signals", self.auto_status.forget)):
             with _logged(f"forgetting the {what} of closed session {session_id}"):
                 forget(session_id)
 
@@ -605,3 +689,8 @@ def tunnel_alias(p: Any) -> str:
         raise RpcError(protocol.BAD_PARAMS, "alias must be a Host alias from ~/.ssh/config")
     return alias
 
+
+def _is_variable(name: Any, value: Any) -> bool:
+    """An environment entry exec can carry: a name without `=` or NUL, and a value without NUL."""
+    return (isinstance(name, str) and isinstance(value, str) and bool(name)
+            and "=" not in name and "\0" not in name and "\0" not in value)

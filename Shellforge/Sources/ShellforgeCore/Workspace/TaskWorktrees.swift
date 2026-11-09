@@ -62,11 +62,12 @@ public enum TaskWorktrees {
     /// `cancellation` stops it — between steps, or by ending the step's command and what it started,
     /// the repository's checkout hook included — and undoes the worktree and branch it made;
     /// `progress` hears each step as it starts.
+    /// `modelRequired` is false for an agent that takes no model (`AgentDefinition.takesNoModel`).
     public static func create(draft: TaskDraft, in project: Project, launcher: CommandLauncher,
                               cancellation: CreationCancellation? = nil,
-                              progress: (@Sendable (CreationStep) -> Void)? = nil) throws -> TaskItem {
+                              progress: (@Sendable (CreationStep) -> Void)? = nil, modelRequired: Bool = true) throws -> TaskItem {
         guard !draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw Refusal.emptyTitle }
-        guard !draft.model.isEmpty else { throw Refusal.emptyModel }
+        guard !modelRequired || !draft.model.isEmpty else { throw Refusal.emptyModel }
         func checkCancelled() throws { if cancellation?.isCancelled == true { throw CreationCancelled() } }
         try checkCancelled()
         guard BranchNaming.isValid(draft.branch, launcher: launcher) else { throw Refusal.invalidBranch(draft.branch) }

@@ -1,0 +1,20 @@
+#!/bin/zsh -f
+# hooks/shellforge-run <agent-id> -- <command…> — how Shellforge starts any agent that isn't built in.
+# The app arms the helper with the agent's environment and secrets for this tab; this takes them once
+# over the helper's socket and execs the agent, so no value is ever typed, shown or kept in history.
+# The work is run_agent.py, under the helper's own Python (named in helper-python), isolated (-I).
+# Without that Python it prints the one failure line and exits 1: the agent never starts without its settings.
+set -u
+SUPPORT="$HOME/Library/Application Support/Shellforge"
+PY=""
+[[ -f "$SUPPORT/helper-python" ]] && { PY="$(<"$SUPPORT/helper-python")" 2>/dev/null; }
+if [[ $PY != /* || ! -x $PY ]]; then
+  # The id goes into the line only when it is a plain id, as run_agent.py checks it.
+  if [[ ${1-} =~ '^[A-Za-z0-9_-]{1,64}$' ]]; then
+    print -r -u2 -- "shellforge-run: Shellforge didn’t send ${1}’s settings. Start the task again from Shellforge."
+    exit 1
+  fi
+  print -r -u2 -- "usage: shellforge-run <agent-id> -- <command> [arguments…]"
+  exit 2
+fi
+exec "$PY" -I "${0:A:h}/../daemon/shellforged/run_agent.py" "$@"

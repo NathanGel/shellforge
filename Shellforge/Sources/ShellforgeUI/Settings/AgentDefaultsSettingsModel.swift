@@ -35,23 +35,39 @@ final class AgentDefaultsSettingsModel: ObservableObject {
         self.defaults = defaults
     }
 
+    /// The installed agents after Settings › Agents changed them: a row still there keeps what it
+    /// read and what was picked in it, with the agent as it is now; a new one is yet to be read.
+    func update(agents: [AgentDefinition]) {
+        let old = Dictionary(rows.map { ($0.id, $0) }) { first, _ in first }
+        rows = agents.map { agent in
+            guard var row = old[agent.id] else { return Row(agent: agent) }
+            if row.agent != agent { row = Row(agent: agent) }
+            return row
+        }
+        picked.formIntersection(rows.filter(\.loaded).map(\.id))
+    }
+
     /// Every agent's catalogue at once, off the main actor, so a slow one holds up only its card.
-    func load() async {
+    /// `onlyUnloaded` reads only the rows not read yet, so a pick made in another is kept.
+    func load(onlyUnloaded: Bool = false) async {
         let read = catalogue
-        await withTaskGroup(of: (String, Result<[AgentModel], Error>).self) { group in
-            for row in rows {
+        await withTaskGroup(of: (AgentDefinition, Result<[AgentModel], Error>).self) { group in
+            for row in rows where !(onlyUnloaded && row.loaded) {
                 let agent = row.agent
                 group.addTask {
                     let result = await BackgroundWork.run { () -> Result<[AgentModel], Error> in Result { try read(agent) } }
-                    return (agent.id, result)
+                    return (agent, result)
                 }
             }
-            for await (id, result) in group { accept(result, for: id) }
+            for await (agent, result) in group { accept(result, for: agent) }
         }
     }
 
-    private func accept(_ result: Result<[AgentModel], Error>, for id: String) {
-        guard let index = rows.firstIndex(where: { $0.id == id }) else { return }
+    /// A read lands only on the row of the agent it was made for: one Settings › Agents changed
+    /// meanwhile (`update(agents:)`) is a new row, read again, never given the old agent's models.
+    private func accept(_ result: Result<[AgentModel], Error>, for agent: AgentDefinition) {
+        let id = agent.id
+        guard let index = rows.firstIndex(where: { $0.id == id }), rows[index].agent == agent else { return }
         var row = rows[index]
         row.loaded = true
         switch result {

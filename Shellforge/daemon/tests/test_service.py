@@ -1967,3 +1967,314 @@ async def test_an_agent_starting_cuts_the_idle_sleep_short(stack):
     await svc.tick()
     before = svc._ticks_started
     await wait_until(lambda: svc._ticks_started > before, timeout=3.0)
+
+
+
+
+class Ticks:
+    """A monotonic clock the test moves by hand."""
+
+    def __init__(self):
+        self.now = 0.0
+
+    def __call__(self):
+        return self.now
+
+
+async def custom_tab(make_service):
+    """An unstarted service (no poll loop: the test ticks it by hand) with one tab the app says runs
+    custom agent `gemini`, and its clock."""
+    mono = Ticks()
+    svc = make_service(monotonic=mono)
+    _, sid = await svc.iterm.create_window("/wt", "x", {"shellforge_task": "t1"}, Frame(**FRAME))
+    svc.iterm.sessions[sid].custom_agent = "gemini"
+    return svc, mono, sid
+
+
+async def feed(svc, mono, sid, seconds, rate, start=0):
+    """Ticks once a second while the tab's output grows by `rate` bytes a second."""
+    for i in range(seconds + 1):
+        mono.now = float(start + i)
+        svc.iterm.sessions[sid].output_bytes = int(rate * (start + i))
+        await svc.tick()
+
+
+async def test_a_custom_guess_flows_through_the_tick(make_service):
+    svc, mono, sid = await custom_tab(make_service)
+    await feed(svc, mono, sid, 4, 200)
+    assert svc.registry.get(sid).state == "working"
+    mono.now += 40.0
+    await svc.tick()
+    assert svc.registry.get(sid).state == "done"
+
+
+async def test_a_reported_tab_ignores_the_guess(make_service):
+    svc, mono, sid = await custom_tab(make_service)
+    await svc.tick()
+    svc.status.apply_report(sid, "needsInput")
+    await feed(svc, mono, sid, 5, 500)
+    assert svc.registry.get(sid).state == "needsInput"
+
+
+async def test_a_report_after_a_guess_wins_and_the_guess_is_forgotten(make_service):
+    svc, mono, sid = await custom_tab(make_service)
+    await feed(svc, mono, sid, 4, 200)
+    assert svc.registry.get(sid).state == "working"
+    svc.status.apply_report(sid, "needsInput")
+    mono.now += 40.0  # quiet: a live guess would now say done
+    await svc.tick()
+    assert svc.registry.get(sid).state == "needsInput"
+    assert sid not in svc.auto_status._tabs
+
+
+async def test_a_custom_agent_exit_is_idle(make_service):
+    svc, mono, sid = await custom_tab(make_service)
+    await feed(svc, mono, sid, 4, 200)
+    assert svc.registry.get(sid).state == "working"
+    svc.iterm.sessions[sid].custom_agent = None
+    await svc.tick()
+    # The next sessions.list says the tab runs no agent any more (the wire's `agent` is the kind,
+    # "shell" for none) and is idle; its command is still the shell's.
+    listed = next(x for x in (await svc._h_sessions_list({})) if x["sessionId"] == sid)
+    assert (listed["agent"], listed["state"]) == ("shell", "idle")
+
+
+async def test_stop_returns_when_the_poll_loop_swallows_a_cancel(make_service, monkeypatch):
+    monkeypatch.setattr(service, "STOP_WAIT_SECONDS", 0.01)
+    svc = make_service()
+    swallowed = []
+
+    async def stubborn():
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            swallowed.append(1)  # swallows the first cancel only
+            await asyncio.sleep(3600)
+
+    svc._poll_task = asyncio.get_running_loop().create_task(stubborn())
+    await asyncio.sleep(0)  # let it start waiting
+    await asyncio.wait_for(svc.stop(), 5)
+    assert swallowed == [1] and svc._poll_task.cancelled()
+
+
+async def test_a_normal_stop_needs_one_cancel(make_service):
+    svc = make_service()
+    await svc.start()
+    await asyncio.sleep(0)
+    await asyncio.wait_for(svc.stop(), 5)
+    assert svc._stop_cancels == 1 and svc._poll_task.done()
+
+
+async def test_stop_gives_up_on_a_loop_that_never_stops(make_service, monkeypatch, caplog):
+    monkeypatch.setattr(service, "STOP_WAIT_SECONDS", 0.01)
+    svc = make_service()
+    release = asyncio.Event()
+
+    async def immortal():
+        while not release.is_set():
+            try:
+                await asyncio.sleep(3600)
+            except asyncio.CancelledError:
+                pass
+
+    task = svc._poll_task = asyncio.get_running_loop().create_task(immortal())
+    await asyncio.sleep(0)
+    await asyncio.wait_for(svc.stop(), 5)
+    assert svc._stop_cancels == service.STOP_CANCEL_ATTEMPTS
+    assert "the poll loop did not stop" in caplog.text
+    release.set()
+    task.cancel()
+    await asyncio.wait({task})
+
+
+ARMED_VALUE = "sk-armed-secret-value"
+TAB_JOB = 4242
+
+
+class Terminals:
+    """`tty_of` for a service: each pid's terminal, set by the test. This test process is the peer
+    of every connection it opens."""
+
+    def __init__(self, me=7, tab=7):
+        self.ttys = {os.getpid(): me, TAB_JOB: tab}
+
+    def __call__(self, pid):
+        return self.ttys.get(pid)
+
+
+def tab_report(job_pid=TAB_JOB):
+    return {"sessionId": "ABC", "windowId": "w1", "tabIndex": 0, "commandLine": "gemini", "jobPid": job_pid,
+            "title": "gemini", "cwd": "/wt", "active": True}
+
+
+@pytest.fixture
+async def launch_stack(make_service):
+    """A service with the app as its session source, the tab ABC running job TAB_JOB, and `Terminals`
+    deciding which terminal each process is on; the app's end of the socket."""
+    from shellforged.app_sessions import AppSessions
+
+    terminals = Terminals()
+    svc = make_service(iterm=AppSessions(), tty_of=terminals)
+    await svc.start()
+    r, w = await asyncio.open_unix_connection(svc.rpc.path)
+    assert (await call(r, w, "sessions.update", {"sessions": [tab_report()]}, id_=100))["result"] == {"ok": True}
+    yield svc, terminals, r, w
+    w.close()
+
+
+async def arm(r, w, agent="gemini", environment=None, id_=1):
+    reply = await call(r, w, "agents.armLaunch", {"sessionId": "ABC", "agentId": agent,
+                                                   "environment": {"API_KEY": ARMED_VALUE} if environment is None else environment}, id_=id_)
+    assert reply["result"] == {"ok": True}
+
+
+async def take(r, w, agent="gemini", id_=2):
+    return await call(r, w, "agents.takeLaunch", {"session": "w0t0p0:ABC", "agentId": agent}, id_=id_)
+
+
+async def test_arm_then_take_over_the_socket(launch_stack, monkeypatch):
+    svc, terminals, r, w = launch_stack
+    await arm(r, w)
+    assert await take(r, w) == {"id": 2, "result": {"environment": {"API_KEY": ARMED_VALUE}}}
+    # Once only.
+    monkeypatch.setattr(service, "TAKE_WAIT_SECONDS", 0)
+    again = await take(r, w, id_=3)
+    assert again["error"]["code"] == "not_found" and ARMED_VALUE not in json.dumps(again)
+
+
+async def test_a_take_from_another_terminal_is_refused_and_the_arm_kept(launch_stack):
+    svc, terminals, r, w = launch_stack
+    terminals.ttys[os.getpid()] = 8  # this process is in another tab now
+    await arm(r, w)
+    refused = await take(r, w)
+    assert refused["error"]["code"] == "not_found" and ARMED_VALUE not in json.dumps(refused)
+    assert svc.launches.armed_sessions() == ["ABC"]
+    terminals.ttys[os.getpid()] = 7  # the tab's own runner still gets it
+    assert (await take(r, w, id_=3))["result"] == {"environment": {"API_KEY": ARMED_VALUE}}
+
+
+async def test_a_take_parked_early_from_another_terminal_gets_nothing(launch_stack):
+    svc, terminals, r, w = launch_stack
+    terminals.ttys[os.getpid()] = 8
+    taker_r, taker_w = await asyncio.open_unix_connection(svc.rpc.path)
+    try:
+        taker_w.write(b'{"id": 9, "method": "agents.takeLaunch", "params": {"session": "w0t0p0:ABC", "agentId": "gemini"}}\n')
+        await taker_w.drain()
+        await wait_until(lambda: len(svc.rpc._requests) == 1)
+        await arm(r, w)
+        while (reply := json.loads(await asyncio.wait_for(taker_r.readline(), 2))).get("id") != 9:
+            pass
+        assert reply["error"]["code"] == "not_found"
+        assert svc.launches.armed_sessions() == ["ABC"]
+    finally:
+        taker_w.close()
+
+
+@pytest.mark.parametrize("me", [None, 7])
+async def test_a_caller_or_tab_without_a_terminal_is_refused(launch_stack, monkeypatch, me):
+    svc, terminals, r, w = launch_stack
+    monkeypatch.setattr(service, "TAKE_WAIT_SECONDS", 0.05)
+    terminals.ttys[os.getpid()] = me
+    if me is not None:
+        terminals.ttys[TAB_JOB] = None  # the tab's job has no terminal: not known, so no
+    await arm(r, w)
+    assert (await take(r, w))["error"]["code"] == "not_found"
+    assert svc.launches.armed_sessions() == ["ABC"]
+
+
+async def test_an_unknown_tab_terminal_waits_for_the_apps_next_list(launch_stack):
+    svc, terminals, r, w = launch_stack
+    await call(r, w, "sessions.update", {"sessions": [tab_report(job_pid=None)]}, id_=101)
+    await arm(r, w)
+    taker_r, taker_w = await asyncio.open_unix_connection(svc.rpc.path)
+    try:
+        taker_w.write(b'{"id": 9, "method": "agents.takeLaunch", "params": {"session": "w0t0p0:ABC", "agentId": "gemini"}}\n')
+        await taker_w.drain()
+        await wait_until(lambda: len(svc.rpc._requests) == 1)  # waiting: the tab's terminal isn't known
+        await call(r, w, "sessions.update", {"sessions": [tab_report()]}, id_=102)
+        while (reply := json.loads(await asyncio.wait_for(taker_r.readline(), 2))).get("id") != 9:
+            pass
+        assert reply["result"] == {"environment": {"API_KEY": ARMED_VALUE}}
+    finally:
+        taker_w.close()
+
+
+async def test_an_unknown_tab_terminal_is_refused_once_the_wait_ends(launch_stack, monkeypatch):
+    svc, terminals, r, w = launch_stack
+    monkeypatch.setattr(service, "TAKE_WAIT_SECONDS", 0.05)
+    await call(r, w, "sessions.update", {"sessions": [tab_report(job_pid=None)]}, id_=101)
+    await arm(r, w)
+    assert (await take(r, w))["error"]["code"] == "not_found"
+    assert svc.launches.armed_sessions() == ["ABC"]
+
+
+async def test_a_take_whose_caller_left_does_not_spend_a_later_arm(launch_stack):
+    svc, terminals, r, w = launch_stack
+    taker_r, taker_w = await asyncio.open_unix_connection(svc.rpc.path)
+    taker_w.write(b'{"id": 9, "method": "agents.takeLaunch", "params": {"session": "w0t0p0:ABC", "agentId": "gemini"}}\n')
+    await taker_w.drain()
+    await wait_until(lambda: len(svc.rpc._requests) == 1)
+    taker_w.close()
+    await wait_until(lambda: svc.rpc.client_count == 1)  # the helper has seen it go
+    await arm(r, w)
+    await wait_until(lambda: len(svc.rpc._requests) == 0)  # the abandoned take has ended
+    assert svc.launches.armed_sessions() == ["ABC"]
+    assert (await take(r, w))["result"] == {"environment": {"API_KEY": ARMED_VALUE}}
+
+
+async def test_a_take_waits_for_the_arm_over_the_socket(launch_stack):
+    svc, terminals, r, w = launch_stack
+    taker_r, taker_w = await asyncio.open_unix_connection(svc.rpc.path)
+    try:
+        taker_w.write(b'{"id": 9, "method": "agents.takeLaunch", "params": {"session": "w0t0p0:ABC", "agentId": "goose"}}\n')
+        await taker_w.drain()
+        await wait_until(lambda: len(svc.rpc._requests) == 1)  # the take is waiting in the helper
+        await arm(r, w, agent="goose", environment={})
+        while (reply := json.loads(await asyncio.wait_for(taker_r.readline(), 2))).get("id") != 9:
+            pass
+        assert reply == {"id": 9, "result": {"environment": {}}}
+    finally:
+        taker_w.close()
+
+
+async def test_the_caller_is_the_process_at_the_other_end(launch_stack):
+    """The peer pid comes from the kernel (LOCAL_PEERPID): this test process, not anything the request says."""
+    svc, terminals, r, w = launch_stack
+    seen = []
+    terminals_call = svc._tty_of
+
+    def recording(pid):
+        seen.append(pid)
+        return terminals_call(pid)
+
+    svc._tty_of = recording
+    await arm(r, w)
+    await take(r, w)
+    assert os.getpid() in seen
+
+
+@pytest.mark.parametrize("params", [
+    None, {}, {"sessionId": "ABC", "agentId": "a"}, {"sessionId": "", "agentId": "a", "environment": {}},
+    {"sessionId": "ABC", "agentId": "", "environment": {}}, {"sessionId": "ABC", "agentId": "a", "environment": {"A": 1}},
+    {"sessionId": "ABC", "agentId": "a", "environment": {"A=B": "x"}}, {"sessionId": "ABC", "agentId": "a", "environment": {"": "x"}},
+    {"sessionId": "ABC", "agentId": "a", "environment": {"A": "x\x00y"}},
+])
+async def test_a_malformed_arm_is_bad_params_without_its_values(stack, params):
+    svc, it, files, r, w = stack
+    reply = await call(r, w, "agents.armLaunch", params)
+    assert reply["error"]["code"] == "bad_params" and "x\x00y" not in reply["error"]["message"]
+    assert svc.launches.armed_sessions() == []
+
+
+async def test_params_are_not_logged(launch_stack, caplog, monkeypatch):
+    svc, terminals, r, w = launch_stack
+    monkeypatch.setattr(service, "TAKE_WAIT_SECONDS", 0.05)
+    with caplog.at_level("DEBUG"):
+        await arm(r, w)
+        await call(r, w, "agents.armLaunch", {"sessionId": "ABC", "agentId": "gemini",
+                                              "environment": {"API_KEY": ARMED_VALUE, "BAD": 1}}, id_=2)
+        terminals.ttys[os.getpid()] = 8
+        await take(r, w, id_=3)
+        terminals.ttys[os.getpid()] = 7
+        await take(r, w, id_=4)
+    assert ARMED_VALUE not in caplog.text
