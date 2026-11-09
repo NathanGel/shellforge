@@ -213,8 +213,11 @@ final class SidebarHostingView<Content: View>: NSHostingView<Content>, RowHighli
 
     /// Esc, with the keyboard in the sidebar: cancels Rearrange mode. A responder action, so it
     /// reaches here only from a view inside the sidebar, never from the terminal beside it.
+    /// Outside the mode it goes on up the chain as it would have: NSView has no `cancelOperation:`
+    /// of its own, so calling super would raise.
     override func cancelOperation(_ sender: Any?) {
-        if cancelRearrange?() != true { super.cancelOperation(sender) }
+        guard cancelRearrange?() != true else { return }
+        nextResponder?.tryToPerform(#selector(NSResponder.cancelOperation(_:)), with: sender)
     }
 }
 

@@ -196,6 +196,36 @@ import Testing
         #expect(!s.model.isRearranging, "Esc in the sidebar cancels")
     }
 
+    /// Outside the mode, Esc in the sidebar is not the sidebar's: it goes on up the responder chain,
+    /// unchanged, and nothing raises (NSView has no `cancelOperation:` to call up to).
+    @Test func escOutsideTheModePassesOn() throws {
+        let s = try setup()
+        let sidebar = SidebarHostingView(rootView: EmptyView())
+        sidebar.cancelRearrange = { [model = s.model] in
+            guard model.isRearranging else { return false }
+            model.cancelRearrange()
+            return true
+        }
+        let inside = Focusable()
+        sidebar.addSubview(inside)
+        let content = EscRecorder()
+        content.addSubview(sidebar)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300), styleMask: [], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = content
+        defer { window.close() }
+        #expect(window.makeFirstResponder(inside))
+        #expect(window.firstResponder?.tryToPerform(#selector(NSResponder.cancelOperation(_:)), with: nil) == true)
+        #expect(content.escapes == 1, "it reached the responder after the sidebar")
+        #expect(!s.model.isRearranging)
+        s.model.beginRearrange()
+        _ = window.firstResponder?.tryToPerform(#selector(NSResponder.cancelOperation(_:)), with: nil)
+        #expect(!s.model.isRearranging && content.escapes == 1, "in the mode the sidebar takes it")
+        // With no one further up to take it, it is simply dropped.
+        let alone = SidebarHostingView(rootView: EmptyView())
+        alone.cancelOperation(nil)
+    }
+
     /// Hiding the sidebar on purpose cancels the mode, through the one call the app makes for it.
     @Test func hidingTheSidebarCancels() throws {
         let s = try setup()
@@ -214,6 +244,12 @@ import Testing
     private func descendants<T: NSView>(of type: T.Type, in view: NSView) -> [T] {
         view.subviews.flatMap { [$0 as? T].compactMap { $0 } + descendants(of: type, in: $0) }
     }
+}
+
+/// A responder that counts the Esc presses that reach it.
+private final class EscRecorder: NSView {
+    var escapes = 0
+    @objc override func cancelOperation(_ sender: Any?) { escapes += 1 }
 }
 
 /// A view that takes the keyboard, standing for a sidebar row or the terminal.
