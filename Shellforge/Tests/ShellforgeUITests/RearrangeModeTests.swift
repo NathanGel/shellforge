@@ -7,7 +7,7 @@ import Testing
 /// Rearrange mode in the sidebar: a draft held until Done, one window at a time, no commands meanwhile.
 @MainActor @Suite struct RearrangeModeTests {
     @MainActor private struct Setup {
-        let first: SidebarModel, second: SidebarModel, document: WorkspaceDocument, host: FakeTerminalHost
+        let first: SidebarModel, second: SidebarModel, document: WorkspaceDocument, host: FakeTerminalHost, folder: URL
         let a: Project, task: TaskItem, terminal: TerminalItem
     }
 
@@ -26,7 +26,7 @@ import Testing
             w.projects.append(a); w.addTask(task); w.addTerminal(terminal)
         }
         let host = FakeTerminalHost()
-        return Setup(first: model(host, document), second: model(FakeTerminalHost(), document), document: document, host: host,
+        return Setup(first: model(host, document), second: model(FakeTerminalHost(), document), document: document, host: host, folder: folder,
                      a: a, task: task, terminal: terminal)
     }
 
@@ -115,5 +115,48 @@ import Testing
         s.first.beginRearrange()
         _ = s.first.moveInDraft(.child(project: s.a.id, .terminal(s.terminal.id)), before: .child(project: s.a.id, .task(s.task.id)))
         #expect(s.first.rows.map(\.id) == ["project-\(s.a.id)", "terminal-\(s.terminal.id)", "task-\(s.task.id)"])
+    }
+
+    /// A save that fails on Done keeps the mode (and the draft) open and says why; Cancel still leaves.
+    @Test func aFailedSaveKeepsTheModeOpenAndSaysWhy() throws {
+        let s = try setup()
+        s.first.beginRearrange()
+        _ = s.first.moveInDraft(.child(project: s.a.id, .terminal(s.terminal.id)), before: .child(project: s.a.id, .task(s.task.id)))
+        // A file where the workspace folder was: the save cannot create it.
+        try FileManager.default.removeItem(at: s.folder)
+        try Data().write(to: s.folder)
+        s.first.finishRearrange()
+        #expect(s.first.isRearranging)
+        #expect(s.first.lastError != nil)
+        #expect(s.first.rearrange?.children[s.a.id] == [.terminal(s.terminal.id), .task(s.task.id)], "the draft is kept")
+        #expect(!s.second.canRearrange, "the lock is kept")
+        s.first.cancelRearrange()
+        #expect(!s.first.isRearranging)
+        #expect(s.second.canRearrange)
+    }
+
+    @Test func newHomeTabStaysEnabledWhileRearranging() throws {
+        let s = try setup()
+        s.first.beginRearrange()
+        #expect(s.first.can(.newHomeTab))
+    }
+
+    @Test func aCollapsedProjectShowsOnlyItsHeaderWhileRearranging() throws {
+        let s = try setup()
+        try s.document.update { $0.projects[0].collapsed = true }
+        s.first.beginRearrange()
+        #expect(s.first.rows.map(\.id) == ["project-\(s.a.id)"])
+    }
+
+    @Test func draggingIsClearedOnDoneAndOnCancel() throws {
+        let s = try setup()
+        s.first.beginRearrange()
+        s.first.draggingProject = s.a.id
+        s.first.finishRearrange()
+        #expect(s.first.draggingProject == nil)
+        s.first.beginRearrange()
+        s.first.draggingProject = s.a.id
+        s.first.cancelRearrange()
+        #expect(s.first.draggingProject == nil)
     }
 }

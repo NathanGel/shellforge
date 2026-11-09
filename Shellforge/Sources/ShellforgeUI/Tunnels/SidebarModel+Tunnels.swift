@@ -139,6 +139,14 @@ extension SidebarModel {
         }
     }
 
+    /// The project's tunnels as rows in `aliases`' order (a rearrange draft's), else in its own.
+    func tunnelRows(of project: Project, in aliases: [String]?) -> [TunnelRowItem] {
+        let rows = tunnelRows(of: project)
+        guard let aliases else { return rows }
+        let byAlias = Dictionary(rows.map { ($0.alias, $0) }, uniquingKeysWith: { first, _ in first })
+        return aliases.compactMap { byAlias[$0] }
+    }
+
     public func tunnelRows(of projectId: UUID) -> [TunnelRowItem] { project(projectId).map(tunnelRows(of:)) ?? [] }
 
     public func tunnelState(_ alias: String) -> TunnelState { sessions.tunnels[alias]?.state ?? .stopped }

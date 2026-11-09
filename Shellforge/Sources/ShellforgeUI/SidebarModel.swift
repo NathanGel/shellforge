@@ -616,47 +616,67 @@ public final class SidebarModel: ObservableObject {
     /// What the sidebar draws, in order: each project, and unless it is folded its tasks — the selected
     /// task's tabs under it when it has more than one; then the tabs of no task. With no project, the
     /// empty state comes first. Exactly one row is selected: the current tab when it is listed, else
-    /// the task it belongs to (AiTerm's one painter, one row).
+    /// the task it belongs to (AiTerm's one painter, one row). While rearranging, the order is the
+    /// draft's and there are no tabs: no `.tab` rows, no Other tabs.
     public var rows: [SidebarRow] {
-        if let draft = rearrange { return rearrangeRows(draft) }
+        let draft = rearrange
         var rows: [SidebarRow] = tree.projects.isEmpty ? [.empty] : []
-        let current = host.selectedTabId
-        let workspace = document.workspace
-        // A hand-edited workspace may repeat a project: the first is drawn, never a crash.
-        let nodes = Dictionary(tree.projects.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let dividers = Dictionary(workspace.dividers.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         // With no project the empty state stands alone; a rule under it would divide nothing.
-        let entries = tree.projects.isEmpty ? [] : SidebarLayout.entries(projects: tree.projects.map(\.project), dividers: workspace.dividers)
-        for (index, entry) in entries.enumerated() {
-            guard case .project(let id) = entry, let node = nodes[id] else {
-                // Its ends from its place in the one layout drawn, not a layout rebuilt per divider.
-                if case .divider(let id) = entry, let divider = dividers[id] {
-                    rows.append(.divider(DividerRowItem(divider: divider, canMoveUp: index > 0, canMoveDown: index < entries.count - 1)))
-                }
-                continue
-            }
-            rows.append(.project(node, collapsed: node.project.collapsed))
-            guard !node.project.collapsed else { continue }
-            rows += tunnelRows(of: node.project).map(SidebarRow.tunnel)
-            let tasks = Dictionary(node.tasks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-            let terminals = Dictionary(node.terminals.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-            for child in node.children {
-                switch child {
-                case .task(let id):
-                    guard let task = tasks[id] else { continue }
-                    let listsTabs = task.id == selectedTaskId && task.tabs.count > 1
-                    let ownsCurrent = task.tabs.contains { $0.id == current }
-                    rows.append(.task(task, selected: task.id == selectedTaskId && !(listsTabs && ownsCurrent)))
-                    if listsTabs { rows += task.tabs.map { .tab($0, selected: $0.id == current) } }
-                case .terminal(let id):
-                    guard let terminal = terminals[id] else { continue }
-                    rows.append(.terminal(terminal, selected: terminal.id == selectedTerminalId))
-                }
-            }
-        }
+        let entries = draft?.entries ?? (tree.projects.isEmpty ? [] : SidebarLayout.entries(projects: tree.projects.map(\.project), dividers: document.workspace.dividers))
+        rows += entryRows(entries, draft: draft)
+        guard draft == nil else { return rows }
         if !tree.otherTabs.isEmpty {
+            let current = host.selectedTabId
             rows.append(.otherTabsHeading)
             rows += tree.otherTabs.map { .tab($0, selected: selectedTaskId == nil && $0.id == current) }
+        }
+        return rows
+    }
+
+    /// The rows of the projects and dividers in `entries`, in that order: the one builder both the
+    /// normal sidebar and rearrange mode draw with. A draft supplies each project's SSH and child
+    /// order and turns the tabs off; a project being dragged shows only its header.
+    private func entryRows(_ entries: [SidebarEntry], draft: RearrangeDraft?) -> [SidebarRow] {
+        var rows: [SidebarRow] = []
+        // A hand-edited workspace may repeat a project: the first is drawn, never a crash.
+        let nodes = Dictionary(tree.projects.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let dividers = Dictionary(document.workspace.dividers.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        for (index, entry) in entries.enumerated() {
+            switch entry {
+            case .divider(let id):
+                // Its ends from its place in the one layout drawn, not a layout rebuilt per divider.
+                if let divider = dividers[id] {
+                    rows.append(.divider(DividerRowItem(divider: divider, canMoveUp: index > 0, canMoveDown: index < entries.count - 1)))
+                }
+            case .project(let id):
+                guard let node = nodes[id] else { continue }
+                rows.append(.project(node, collapsed: node.project.collapsed))
+                guard !node.project.collapsed, draft == nil || draggingProject != id else { continue }
+                rows += tunnelRows(of: node.project, in: draft?.tunnels[id]).map(SidebarRow.tunnel)
+                rows += childRows(of: node, order: draft?.children[id] ?? node.children, listsTabs: draft == nil)
+            }
+        }
+        return rows
+    }
+
+    /// A project's task and terminal rows in `order`; with `listsTabs`, the selected task's tabs under it.
+    private func childRows(of node: ProjectNode, order: [ProjectChild], listsTabs: Bool) -> [SidebarRow] {
+        let current = host.selectedTabId
+        let tasks = Dictionary(node.tasks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let terminals = Dictionary(node.terminals.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var rows: [SidebarRow] = []
+        for child in order {
+            switch child {
+            case .task(let id):
+                guard let task = tasks[id] else { continue }
+                let showsTabs = listsTabs && task.id == selectedTaskId && task.tabs.count > 1
+                let ownsCurrent = task.tabs.contains { $0.id == current }
+                rows.append(.task(task, selected: task.id == selectedTaskId && !(showsTabs && ownsCurrent)))
+                if showsTabs { rows += task.tabs.map { .tab($0, selected: $0.id == current) } }
+            case .terminal(let id):
+                guard let terminal = terminals[id] else { continue }
+                rows.append(.terminal(terminal, selected: terminal.id == selectedTerminalId))
+            }
         }
         return rows
     }
