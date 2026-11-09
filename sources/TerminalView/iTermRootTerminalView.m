@@ -1877,6 +1877,10 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
     }
     _shellforgeSidebarHidden = !_shellforgeSidebarHidden;
     [iTermShellforgeSidebar setStartsHidden:_shellforgeSidebarHidden];
+    if (_shellforgeSidebarHidden) {
+        // Hidden on purpose: Rearrange mode is cancelled. A revealed sidebar sliding away is not this.
+        [iTermShellforgeSidebar sidebarWillHide:_shellforgeSidebar];
+    }
     // Pinned open (or closed) for good: a reveal no longer holds it.
     [_shellforgeReveal reset];
     // Typing into a hidden sidebar would go nowhere visible: the current session takes the keys.

@@ -48,9 +48,12 @@ public enum ShellforgeSidebar {
         }, hideSidebar: hideSidebar, agentTools: agentTools, agentsChanged: agentsChanged)
         let host = SidebarHostingView(rootView: ZoomedSidebar(zoom: zoom, sidebar: sidebar))
         host.chrome = chrome
-        // Hiding the sidebar, by ⌃⌘S or its button, leaves Rearrange mode unsaved: nothing is
-        // left half-arranged where it cannot be seen.
-        host.didHide = { [weak model] in model?.cancelRearrange() }
+        // Esc inside the sidebar, and hiding it (`willHide`), leave Rearrange mode unsaved.
+        host.cancelRearrange = { [weak model] in
+            guard let model, model.isRearranging else { return false }
+            model.cancelRearrange()
+            return true
+        }
         host.backpackPresenter = presenter
         host.feedbackPresenter = feedbackPresenter
         host.frame = NSRect(x: 0, y: 0, width: width, height: 400)
@@ -87,6 +90,13 @@ public enum ShellforgeSidebar {
 
     /// How far the sidebar's list insets its rows: what lines the host's toggle up with them.
     public static var listInset: CGFloat { SidebarRowLayout.listInset }
+
+    /// The user is hiding the sidebar `view` (⌃⌘S, its button, the window's toggle): Rearrange mode
+    /// is cancelled, so nothing is left half-arranged where it cannot be seen. Not for a revealed
+    /// sidebar sliding away again: that is not a hide the user asked for.
+    public static func willHide(_ view: NSView) {
+        _ = (view as? RearrangeCancelling)?.cancelRearrange?()
+    }
 
     /// Whether `view` is a sidebar `makeView` made, or inside one.
     public static func contains(_ view: NSView?) -> Bool {
@@ -199,14 +209,23 @@ final class SidebarHostingView<Content: View>: NSHostingView<Content>, RowHighli
     var backpackPresenter: SheetPresenter?
     /// How this sidebar opens its feedback form.
     var feedbackPresenter: SheetPresenter?
-    /// Told when the sidebar is hidden.
-    var didHide: (@MainActor () -> Void)?
+    var cancelRearrange: (@MainActor () -> Bool)?
 
-    override func viewDidHide() {
-        super.viewDidHide()
-        didHide?()
+    /// Esc, with the keyboard in the sidebar: cancels Rearrange mode. A responder action, so it
+    /// reaches here only from a view inside the sidebar, never from the terminal beside it.
+    override func cancelOperation(_ sender: Any?) {
+        if cancelRearrange?() != true { super.cancelOperation(sender) }
     }
 }
+
+/// A sidebar host that can leave Rearrange mode: Esc inside it, or the user hiding it.
+@MainActor
+protocol RearrangeCancelling: AnyObject {
+    /// Cancels the mode; false when it was not on.
+    var cancelRearrange: (@MainActor () -> Bool)? { get }
+}
+
+extension SidebarHostingView: RearrangeCancelling {}
 
 /// Calls back once when a window closes, unless stopped first: how a sheet learns it was closed
 /// rather than answered. The panel's own buttons stop it.

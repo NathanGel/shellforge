@@ -24,8 +24,8 @@ it and refuses to release a version that has none.
   another task works in the folder. Cancel leaves the folder as it was and the sheet open.
 - **Rearrange mode.** Right-click a project, divider, task, terminal or SSH row › Rearrange, then
   drag rows by their handles. Projects and dividers move among each other, and a project’s SSH rows,
-  and its tasks and terminals in any mix, move within that project. Done saves the order and Cancel
-  (or Esc) puts it back. VoiceOver offers Move Up and Move Down on each row while rearranging.
+  and its tasks and terminals in any mix, move within that project. Done saves the order; Cancel,
+  Esc in the sidebar, or hiding the sidebar puts it back. VoiceOver offers Move Up and Move Down on each row while rearranging.
 
 ### Changed
 

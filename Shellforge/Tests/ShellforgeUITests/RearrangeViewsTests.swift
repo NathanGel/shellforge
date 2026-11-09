@@ -59,7 +59,7 @@ import Testing
         #expect(!s.model.hover(over: .tunnel(project: a, alias: "a2"), lowerHalf: true), "not among the SSH rows")
         #expect(s.model.hover(over: x, lowerHalf: true))
         #expect(s.model.dropTarget == RearrangeDropTarget(item: x, lowerHalf: true))
-        #expect(s.model.drop(on: x, lowerHalf: true))
+        #expect(s.model.drop(payload: "task-\(s.task.id)", on: x, lowerHalf: true))
         #expect(s.model.rearrange?.children[a] == [.terminal(s.terminal.id), .task(s.task.id)])
         #expect(s.model.dropTarget == nil && s.model.draggingProject == nil)
     }
@@ -71,6 +71,39 @@ import Testing
         #expect(s.model.draggingProject == s.a.id)
         s.model.endDrag()
         #expect(s.model.draggingProject == nil && s.model.dropTarget == nil)
+    }
+
+    /// Esc during a drag, or a let-go outside the sidebar: the session ends with no drop, and the
+    /// project unfolds. A late end of an older session leaves the current drag alone.
+    @Test func anAbandonedDragUnfoldsTheProject() throws {
+        let s = try setup()
+        s.model.beginRearrange()
+        let first = s.model.startDragging(.entry(.project(s.a.id)))
+        #expect(s.model.rows.count == 3, "A folds to its header while dragged: A, B, B’s task")
+        s.model.dragEnded(first)
+        #expect(s.model.draggingProject == nil && s.model.draggedItem == nil)
+        #expect(s.model.rows.count == 7, "A’s SSH rows and children are back")
+        let older = s.model.startDragging(.entry(.project(s.a.id)))
+        _ = s.model.startDragging(.entry(.project(s.b.id)))
+        s.model.dragEnded(older)
+        #expect(s.model.draggingProject == s.b.id, "only its own session clears a drag")
+    }
+
+    /// What moves is read from the drop's payload: one that is no row of this draft — another app's
+    /// text, or a row that is gone — moves nothing, even with a stale drag left over.
+    @Test func aDropWhosePayloadIsNoDraftRowIsRefused() throws {
+        let s = try setup()
+        s.model.beginRearrange()
+        let a = s.a.id
+        let x = RearrangeDraft.Item.child(project: a, .terminal(s.terminal.id))
+        s.model.startDragging(.child(project: a, .task(s.task.id)))
+        let before = s.model.rearrange
+        #expect(!s.model.drop(payload: "hello from another app", on: x, lowerHalf: true))
+        #expect(!s.model.drop(payload: "task-\(UUID())", on: x, lowerHalf: true))
+        #expect(s.model.rearrange == before)
+        #expect(s.model.draggedItem == nil && s.model.dropTarget == nil)
+        // Without any drag of its own, a hover draws nothing.
+        #expect(!s.model.hover(over: x, lowerHalf: false) && s.model.dropTarget == nil)
     }
 
     @Test func leavingTheModeClearsTheDropTarget() throws {
@@ -118,8 +151,9 @@ import Testing
         #expect(RearrangeRowActions.titles(for: .tunnel(project: a, alias: "a2"), in: draft) == ["Move Up"])
     }
 
-    /// SwiftUI draws a button's title itself, out of AppKit's sight, so the hosted bar is read by its
-    /// buttons' keys — Esc for Cancel, Return for Done — and the words by the bar's own.
+    /// SwiftUI draws a button's title itself, out of AppKit's sight, so the words are the bar's own;
+    /// the hosted bar is checked for key equivalents: none, so Return and Esc typed in the terminal
+    /// that shares the window stay the shell's.
     @Test func theBarHasCancelAndDone() {
         #expect(RearrangeBar.title == "Rearranging")
         #expect(RearrangeBar.cancelTitle == "Cancel" && RearrangeBar.doneTitle == "Done")
@@ -130,11 +164,59 @@ import Testing
         window.contentView = host
         host.layoutSubtreeIfNeeded()
         defer { window.close() }
-        let keys = descendants(of: NSButton.self, in: host).map(\.keyEquivalent)
-        #expect(keys == ["\u{1b}", "\r"], "Cancel then Done: \(keys)")
+        let keys = descendants(of: NSButton.self, in: host).map(\.keyEquivalent).filter { !$0.isEmpty }
+        #expect(keys.isEmpty, "no key equivalents: \(keys)")
+    }
+
+    /// Esc is a responder action: it cancels from a view inside the sidebar, and a view beside it —
+    /// the terminal — never reaches the sidebar with it.
+    @Test func escCancelsOnlyFromInsideTheSidebar() throws {
+        let s = try setup()
+        let sidebar = SidebarHostingView(rootView: EmptyView())
+        sidebar.cancelRearrange = { [model = s.model] in
+            guard model.isRearranging else { return false }
+            model.cancelRearrange()
+            return true
+        }
+        let inside = Focusable(), terminal = Focusable()
+        sidebar.addSubview(inside)
+        let content = NSView()
+        content.addSubview(sidebar)
+        content.addSubview(terminal)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300), styleMask: [], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = content
+        defer { window.close() }
+        s.model.beginRearrange()
+        #expect(window.makeFirstResponder(terminal))
+        _ = window.firstResponder?.tryToPerform(#selector(NSResponder.cancelOperation(_:)), with: nil)
+        #expect(s.model.isRearranging, "Esc in the terminal is the terminal’s")
+        #expect(window.makeFirstResponder(inside))
+        _ = window.firstResponder?.tryToPerform(#selector(NSResponder.cancelOperation(_:)), with: nil)
+        #expect(!s.model.isRearranging, "Esc in the sidebar cancels")
+    }
+
+    /// Hiding the sidebar on purpose cancels the mode, through the one call the app makes for it.
+    @Test func hidingTheSidebarCancels() throws {
+        let s = try setup()
+        let sidebar = SidebarHostingView(rootView: EmptyView())
+        sidebar.cancelRearrange = { [model = s.model] in
+            model.cancelRearrange()
+            return true
+        }
+        s.model.beginRearrange()
+        ShellforgeSidebar.willHide(NSView())
+        #expect(s.model.isRearranging, "not a sidebar: nothing happens")
+        ShellforgeSidebar.willHide(sidebar)
+        #expect(!s.model.isRearranging)
     }
 
     private func descendants<T: NSView>(of type: T.Type, in view: NSView) -> [T] {
         view.subviews.flatMap { [$0 as? T].compactMap { $0 } + descendants(of: type, in: $0) }
     }
+}
+
+/// A view that takes the keyboard, standing for a sidebar row or the terminal.
+private final class Focusable: NSView {
+    override var acceptsFirstResponder: Bool { true }
 }

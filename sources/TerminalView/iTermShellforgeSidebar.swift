@@ -927,6 +927,9 @@ extension iTermShellforgeSidebar {
     @objc static func startsHidden() -> Bool { layout.hidden }
 
     @objc static func setStartsHidden(_ hidden: Bool) { layout.hidden = hidden }
+
+    /// The user is hiding `sidebar` (⌃⌘S, its button, the window's toggle): Rearrange mode is cancelled.
+    @objc static func sidebarWillHide(_ sidebar: NSView) { ShellforgeSidebar.willHide(sidebar) }
 }
 
 /// A closed sidebar in full screen comes back while the pointer wants it: the screen's left edge

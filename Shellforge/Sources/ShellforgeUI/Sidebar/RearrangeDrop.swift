@@ -141,9 +141,11 @@ struct RearrangeRow<Content: View>: View {
         .overlay(alignment: line == true ? .bottom : .top) {
             if line != nil { Rectangle().fill(Palette.accent).frame(height: Self.lineWidth).allowsHitTesting(false) }
         }
-        .onDrag {
-            model.startDragging(item)
-            return NSItemProvider(object: id as NSString)
+        .onDrag { [weak model, item, id] in
+            let session = model?.startDragging(item) ?? 0
+            return RearrangeDragProvider(payload: id) { [weak model] in
+                Task { @MainActor in model?.dragEnded(session) }
+            }
         }
         .onDrop(of: [.text], delegate: RearrangeRowDrop(model: model, item: item, height: height))
         .accessibilityElement(children: .combine)
@@ -166,7 +168,10 @@ private struct RearrangeRowDrop: DropDelegate {
 
     private func lowerHalf(_ info: DropInfo) -> Bool { info.location.y > height / 2 }
 
-    func validateDrop(info: DropInfo) -> Bool { MainActor.assumeIsolated { model.draggedItem != nil } }
+    /// What moves is read from the payload at the drop, never from what this sidebar thinks is dragged.
+    func validateDrop(info: DropInfo) -> Bool {
+        MainActor.assumeIsolated { model.isRearranging } && info.hasItemsConforming(to: [.text])
+    }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
         let accepted = MainActor.assumeIsolated { model.hover(over: item, lowerHalf: lowerHalf(info)) }
@@ -178,8 +183,34 @@ private struct RearrangeRowDrop: DropDelegate {
     }
 
     func performDrop(info: DropInfo) -> Bool {
-        MainActor.assumeIsolated { model.drop(on: item, lowerHalf: lowerHalf(info)) }
+        let model = model, item = item, lowerHalf = lowerHalf(info)
+        guard let provider = info.itemProviders(for: [.text]).first else {
+            MainActor.assumeIsolated { model.endDrag() }
+            return false
+        }
+        MainActor.assumeIsolated { model.dropTarget = nil }
+        _ = provider.loadObject(ofClass: NSString.self) { object, _ in
+            let payload = (object as? NSString).map { String($0) }
+            Task { @MainActor in
+                if let payload { model.drop(payload: payload, on: item, lowerHalf: lowerHalf) } else { model.endDrag() }
+            }
+        }
+        return true
     }
+}
+
+/// A dragged row's id, as text. AppKit holds it for as long as the drag session lasts; letting go
+/// of it, dropped or abandoned, tells the sidebar the drag is over.
+private final class RearrangeDragProvider: NSItemProvider, @unchecked Sendable {
+    private let ended: @Sendable () -> Void
+
+    init(payload: String, ended: @escaping @Sendable () -> Void) {
+        self.ended = ended
+        super.init()
+        registerObject(payload as NSString, visibility: .all)
+    }
+
+    deinit { ended() }
 }
 
 /// A drop anywhere else in the list: nothing moves. Leaving the list ends the drag, so a project
@@ -189,7 +220,7 @@ private struct RearrangeListDrop: DropDelegate {
     let size: CGSize
 
     func validateDrop(info: DropInfo) -> Bool {
-        MainActor.assumeIsolated { model.isRearranging && model.draggedItem != nil }
+        MainActor.assumeIsolated { model.isRearranging } && info.hasItemsConforming(to: [.text])
     }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {

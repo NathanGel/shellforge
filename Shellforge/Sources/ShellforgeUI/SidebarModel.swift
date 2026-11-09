@@ -102,6 +102,8 @@ public final class SidebarModel: ObservableObject {
     @Published public var dropTarget: RearrangeDropTarget?
     /// The row being dragged in the mode: what a drop moves. Not drawn, so not published.
     public internal(set) var draggedItem: RearrangeDraft.Item?
+    /// Counts the drags begun, so a drag session that ends late clears only its own state.
+    var dragSession = 0
     @Published public internal(set) var selectedTaskId: UUID?
     /// The terminal row shown, when the selected tab is a terminal's (Terminals/).
     @Published public internal(set) var selectedTerminalId: UUID?
