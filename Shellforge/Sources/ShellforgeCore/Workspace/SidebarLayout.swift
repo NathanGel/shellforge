@@ -47,12 +47,19 @@ public enum SidebarLayout {
         let other = up ? index - 1 : index + 1
         guard all.indices.contains(other) else { return false }
         all.swapAt(index, other)
-        // Read the order back: projects as drawn, each divider at the count of projects above it.
-        // A hand-edited workspace may repeat an id: the first is kept, never a crash.
+        apply(all, projects: &projects, dividers: &dividers)
+        return true
+    }
+
+    /// Reads a drawn order back: projects as drawn, each divider at the count of projects above it.
+    /// Ids in `order` that are not in `projects` or `dividers` are skipped, and anything `order` does
+    /// not name is dropped, so `order` must name everything to keep. A hand-edited workspace may
+    /// repeat an id: the first is kept, never a crash.
+    public static func apply(_ order: [SidebarEntry], projects: inout [Project], dividers: inout [SidebarDivider]) {
         let byProject = Dictionary(projects.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let byDivider = Dictionary(dividers.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var newProjects: [Project] = [], newDividers: [SidebarDivider] = []
-        for item in all {
+        for item in order {
             switch item {
             case .project(let id): if let project = byProject[id] { newProjects.append(project) }
             case .divider(let id):
@@ -64,6 +71,5 @@ public enum SidebarLayout {
         }
         projects = newProjects
         dividers = newDividers
-        return true
     }
 }
