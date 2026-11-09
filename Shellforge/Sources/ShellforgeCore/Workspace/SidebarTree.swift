@@ -12,6 +12,8 @@ public struct ProjectNode: Equatable, Sendable, Identifiable {
     public var tasks: [TaskNode]
     /// Its terminal rows, after its tasks, oldest first.
     public var terminals: [TerminalNode] = []
+    /// Its tasks and terminals in the order they are drawn (`Workspace.children(in:)`).
+    public var children: [ProjectChild] = []
     public var id: UUID { project.id }
 }
 
@@ -47,7 +49,7 @@ public struct SidebarTree: Equatable, Sendable {
                 TerminalNode(terminal: terminal, tabs: ordered.filter { tab in
                     tab.terminalId == terminal.id && !(tab.taskId.map(known.contains) ?? false)
                 })
-            })
+            }, children: workspace.children(in: project.id))
         }
         let other = ordered.filter { tab in
             if let terminal = tab.terminalId, terminals.contains(terminal) { return false }

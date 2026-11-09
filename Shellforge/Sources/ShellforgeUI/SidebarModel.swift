@@ -357,7 +357,7 @@ public final class SidebarModel: ObservableObject {
             let path = ExistingWorktrees.resolved($0.path)
             return offered.contains(path) && !known.contains(path)
         }, project: project, baseBranch: base, agent: nil, model: nil, reasoning: nil)
-        attempt { try document.update { $0.tasks += tasks } }
+        attempt { try document.update { workspace in tasks.forEach { workspace.addTask($0) } } }
     }
 
     /// The New Task sheet for `projectId`, the SSH config read first when the project names a host:
@@ -477,7 +477,7 @@ public final class SidebarModel: ObservableObject {
                 }) {
                     throw ExistingWorktrees.Refusal.taken(made.0.branch)
                 }
-                workspace.tasks.append(made.0)
+                workspace.addTask(made.0)
                 workspace.remember(draft, projectId: projectId)
                 // Only a box the sheet showed is a choice to remember.
                 if draft.paneHost != nil { workspace.lastOpenSSHByProject[projectId] = draft.openSSH }
@@ -632,13 +632,21 @@ public final class SidebarModel: ObservableObject {
             rows.append(.project(node, collapsed: node.project.collapsed))
             guard !node.project.collapsed else { continue }
             rows += tunnelRows(of: node.project).map(SidebarRow.tunnel)
-            for task in node.tasks {
-                let listsTabs = task.id == selectedTaskId && task.tabs.count > 1
-                let ownsCurrent = task.tabs.contains { $0.id == current }
-                rows.append(.task(task, selected: task.id == selectedTaskId && !(listsTabs && ownsCurrent)))
-                if listsTabs { rows += task.tabs.map { .tab($0, selected: $0.id == current) } }
+            let tasks = Dictionary(node.tasks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            let terminals = Dictionary(node.terminals.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            for child in node.children {
+                switch child {
+                case .task(let id):
+                    guard let task = tasks[id] else { continue }
+                    let listsTabs = task.id == selectedTaskId && task.tabs.count > 1
+                    let ownsCurrent = task.tabs.contains { $0.id == current }
+                    rows.append(.task(task, selected: task.id == selectedTaskId && !(listsTabs && ownsCurrent)))
+                    if listsTabs { rows += task.tabs.map { .tab($0, selected: $0.id == current) } }
+                case .terminal(let id):
+                    guard let terminal = terminals[id] else { continue }
+                    rows.append(.terminal(terminal, selected: terminal.id == selectedTerminalId))
+                }
             }
-            rows += node.terminals.map { .terminal($0, selected: $0.id == selectedTerminalId) }
         }
         if !tree.otherTabs.isEmpty {
             rows.append(.otherTabsHeading)

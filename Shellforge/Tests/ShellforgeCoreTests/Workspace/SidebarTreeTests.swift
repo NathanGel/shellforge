@@ -25,6 +25,18 @@ import Testing
         #expect(tree.projects[0].tasks[1].tabs.map(\.id) == ["s2"])
     }
 
+    @Test func buildCarriesTheMixedOrder() {
+        var arranged = project
+        let (a, b) = (login, docs)
+        let x = TerminalItem(projectId: project.id, name: "logs", createdAt: Date(timeIntervalSince1970: 0))
+        arranged.childOrder = [b.id, x.id, a.id]
+        var workspace = Workspace(projects: [arranged], tasks: [a, b])
+        workspace.terminals = [x]
+        let tree = SidebarTree.build(workspace, tabs: [])
+        #expect(tree.projects[0].children == workspace.children(in: arranged.id))
+        #expect(tree.projects[0].children == [.task(b.id), .terminal(x.id), .task(a.id)])
+    }
+
     @Test func aTaskWithNoOpenTabStaysListed() {
         let tree = SidebarTree.build(Workspace(projects: [project], tasks: [login]), tabs: [])
         #expect(tree.projects[0].tasks.map(\.tabs) == [[]])

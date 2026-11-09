@@ -18,7 +18,7 @@ extension SidebarModel {
         let terminal = TerminalItem(projectId: projectId, name: trimmed.isEmpty ? suggestedTerminalName(in: projectId) : trimmed)
         do {
             try document.update { workspace in
-                workspace.terminals.append(terminal)
+                workspace.addTerminal(terminal)
                 if let i = workspace.projects.firstIndex(where: { $0.id == projectId }) { workspace.projects[i].collapsed = false }
             }
         } catch {

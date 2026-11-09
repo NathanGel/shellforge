@@ -69,7 +69,7 @@ extension SidebarModel {
                 throw CreationCancelled()
             }
             try document.update { workspace in
-                workspace.tasks.append(made.0)
+                workspace.addTask(made.0)
                 workspace.remember(draft, projectId: projectId)
                 if let i = workspace.projects.firstIndex(where: { $0.id == projectId }) { workspace.projects[i].collapsed = false }
             }
