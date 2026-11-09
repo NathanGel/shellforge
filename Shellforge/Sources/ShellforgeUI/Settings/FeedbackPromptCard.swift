@@ -18,7 +18,7 @@ struct FeedbackPromptCard: View {
         } actions: {
             SettingsSwitch(title: "Ask for feedback now and then", isOn: $isOn)
         } content: {
-            Text("A note in the sidebar every few months. Help › Send Feedback… works either way.")
+            Text("A note in the sidebar every few months, asking what to add or fix. Help › Send Feedback… works any time, once a day.")
                 .font(Typography.help)
                 .foregroundStyle(Palette.muted)
                 .fixedSize(horizontal: false, vertical: true)

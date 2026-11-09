@@ -30,7 +30,7 @@ function fenced(text) {
 export function renderBody(feedback) {
   const parts = [];
   if (!isBlank(feedback.good)) parts.push("### What’s working well", fenced(feedback.good));
-  if (!isBlank(feedback.bad)) parts.push("### What gets in the way", fenced(feedback.bad));
+  if (!isBlank(feedback.bad)) parts.push("### What’s missing or in the way", fenced(feedback.bad));
   if (feedback.rating !== undefined) parts.push("### Rating", `\`${feedback.rating}/5\``);
   parts.push(`Sent from Shellforge \`${feedback.version}\`, macOS \`${feedback.macos}\``);
   return parts.join("\n\n");

@@ -10,7 +10,7 @@ body:
   - type: textarea
     id: bad
     attributes:
-      label: What gets in your way?
+      label: What’s missing, or gets in your way?
   - type: input
     id: rating
     attributes:

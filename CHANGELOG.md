@@ -15,6 +15,14 @@ it and refuses to release a version that has none.
   back to Shellforge, when your Mac wakes, or when you start a task or review, not only in a new
   window. How often it asks is unchanged.
 
+### Changed
+
+- **Feedback says what it is for.** The sidebar note and the form now say that feedback decides
+  what gets added and fixed next, and the second question asks what’s missing as well as what gets
+  in your way.
+- **One feedback a day.** After feedback is sent, Send waits a day, however the form was opened, so
+  the issues can’t be flooded. GitHub’s own form, under your own account, stays open in the meantime.
+
 ## 0.9.0 — 2026-11-09
 
 ### Added

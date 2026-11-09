@@ -6,6 +6,7 @@ import ShellforgeCore
     nonisolated public static let firstSeenKey = "NoSyncShellforgeFeedbackFirstSeen"
     nonisolated public static let nextAskKey = "NoSyncShellforgeFeedbackNextAsk"
     nonisolated public static let enabledKey = "ShellforgeFeedbackPromptsEnabled"
+    nonisolated public static let lastSentKey = "NoSyncShellforgeFeedbackLastSent"
 
     @Published public private(set) var showsBanner = false
     @Published public private(set) var isEnabled: Bool
@@ -59,7 +60,15 @@ import ShellforgeCore
     /// A form left open, or a crash, counts as Not Now.
     public func beginFeedback() { wait(FeedbackSchedule.notNowDelay) }
 
-    public func finished(sent: Bool) { wait(sent ? FeedbackSchedule.afterSendDelay : FeedbackSchedule.notNowDelay) }
+    public func finished(sent: Bool) {
+        if sent { defaults.set(now(), forKey: Self.lastSentKey) }
+        wait(sent ? FeedbackSchedule.afterSendDelay : FeedbackSchedule.notNowDelay)
+    }
+
+    /// Until when another send is refused, or nil when one is allowed now.
+    public var sendBlockedUntil: Date? {
+        FeedbackSchedule.nextSend(lastSent: defaults.object(forKey: Self.lastSentKey) as? Date, now: now())
+    }
 
     public func save(_ on: Bool) {
         guard on != isEnabled else { return }

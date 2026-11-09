@@ -16,6 +16,7 @@ import Testing
 
     @Test func theTextAndTitlesAreExact() {
         #expect(FeedbackBanner.text == "How’s Shellforge working for you?")
+        #expect(FeedbackBanner.why == "Feedback decides what gets added and fixed next.")
         #expect(FeedbackBanner.title(.give) == "Give Feedback…")
         #expect(FeedbackBanner.title(.notNow) == "Not Now")
         #expect(FeedbackBanner.title(.never) == "Don’t Ask Again")

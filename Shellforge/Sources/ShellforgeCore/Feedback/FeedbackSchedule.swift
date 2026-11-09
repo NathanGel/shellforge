@@ -5,6 +5,14 @@ public enum FeedbackSchedule {
     public static let firstAskDelay: TimeInterval = 14 * 86_400
     public static let notNowDelay: TimeInterval = 90 * 86_400
     public static let afterSendDelay: TimeInterval = 180 * 86_400
+    /// One send a day, however the form was opened, so no one can flood the issues by hand.
+    public static let sendGap: TimeInterval = 86_400
+
+    /// When the next send is allowed, or nil when it is allowed now.
+    public static func nextSend(lastSent: Date?, now: Date) -> Date? {
+        guard let next = lastSent?.addingTimeInterval(sendGap), next > now else { return nil }
+        return next
+    }
 
     /// Release builds only, and only while the person has not switched the prompts off.
     public static func isDue(firstSeen: Date, nextAsk: Date?, enabled: Bool, channel: BuildChannel, now: Date) -> Bool {

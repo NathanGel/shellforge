@@ -20,6 +20,9 @@ import ShellforgeCore
     /// False when there is no relay: Send then opens GitHub.
     public let viaRelay: Bool
     public let versions: AppVersions
+    /// Set when feedback went out less than a day ago: the relay's Send is refused until then.
+    /// GitHub's own form stays open, since it posts under the person's own account.
+    public let blockedUntil: Date?
 
     private let sender: (@Sendable (FeedbackSubmission) async throws -> Int)?
     private let open: @MainActor (URL) -> Void
@@ -36,12 +39,14 @@ import ShellforgeCore
 
     public init(versions: AppVersions,
                 send: (@Sendable (FeedbackSubmission) async throws -> Int)?,
+                blockedUntil: Date? = nil,
                 open: @escaping @MainActor (URL) -> Void,
                 copy: @escaping @MainActor (String) -> Void,
                 finished: @escaping @MainActor (_ sent: Bool) -> Void) {
         self.versions = versions
         self.sender = send
         self.viaRelay = send != nil
+        self.blockedUntil = viaRelay ? blockedUntil : nil
         self.open = open
         self.copy = copy
         self.report = finished
@@ -56,6 +61,7 @@ import ShellforgeCore
         return FeedbackFormModel(
             versions: versions,
             send: client.map { client in { @Sendable submission in try await client.send(submission) } },
+            blockedUntil: prompt.sendBlockedUntil,
             open: { NSWorkspace.shared.open($0) },
             copy: { text in
                 NSPasteboard.general.clearContents()
@@ -72,7 +78,7 @@ import ShellforgeCore
     }
 
     public var canSend: Bool {
-        guard phase == .editing || isFailed else { return false }
+        guard blockedUntil == nil, phase == .editing || isFailed else { return false }
         return submission.hasText
     }
 
@@ -152,6 +158,12 @@ import ShellforgeCore
 }
 
 public enum FeedbackFormPresentation {
+    static let purpose = "Shellforge gets the features and fixes people ask for. Nobody sees what you need unless you say so here."
+    static let goodLabel = "What’s working well?"
+    static let missingLabel = "What’s missing, or gets in your way?"
+    static func sentRecently(_ until: Date) -> String {
+        "You already sent feedback in the last day. You can send more from \(until.formatted(date: .abbreviated, time: .shortened)), or open it in GitHub now."
+    }
     static let relayWarning = "This becomes a public issue on github.com/NathanGel/shellforge, posted anonymously. Anyone can read it, and you can’t edit or delete it yourself. Don’t include names, client details, commands, output, paths or passwords."
     /// The form's main button: Send through the relay, else the GitHub link.
     static func primaryTitle(viaRelay: Bool) -> String { viaRelay ? "Send" : "Open in GitHub" }

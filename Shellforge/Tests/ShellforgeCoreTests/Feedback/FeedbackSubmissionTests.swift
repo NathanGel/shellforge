@@ -35,7 +35,7 @@ import Testing
             What’s working well?
             fast
 
-            What gets in your way?
+            What’s missing, or gets in your way?
             crashes
 
             Rating: 4/5
@@ -47,7 +47,7 @@ import Testing
     @Test func plainTextLeavesOutAbsentSections() {
         let s = FeedbackSubmission(versions: versions, good: "", bad: "crashes", rating: nil)
         #expect(s.plainText == """
-            What gets in your way?
+            What’s missing, or gets in your way?
             crashes
 
             Shellforge 0.8.0, macOS 26.1.0

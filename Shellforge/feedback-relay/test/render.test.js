@@ -45,11 +45,11 @@ test("body normalises line endings", () => {
 test("body sections appear only when present", () => {
   const onlyGood = renderBody({ ...meta, good: "yes" });
   assert.ok(onlyGood.includes("### What’s working well"));
-  assert.ok(!onlyGood.includes("### What gets in the way"));
+  assert.ok(!onlyGood.includes("### What’s missing or in the way"));
   assert.ok(!onlyGood.includes("### Rating"));
   const onlyBad = renderBody({ ...meta, good: "  ", bad: "no", rating: 4 });
   assert.ok(!onlyBad.includes("### What’s working well"));
-  assert.ok(onlyBad.includes("### What gets in the way"));
+  assert.ok(onlyBad.includes("### What’s missing or in the way"));
   assert.ok(onlyBad.includes("### Rating"));
   assert.ok(onlyBad.includes("`4/5`"));
 });
@@ -67,7 +67,7 @@ test("body removes control and bidi characters but keeps tabs", () => {
 const FIXED_LINES = new Set([
   "",
   "### What’s working well",
-  "### What gets in the way",
+  "### What’s missing or in the way",
   "### Rating",
   "`1/5`", "`2/5`", "`3/5`", "`4/5`", "`5/5`",
   "Sent from Shellforge `0.8.0`, macOS `26.1.0`",

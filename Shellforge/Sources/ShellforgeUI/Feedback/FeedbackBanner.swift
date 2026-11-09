@@ -6,6 +6,7 @@ struct FeedbackBanner: View {
     enum Choice { case give, notNow, never }
 
     static let text = "How’s Shellforge working for you?"
+    static let why = "Feedback decides what gets added and fixed next."
 
     static func title(_ choice: Choice) -> String {
         switch choice {
@@ -33,6 +34,9 @@ struct FeedbackBanner: View {
         NoticeGround(tone: .info) {
             VStack(alignment: .leading, spacing: scale(Space.snug)) {
                 NoticeLine(text: Self.text, tone: .info)
+                Text(Self.why).font(Typography.help).foregroundStyle(Palette.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, scale(Space.block))
                 // Side by side while they fit; stacked at a large zoom, so none is cut off.
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: scale(Space.block)) { buttons }

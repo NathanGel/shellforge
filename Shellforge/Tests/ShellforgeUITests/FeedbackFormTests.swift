@@ -44,10 +44,10 @@ private final class Gate: @unchecked Sendable {
 @MainActor @Suite struct FeedbackFormTests {
     private static let versions = AppVersions(version: "0.8.0", macOS: "26.1.0")
 
-    private func make(_ gate: Gate?, _ r: Recorder, relay: Bool = true) -> FeedbackFormModel {
+    private func make(_ gate: Gate?, _ r: Recorder, relay: Bool = true, blockedUntil: Date? = nil) -> FeedbackFormModel {
         let gate = gate ?? Gate()
         let send: (@Sendable (FeedbackSubmission) async throws -> Int)? = relay ? { @Sendable s in try await gate.send(s) } : nil
-        return FeedbackFormModel(versions: Self.versions, send: send,
+        return FeedbackFormModel(versions: Self.versions, send: send, blockedUntil: blockedUntil,
                           open: { r.opened.append($0) }, copy: { r.copied.append($0) },
                           finished: { r.finished.append($0) })
     }
@@ -62,6 +62,25 @@ private final class Gate: @unchecked Sendable {
         #expect(P.sending == "Sending…")
         #expect(P.copied == "Copied.")
         #expect(P.onClipboard == "Your feedback is on the clipboard.")
+        #expect(P.purpose == "Shellforge gets the features and fixes people ask for. Nobody sees what you need unless you say so here.")
+        #expect(P.missingLabel == "What’s missing, or gets in your way?")
+    }
+
+    @Test func aSendWithinADayIsRefused() {
+        let until = Date(timeIntervalSince1970: 2_000_000)
+        let model = make(Gate(), Recorder(), blockedUntil: until)
+        model.bad = "slow"
+        #expect(!model.canSend)
+        model.send()
+        #expect(model.phase == .editing)
+        #expect(FeedbackFormPresentation.sentRecently(until).hasPrefix("You already sent feedback in the last day. You can send more from "))
+    }
+
+    @Test func theDailyLimitLeavesGitHubOpen() {
+        let r = Recorder()
+        let model = make(nil, r, relay: false, blockedUntil: Date(timeIntervalSince1970: 2_000_000))
+        model.bad = "slow"
+        #expect(model.canSend)
     }
 
     @Test func sendNeedsText() {

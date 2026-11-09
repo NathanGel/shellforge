@@ -65,6 +65,25 @@ import Testing
         #expect(!prompt.showsBanner)
     }
 
+    @Test func sendingBlocksAnotherSendForADay() {
+        let (prompt, clock, defaults) = shown()
+        #expect(prompt.sendBlockedUntil == nil)
+        prompt.finished(sent: true)
+        let sentAt = clock.now
+        #expect(prompt.sendBlockedUntil == sentAt.addingTimeInterval(Self.day))
+        // It holds across a relaunch.
+        clock.advance(by: Self.day - 1)
+        #expect(make(defaults, clock).sendBlockedUntil == sentAt.addingTimeInterval(Self.day))
+        clock.advance(by: 1)
+        #expect(prompt.sendBlockedUntil == nil)
+    }
+
+    @Test func notSendingBlocksNothing() {
+        let (prompt, _, _) = shown()
+        prompt.finished(sent: false)
+        #expect(prompt.sendBlockedUntil == nil)
+    }
+
     @Test func devBuildNeverShows() {
         let defaults = ScratchDefaults.make(), clock = TestClock(Date(timeIntervalSince1970: 1_000_000))
         let prompt = make(defaults, clock, channel: .dev)

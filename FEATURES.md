@@ -375,11 +375,15 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
 
 ## Feedback
 
+Feedback is how Shellforge learns what to add and what to fix: without it, nobody sees what people need. The note and the form both say so.
+
 - **A note in the sidebar.** In a release build, 14 days after you first use Shellforge, a note at the top of the sidebar, under the header, asks what you think. It shows in every window at once. A Development build never shows it.
+  - Once it is due, it appears in the next window you open, when you switch back to Shellforge, when your Mac wakes, or when you start a task or review. No relaunch is needed.
   - **Give Feedback** opens the form. **Not Now** hides the note in every window and asks again in 90 days. **Don’t Ask Again** turns the note off; Settings › Core › Ask for feedback now and then turns it back on.
   - Closing the form without sending counts as Not Now. After you send, the next ask is 180 days away.
 - **Help › Send Feedback…** opens the same form whenever you like, with the note on or off. With no terminal window open, it offers GitHub’s feedback form instead.
-- **The form** asks how Shellforge is for you (a rating from 1 to 5, optional), what is good and what is bad. It says first that feedback becomes a public issue on github.com/NathanGel/shellforge, so leave out names, client details, commands, output, paths and passwords.
+- **Once a day.** After feedback is sent, Send waits a day, however the form was opened, and the form says from when you can send more. GitHub’s own form, posted under your own account, stays available in the meantime.
+- **The form** asks how Shellforge is for you (a rating from 1 to 5, optional), what is working well, and what is missing or gets in your way. It says first that feedback becomes a public issue on github.com/NathanGel/shellforge, so leave out names, client details, commands, output, paths and passwords.
   - Sent through Shellforge, the issue is posted anonymously by a bot, and you can’t edit or delete it yourself. With it go your rating, your two texts, Shellforge’s version and your macOS version. Your IP address is used only for a one-minute rate limit and is not kept.
   - **If sending can’t get through**, or the build has no relay, the form offers GitHub’s prefilled feedback form in your browser instead, and that issue is posted under your own GitHub account. A long text is cut to fit the link, and the whole of it is copied to the clipboard.
 - **Nothing is sent by itself.** Nothing leaves your Mac until you press Send, and what you type is never saved to disk.

@@ -9,15 +9,18 @@ struct FeedbackSheet: View {
 
     var body: some View {
         SheetLayout(title: "Send Feedback", height: Sheet.height, locked: model.phase == .sending) {
-            // Never cut off: the warning is the point of the sheet.
-            Text(model.viaRelay ? Copy.relayWarning : Copy.githubWarning)
-                .font(Typography.caption).foregroundStyle(Palette.muted)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            // Never cut off: why it matters, then the warning, which is the point of the sheet.
+            VStack(alignment: .leading, spacing: Space.tight) {
+                Text(Copy.purpose).font(Typography.caption).foregroundStyle(Palette.text)
+                Text(model.viaRelay ? Copy.relayWarning : Copy.githubWarning)
+                    .font(Typography.caption).foregroundStyle(Palette.muted)
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         } content: {
             VStack(alignment: .leading, spacing: Space.block) {
-                FormField("What’s working well?") { editor($model.good) }
-                FormField("What gets in your way?") { editor($model.bad) }
+                FormField(Copy.goodLabel) { editor($model.good) }
+                FormField(Copy.missingLabel) { editor($model.bad) }
                 FormField("How likely are you to keep using Shellforge?") {
                     SegmentedControl(values: [1, 2, 3, 4, 5] as [Int?], selection: $model.rating) { value, on in
                         Text(value.map(String.init) ?? "").font(on ? Typography.bodyEmphasis : Typography.body)
@@ -88,7 +91,17 @@ struct FeedbackSheet: View {
                 Link(FeedbackLink.issue(n).absoluteString, destination: FeedbackLink.issue(n)).font(Typography.caption)
             }
         default:
-            if let note = model.note { HelpText(note) }
+            VStack(alignment: .leading, spacing: Space.base) {
+                if let until = model.blockedUntil {
+                    Text(Copy.sentRecently(until)).font(Typography.caption).foregroundStyle(Palette.amber)
+                        .fixedSize(horizontal: false, vertical: true)
+                    VStack(alignment: .leading, spacing: Space.tight) {
+                        Button("Open in GitHub") { model.openInGitHub() }
+                        HelpText(Copy.githubWarning)
+                    }
+                }
+                if let note = model.note { HelpText(note) }
+            }
         }
     }
 }

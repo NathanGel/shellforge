@@ -41,7 +41,7 @@ public struct FeedbackSubmission: Codable, Equatable, Sendable {
     public var plainText: String {
         var sections: [String] = []
         if let good { sections.append("What’s working well?\n\(good)") }
-        if let bad { sections.append("What gets in your way?\n\(bad)") }
+        if let bad { sections.append("What’s missing, or gets in your way?\n\(bad)") }
         if let rating { sections.append("Rating: \(rating)/5") }
         sections.append("Shellforge \(version), macOS \(macos)")
         return sections.joined(separator: "\n\n")
