@@ -98,6 +98,10 @@ public final class SidebarModel: ObservableObject {
     @Published public internal(set) var rearrange: RearrangeDraft?
     /// The project being dragged in the mode: only its header is drawn while it is.
     @Published public var draggingProject: UUID?
+    /// The row a drag in the mode is over, and which half: where its accent line is drawn.
+    @Published public var dropTarget: RearrangeDropTarget?
+    /// The row being dragged in the mode: what a drop moves. Not drawn, so not published.
+    public internal(set) var draggedItem: RearrangeDraft.Item?
     @Published public internal(set) var selectedTaskId: UUID?
     /// The terminal row shown, when the selected tab is a terminal's (Terminals/).
     @Published public internal(set) var selectedTerminalId: UUID?

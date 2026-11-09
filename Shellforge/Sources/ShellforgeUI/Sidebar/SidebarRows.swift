@@ -73,7 +73,7 @@ struct SidebarHeader: View {
 /// The header's place: a row of the list as before, or — while the window's buttons sit inside the
 /// sidebar — their band, pinned above the list: the title a gap past the zoom button, the row
 /// centred on the buttons, its trailing buttons in line with the rows' below.
-private struct HeaderPlacement: ViewModifier {
+struct HeaderPlacement: ViewModifier {
     let windowControls: SidebarWindowControls?
     let scale: InterfaceScale
 
@@ -100,8 +100,7 @@ private struct HeaderPlacement: ViewModifier {
 
 /// A project: its chevron, its provider's mark, its name and Jira badge, and the "+" that starts a
 /// task; right-clicked, AiTerm's menu: the "+" items, Open in, Jira Projects…, Tunnels… and SSH
-/// Host…, Pull <default branch> for a hosted project, then Move Up and Move Down, and Remove
-/// Project… last.
+/// Host…, Pull <default branch> for a hosted project, then Rearrange, and Remove Project… last.
 struct ProjectHeaderRow: View {
     let node: ProjectNode
     let collapsed: Bool
@@ -112,9 +111,9 @@ struct ProjectHeaderRow: View {
     let newTask: () -> Void
     let newReview: () -> Void
     var newTerminal: () -> Void = {}
-    var canMoveUp = false
-    var canMoveDown = false
-    var move: (_ up: Bool) -> Void = { _ in }
+    /// Rearrange mode, greyed while another window is in it.
+    var canRearrange = true
+    var rearrange: () -> Void = {}
     let editJiraProjects: () -> Void
     var editTunnels: () -> Void = {}
     var editSSHHost: () -> Void = {}
@@ -167,8 +166,8 @@ struct ProjectHeaderRow: View {
         }
         .frame(height: scale(Size.projectRow)).padding(.leading, scale(Space.base)).padding(.trailing, SidebarRowLayout.trailingInset(scale))
         .modifier(RowPill(selected: false))
-        // AiTerm's order: what the "+" offers, Open in, what the project links to, the moves, then Remove.
-        .contextMenu {
+        // AiTerm's order: what the "+" offers, Open in, what the project links to, Rearrange, then Remove.
+        .rowContextMenu {
             newItems
             Divider()
             OpenInMenuItems(folder: node.project.path)
@@ -182,11 +181,18 @@ struct ProjectHeaderRow: View {
                 Button(pullTitle, action: pull).disabled(pulling)
             }
             Divider()
-            Button("Move Up") { move(true) }.disabled(!canMoveUp)
-            Button("Move Down") { move(false) }.disabled(!canMoveDown)
+            RearrangeMenuItem(enabled: canRearrange, action: rearrange)
             Divider()
             Button("Remove Project…", role: .destructive, action: remove)
         }
+    }
+
+    /// The context menu's items, in order, apart from Open in's.
+    static func menuTitles(provider: Provider, sshHost: String?, canOpenSSHHost: Bool, pullTitle: String?) -> [String] {
+        var titles = ["New Task…", "New Review…", "New Terminal…", "Jira Projects…", "Tunnels…", SidebarModel.sshHostMenuTitle(sshHost)]
+        if let sshHost, canOpenSSHHost { titles.append(SidebarModel.openSSHHostTitle(sshHost)) }
+        if let pullTitle { titles.append(pullTitle) }
+        return titles + [RearrangeMenuItem.title, "Remove Project…"]
     }
 
     /// What the "+" and the context menu both offer. New Review is greyed only for a folder that is
@@ -219,6 +225,9 @@ struct TaskRowView: View {
     var closeTitle = "Close Tab"
     /// Its worktree's lines against its base, for the VS Code badge; nil until read.
     var diff: DiffStat? = nil
+    /// Rearrange mode, greyed while another window is in it.
+    var canRearrange = true
+    var rearrange: () -> Void = {}
     @Environment(\.interfaceScale) private var scale
 
     var body: some View {
@@ -255,15 +264,22 @@ struct TaskRowView: View {
         }
         .accessibilityLabel(node.task.title)
         .accessibilityValue(status.label)
-        .contextMenu {
+        .rowContextMenu {
             // Greyed while the row is being removed, as AiTerm's is.
             Button("Rename…", action: rename).disabled(removal == .removing)
             Divider()
             OpenInMenuItems(folder: node.task.worktreePath)
             Divider()
+            RearrangeMenuItem(enabled: canRearrange, action: rearrange)
+            Divider()
             if !node.tabs.isEmpty { Button(closeTitle, action: closeTab).disabled(removal == .removing) }
             Button("Remove \(node.task.kindName)…", role: .destructive, action: remove).disabled(removal == .removing)
         }
+    }
+
+    /// The context menu's items, in order, apart from Open in's.
+    static func menuTitles(hasTabs: Bool, closeTitle: String, kindName: String) -> [String] {
+        ["Rename…", RearrangeMenuItem.title] + (hasTabs ? [closeTitle] : []) + ["Remove \(kindName)…"]
     }
 
     /// What the row says of its removal: "Removing…" while it runs, why it stopped after.

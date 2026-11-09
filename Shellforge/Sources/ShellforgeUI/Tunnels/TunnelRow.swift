@@ -11,6 +11,9 @@ struct TunnelRowView: View {
     let start: () -> Void
     let stop: () -> Void
     var answerInTab: () -> Void = {}
+    /// Rearrange mode, greyed while another window is in it: the row's one menu item.
+    var canRearrange = true
+    var rearrange: () -> Void = {}
     @Environment(\.interfaceScale) private var scale
     @Environment(\.surface) private var surface
 
@@ -130,5 +133,9 @@ struct TunnelRowView: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Tunnel \(row.alias)")
         .accessibilityValue(row.missing ? "Not in SSH config" : row.state.rawValue)
+        .rowContextMenu { RearrangeMenuItem(enabled: canRearrange, action: rearrange) }
     }
+
+    /// The context menu's items.
+    static let menuTitles = [RearrangeMenuItem.title]
 }

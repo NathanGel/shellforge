@@ -73,14 +73,14 @@ import Testing
         #expect(ends == [[true, true], [true, false]])
     }
 
-    /// VoiceOver gets the context menu's actions, those it can take now.
+    /// VoiceOver gets the context menu's actions; moving is Rearrange mode's (RearrangeViewsTests).
     @Test func voiceOverOffersTheMenusEnabledItems() throws {
         let divider = SidebarDivider(name: "Work", position: 0)
-        #expect(DividerRow.voiceOverActions(DividerRowItem(divider: divider, canMoveUp: false, canMoveDown: true))
-                == ["Rename", "Move Down", "Remove Divider"])
         #expect(DividerRow.voiceOverActions(DividerRowItem(divider: divider, canMoveUp: true, canMoveDown: true))
-                == ["Rename", "Move Up", "Move Down", "Remove Divider"])
-        #expect(TerminalRowView.voiceOverActions == ["Rename", "Remove Terminal"])
+                == ["Rename", "Rearrange", "Remove Divider"])
+        #expect(DividerRow.voiceOverActions(DividerRowItem(divider: divider, canMoveUp: true, canMoveDown: true), canRearrange: false)
+                == ["Rename", "Remove Divider"])
+        #expect(TerminalRowView.voiceOverActions == ["Rename", "Rearrange", "Remove Terminal"])
     }
 
     /// With no project a divider would divide nothing, and would not be drawn to remove again.

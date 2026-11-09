@@ -22,6 +22,10 @@ it and refuses to release a version that has none.
   starts. When git can’t simply switch, Shellforge asks: stash clashing changes, create a branch
   that doesn’t exist yet, use the worktree that already has the branch, or switch anyway while
   another task works in the folder. Cancel leaves the folder as it was and the sheet open.
+- **Rearrange mode.** Right-click a project, divider, task, terminal or SSH row › Rearrange, then
+  drag rows by their handles. Projects and dividers move among each other, and a project’s SSH rows,
+  and its tasks and terminals in any mix, move within that project. Done saves the order and Cancel
+  (or Esc) puts it back. VoiceOver offers Move Up and Move Down on each row while rearranging.
 
 ### Changed
 
@@ -30,6 +34,8 @@ it and refuses to release a version that has none.
   in your way.
 - **One feedback a day.** After feedback is sent, Send waits a day, however the form was opened, so
   the issues can’t be flooded. GitHub’s own form, under your own account, stays open in the meantime.
+- **Move Up and Move Down leave the menus.** A project’s and a divider’s right-click menus, and a
+  divider’s VoiceOver actions, now offer Rearrange instead.
 
 ## 0.9.0 — 2026-11-09
 

@@ -4,8 +4,8 @@ import ShellforgeDesign
 import SwiftUI
 
 /// A terminal row: the agents in its tabs, or its shell's `>_` when none is known; its name; its
-/// status. Right-clicked: Rename…, Open in, and Remove Terminal; VoiceOver offers Rename and
-/// Remove Terminal.
+/// status. Right-clicked: Rename…, Open in, Rearrange and Remove Terminal; VoiceOver offers Rename,
+/// Rearrange and Remove Terminal, and none of them in Rearrange mode.
 struct TerminalRowView: View {
     let node: TerminalNode
     let selected: Bool
@@ -19,7 +19,11 @@ struct TerminalRowView: View {
     var rename: () -> Void = {}
     var remove: () -> Void = {}
     var menuExtras: AnyView = AnyView(EmptyView())
+    /// Rearrange mode, greyed while another window is in it.
+    var canRearrange = true
+    var rearrange: () -> Void = {}
     @Environment(\.interfaceScale) private var scale
+    @Environment(\.isRearranging) private var isRearranging
 
     var body: some View {
         SelectableRow(selected: selected, activate: activate) {
@@ -33,19 +37,25 @@ struct TerminalRowView: View {
         }
         .accessibilityLabel(node.terminal.name)
         .accessibilityValue(status.label)
-        .accessibilityAction(named: Text("Rename"), rename)
-        .accessibilityAction(named: Text("Remove Terminal"), remove)
-        .contextMenu {
+        .modifier(NamedAccessibilityAction(name: "Rename", enabled: !isRearranging, action: rename))
+        .modifier(NamedAccessibilityAction(name: RearrangeMenuItem.title, enabled: !isRearranging && canRearrange, action: rearrange))
+        .modifier(NamedAccessibilityAction(name: "Remove Terminal", enabled: !isRearranging, action: remove))
+        .rowContextMenu {
             Button("Rename…", action: rename)
             Divider()
             menuExtras
+            Divider()
+            RearrangeMenuItem(enabled: canRearrange, action: rearrange)
             Divider()
             Button("Remove Terminal", role: .destructive, action: remove)
         }
     }
 
-    /// What VoiceOver offers, as the context menu does.
-    static let voiceOverActions = ["Rename", "Remove Terminal"]
+    /// What VoiceOver offers outside Rearrange mode, as the context menu does.
+    static let voiceOverActions = ["Rename", RearrangeMenuItem.title, "Remove Terminal"]
+
+    /// The context menu's items, in order, apart from Open in's.
+    static let menuTitles = ["Rename…", RearrangeMenuItem.title, "Remove Terminal"]
 
     /// AiTerm's: its agents, or `>_` when none is known.
     static func marks(_ agents: [SessionAgent]) -> AvatarGroup { AvatarGroup.of(agents.isEmpty ? [.shell] : agents) }

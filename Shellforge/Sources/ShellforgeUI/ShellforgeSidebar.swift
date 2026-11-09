@@ -48,6 +48,9 @@ public enum ShellforgeSidebar {
         }, hideSidebar: hideSidebar, agentTools: agentTools, agentsChanged: agentsChanged)
         let host = SidebarHostingView(rootView: ZoomedSidebar(zoom: zoom, sidebar: sidebar))
         host.chrome = chrome
+        // Hiding the sidebar, by ⌃⌘S or its button, leaves Rearrange mode unsaved: nothing is
+        // left half-arranged where it cannot be seen.
+        host.didHide = { [weak model] in model?.cancelRearrange() }
         host.backpackPresenter = presenter
         host.feedbackPresenter = feedbackPresenter
         host.frame = NSRect(x: 0, y: 0, width: width, height: 400)
@@ -196,6 +199,13 @@ final class SidebarHostingView<Content: View>: NSHostingView<Content>, RowHighli
     var backpackPresenter: SheetPresenter?
     /// How this sidebar opens its feedback form.
     var feedbackPresenter: SheetPresenter?
+    /// Told when the sidebar is hidden.
+    var didHide: (@MainActor () -> Void)?
+
+    override func viewDidHide() {
+        super.viewDidHide()
+        didHide?()
+    }
 }
 
 /// Calls back once when a window closes, unless stopped first: how a sheet learns it was closed
@@ -248,16 +258,25 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // With the window's buttons inside the panel, the header is their row, pinned.
-            if let controls = chrome.windowControls { header(controls) }
+            // With the window's buttons inside the panel, the header is their row, pinned. Rearrange
+            // mode's bar takes the header's place, pinned either way, so Done stays in reach.
+            if model.isRearranging {
+                RearrangeBar(cancel: model.cancelRearrange, done: model.finishRearrange, windowControls: chrome.windowControls)
+            } else if let controls = chrome.windowControls {
+                header(controls)
+            }
+            // Its buttons wait while the sidebar is rearranged.
             SidebarBanners(model: model, feedback: feedback, giveFeedback: presentFeedback)
+                .allowsHitTesting(!model.isRearranging)
             List {
-                if chrome.windowControls == nil { header(nil) }
+                if chrome.windowControls == nil && !model.isRearranging { header(nil) }
                 ForEach(model.rows) { row in rowView(row) }
             }
             .listStyle(.sidebar)
             .scrollContentBackground(.hidden)
             .background(NativeRowHighlight.off)
+            .environment(\.isRearranging, model.isRearranging)
+            .rearrangeListDrop(model)
             SidebarFooterHost(model: model, hooks: hooks, machine: machine, backpack: backpack,
                               toggleMac: { BackpackToggle(backpack: backpack, presentSheet: presentBackpack).run() },
                               openMacSettings: showMacSettings)
@@ -295,7 +314,30 @@ struct SidebarView: View {
                       windowControls: controls)
     }
 
+    /// A row as drawn: in Rearrange mode, behind its handle and taking drops (RearrangeRow).
     @ViewBuilder private func rowView(_ row: SidebarRow) -> some View {
+        if model.isRearranging, let item = RearrangeDrop.item(of: row) {
+            RearrangeRow(model: model, item: item, id: row.id, label: Self.rearrangeLabel(row)) { rowContent(row) }
+                .listRowSeparator(.hidden)
+        } else {
+            rowContent(row)
+        }
+    }
+
+    /// What VoiceOver calls a row in Rearrange mode.
+    private static func rearrangeLabel(_ row: SidebarRow) -> String {
+        switch row {
+        case .project(let node, _): node.project.name
+        case .divider(let row): row.divider.name.isEmpty ? "Divider" : "\(row.divider.name) divider"
+        case .tunnel(let row): "Tunnel \(row.alias)"
+        case .task(let node, _): node.task.title
+        case .terminal(let node, _): node.terminal.name
+        case .empty, .tab, .otherTabsHeading: ""
+        }
+    }
+
+    @ViewBuilder private func rowContent(_ row: SidebarRow) -> some View {
+        let canRearrange = model.canRearrange
         switch row {
         case .empty:
             SidebarEmptyState(canAdd: true, add: addProject).listRowSeparator(.hidden)
@@ -306,8 +348,7 @@ struct SidebarView: View {
                              newTask: { showNewTask(in: node.id) },
                              newReview: { showNewReview(in: node.id) },
                              newTerminal: { showNewTerminal(in: node.id) },
-                             canMoveUp: model.canMove(.project(node.id), up: true), canMoveDown: model.canMove(.project(node.id), up: false),
-                             move: { up in model.move(.project(node.id), up: up) },
+                             canRearrange: canRearrange, rearrange: model.beginRearrange,
                              editJiraProjects: { showJiraProjects(for: node.id) },
                              editTunnels: { showTunnels(for: node.id) },
                              editSSHHost: { showSSHHost(for: node.id) },
@@ -324,15 +365,17 @@ struct SidebarView: View {
                             status: model.status(ofTerminal: node.id), guessed: model.statusIsGuessed(ofTerminal: node.id),
                             agentName: model.agentName, activate: { model.select(terminal: node.id) },
                             rename: { showRenameTerminal(node.terminal) }, remove: { model.removeTerminal(node.id) },
-                            menuExtras: AnyView(OpenInMenuItems(folder: model.project(node.terminal.projectId)?.path ?? "")))
+                            menuExtras: AnyView(OpenInMenuItems(folder: model.project(node.terminal.projectId)?.path ?? "")),
+                            canRearrange: canRearrange, rearrange: model.beginRearrange)
                 .listRowSeparator(.hidden)
         case .divider(let row):
-            DividerRow(row: row, rename: { showRenameDivider(row.divider) }, move: { up in model.move(.divider(row.divider.id), up: up) },
+            DividerRow(row: row, rename: { showRenameDivider(row.divider) }, canRearrange: canRearrange, rearrange: model.beginRearrange,
                        remove: { model.removeDivider(row.divider.id) })
                 .listRowSeparator(.hidden)
         case .tunnel(let tunnel):
             TunnelRowView(row: tunnel, start: { model.startTunnel(tunnel.alias) }, stop: { model.stopTunnel(tunnel.alias) },
-                          answerInTab: { model.answerInTab(tunnel.alias, in: tunnel.projectId) })
+                          answerInTab: { model.answerInTab(tunnel.alias, in: tunnel.projectId) },
+                          canRearrange: canRearrange, rearrange: model.beginRearrange)
                 .listRowSeparator(.hidden)
         case .task(let node, let selected):
             TaskRowView(node: node, selected: selected, agents: model.avatars(forTask: node.id),
@@ -342,7 +385,7 @@ struct SidebarView: View {
                         remove: { Task { await model.confirmRemove(taskId: node.id) } },
                         rename: { showRename(.task, name: node.task.title) { model.renameTask(node.id, to: $0) } },
                         closeTab: { model.closeCurrentTab(ofTask: node.id) }, closeTitle: model.closeTitle(ofTask: node.id),
-                        diff: model.diffs[node.id])
+                        diff: model.diffs[node.id], canRearrange: canRearrange, rearrange: model.beginRearrange)
                 .listRowSeparator(.hidden)
         case .tab(let tab, let selected):
             TabRowView(tab: tab, selected: selected, agents: model.avatars(forTab: tab.id),

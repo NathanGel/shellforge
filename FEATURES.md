@@ -75,7 +75,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
   - Open in Finder and Open in VS Code (when VS Code is installed);
   - Jira Projects…, Tunnels… and SSH Host…;
   - Pull <default branch>, for a GitLab or GitHub project;
-  - Move Up and Move Down. A move crosses a divider;
+  - Rearrange (see [Rearranging the sidebar](#rearranging-the-sidebar));
   - Remove Project….
 - **Jira Projects…** links the project to Jira projects.
   - Search, add, or remove a link with ✕; nothing changes until Save.
@@ -98,7 +98,17 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 ## Dividers
 
 - **Add Divider.** Use ⌃⌘G, or the header's "+" › Add Divider…. The divider is added at the end of the list. A name is optional: without one it draws a plain line.
-- **Right-click a divider** for Rename…, Move Up / Move Down and Remove Divider. Removing it asks nothing, because a divider holds nothing.
+- **Right-click a divider** for Rename…, Rearrange and Remove Divider. Removing it asks nothing, because a divider holds nothing.
+
+## Rearranging the sidebar
+
+- **Rearrange.** Right-click a project, divider, task, terminal or SSH row › Rearrange. The header becomes a bar that reads Rearranging, with Cancel and Done.
+  - Each row gets a handle. Drag a row and a line shows where it lands.
+  - Projects and dividers move among each other; a project brings its rows along and shows only its header while it is dragged.
+  - A project's SSH rows move among themselves, and its tasks and terminals move among themselves, in any mix. Nothing leaves its project, and no task or terminal goes above the SSH rows. A drop the rules refuse shows no line.
+  - Tabs and Other Tabs are hidden, and clicks, menus and banner buttons wait until you are done.
+- **Done (Return)** saves the new order. **Cancel (Esc)** puts everything back. Hiding the sidebar cancels too.
+- **One window at a time.** While one window is rearranging, Rearrange is greyed in the others.
 
 ## Tasks and reviews
 
@@ -212,6 +222,7 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
 - **Right-click a terminal row** for:
   - Rename…, which renames the row, not the tabs;
   - Open in;
+  - Rearrange;
   - Remove Terminal, which closes its tabs and asks nothing, because nothing on disk is touched.
 
 ## Footer
@@ -332,8 +343,9 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
 - **Rows** read their title and status.
 - **Named actions:**
   - tab rows: Close;
-  - terminal rows: Rename and Remove Terminal;
-  - dividers: Rename, Move Up / Move Down (while possible) and Remove Divider.
+  - terminal rows: Rename, Rearrange and Remove Terminal;
+  - dividers: Rename, Rearrange and Remove Divider;
+  - in Rearrange mode, every row: Move Up / Move Down (while possible), one step within its own list.
 - **Labels:** tunnel rows read their state, and the footer's Mac row reads its readings.
 
 ## The helper (shellforged)

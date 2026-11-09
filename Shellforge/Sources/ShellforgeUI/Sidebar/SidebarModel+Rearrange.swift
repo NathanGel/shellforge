@@ -42,7 +42,54 @@ extension SidebarModel {
 
     private func leaveRearrange() {
         rearrange = nil
-        draggingProject = nil
+        endDrag()
         if document.rearranger === self { document.rearranger = nil }
+    }
+}
+
+// -- dragging -------------------------------------------------------------------
+
+extension SidebarModel {
+    /// A row is picked up: a project folds to its header until it is dropped.
+    public func startDragging(_ item: RearrangeDraft.Item) {
+        guard isRearranging else { return }
+        draggedItem = item
+        dropTarget = nil
+        if case .entry(.project(let id)) = item { draggingProject = id } else { draggingProject = nil }
+    }
+
+    /// The drag is over `item`'s upper or lower half: the line is drawn there when the draft would
+    /// take the drop, and none when it would refuse it. True when it would take it.
+    @discardableResult
+    public func hover(over item: RearrangeDraft.Item, lowerHalf: Bool) -> Bool {
+        guard landing(on: item, lowerHalf: lowerHalf) != nil else {
+            if dropTarget != nil { dropTarget = nil }
+            return false
+        }
+        let target = RearrangeDropTarget(item: item, lowerHalf: lowerHalf)
+        if dropTarget != target { dropTarget = target }
+        return true
+    }
+
+    /// The dragged row is dropped on `item`'s upper or lower half: moved in the draft when it may be.
+    /// The drag is over either way.
+    @discardableResult
+    public func drop(on item: RearrangeDraft.Item, lowerHalf: Bool) -> Bool {
+        defer { endDrag() }
+        guard let dragged = draggedItem, let before = landing(on: item, lowerHalf: lowerHalf) else { return false }
+        return moveInDraft(dragged, before: before)
+    }
+
+    /// The drag ended without a drop here: nothing is dragged, no line is drawn.
+    public func endDrag() {
+        draggedItem = nil
+        if draggingProject != nil { draggingProject = nil }
+        if dropTarget != nil { dropTarget = nil }
+    }
+
+    /// Where dropping the dragged row on `item` would put it (`.some(nil)` = the end of its list), or nil when refused.
+    private func landing(on item: RearrangeDraft.Item, lowerHalf: Bool) -> RearrangeDraft.Item?? {
+        guard let dragged = draggedItem, let draft = rearrange else { return nil }
+        return RearrangeDrop.landing(of: dragged, on: item, lowerHalf: lowerHalf, in: rows, draft: draft)
     }
 }
