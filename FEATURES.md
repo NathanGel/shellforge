@@ -376,7 +376,7 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
   - Agents report to it through their hooks, on `127.0.0.1:47831`.
   - The app tells it which sessions are open.
 - **When it runs.** It starts with Shellforge and needs Python 3.11 or newer on your login PATH. It restarts after a crash, waiting longer each time. One left running from before is picked up. It stops when Shellforge quits.
-- **Its files** are in `~/Library/Application Support/Shellforge/`: the socket, `shellforged.log`, `daemon.json`, `tunnels.json` and `hook-port`.
+- **Its files** are in `~/Library/Application Support/Shellforge/`: the socket, `shellforged.log`, `daemon.json`, `tunnels.json` and `hook-port`. A dev build's helper keeps its own in the dev build's data folder, on a port of its own.
 - **Messages it can cause:**
   - starting or reconnecting;
   - Python missing or too old;
