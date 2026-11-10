@@ -368,7 +368,7 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
   - dividers: Rename, Rearrange and Remove Divider;
   - project, task and SSH rows: Rearrange (greyed menus aside, it is left out while another window is rearranging);
   - in Rearrange mode, every row: Move Up / Move Down (while possible), one step within its own list, and a project's Fold / Unfold.
-- **Labels:** tunnel rows read their state, the Metrics panel's Mac row reads its readings, and the metrics strip reads all of its readings, both windows of each vendor ("Claude: 5-hour limit 42 % used, weekly limit 84 % used"), and opens the panel.
+- **Labels:** tunnel rows read their state, the Metrics panel's Mac row reads its readings, and the metrics strip reads all of its readings, both windows of each vendor ("Claude Code: 5-hour limit 42 % used, weekly limit 84 % used"), and opens the panel.
 
 ## The helper (shellforged)
 

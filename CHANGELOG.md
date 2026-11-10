@@ -32,6 +32,8 @@ it and refuses to release a version that has none.
   isn't installed, such as Codex on a Mac without it, no longer shows "No usage data yet".
   Claude Code counts as installed when `~/.claude` exists, even off your PATH. With no vendor
   to show, the Metrics panel leaves out its Usage group.
+- **The Sessions header no longer has a Settings gear.** Settings is the gear at the foot of the
+  activity bar; Mac Settings… is on the Metrics panel's Mac row (right-click).
 - **Banners show above every panel.** An error, work in progress such as "Adding demo…", a
   fallback PATH or a helper problem is pinned at the top of the sidebar, whichever panel shows.
 

@@ -63,14 +63,31 @@ import Testing
         #expect(inks == [Palette.text, Palette.amber])
     }
 
-    /// VoiceOver reads the Mac's readings, then each vendor by name with both windows, or its note.
+    /// VoiceOver reads the Mac's readings, then each vendor by the sidebar's name for it with both
+    /// windows, or its note.
     @Test func theLabelReadsBothWindows() {
+        let model = sidebarModel()
         let label = MetricsStrip.label(machine: MetricsStrip.machineGauges(cpu), vendors: [
             vendor(.claude), UsageVendorRow(vendor: .codex, lines: [UsageLine(window: .weekly, percent: 21, warning: false)], note: nil),
-        ])
-        #expect(label == "CPU 23 % busy, Memory 61 % used, Claude: 5-hour limit 42 % used, weekly limit 84 % used, Codex: weekly limit 21 % used")
-        let waiting = MetricsStrip.label(machine: [], vendors: [UsageVendorRow(vendor: .claude, lines: [], note: "Usage disconnected", warning: true)])
-        #expect(waiting == "Claude: Usage disconnected")
+        ], name: model.agentName)
+        #expect(label == "CPU 23 % busy, Memory 61 % used, Claude Code: 5-hour limit 42 % used, weekly limit 84 % used, Codex: weekly limit 21 % used")
+        let waiting = MetricsStrip.label(machine: [], vendors: [UsageVendorRow(vendor: .claude, lines: [], note: "Usage disconnected", warning: true)],
+                                         name: model.agentName)
+        #expect(waiting == "Claude Code: Usage disconnected")
+    }
+
+    /// A custom agent is read by its name as it is now: renamed in Settings › Agents, the label follows.
+    @Test func theLabelUsesARenamedAgentsCurrentName() {
+        let model = sidebarModel()
+        var agent = AgentPresets.codex
+        agent.id = "mine"
+        agent.name = "Helper"
+        model.reloadAgents(AgentPresets.all + [agent], readyMade: [])
+        let row = UsageVendorRow(vendor: .custom("mine"), lines: [week], note: nil)
+        #expect(MetricsStrip.label(machine: [], vendors: [row], name: model.agentName) == "Helper: weekly limit 84 % used")
+        agent.name = "Renamed helper"
+        model.reloadAgents(AgentPresets.all + [agent], readyMade: [])
+        #expect(MetricsStrip.label(machine: [], vendors: [row], name: model.agentName) == "Renamed helper: weekly limit 84 % used")
     }
 
     @Test func clickingTheStripOpensMetrics() {

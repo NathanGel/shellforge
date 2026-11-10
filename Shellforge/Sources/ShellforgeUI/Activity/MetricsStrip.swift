@@ -13,6 +13,8 @@ struct MetricsStrip: View {
     let vendors: [UsageVendorRow]
     /// Shows the Metrics panel (`opener`).
     let open: () -> Void
+    /// What a vendor is called when the strip is read out: `SidebarModel.agentName`.
+    var agentName: @MainActor (SessionAgent) -> String = { $0.rawValue }
     @Environment(\.interfaceScale) private var scale
 
     /// The strip's `ViewMark`.
@@ -46,14 +48,6 @@ struct MetricsStrip: View {
 
     /// A window's number ink: amber past its own warning, the text ink below it.
     static func ink(_ line: UsageLine) -> Color { line.warning ? Palette.amber : Palette.text }
-
-    /// What a vendor is called when the strip is read out.
-    static func vendorName(_ agent: SessionAgent) -> String {
-        switch agent {
-        case .claude: "Claude"
-        default: AgentPresets.all.first { $0.id == agent.rawValue }?.name ?? agent.customId ?? agent.rawValue
-        }
-    }
 
     /// What a click on the strip does in `activity`'s window.
     static func opener(_ activity: ActivityModel) -> () -> Void {
@@ -96,19 +90,19 @@ struct MetricsStrip: View {
         .help(Self.helpText)
         .background(ViewMark(name: Self.markName))
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Self.label(machine: gauges, vendors: vendors))
+        .accessibilityLabel(Self.label(machine: gauges, vendors: vendors, name: agentName))
         .accessibilityHint(Self.helpText)
         .accessibilityAddTraits(.isButton)
         .accessibilityAction(.default, open)
     }
 
     /// The strip read as words: each reading's own, then each vendor by name with its windows in
-    /// ``windowOrder`` — “Claude: 5-hour limit 42 % used, weekly limit 84 % used” — or its note.
-    static func label(machine: [UsageLine], vendors: [UsageVendorRow]) -> String {
+    /// ``windowOrder`` — “Claude Code: 5-hour limit 42 % used, weekly limit 84 % used” — or its note.
+    static func label(machine: [UsageLine], vendors: [UsageVendorRow], name: (SessionAgent) -> String) -> String {
         let readings = vendors.map { row in
             let lines = windows(row)
             let said = lines.isEmpty ? (row.note ?? "") : lines.map { "\($0.window.name.lowercased()) \($0.percent) % used" }.joined(separator: ", ")
-            return said.isEmpty ? "" : "\(vendorName(row.vendor)): \(said)"
+            return said.isEmpty ? "" : "\(name(row.vendor)): \(said)"
         }
         return (machine.map(\.help) + readings).filter { !$0.isEmpty }.joined(separator: ", ")
     }
@@ -127,12 +121,12 @@ struct MetricsStrip: View {
         HStack(spacing: scale(Space.inset)) {
             ForEach(folded.shown, id: \.vendor) { row in
                 let lines = Self.windows(row)
-                HStack(spacing: scale(Space.tight)) {
+                let vendor = HStack(spacing: scale(Space.tight)) {
                     VendorMark(agent: row.vendor, size: scale(Size.vendorMark))
                     if lines.isEmpty {
                         // A vendor waiting for data, or whose feed is broken: its note is the tooltip
                         // and in the panel, and the dash takes the note's ink — amber when broken.
-                        Text("–").foregroundStyle(SidebarFooter.noteInk(row)).help(row.note ?? "")
+                        Text("–").foregroundStyle(SidebarFooter.noteInk(row))
                     } else {
                         HStack(spacing: 0) {
                             ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
@@ -142,6 +136,8 @@ struct MetricsStrip: View {
                         }
                     }
                 }
+                // The note covers the mark and the dash alike; a vendor with windows has theirs.
+                if lines.isEmpty, let note = row.note { vendor.help(note) } else { vendor }
             }
             if folded.hidden > 0 { Text("+\(folded.hidden)").foregroundStyle(Palette.muted) }
         }
@@ -168,7 +164,8 @@ struct MetricsStripHost: View {
 
     var body: some View {
         TimelineView(.everyMinute) { context in
-            MetricsStrip(machine: machine.lines, vendors: model.vendorRows(at: context.date, clock: footerClock, hooks: hooks), open: open)
+            MetricsStrip(machine: machine.lines, vendors: model.vendorRows(at: context.date, clock: footerClock, hooks: hooks), open: open,
+                         agentName: model.agentName)
         }
     }
 }
