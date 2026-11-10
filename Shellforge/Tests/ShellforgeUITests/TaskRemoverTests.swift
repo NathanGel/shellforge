@@ -310,6 +310,67 @@ import Testing
         #expect(s.sidebar.lastError?.hasPrefix("Couldn’t remove the task.") == true, "\(s.sidebar.lastError ?? "nil")")
     }
 
+    // -- a folder still in use --------------------------------------------------------------
+
+    /// The setup's git, but `worktree remove` fails “Directory not empty”, as it does while a dev
+    /// server writes into the folder: every time, or only the first `failures` times.
+    private func makeGitBusy(_ s: Setup, failures: Int? = nil) throws {
+        let bin = (s.repo.path as NSString).deletingLastPathComponent + "/bin"
+        let count = bin + "/busy-count"
+        let gate = failures.map { "[ \"$(wc -c < \"\(count)\" 2>/dev/null || echo 0)\" -lt \($0) ] || exec /usr/bin/git \"$@\"" } ?? ":"
+        let script = """
+        #!/bin/sh
+        case "$*" in *"worktree remove"*)
+          \(gate)
+          printf x >> "\(count)"
+          echo "error: failed to delete '$5': Directory not empty" >&2; exit 255;;
+        esac
+        exec /usr/bin/git "$@"
+        """
+        try script.write(toFile: bin + "/git", atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin + "/git")
+    }
+
+    private static let tryAgain = AlertAnswer(button: 0)
+
+    /// The person learns the folder is in use, and by what — nothing found here, so the likely
+    /// culprit — instead of git's bare error. Cancel leaves the task, its row and its worktree.
+    @Test func aFolderInUseAsksToTryAgainAndCancelKeepsTheTask() async throws {
+        let s = try await setup([Self.remove, Self.cancel])
+        try makeGitBusy(s)
+
+        #expect(await s.sidebar.confirmRemove(taskId: s.task.id) == false)
+
+        #expect(s.prompter.asked.count == 2)
+        let asked = try #require(s.prompter.asked.last)
+        #expect(asked.message == "“Fix login” couldn’t be removed: its folder is still in use.")
+        #expect(asked.detail == "Something is still writing into it, such as a dev server.")
+        #expect(asked.buttons == ["Try Again", "Cancel"] && asked.escapeButton == 1)
+        #expect(s.row != nil)
+        #expect(FileManager.default.fileExists(atPath: s.task.worktreePath))
+        #expect(s.sidebar.removals[s.task.id] == .stopped("Not removed: its folder is in use"))
+    }
+
+    /// Try Again runs the removal again, once: git succeeding then, the task goes.
+    @Test func tryAgainRemovesTheTaskOnceTheFolderIsFree() async throws {
+        let s = try await setup([Self.remove, Self.tryAgain])
+        try makeGitBusy(s, failures: 1)
+
+        #expect(await s.sidebar.confirmRemove(taskId: s.task.id))
+
+        #expect(s.prompter.asked.map(\.buttons) == [["Remove", "Cancel"], ["Try Again", "Cancel"]])
+        #expect(!FileManager.default.fileExists(atPath: s.task.worktreePath))
+        #expect(s.row == nil)
+        #expect(s.sidebar.removals[s.task.id] == nil)
+    }
+
+    /// The programs found are named, by name and pid.
+    @Test func theFolderInUsePromptNamesWhatHoldsIt() {
+        let prompt = SidebarModel.folderInUsePrompt(title: "Fix login",
+                                                    users: [FolderUser(pid: 4211, name: "node"), FolderUser(pid: 4230, name: "nuxt")])
+        #expect(prompt.detail == "In use by node (4211), nuxt (4230).")
+    }
+
     // -- reviews -----------------------------------------------------------------------------
 
     /// A merge request's branch checked out as a review in the setup's repository, its origin a

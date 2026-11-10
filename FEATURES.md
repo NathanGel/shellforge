@@ -160,6 +160,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
   - A review's branch goes only when nothing would be lost.
   - A task continued in a worktree outside the project's `.worktrees/` folder is only forgotten: its tabs close, and the worktree and its branch stay where they are. The question says so.
   - While it runs, the row reads "Removing…", or why it stopped.
+  - When something still writes into the worktree as it is deleted, such as a dev server, the removal stops and says which program holds the folder (“node (4211)”), with Try Again and Cancel. Cancel keeps the task and its row.
 - **Status dot:**
   - idle: a ring;
   - working: a spinning arc, or a still one under Reduce Motion;

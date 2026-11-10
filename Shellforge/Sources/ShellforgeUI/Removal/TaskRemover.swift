@@ -118,9 +118,24 @@ extension SidebarModel {
             // the checkout there when it is on another branch; else the branch is the agent's switch.
             let path = ExistingWorktrees.resolved(task.worktreePath)
             let shared = document.workspace.tasks.contains { $0.id != id && ExistingWorktrees.resolved($0.worktreePath) == path }
-            let result = try await BackgroundWork.run {
-                try TaskRemoval.remove(task: task, project: project, deleteBranch: deleteBranch, force: forced,
-                                       sharedWithAnotherTask: shared, launcher: launcher)
+            let result: TaskRemoval.Removed
+            while true {
+                do {
+                    result = try await BackgroundWork.run {
+                        try TaskRemoval.remove(task: task, project: project, deleteBranch: deleteBranch, force: forced,
+                                               sharedWithAnotherTask: shared, launcher: launcher)
+                    }
+                    break
+                } catch let TaskRemoval.Blocked.folderInUse(users) {
+                    // Something still writes into the folder: Try Again runs the removal once more,
+                    // when the person says so — nothing here waits for the folder to free up.
+                    let answer = await prompter.ask(Self.folderInUsePrompt(title: task.title, users: users))
+                    guard answer.confirmed else {
+                        TaskRemoval.log("Not removed, folder in use: task \(id.uuidString)")
+                        removalBoard.removals[id] = .stopped("Not removed: its folder is in use")
+                        return false
+                    }
+                }
             }
             await settleBranch(of: task, in: project, after: result)
             try document.update { $0.removeTask(id) }
@@ -162,6 +177,15 @@ extension SidebarModel {
         case .other(let reason)?:
             report("Branch \(task.branch) kept: \(reason)")
         }
+    }
+
+    /// The removal stopped because something still writes into the worktree: who holds it, when
+    /// lsof found anyone, and Try Again.
+    static func folderInUsePrompt(title: String, users: [FolderUser]) -> AlertPrompt {
+        AlertPrompt(message: "“\(title)” couldn’t be removed: its folder is still in use.",
+                    detail: users.isEmpty ? "Something is still writing into it, such as a dev server."
+                                          : "In use by \(FolderUsers.describe(users)).",
+                    buttons: ["Try Again", "Cancel"])
     }
 
     /// Says it in the banner, and keeps it in the log: the banner holds git's first line only.

@@ -14,6 +14,10 @@ it and refuses to release a version that has none.
 - **The feedback note shows up without a relaunch.** Once it is due, it now appears when you switch
   back to Shellforge, when your Mac wakes, or when you start a task or review, not only in a new
   window. How often it asks is unchanged.
+- **Removing a task whose folder is still in use says which program holds it, with Try Again.**
+  When a dev server or file watcher kept writing into the worktree while it was deleted, the
+  removal failed with git’s bare “Directory not empty”. Now it names the programs whose folder is
+  there, such as `node (4211)`, and offers Try Again; Cancel keeps the task.
 
 ### Added
 

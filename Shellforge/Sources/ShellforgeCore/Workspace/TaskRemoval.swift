@@ -18,6 +18,13 @@ public enum TaskRemoval {
         case other(reason: String)
     }
 
+    /// Why the worktree stayed although its removal ran: thrown, the task and its row stay.
+    public enum Blocked: Error, Equatable, Sendable {
+        /// Something kept writing into the folder while it was deleted — a dev server, a file
+        /// watcher — with the programs found holding it, which may be none.
+        case folderInUse([FolderUser])
+    }
+
     public struct Removed: Equatable, Sendable {
         public var branchRefusal: BranchRefusal?
         /// A review's local branch kept, and why: a note, not a refusal — the review is gone either way.
@@ -149,7 +156,7 @@ public enum TaskRemoval {
             try removeRegistered(worktreePath, lockedWith: worktree.lockReason, in: projectPath, force: force, launcher: launcher)
         } else {
             // A removal git gave up on halfway, retried: there is nothing left to unlock or refuse.
-            try deleteLeftover(worktreePath, in: projectPath)
+            try deleteLeftover(worktreePath, in: projectPath, launcher: launcher)
         }
         // The checkout is gone either way.
         _ = try? git(["worktree", "prune"], in: projectPath, launcher)
@@ -168,27 +175,53 @@ public enum TaskRemoval {
             // still running there wrote files back — and every later `remove` then fails "is not a
             // working tree". The checkout is gone; what is left is files nothing tracks.
             if (try? registered(worktreePath, in: projectPath, launcher: launcher) == nil) == true {
-                return try deleteLeftover(worktreePath, in: projectPath)
+                return try deleteLeftover(worktreePath, in: projectPath, launcher: launcher)
             }
             if let lockReason {
                 _ = try? git(["worktree", "lock", worktreePath] + (lockReason.isEmpty ? [] : ["--reason", lockReason]),
                              in: projectPath, launcher)
             }
-            throw error
+            throw stillInUse(worktreePath, after: error, launcher: launcher) ?? error
         }
     }
 
     /// What a half-finished removal left of a worktree git no longer knows. Only ever a folder
     /// directly under the project's `.worktrees/`, and never through a symlink: anywhere else, a
     /// folder git does not know is not Shellforge's to delete.
-    private static func deleteLeftover(_ worktreePath: String, in projectPath: String) throws {
+    private static func deleteLeftover(_ worktreePath: String, in projectPath: String, launcher: CommandLauncher) throws {
         guard FileManager.default.fileExists(atPath: worktreePath) else { return }
         guard TaskWorktrees.isInWorktreesFolder(worktreePath, project: Project(name: "", path: projectPath)),
               (try? FileManager.default.destinationOfSymbolicLink(atPath: projectPath + "/.worktrees")) == nil,
               (try? FileManager.default.destinationOfSymbolicLink(atPath: worktreePath)) == nil else {
             throw GitFailure(command: "remove \(worktreePath)", message: "\(worktreePath) is not a worktree of this project.")
         }
-        try FileManager.default.removeItem(atPath: worktreePath)
+        do {
+            try FileManager.default.removeItem(atPath: worktreePath)
+        } catch {
+            throw stillInUse(worktreePath, after: error, launcher: launcher) ?? error
+        }
+    }
+
+    /// `.folderInUse` when `error` is a deletion that found the folder filling up again — git's
+    /// “Directory not empty”, or the same from deleting a leftover — and the folder is still there,
+    /// with the programs whose current directory is in it; recorded in the error log. nil for any
+    /// other failure.
+    private static func stillInUse(_ worktreePath: String, after error: Error, launcher: CommandLauncher) -> Blocked? {
+        guard FileManager.default.fileExists(atPath: worktreePath), refillsWhileDeleted(error) else { return nil }
+        let users = FolderUsers.processes(using: worktreePath, launcher: launcher)
+        let holders = users.isEmpty ? "no program found with its folder there" : FolderUsers.describe(users)
+        removalLog.notice("worktree \(worktreePath, privacy: .public) still in use: \(holders, privacy: .public)")
+        ErrorLogging.record("removal", "Worktree \(worktreePath) not removed, still in use: \(holders)")
+        return .folderInUse(users)
+    }
+
+    /// A folder something wrote into while it was being deleted.
+    private static func refillsWhileDeleted(_ error: Error) -> Bool {
+        if let failure = error as? GitFailure { return failure.message.contains("Directory not empty") }
+        let underlying = (error as NSError).userInfo[NSUnderlyingErrorKey] as? NSError
+        return [error as NSError, underlying].contains { error in
+            error?.domain == NSPOSIXErrorDomain && [Int(ENOTEMPTY), Int(EBUSY)].contains(error?.code)
+        }
     }
 
     struct Registered: Equatable {

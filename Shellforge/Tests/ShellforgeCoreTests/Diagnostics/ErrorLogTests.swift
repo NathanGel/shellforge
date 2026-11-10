@@ -60,6 +60,26 @@ import Testing
         #expect(lines(log.fileURL).first?.hasSuffix(" · fatal: unable to access 'https://…@example.com/repo.git/'") == true)
     }
 
+    /// A token git or a host repeats back — a query value or a bare GitHub or GitLab token — is
+    /// blanked, and what is around it stays.
+    @Test func tokensAreBlanked() {
+        let cases: [(String, String)] = [
+            ("GET https://gitlab.com/api/v4/projects?private_token=glpat-abc&page=2 failed",
+             "GET https://gitlab.com/api/v4/projects?private_token=‹redacted›&page=2 failed"),
+            ("https://example.com/cb?access_token=a1.b2-c3 'x'", "https://example.com/cb?access_token=‹redacted› 'x'"),
+            ("fetch 'https://host/x?token=s3cr3t#top'", "fetch 'https://host/x?token=‹redacted›#top'"),
+            ("Authorization: token ghp_16C7e42F292c6912E7710c838347Ae178B4a refused",
+             "Authorization: token ‹redacted› refused"),
+            ("gho_abc123 ghs_DEF456, github_pat_11ABC_def789", "‹redacted› ‹redacted›, ‹redacted›"),
+            ("remote: glpat-xY_z-12345 is expired", "remote: ‹redacted› is expired"),
+            // Words that only look like the start of one stay.
+            ("tokens=3 ghp_ highlight_x glpat", "tokens=3 ghp_ highlight_x glpat"),
+        ]
+        for (message, expected) in cases {
+            #expect(ErrorLog.cleaned(message, home: "") == expected, "\(message)")
+        }
+    }
+
     /// A message of several lines stays one line in the log, with ⏎ where each break was.
     @Test func newlinesBecomeOneLine() {
         let log = ErrorLog(folder: folder(), version: "1", now: { Date(timeIntervalSince1970: 0) })

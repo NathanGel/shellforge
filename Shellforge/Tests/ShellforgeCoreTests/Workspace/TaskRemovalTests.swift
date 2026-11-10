@@ -150,6 +150,47 @@ import Testing
         #expect(try String(contentsOfFile: file, encoding: .utf8) == "work in progress")
     }
 
+    /// A git whose `worktree remove` fails as it does while a dev server writes into the folder,
+    /// deleting nothing; every other command is the real git.
+    private func busyGit(_ repo: GitRepoFixture) throws -> CommandLauncher {
+        let bin = TestScratch.root.appendingPathComponent("busy-git-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: bin, withIntermediateDirectories: true)
+        let script = """
+        #!/bin/sh
+        case "$*" in *"worktree remove"*)
+          echo "error: failed to delete '$5': Directory not empty" >&2; exit 255;;
+        esac
+        exec /usr/bin/git "$@"
+        """
+        try script.write(toFile: bin + "/git", atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin + "/git")
+        var variables = repo.launcher.reload().variables
+        variables["PATH"] = bin + ":" + (variables["PATH"] ?? "/usr/bin:/bin")
+        let env = variables
+        return CommandLauncher { ResolvedEnvironment(variables: env, source: .loginShell("/bin/sh")) }
+    }
+
+    /// git failing “Directory not empty”: something still writes there. The removal says the folder
+    /// is in use — by whom, when lsof finds it — rather than git's bare error, and the checkout stays.
+    @Test func aDirectoryNotEmptyFailureReportsTheFolderInUse() throws {
+        let repo = try GitRepoFixture()
+        let task = try task(repo)
+        let log = ErrorLog(folder: TestScratch.root.appendingPathComponent("busy-log-\(UUID().uuidString)"), version: "1")
+        let busy = try busyGit(repo)
+
+        let thrown = ErrorLogging.$testLog.withValue(log) {
+            #expect(throws: TaskRemoval.Blocked.self) {
+                _ = try TaskRemoval.remove(task: task, project: repo.project, deleteBranch: true, force: false,
+                                           sharedWithAnotherTask: false, launcher: busy)
+            }
+        }
+        guard case .folderInUse? = thrown else { Issue.record("not .folderInUse: \(String(describing: thrown))"); return }
+        #expect(FileManager.default.fileExists(atPath: task.worktreePath))
+        #expect(try branchExists(repo, task.branch))
+        let written = (try? String(contentsOf: log.fileURL, encoding: .utf8)) ?? ""
+        #expect(written.contains("still in use"), "\(written)")
+    }
+
     /// A row left behind by a worktree deleted outside Shellforge shares its path with a newer task
     /// of the same title: removing the old row must not take the new task's worktree.
     @Test func aWorktreeOfAnotherBranchAtTheTasksPathIsNeverRemoved() throws {
