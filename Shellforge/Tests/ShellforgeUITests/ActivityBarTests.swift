@@ -149,6 +149,78 @@ import Testing
         #expect(isShown(list, in: host))
     }
 
+    /// The sidebar as the app makes it, in a window, and the activity bar it made.
+    private func made(_ sidebar: SidebarModel) throws -> (NSView, NSWindow, ActivityModel) {
+        let hooks = AgentHooksModel(integrations: HookIntegrations(home: TestScratch.root.appendingPathComponent("activity-made-\(UUID().uuidString)"),
+                                                                   resources: .bundled(resourceURL: nil)), names: [:])
+        let view = ShellforgeSidebar.makeView(model: sidebar, chooseFolder: { nil }, hooks: hooks,
+                                              machine: MachineMonitor(sensor: InertMachineSensor(), power: InertPower()),
+                                              backpack: BackpackController(ports: .inert, settings: BackpackSettings(defaults: nil), toast: { _ in }),
+                                              zoom: SidebarZoom(settings: SidebarLayoutSettings(defaults: ScratchDefaults.make())),
+                                              terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()),
+                                              feedback: FeedbackPrompt(defaults: ScratchDefaults.make(), channel: .dev))
+        view.frame = NSRect(x: 0, y: 0, width: Size.sidebarWidth, height: 600)
+        let window = NSWindow(contentRect: view.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = view
+        view.layoutSubtreeIfNeeded()
+        let activity = try #require((view as? SidebarHostingView<ZoomedSidebar>)?.activity)
+        return (view, window, activity)
+    }
+
+    /// Behind Metrics the Sessions list is out of the keyboard's reach too: it cannot take the
+    /// keyboard, so Tab, the arrows, Return and type-select never land on a list nobody sees.
+    @Test func theHiddenSessionsListCannotTakeTheKeyboard() throws {
+        let (sidebar, _) = try sidebarModel()
+        let activity = ActivityModel(source: ActivityOrderSource(defaults: nil))
+        let (host, window) = hosted(sidebar, activity: activity, controls: nil)
+        defer { window.close() }
+        let list = try sessionsTable(in: host)
+        _ = window.makeFirstResponder(list)
+        #expect(window.firstResponder === list, "on Sessions the list takes the keyboard")
+        _ = window.makeFirstResponder(nil)
+        activity.select(.metrics)
+        host.layoutSubtreeIfNeeded()
+        #expect(!list.acceptsFirstResponder && !list.isEnabled)
+        // AppKit answers true even for a view that refuses: where the keyboard went is what counts.
+        _ = window.makeFirstResponder(list)
+        #expect(window.firstResponder !== list, "the hidden list took the keyboard")
+        activity.select(.sessions)
+        host.layoutSubtreeIfNeeded()
+        _ = window.makeFirstResponder(list)
+        #expect(window.firstResponder === list, "back on Sessions it takes it again")
+    }
+
+    /// The keyboard in the Sessions list when Metrics is picked: it moves to the sidebar itself, so
+    /// it is never left on the hidden list — and Esc still reaches Rearrange mode there.
+    @Test func theKeyboardLeavesSessionsWhenAnotherPanelShows() throws {
+        let (sidebar, _) = try sidebarModel()
+        let (view, window, activity) = try made(sidebar)
+        defer { window.close() }
+        let list = try sessionsTable(in: view)
+        _ = window.makeFirstResponder(list)
+        #expect(window.firstResponder === list)
+        activity.select(.metrics)
+        #expect(window.firstResponder === view, "the keyboard is on \(String(describing: window.firstResponder))")
+        sidebar.beginRearrange()
+        _ = window.firstResponder?.tryToPerform(#selector(NSResponder.cancelOperation(_:)), with: nil)
+        #expect(!sidebar.isRearranging, "Esc in the sidebar cancels")
+    }
+
+    /// The Tasks menu's commands go through the model, so they work while Metrics shows.
+    @Test func commandsWorkWhileAnotherPanelShows() throws {
+        let (sidebar, ids) = try sidebarModel()
+        let (view, window, activity) = try made(sidebar)
+        defer { window.close() }
+        activity.select(.metrics)
+        view.layoutSubtreeIfNeeded()
+        #expect(sidebar.can(.newTask), "the only project is New Task’s target")
+        sidebar.perform(.nextTask)
+        #expect(sidebar.selectedTaskId == ids["a1"])
+        sidebar.perform(.nextTask)
+        #expect(sidebar.selectedTaskId == ids["a2"])
+    }
+
     /// The Sessions panel's content is as wide as the sidebar was before the bar: the bar's width was
     /// added to the sidebar's.
     @Test func theBarAddsToTheSidebarRatherThanTakingFromIt() {

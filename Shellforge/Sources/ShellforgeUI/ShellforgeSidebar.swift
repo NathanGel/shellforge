@@ -39,7 +39,8 @@ public enum ShellforgeSidebar {
         // reaches it weakly, so whatever keeps that — ⌘B's registry — never keeps the sidebar.
         let presenter = SheetPresenter()
         let feedbackPresenter = SheetPresenter()
-        let sidebar = SidebarView(model: model, activity: ActivityModel(source: activityOrder), chooseFolder: chooseFolder,
+        let activity = ActivityModel(source: activityOrder)
+        let sidebar = SidebarView(model: model, activity: activity, chooseFolder: chooseFolder,
                                   hooks: hooks, machine: machine, backpack: backpack, terminalMatch: terminalMatch, feedback: feedback,
                                   chrome: chrome, showBackpack: { [weak presenter] present in
             guard let presenter else { return }
@@ -52,6 +53,9 @@ public enum ShellforgeSidebar {
         }, hideSidebar: hideSidebar, agentTools: agentTools, agentsChanged: agentsChanged)
         let host = SidebarHostingView(rootView: ZoomedSidebar(zoom: zoom, sidebar: sidebar))
         host.chrome = chrome
+        host.activity = activity
+        // Picking another panel takes the keyboard off the Sessions list it hides.
+        host.watchPanel(activity.$layout.map(\.selected))
         // Esc inside the sidebar, and hiding it (`willHide`), leave Rearrange mode unsaved.
         host.cancelRearrange = { [weak model] in
             guard let model, model.isRearranging else { return false }
@@ -214,15 +218,35 @@ final class SidebarHostingView<Content: View>: NSHostingView<Content>, RowHighli
     var backpackPresenter: SheetPresenter?
     /// How this sidebar opens its feedback form.
     var feedbackPresenter: SheetPresenter?
+    /// This window's activity bar.
+    var activity: ActivityModel?
     var cancelRearrange: (@MainActor () -> Bool)?
     /// While Rearrange mode holds the keyboard, so Esc reaches it at once: where it was before
     /// (given back on Done or Cancel), and that the mode took it.
     private weak var keyboardBefore: NSResponder?
     private var holdsKeyboard = false
     private var rearrangeWatch: AnyCancellable?
+    private var panelWatch: AnyCancellable?
+    /// Set only while the host takes the keyboard from a panel being hidden.
+    private var parksKeyboard = false
 
     /// The host takes the keyboard only while Rearrange mode holds it; otherwise as before.
-    override var acceptsFirstResponder: Bool { holdsKeyboard || super.acceptsFirstResponder }
+    override var acceptsFirstResponder: Bool { holdsKeyboard || parksKeyboard || super.acceptsFirstResponder }
+
+    func watchPanel(_ selected: some Publisher<ActivityPanel, Never>) {
+        panelWatch = selected.removeDuplicates().sink { [weak self] panel in
+            if panel != .sessions { self?.releaseKeyboard() }
+        }
+    }
+
+    /// The keyboard was on a view inside the sidebar whose panel is going out of sight: it moves to
+    /// the host itself, still inside the sidebar, so Esc keeps reaching Rearrange mode.
+    func releaseKeyboard() {
+        guard let window, let responder = window.firstResponder as? NSView, responder !== self, isInside(responder) else { return }
+        parksKeyboard = true
+        defer { parksKeyboard = false }
+        if !window.makeFirstResponder(self) { window.makeFirstResponder(nil) }
+    }
 
     func watchRearrange(_ isRearranging: some Publisher<Bool, Never>) {
         rearrangeWatch = isRearranging.removeDuplicates().sink { [weak self] on in self?.rearrangeChanged(on) }
@@ -394,20 +418,24 @@ struct SidebarView: View {
         RearrangeBar(cancel: model.cancelRearrange, done: model.finishRearrange, windowControls: controls)
     }
 
-    /// The selected panel. Sessions stays mounted behind another, hidden and out of reach, so its
-    /// scroll position, its rows' state and its list's focus survive the switch.
+    /// The selected panel. Sessions stays mounted behind another, so its scroll position and its rows'
+    /// state survive the switch; meanwhile it is hidden and out of the mouse's, VoiceOver's and the
+    /// keyboard's reach (disabled: its list cannot take the keyboard). The Tasks menu's commands go
+    /// through the model, so they work whatever the panel.
     private var panels: some View {
-        let showsSessions = activity.layout.selected == .sessions
         return ZStack(alignment: .top) {
             sessionsPanel
                 .opacity(showsSessions ? 1 : 0)
                 .allowsHitTesting(showsSessions)
                 .accessibilityHidden(!showsSessions)
+                .disabled(!showsSessions)
             if activity.layout.selected == .metrics {
                 ActivityPanelPlaceholder(panel: .metrics, titled: chrome.windowControls == nil)
             }
         }
     }
+
+    private var showsSessions: Bool { activity.layout.selected == .sessions }
 
     /// Today's sidebar: the header (unless pinned on the buttons' row), the banners, the list and the footer.
     private var sessionsPanel: some View {
@@ -424,6 +452,7 @@ struct SidebarView: View {
             .listStyle(.sidebar)
             .scrollContentBackground(.hidden)
             .background(NativeRowHighlight.off)
+            .background(ListKeyboardGate(enabled: showsSessions))
             .environment(\.isRearranging, model.isRearranging)
             SidebarFooterHost(model: model, hooks: hooks, machine: machine, backpack: backpack,
                               toggleMac: { BackpackToggle(backpack: backpack, presentSheet: presentBackpack).run() },
