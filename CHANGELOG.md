@@ -7,17 +7,7 @@ a patch fixes, a minor adds features, a major changes a saved setup.
 Each version's section is also its GitHub release notes: `Shellforge/scripts/release.sh` publishes
 it and refuses to release a version that has none.
 
-## 0.9.1 — unreleased
-
-### Fixed
-
-- **The feedback note shows up without a relaunch.** Once it is due, it now appears when you switch
-  back to Shellforge, when your Mac wakes, or when you start a task or review, not only in a new
-  window. How often it asks is unchanged.
-- **Removing a task whose folder is still in use says which program holds it, with Try Again.**
-  When a dev server or file watcher kept writing into the worktree while it was deleted, the
-  removal failed with git’s bare “Directory not empty”. Now it names the programs whose folder is
-  there, such as `node (4211)`, and offers Try Again; Cancel keeps the task.
+## 0.10.0 — 2026-11-10
 
 ### Added
 
@@ -57,6 +47,22 @@ it and refuses to release a version that has none.
 - **Move Up and Move Down leave the menus.** A project’s and a divider’s right-click menus, and a
   divider’s VoiceOver actions, now offer Rearrange instead.
 - **A new task goes to the bottom of its project,** below its terminals, as a new terminal does.
+
+### Fixed
+
+- **The feedback note shows up without a relaunch.** Once it is due, it now appears when you switch
+  back to Shellforge, when your Mac wakes, or when you start a task or review, not only in a new
+  window. How often it asks is unchanged.
+- **Removing a task whose folder is still in use says which program holds it, with Try Again.**
+  When a dev server or file watcher kept writing into the worktree while it was deleted, the
+  removal failed with git’s bare “Directory not empty”. Now it names the programs whose folder is
+  there, such as `node (4211)`, and offers Try Again; Cancel keeps the task.
+
+### Installing
+
+- Shellforge is signed but not notarized by Apple, so macOS refuses to open it the first time.
+- Right-click Shellforge in Applications, choose Open, then Open again.
+- Or run `xattr -dr com.apple.quarantine /Applications/Shellforge.app` once.
 
 ## 0.9.0 — 2026-11-09
 
