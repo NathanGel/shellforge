@@ -17,6 +17,8 @@ struct RearrangeBar: View {
     static let title = "Rearranging"
     static let cancelTitle = "Cancel"
     static let doneTitle = "Done"
+    /// The bar's `ViewMark`.
+    static let markName = "RearrangeBar"
 
     var body: some View {
         HStack(spacing: scale(Space.base)) {
@@ -30,6 +32,7 @@ struct RearrangeBar: View {
         }
         .frame(height: scale(Size.menuRow))
         .modifier(HeaderPlacement(windowControls: windowControls, scale: scale))
+        .background(ViewMark(name: Self.markName))
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Self.title)
     }

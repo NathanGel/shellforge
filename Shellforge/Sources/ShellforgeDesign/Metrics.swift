@@ -60,22 +60,29 @@ public enum Radius {
 public enum Size {
     /// The edge of a Settings section's box: one device pixel at 2×, as the native grouped box draws it.
     public static let groupEdge: CGFloat = 0.5
-    /// The width the sidebar opens at when there is no saved frame. It is sized to a task row rather
-    /// than to the footer: at 360 a row carrying a Jira key, a diff and a `+n` squeezes its branch
-    /// to `feat/f…t-side`; here the branch keeps its type, the ticket's prefix and its tail, and a
-    /// branch without a ticket beside it nearly fits whole (proposal, 23 Sep 2026).
-    public static let sidebarWidth: CGFloat = 420
-    /// The sidebar cannot be narrowed past this. It has to fit a vendor usage row's common case:
-    /// two windows under 100%, the 5-hour one resetting today and the weekly one on a later day.
+    /// The activity bar's width at the sidebar's left: an icon's `control` square and a `base` margin
+    /// either side. The sidebar's widths below include it, so the panel beside it keeps the room
+    /// they were sized for.
+    public static let activityBar: CGFloat = control + 2 * Space.base
+    /// The width the sidebar opens at when there is no saved frame: 420 for the panel, plus the
+    /// activity bar. The panel is sized to a task row rather than to the footer: at 360 a row
+    /// carrying a Jira key, a diff and a `+n` squeezes its branch to `feat/f…t-side`; at 420 the
+    /// branch keeps its type, the ticket's prefix and its tail, and a branch without a ticket beside
+    /// it nearly fits whole (proposal, 23 Sep 2026).
+    public static let sidebarWidth: CGFloat = 420 + activityBar
+    /// The sidebar cannot be narrowed past this: 360 for the panel, plus the activity bar. The panel
+    /// has to fit a vendor usage row's common case: two windows under 100%, the 5-hour one resetting
+    /// today and the weekly one on a later day.
     /// Everything at 100% costs a digit per segment and clips — the accepted price of showing clock
     /// times rather than a countdown.
-    /// `SidebarFooterGeometryTests.theTwoWindowTelemetryFitsTheMinimumSidebarWidth` holds this honest.
+    /// `SidebarFooterGeometryTests.theTwoWindowTelemetryFitsTheMinimumSidebarWidth` holds this honest,
+    /// at the panel's width (this, less the bar's).
     /// The context row's widest case — a full window and both token counts at `999k` — fits too, held
     /// by `SidebarFooterGeometryTests.theWidestContextRowFitsTheMinimumSidebarWidth`.
     ///
     /// Was 395 while each vendor row also carried its `ctx` segment; that moved to the footer's
-    /// task row, which carries nothing else, so the minimum came back to 360.
-    public static let sidebarMinWidth: CGFloat = 360
+    /// task row, which carries nothing else, so the panel's minimum came back to 360.
+    public static let sidebarMinWidth: CGFloat = 360 + activityBar
     /// Every chip: the Jira key, the VS Code badge, `+n`, a status count.
     public static let chip: CGFloat = 16
     /// The click target the sidebar's trailing column is built from.

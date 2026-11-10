@@ -18,8 +18,8 @@ struct InterfaceScaleTests {
     @Test func largerStepsRoundToWholePoints() {
         #expect(InterfaceScale.large(Size.row) == 60)
         #expect(InterfaceScale.extraLarge(Size.row) == 68)
-        #expect(InterfaceScale.large(Size.sidebarMinWidth) == 414)
-        #expect(InterfaceScale.extraLarge(Size.sidebarMinWidth) == 468)
+        #expect(InterfaceScale.large(Size.sidebarMinWidth) == 465)
+        #expect(InterfaceScale.extraLarge(Size.sidebarMinWidth) == 525)
         #expect(InterfaceScale.large(Size.chip) == 18)
         #expect(InterfaceScale.extraLarge(Size.chip) == 21)
         #expect(InterfaceScale.large(-5) == -6)

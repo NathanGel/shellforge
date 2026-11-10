@@ -29,7 +29,7 @@ import Testing
         "IconSource": "1c4233822c68d94be0a1d95aefdf0c27242b2a14b31839c4a5ef13c59be093df",
         "InterfaceScale": "8cd10c61121676480e5fae9e24d5e9499ee7babcb165739c16514f3174cda745",
         "Logos": "af2e1ee98ac438ca5bc59b58aa2fcffca6269ad502c2b1c73f78b875dfd7a4f5",
-        "Metrics": "599092014bd0f2b9fdbd3c866fcfc6dbfb8c718db2fb9ad0f04ca65adbc8bc53",
+        "Metrics": "8721c83ed5cd9d77f6b4517f8d5927d48865f21acd3c8aca33bf28897a0dae56",
         "Palette": "717458f9d1dd43d62461d8ccce7a68c69331a2aea015f86c844732e9f3129bc2",
         "SidebarHeading": "920a10e24175cc889fa22c5437ca486ddebd7ee2605350795edb56138ebca38f",
         "Surface": "59282e263f6d4728cd2af4ec4e48ffbbf6b18557111a89a6a97e9d4fe89adf7e",

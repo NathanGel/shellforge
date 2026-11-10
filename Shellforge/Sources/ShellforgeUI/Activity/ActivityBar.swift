@@ -13,7 +13,7 @@ struct ActivityBar: View {
     @Environment(\.surface) private var surface
 
     /// The bar's width, and each icon's square cell.
-    static func width(_ scale: InterfaceScale) -> CGFloat { scale(Size.control + 2 * Space.base) }
+    static func width(_ scale: InterfaceScale) -> CGFloat { scale(Size.activityBar) }
 
     var body: some View {
         let cell = Self.width(scale)

@@ -332,11 +332,16 @@ struct SidebarView: View {
     var body: some View {
         VStack(spacing: 0) {
             // With the window's buttons inside the panel, the selected panel's header is their row,
-            // pinned across the whole sidebar; the activity bar starts below it.
-            if let controls = chrome.windowControls { pinnedHeader(controls) }
+            // pinned across the whole sidebar; the activity bar starts below it. Rearrange mode's bar
+            // is pinned above every panel, so the mode is never left out of sight with Done.
+            if let controls = chrome.windowControls {
+                pinnedHeader(controls)
+            } else if model.isRearranging {
+                rearrangeBar(nil)
+            }
             HStack(spacing: 0) {
                 ActivityBar(model: activity, openSettings: showMacSettings)
-                selectedPanel.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                panels.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
         }
         // The header places itself on the buttons' row, so the title bar's safe area is not wanted.
@@ -366,40 +371,47 @@ struct SidebarView: View {
         }
     }
 
-    /// The header on the window buttons' row. Rearrange mode's bar takes the Sessions header's place,
-    /// pinned either way, so Done stays in reach.
+    /// The header on the window buttons' row: Rearrange mode's bar while the mode is on, whatever the
+    /// panel, so Done stays in reach; otherwise the selected panel's.
     @ViewBuilder private func pinnedHeader(_ controls: SidebarWindowControls) -> some View {
-        switch activity.layout.selected {
-        case .sessions:
-            if model.isRearranging {
-                rearrangeBar(controls)
-            } else {
-                header(controls)
+        if model.isRearranging {
+            rearrangeBar(controls)
+        } else {
+            switch activity.layout.selected {
+            case .sessions: header(controls)
+            case .metrics: panelTitle(.metrics, controls)
             }
-        case .metrics:
-            HStack { SidebarHeading(ActivityPanel.metrics.title); Spacer() }
-                .frame(height: scale(Size.menuRow))
-                .modifier(HeaderPlacement(windowControls: controls, scale: scale))
         }
+    }
+
+    private func panelTitle(_ panel: ActivityPanel, _ controls: SidebarWindowControls) -> some View {
+        HStack { SidebarHeading(panel.title); Spacer() }
+            .frame(height: scale(Size.menuRow))
+            .modifier(HeaderPlacement(windowControls: controls, scale: scale))
     }
 
     private func rearrangeBar(_ controls: SidebarWindowControls?) -> RearrangeBar {
         RearrangeBar(cancel: model.cancelRearrange, done: model.finishRearrange, windowControls: controls)
     }
 
-    @ViewBuilder private var selectedPanel: some View {
-        switch activity.layout.selected {
-        case .sessions: sessionsPanel
-        case .metrics: ActivityPanelPlaceholder(panel: .metrics, titled: chrome.windowControls == nil)
+    /// The selected panel. Sessions stays mounted behind another, hidden and out of reach, so its
+    /// scroll position, its rows' state and its list's focus survive the switch.
+    private var panels: some View {
+        let showsSessions = activity.layout.selected == .sessions
+        return ZStack(alignment: .top) {
+            sessionsPanel
+                .opacity(showsSessions ? 1 : 0)
+                .allowsHitTesting(showsSessions)
+                .accessibilityHidden(!showsSessions)
+            if activity.layout.selected == .metrics {
+                ActivityPanelPlaceholder(panel: .metrics, titled: chrome.windowControls == nil)
+            }
         }
     }
 
     /// Today's sidebar: the header (unless pinned on the buttons' row), the banners, the list and the footer.
     private var sessionsPanel: some View {
         VStack(spacing: 0) {
-            if model.isRearranging && chrome.windowControls == nil {
-                rearrangeBar(nil)
-            }
             // Its buttons wait while the sidebar is rearranged.
             SidebarBanners(model: model, feedback: feedback, giveFeedback: presentFeedback)
                 .allowsHitTesting(!model.isRearranging)

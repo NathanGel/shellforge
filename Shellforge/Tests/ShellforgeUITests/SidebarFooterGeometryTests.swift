@@ -40,7 +40,7 @@ struct SidebarFooterGeometryTests {
     }
 
     private func host(_ rows: [UsageVendorRow], task: UsageTaskRow? = nil, machine: [UsageLine] = [], mode: MacMode = .desk,
-                      width: CGFloat = Size.sidebarMinWidth, scale: InterfaceScale = .standard) -> NSHostingView<AnyView> {
+                      width: CGFloat = panelMinimum(.standard), scale: InterfaceScale = .standard) -> NSHostingView<AnyView> {
         let mac = MacModePresentation.line(mode: mode, hotspot: "Laurens’s iPhone", wifi: "Office-WiFi")
         let view = AnyView(SidebarFooter(task: task, rows: rows, machine: machine, mac: mac)
             .interfaceScale(scale)
@@ -145,7 +145,7 @@ struct SidebarFooterGeometryTests {
         // Comparing the row against its own unconstrained rendering is the only honest test:
         // arithmetic on the string's width agrees to a fraction of a point and still truncates.
         let natural = try paintedWidth(rows, width: 900, scale: scale)
-        let minimum = scale(Size.sidebarMinWidth)
+        let minimum = panelMinimum(scale)
         let atMinimum = try paintedWidth(rows, width: minimum, scale: scale)
         #expect(abs(atMinimum - natural) < 1,
                 "at ×\(scale.factor) the row paints \(natural) pt unconstrained but only \(atMinimum) pt at the \(minimum) pt sidebar minimum, so it is truncating")
@@ -200,10 +200,13 @@ struct SidebarFooterGeometryTests {
         let top = Int(scale(Space.tight) + scale(Size.menuRow))
         let band = top..<(top + Int(scale(Size.menuRow)))
         let natural = try paintedWidth(host([], task: task, width: 900, scale: scale), band: band)
-        let atMinimum = try paintedWidth(host([], task: task, width: scale(Size.sidebarMinWidth), scale: scale), band: band)
+        let atMinimum = try paintedWidth(host([], task: task, width: panelMinimum(scale), scale: scale), band: band)
         #expect(abs(atMinimum - natural) < 1,
                 "at ×\(scale.factor) the ctx row paints \(natural) pt unconstrained but only \(atMinimum) pt at the minimum")
     }}
+
+/// The footer's width at the sidebar's narrowest: the Sessions panel's, beside the activity bar.
+@MainActor private func panelMinimum(_ scale: InterfaceScale) -> CGFloat { scale(Size.sidebarMinWidth) - ActivityBar.width(scale) }
 
 private extension UsageLine {
     var withoutReset: UsageLine { UsageLine(window: window, percent: percent, reset: nil, warning: warning) }
@@ -284,7 +287,7 @@ extension SidebarFooterGeometryTests {
         let top = Int((scale(Space.tight) + scale(Size.menuRow)).rounded(.up))
         let band = top..<(top + Int(scale(Size.menuRow)))
         let natural = try paintedWidth(host([], machine: machine, width: 900, scale: scale), band: band)
-        let minimum = scale(Size.sidebarMinWidth)
+        let minimum = panelMinimum(scale)
         let atMinimum = try paintedWidth(host([], machine: machine, width: minimum, scale: scale), band: band)
         #expect(natural > scale(Size.vendorMark) * 4, "the row painted its readings, not its mark alone")
         #expect(abs(atMinimum - natural) < 1,

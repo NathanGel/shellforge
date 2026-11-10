@@ -11,6 +11,9 @@ import Testing
 /// so selecting a hovered row never shows a wash beside the selection (AiTerm's
 /// `selectionAndHoverPaintTheSamePill`, on a row alone rather than AiTerm's whole app).
 @MainActor @Suite struct SidebarRowGeometryTests {
+    /// The Sessions panel's width at the sidebar's default: beside the activity bar.
+    private let panelWidth = Size.sidebarWidth - ActivityBar.width(.standard)
+
     /// The box of everything drawn that is not the sidebar's ground.
     private func paintedBox(selected: Bool, hovered: Bool) throws -> CGRect {
         // In a sidebar list, as the sidebar draws it: the pill is the row's own background.
@@ -19,11 +22,11 @@ import Testing
                 .environment(\.rowHovered, hovered)
         }
         .listStyle(.sidebar).scrollContentBackground(.hidden).background(NativeRowHighlight.off)
-        .frame(width: Size.sidebarWidth, height: 80)
+        .frame(width: panelWidth, height: 80)
         .background(Palette.sidebar)
         let host = NSHostingView(rootView: row)
         host.appearance = NSAppearance(named: .darkAqua)
-        host.frame = NSRect(origin: .zero, size: NSSize(width: Size.sidebarWidth, height: 80))
+        host.frame = NSRect(origin: .zero, size: NSSize(width: panelWidth, height: 80))
         let window = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
         window.contentView = host
         RunLoop.main.run(until: Date().addingTimeInterval(0.05)); host.layoutSubtreeIfNeeded()
@@ -53,11 +56,11 @@ import Testing
         let task = TaskItem(projectId: UUID(), title: long, branch: long, worktreePath: "/w", baseBranch: "main")
         let row = TaskRowView(node: TaskNode(task: task, tabs: []), selected: false, agents: [.claude],
                               status: .needsInput, activate: {})
-            .frame(width: Size.sidebarWidth)
+            .frame(width: panelWidth)
             .background(Palette.sidebar)
         let host = NSHostingView(rootView: row)
         host.appearance = NSAppearance(named: .darkAqua)
-        host.frame = NSRect(x: 0, y: 0, width: Size.sidebarWidth, height: host.fittingSize.height)
+        host.frame = NSRect(x: 0, y: 0, width: panelWidth, height: host.fittingSize.height)
         host.layoutSubtreeIfNeeded()
         let bitmap = try #require(Snapshot.bitmap(of: host))
         // The amber dot: strongly orange pixels.
@@ -70,6 +73,6 @@ import Testing
         }
         let scale = CGFloat(bitmap.pixelsWide) / host.bounds.width
         let trailing = try #require(xs.max(), "no status mark drawn")
-        #expect(CGFloat(trailing) / scale > Size.sidebarWidth - Space.section - Size.slot, "the mark moved off the trailing edge")
+        #expect(CGFloat(trailing) / scale > panelWidth - Space.section - Size.slot, "the mark moved off the trailing edge")
     }
 }

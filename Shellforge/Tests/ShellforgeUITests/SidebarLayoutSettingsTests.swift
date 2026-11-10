@@ -17,6 +17,17 @@ import Testing
         #expect(!settings.hidden)
     }
 
+    /// A width saved before the activity bar widened the minimum reads as the new minimum; a wider
+    /// saved width is kept as it was. Nothing is rewritten.
+    @Test func aWidthSavedBelowTheNewMinimumReadsAsTheMinimum() {
+        let store = defaults()
+        store.set(Double(380), forKey: "ShellforgeSidebarWidth")
+        #expect(SidebarLayoutSettings(defaults: store).width == Size.sidebarMinWidth)
+        #expect(store.double(forKey: "ShellforgeSidebarWidth") == 380)
+        store.set(Double(500), forKey: "ShellforgeSidebarWidth")
+        #expect(SidebarLayoutSettings(defaults: store).width == 500)
+    }
+
     @Test func theWidthIsRememberedAndClamped() {
         let store = defaults()
         var settings = SidebarLayoutSettings(defaults: store)
@@ -37,23 +48,23 @@ import Testing
 
     @Test func theWidthIsClampedToTheWindow() {
         #expect(SidebarLayoutSettings.width(500, windowWidth: 2_000) == 500)
-        #expect(SidebarLayoutSettings.width(500, windowWidth: 700) == 700 - SidebarLayoutSettings.terminalMinWidth,
+        #expect(SidebarLayoutSettings.width(500, windowWidth: 760) == 760 - SidebarLayoutSettings.terminalMinWidth,
                 "the terminal keeps its minimum; the sidebar gives way")
         #expect(SidebarLayoutSettings.width(500, windowWidth: 500) == 0,
-                "under 680 pt both minimums do not fit: the terminal keeps its own, and the sidebar steps aside")
-        #expect(SidebarLayoutSettings.width(500, windowWidth: 680) == Size.sidebarMinWidth)
+                "under 724 pt both minimums do not fit: the terminal keeps its own, and the sidebar steps aside")
+        #expect(SidebarLayoutSettings.width(500, windowWidth: 724) == Size.sidebarMinWidth)
         #expect(SidebarLayoutSettings.width(500, windowWidth: 200) == 0, "a window too narrow for both: the terminal")
     }
 
     /// The toolbelt on the right takes its width from the terminal's, not the sidebar's room.
     @Test func theToolbeltCountsAgainstTheTerminal() {
-        #expect(SidebarLayoutSettings.width(500, windowWidth: 1_000, beside: 300) == 1_000 - 300 - SidebarLayoutSettings.terminalMinWidth)
+        #expect(SidebarLayoutSettings.width(500, windowWidth: 1_100, beside: 300) == 1_100 - 300 - SidebarLayoutSettings.terminalMinWidth)
         #expect(SidebarLayoutSettings.width(500, windowWidth: 800, beside: 300) == 0, "no room for both minimums")
         #expect(SidebarLayoutSettings.width(500, windowWidth: 2_000, beside: 0) == 500)
     }
 
     /// Dragged narrower, a window stops where the sidebar at its minimum and the terminal at its own
-    /// both still fit: below it the sidebar would jump from 360 pt to nothing (680 pt, more with the
+    /// both still fit: below it the sidebar would jump from 404 pt to nothing (724 pt, more with the
     /// toolbelt).
     @Test func aWindowStopsBeforeTheSidebarWouldJump() {
         let minimum = SidebarLayoutSettings.minimumWindowWidth(beside: 0)
