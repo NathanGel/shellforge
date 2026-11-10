@@ -9,7 +9,8 @@ Open an issue on [GitHub](https://github.com/NathanGel/shellforge/issues/new/cho
 - **Change request:** something Shellforge should do, or do differently. Say what you are trying to
   get done and what gets in the way, rather than only the fix you have in mind.
 - **Bug report:** something Shellforge does wrong. Give the steps, what you expected, what happened,
-  and the version from **Shellforge › About Shellforge**.
+  and the version from **Shellforge › About Shellforge**. The lines that apply from **Help › Show
+  Error Log** help too; leave out anything private, as issues are public.
 
 Each request is read, and either planned into a version, answered, or closed with the reason.
 What ships is listed in [CHANGELOG.md](CHANGELOG.md).
