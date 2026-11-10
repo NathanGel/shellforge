@@ -9,21 +9,21 @@ import Testing
         if let format { d.branchFormat = format }
         return d
     }
-    private let ticket = JiraTicket(key: "JVS-5819", summary: "Jarvis alarms and relay", description: nil, issueType: "Bug", status: nil, url: "")
+    private let ticket = JiraTicket(key: "ABC-123", summary: "Add login page", description: nil, issueType: "Bug", status: nil, url: "")
 
     @Test func theDefaultIsTodaysTypeAndName() {
         var d = draft()
         d.apply(ticket: ticket)
         #expect(d.branchFormat == .typeAndName)
-        #expect(d.branch == "fix/jvs-5819-jarvis-alarms-and-relay")
+        #expect(d.branch == "fix/abc-123-add-login-page")
     }
 
     @Test func ticketKeyNamesTheBranchAfterTheKeyAlone() {
         var d = draft(.ticketKey)
         d.apply(ticket: ticket)
-        #expect(d.branch == "JVS-5819")
-        #expect(d.branchFieldText == "JVS-5819" && d.usesTicketKey)
-        #expect(d.worktreeSlug == "jvs-5819-jarvis-alarms-and-relay", "the folder keeps its readable slug")
+        #expect(d.branch == "ABC-123")
+        #expect(d.branchFieldText == "ABC-123" && d.usesTicketKey)
+        #expect(d.worktreeSlug == "abc-123-add-login-page", "the folder keeps its readable slug")
     }
 
     @Test func withoutATicketItFallsBackToTypeAndName() {
@@ -32,7 +32,7 @@ import Testing
         #expect(d.branch == "feat/sidebar-avatars")
         #expect(!d.usesTicketKey)
         d.apply(ticket: ticket)
-        #expect(d.branch == "JVS-5819")
+        #expect(d.branch == "ABC-123")
         d.apply(ticket: nil)
         #expect(d.branch.hasPrefix("fix/") || d.branch.hasPrefix("feat/"))
         #expect(d.branchName == "sidebar-avatars")
@@ -50,14 +50,14 @@ import Testing
     @Test func underTicketKeyOnlyABranchTypedWithoutATypeIsTheWholeBranch() {
         var d = draft(.ticketKey)
         d.apply(ticket: ticket)
-        d.setBranch("JVS-5819-v2")
-        #expect(d.branch == "JVS-5819-v2")
-        #expect(d.branchFieldText == "JVS-5819-v2")
+        d.setBranch("ABC-123-v2")
+        #expect(d.branch == "ABC-123-v2")
+        #expect(d.branchFieldText == "ABC-123-v2")
         #expect(d.namesWholeBranch && !d.usesTicketKey)
-        #expect(d.worktreeSlug == "jvs-5819-v2")
+        #expect(d.worktreeSlug == "abc-123-v2")
         // SwiftUI writing the same text back changes nothing.
         d.setBranch(d.branchFieldText)
-        #expect(d.branch == "JVS-5819-v2" && d.namesWholeBranch)
+        #expect(d.branch == "ABC-123-v2" && d.namesWholeBranch)
         // Typing a known type prefix after all picks the type, and the select is back.
         d.setBranch("fix/alarms")
         #expect(d.branch == "fix/alarms" && d.branchType == .fix && !d.namesWholeBranch)
@@ -68,8 +68,8 @@ import Testing
         var d = draft()
         d.apply(ticket: ticket)
         #expect(!d.namesWholeBranch)
-        d.setBranch("JVS-5819-v2")
-        #expect(d.branch == "fix/JVS-5819-v2")
+        d.setBranch("ABC-123-v2")
+        #expect(d.branch == "fix/ABC-123-v2")
         #expect(!d.namesWholeBranch)
     }
 
@@ -77,7 +77,7 @@ import Testing
         var d = draft(.ticketKey)
         d.apply(ticket: ticket)
         d.setBranch(d.branchFieldText)
-        #expect(d.branch == "JVS-5819")
+        #expect(d.branch == "ABC-123")
     }
 
     @Test func oldWorkspaceLoadsTheDefaultAndDoesNotWriteTheKey() throws {

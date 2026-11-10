@@ -6,16 +6,16 @@ import Testing
 /// Which programs hold a folder — their current directory in it — when a removal can't delete it:
 /// one `lsof -F` call, read here.
 @Suite struct FolderUsersTests {
-    private let folder = "/Users/me/app/.worktrees/fe-1796"
+    private let folder = "/Users/me/app/.worktrees/abc-42"
 
     /// `lsof -a -d cwd -F pcn`: a `p` line opens each process, `c` names it and `n` is its folder.
     @Test func lsofOutputIsReadForProcessesInTheFolderOrBelowIt() {
         let output = """
         p1\ncsystemd\nfcwd\nn/
-        p4211\ncnode\nfcwd\nn/Users/me/app/.worktrees/fe-1796
-        p4230\ncnuxt\nfcwd\nn/Users/me/app/.worktrees/fe-1796/apps/web
-        p4300\ncvim\nfcwd\nn/Users/me/app/.worktrees/fe-1796-other
-        p77\ncShellforge\nfcwd\nn/Users/me/app/.worktrees/fe-1796
+        p4211\ncnode\nfcwd\nn/Users/me/app/.worktrees/abc-42
+        p4230\ncnuxt\nfcwd\nn/Users/me/app/.worktrees/abc-42/apps/web
+        p4300\ncvim\nfcwd\nn/Users/me/app/.worktrees/abc-42-other
+        p77\ncShellforge\nfcwd\nn/Users/me/app/.worktrees/abc-42
 
         """
         #expect(FolderUsers.parse(output, folder: folder, excluding: 77)

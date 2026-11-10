@@ -3,9 +3,9 @@ import Foundation
 
 /// How a project names its tasks' branches.
 public enum BranchFormat: String, Codable, Sendable, CaseIterable {
-    /// `feat/jvs-5819-jarvis-alarms-and-relay`: the type, then the ticket key and the summary.
+    /// `feat/abc-123-add-login-page`: the type, then the ticket key and the summary.
     case typeAndName
-    /// `JVS-5819`: the ticket key alone, for a repository whose convention that is. A task with no
+    /// `ABC-123`: the ticket key alone, for a repository whose convention that is. A task with no
     /// ticket falls back to `typeAndName`.
     case ticketKey
 }

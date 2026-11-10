@@ -10,7 +10,7 @@ import Testing
         let folder = TestScratch.root.appendingPathComponent("shellforge-branch-format-\(UUID().uuidString)")
         let store = WorkspaceStore(folder: folder)
         let document = WorkspaceDocument(store: store)
-        let project = Project(name: "jarvis", path: "/jarvis")
+        let project = Project(name: "demo", path: "/demo")
         try document.update { $0.projects.append(project) }
         let launcher = CommandLauncher(resolve: { ResolvedEnvironment(variables: ["PATH": "/usr/bin"], source: .loginShell("/bin/zsh")) })
         return (SidebarModel(host: FakeTerminalHost(), document: document, launcher: launcher, jiraSettings: { nil }), document, project, store)

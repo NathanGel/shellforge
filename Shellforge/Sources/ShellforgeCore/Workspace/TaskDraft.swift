@@ -29,7 +29,7 @@ public struct TaskDraft: Equatable, Sendable {
     public var folderBranch: String?
     private var titleEdited = false, branchEdited = false, typeEdited = false
     /// The branch was typed whole, with no type, where the field held the whole branch: a Ticket Key
-    /// Only project's `JVS-5819-v2`.
+    /// Only project's `ABC-123-v2`.
     private var typedWhole = false
 
     /// How the project names its branches, set when the sheet opens for it.

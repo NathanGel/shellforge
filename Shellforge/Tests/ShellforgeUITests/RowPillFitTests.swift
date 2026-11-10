@@ -10,7 +10,7 @@ import ShellforgeDesign
 @MainActor @Suite struct RowPillFitTests {
     @Test func aSelectedRowsPillIsTheNativeSelectionRectangle() throws {
         let list = List {
-            SelectableRow(selected: true, activate: {}) { Text("Mirai Bullhorn parsing in JarvisRAG").padding(.leading, 20) }
+            SelectableRow(selected: true, activate: {}) { Text("Parse the incoming webhook payloads safely").padding(.leading, 20) }
             Text("next")
         }
         .listStyle(.sidebar).scrollContentBackground(.hidden).background(NativeRowHighlight.off)
