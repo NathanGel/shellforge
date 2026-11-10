@@ -32,6 +32,50 @@ Shellforge follows iTerm2: we merge upstream iTerm2 into Shellforge whenever it 
 security fix or a new feature, so a fix in iTerm2 reaches Shellforge too. Shellforge's own code is
 kept apart in `Shellforge/` so these merges stay small.
 
+## A look
+
+<!-- Rendered from code with invented demo data, never from a real app: run
+     Shellforge/scripts/render-screenshots.sh after a UI change and commit the PNGs. -->
+
+<p align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="Shellforge/docs/images/sessions-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="Shellforge/docs/images/sessions-light.png">
+  <img src="Shellforge/docs/images/sessions-light.png" width="464" alt="The Shellforge sidebar’s Sessions panel: the projects acme-web, demo-api and docs-site with their tasks, each with its agent, status, Jira ticket, diff count and branch; a running SSH tunnel to staging; a zsh terminal; and the metrics strip with CPU, memory and each agent’s 5-hour and weekly usage">
+</picture>
+</p>
+
+<table>
+  <tr>
+    <th>Metrics</th>
+    <th>Rearrange</th>
+    <th>New Task</th>
+  </tr>
+  <tr>
+    <td valign="top">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="Shellforge/docs/images/metrics-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="Shellforge/docs/images/metrics-light.png">
+  <img src="Shellforge/docs/images/metrics-light.png" width="260" alt="The Metrics panel: the selected task’s context and tokens, the Mac’s CPU and memory, and Claude Code’s and Codex’s weekly and 5-hour usage with their reset times">
+</picture>
+    </td>
+    <td valign="top">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="Shellforge/docs/images/rearrange-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="Shellforge/docs/images/rearrange-light.png">
+  <img src="Shellforge/docs/images/rearrange-light.png" width="260" alt="Rearrange mode: a drag handle on every project, task, tunnel and terminal, with Cancel and Done in the bar at the top">
+</picture>
+    </td>
+    <td valign="top">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="Shellforge/docs/images/new-task-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="Shellforge/docs/images/new-task-light.png">
+  <img src="Shellforge/docs/images/new-task-light.png" width="300" alt="The New Task sheet in acme-web, filled in from the Jira ticket ABC-123 “Add login page”: a new worktree on the branch feat/abc-123-add-login-page from main">
+</picture>
+    </td>
+  </tr>
+</table>
+
 ## Get it
 
 Download the latest `Shellforge-<version>.dmg` from

@@ -61,3 +61,12 @@ Running Shellforge sees the new version under **Check for Updates…**.
 
 - `Shellforge/scripts/make-app.sh` alone builds `build/Shellforge.app`, marked as a development build.
 - Day-to-day work uses iTerm2's Development configuration: `tools/build.sh` builds it, and `make run` builds and runs it.
+
+## README screenshots
+
+- The README's pictures are drawn from code with invented projects, tasks and readings, never taken
+  from a running app: `Shellforge/scripts/render-screenshots.sh` renders them into
+  `Shellforge/docs/images/` (`<scene>-<dark|light>.png`).
+- Run it after a change to the sidebar, the Metrics panel, Rearrange mode or the New Task sheet, look
+  over the PNGs, and commit them with the change. The normal test run skips the renderer
+  (`ReadmeScreenshots` runs only with `SHELLFORGE_RENDER_SCREENSHOTS=1`).
