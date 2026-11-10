@@ -6,12 +6,13 @@ Worker holds the App's private key as a secret.
 
     POST /feedback   {"version":"0.8.0","macos":"26.1.0","good":"…","bad":"…","rating":4}
 
-Answers: 201 `{"number":42}`; 400 (`json`, `type`, `size`, `fields`, `empty`, `version`, `secret`);
-429 (`rate`, `daily`, `busy`); 502 `{"error":"github"}`; 503 when switched off. Any other method or
-path is 405. There is no CORS: only the app calls it.
+Answers: 201 `{"number":42}`; otherwise `{"error":"<code>"}` with 400 (`json`, `type`, `size`,
+`fields`, `empty`, `version`, `secret`), 429 (`rate`, `daily`, `busy`), 502 (`github`), 503 (`off`,
+when switched off) or 500 (`internal`). Any other method or path is 405. There is no CORS: only the
+app calls it.
 
 **Limits.** 3 posts per minute per sender (`CF-Connecting-IP`, or its /64 for IPv6), 10 per minute
-overall, 50 per UTC day, and a kill switch. Text is capped at 4,000 code points per field, and text
+overall, 50 per UTC day, and a kill switch. A body is at most 16 KiB and text 4,000 code points per field, and text
 that looks like a secret is refused. The per-minute bindings are approximate; the daily cap is
 approximate too, because KV is eventually consistent.
 

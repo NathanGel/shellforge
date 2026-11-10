@@ -27,10 +27,16 @@ command works in a terminal tab.
 `GitHookPathTests` reproduces the original bug: under launchd's `PATH` a `post-checkout` hook that
 calls `uv` fails; through `CommandLauncher` it runs.
 
+## ShellforgeDesign
+
+AiTerm's design system: the colours, sizes and primitive views everything else is drawn from, with
+the rules its tests enforce. See [Sources/ShellforgeDesign/README.md](Sources/ShellforgeDesign/README.md).
+
 ## ShellforgeUI
 
-The sidebar at the left edge of every terminal window: projects → tasks → tabs, the footer, and
-the sheets and Settings they open. The window code reaches it through
+The sidebar at the left edge of every terminal window: the activity bar, the Sessions panel
+(projects → tasks → tabs) and the Metrics panel, the metrics strip under them, and the sheets and
+Settings they open. The window code reaches it through
 `sources/TerminalView/iTermShellforgeSidebar.swift`. Everything it does, and how to reach it, is
 in [FEATURES.md](../FEATURES.md).
 
@@ -38,3 +44,14 @@ in [FEATURES.md](../FEATURES.md).
 
 The daemon that tracks agents' status and usage from their hooks, in `daemon/`, with the hook shims
 it installs in `hooks/`. See [daemon/README.md](daemon/README.md).
+
+## Also here
+
+- `feedback-relay/`: the Cloudflare Worker that posts the app's feedback as GitHub issues. See
+  [feedback-relay/README.md](feedback-relay/README.md).
+- `scripts/`: building the app (`make-app.sh`, `make-dmg.sh`), releasing (`release.sh`,
+  `changelog-notes.sh`, see [docs/releasing.md](docs/releasing.md)), the README's screenshots
+  (`render-screenshots.sh`), the AiTerm importer (`import_aiterm.py`) and the pinned toolchain
+  (`swift.sh`).
+- `docs/`: [the keyboard](docs/keyboard.md), [releasing](docs/releasing.md) and
+  [the changes to iTerm2's own files](docs/upstream-hook-points.md).

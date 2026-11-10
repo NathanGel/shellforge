@@ -35,11 +35,17 @@ and does not terminate a helper it adopted from another app process.
 Hook events report agent activity only. The helper does not rewrite shell commands, schedule
 checkout deletion, or close windows after Stop. Cleanup is an explicit app action.
 
+**Agent launches.** For an agent that isn't built in, or one with an environment of its own, the
+app arms the launch with the helper over the socket (`agents.armLaunch`): the environment, secrets included, for one
+tab and one agent, single-use, held in memory for at most 60 seconds and never logged.
+`shellforge-run` in that tab takes it (`agents.takeLaunch`, `run_agent.py`) and execs the agent,
+so no value is typed, shown in scrollback or kept in shell history.
+
 ## Hook receiver
 
-The daemon listens on `127.0.0.1:<hookPort>` (default 47831) for seven POST
+The daemon listens on `127.0.0.1:<hookPort>` (default 47831) for eight POST
 routes, used by the installed Claude Code / Codex / Grok Build command hooks,
-the PI extension and the two statusline shims:
+the PI extension, the two statusline shims and `shellforge-status`:
 
 - `POST /hook/claude` — Claude Code hook events (`SessionStart`,
   `PostModelSwitch`, `UserPromptSubmit`, `SubagentStart`, `SubagentStop`,
@@ -59,6 +65,8 @@ the PI extension and the two statusline shims:
 - `POST /statusline/grok` — the Grok status-line shim's forwarded JSON
   (model, effort, context; Grok has no rate-limit block, so this route never
   touches the `UsageStore`).
+- `POST /status` — `shellforge-status working|needs-input|done`, the exact
+  status any other agent's own hooks report (`hook_events.STATUS_ROUTE`).
 
 Grok's own command hooks are the one transport in this list that spawns a
 process in the session's cwd, so they are also the one that goes silent when
@@ -87,8 +95,8 @@ marker header below.
 Every request must carry `X-Shellforge-Hook: 1`; requests without it get a plain
 404, the same as an unknown route, so the receiver never reveals that these
 routes exist to a caller that doesn't know the header (any other local
-process, or a browser page via a CORS-simple POST). The tab a Codex, Grok or PI
-post came from travels in `X-Shellforge-iTerm-Session`; a body field of the same
+process, or a browser page via a CORS-simple POST). The tab a Codex, Grok, PI or
+`shellforge-status` post came from travels in `X-Shellforge-iTerm-Session`; a body field of the same
 name is discarded. A `Content-Length` that is not a plain decimal is a 400,
 and one over 1 MiB a 413. A head of more than 100 header lines or 32 KiB is a
 431, answered before the header check. A request with `Expect: 100-continue` gets an interim
