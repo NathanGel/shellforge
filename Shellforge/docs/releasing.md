@@ -76,15 +76,21 @@ Running Shellforge sees the new version under **Check for Updates…**.
   ignore case. It has the installed app's bundle id, so both share the Jira, GitLab and GitHub
   settings and tokens.
 - A dev build's helper is its own too. It runs with `--support-dir` set to the data folder, so its
-  socket, log, `daemon.json`, `tunnels.json`, `hook-port` and saved status lines are there, and it
-  listens for hooks on a port picked from that folder's path (between 47832 and 48831, the same on
-  every launch) instead of the installed app's 47831. Each app sets `SHELLFORGE_SUPPORT` to its own
-  folder in every terminal it opens, so the status-line shims, `shellforge-status` and
-  `shellforge-run` in a dev build's terminal report to the dev build's helper.
+  socket, log, `daemon.json`, `tunnels.json` and `hook-port` are there, and it listens for hooks
+  on a port picked from that folder's path (between 47832 and 48831, the same on every launch)
+  instead of the installed app's 47831. A dev build sets `SHELLFORGE_SUPPORT` to its folder in every
+  terminal it opens (the installed app clears it), so the status-line shims, `shellforge-status`
+  and `shellforge-run` in a dev build's terminal report to the dev build's helper.
 - What stays shared: the agents' own settings (`~/.claude/settings.json`, `~/.codex/config.toml`,
-  Grok's and PI's) are global, and their lifecycle hooks name one port. Installing or repairing
-  hooks from a dev build points them at the dev build's port, and the installed app then offers to
-  repair them back.
+  Grok's and PI's) are global, and their lifecycle hooks name one port. A dev build's Agent hooks
+  sheet shows the installed app's hooks and leaves them alone; **Install for This Build Anyway…**
+  points them at the dev build, after which the installed app shows no working or done until it
+  repairs them. The user's own status lines (`statusline-original.cmd`,
+  `grok-statusline-original.cmd`) are always recorded in, and read from, the installed app's folder.
+- A tmux server started from a dev build's tab keeps that tab's `SHELLFORGE_SUPPORT`, so sessions
+  opened through it later still report to the dev build's helper.
+- A long `-suite` name can make the socket path (`…/Application Support/<suite>/shellforged.sock`)
+  longer than macOS's 104-byte limit for Unix sockets, and the helper then can't start.
 
 ## README screenshots
 

@@ -82,7 +82,6 @@ it and refuses to release a version that has none.
 
 ### Fixed
 
-- **A dev build has a helper of its own.** It kept its files and hook port in the installed app's folder, so the two adopted or fought over one helper, and an agent in a dev build's terminal reported to the installed app; installed apps are unchanged.
 - **The feedback note shows up without a relaunch.** Once it is due, it now appears when you switch
   back to Shellforge, when your Mac wakes, or when you start a task or review, not only in a new
   window. How often it asks is unchanged.
