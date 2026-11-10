@@ -19,6 +19,8 @@ public struct Project: Codable, Equatable, Sendable, Identifiable {
     /// The ids of its tasks and terminals in the order the sidebar draws them; nil until the
     /// project is first arranged (`Workspace.children(in:)` says what nil means).
     public var childOrder: [UUID]?
+    /// How New Task names this project's branches; encoded only when it is not the default.
+    public var branchFormat = BranchFormat.typeAndName
 
     public init(id: UUID = UUID(), name: String, path: String, addedAt: Date = Date(), collapsed: Bool = false,
                 jiraProjects: [JiraProjectRef] = []) {
@@ -30,7 +32,7 @@ public struct Project: Codable, Equatable, Sendable, Identifiable {
         self.jiraProjects = jiraProjects
     }
 
-    private enum CodingKeys: String, CodingKey { case id, name, path, addedAt, collapsed, jiraProjects, tunnels, sshHost, childOrder }
+    private enum CodingKeys: String, CodingKey { case id, name, path, addedAt, collapsed, jiraProjects, tunnels, sshHost, childOrder, branchFormat }
 
     /// A workspace saved before projects could fold loads them unfolded, and one saved before they
     /// could link Jira projects links none.
@@ -44,6 +46,7 @@ public struct Project: Codable, Equatable, Sendable, Identifiable {
         tunnels = try c.decodeIfPresent([TunnelDefinition].self, forKey: .tunnels) ?? []
         sshHost = try c.decodeIfPresent(String.self, forKey: .sshHost)
         childOrder = try c.decodeIfPresent([UUID].self, forKey: .childOrder)
+        branchFormat = try c.decodeIfPresent(BranchFormat.self, forKey: .branchFormat) ?? .typeAndName
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -57,6 +60,7 @@ public struct Project: Codable, Equatable, Sendable, Identifiable {
         try c.encode(tunnels, forKey: .tunnels)
         try c.encodeIfPresent(sshHost, forKey: .sshHost)
         try c.encodeIfPresent(childOrder, forKey: .childOrder)
+        if branchFormat != .typeAndName { try c.encode(branchFormat, forKey: .branchFormat) }
     }
 }
 

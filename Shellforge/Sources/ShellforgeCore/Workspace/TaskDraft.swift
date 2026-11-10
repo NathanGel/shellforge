@@ -29,13 +29,25 @@ public struct TaskDraft: Equatable, Sendable {
     public var folderBranch: String?
     private var titleEdited = false, branchEdited = false, typeEdited = false
 
-    public var branch: String { "\(branchType.rawValue)/\(branchName)" }
+    /// How the project names its branches, set when the sheet opens for it.
+    public var branchFormat = BranchFormat.typeAndName
+
+    /// Whether the branch is the ticket's key alone: the project asks for it, a ticket is picked, and
+    /// the branch was not typed by hand.
+    public var usesTicketKey: Bool { branchFormat == .ticketKey && ticket != nil && !branchEdited }
+
+    public var branch: String { usesTicketKey ? ticket?.key ?? "" : typeAndNameBranch }
+
+    /// What the branch field shows: the key while the branch is that, else the name half.
+    public var branchFieldText: String { usesTicketKey ? ticket?.key ?? "" : branchName }
+
+    private var typeAndNameBranch: String { "\(branchType.rawValue)/\(branchName)" }
 
     /// The branch's worktree directory before a taken one is skipped (`BranchNaming.unused`, which
     /// the sheet applies): nothing while the name field is empty, rather than the type alone that
     /// `BranchNaming.worktreeSlug` falls back to for a bare `feat/`.
     public var worktreeSlug: String {
-        branchName.trimmingCharacters(in: .whitespaces).isEmpty ? "" : BranchNaming.worktreeSlug(branch: branch)
+        branchName.trimmingCharacters(in: .whitespaces).isEmpty ? "" : BranchNaming.worktreeSlug(branch: typeAndNameBranch)
     }
 
     public init(baseBranch: String, agentId: String, model: String, reasoning: String?) {
@@ -63,6 +75,7 @@ public struct TaskDraft: Equatable, Sendable {
     /// The branch field's text: a name, or a whole branch whose known type prefix moves into the
     /// select — typing `fix/` is picking the type.
     public mutating func setBranch(_ b: String) {
+        if usesTicketKey && b == ticket?.key { return }
         let split = BranchType.split(b)
         if let split { branchType = split.type; typeEdited = true }
         guard (split?.name ?? b) != branchName else { return }

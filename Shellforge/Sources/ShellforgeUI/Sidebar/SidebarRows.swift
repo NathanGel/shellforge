@@ -126,6 +126,9 @@ struct ProjectHeaderRow: View {
     var pullTitle: String?
     var pulling = false
     var pull: () -> Void = {}
+    /// Branch Names: the format New Task uses, and its change.
+    var branchFormat = BranchFormat.typeAndName
+    var setBranchFormat: (BranchFormat) -> Void = { _ in }
     @Environment(\.interfaceScale) private var scale
     @Environment(\.isRearranging) private var isRearranging
 
@@ -171,6 +174,7 @@ struct ProjectHeaderRow: View {
         .frame(height: scale(Size.projectRow)).padding(.leading, scale(Space.base)).padding(.trailing, SidebarRowLayout.trailingInset(scale))
         .modifier(RowPill(selected: false))
         .modifier(RearrangeAccessibilityAction(canRearrange: canRearrange, action: rearrange))
+        .modifier(BranchFormatAccessibilityActions(enabled: !isRearranging, set: setBranchFormat))
         // AiTerm's order: what the "+" offers, Open in, what the project links to, Rearrange, then Remove.
         .rowContextMenu {
             newItems
@@ -180,6 +184,11 @@ struct ProjectHeaderRow: View {
             Button("Jira Projects…", action: editJiraProjects)
             Button("Tunnels…", action: editTunnels)
             Button(SidebarModel.sshHostMenuTitle(node.project.sshHost), action: editSSHHost)
+            Menu(Self.branchNamesTitle) {
+                ForEach(BranchFormat.allCases, id: \.self) { format in
+                    Toggle(format.menuTitle, isOn: Binding(get: { branchFormat == format }, set: { _ in setBranchFormat(format) }))
+                }
+            }
             if let alias = node.project.sshHost, canOpenSSHHost { Button(SidebarModel.openSSHHostTitle(alias), action: openSSHHost) }
             if let pullTitle {
                 Divider()
@@ -192,9 +201,14 @@ struct ProjectHeaderRow: View {
         }
     }
 
+    static let branchNamesTitle = "Branch Names"
+
+    /// What VoiceOver offers for the same choice, as one action each.
+    static let voiceOverBranchActions = BranchFormat.allCases.map { "\(branchNamesTitle): \($0.menuTitle)" }
+
     /// The context menu's items, in order, apart from Open in's.
     static func menuTitles(provider: Provider, sshHost: String?, canOpenSSHHost: Bool, pullTitle: String?) -> [String] {
-        var titles = ["New Task…", "New Review…", "New Terminal…", "Jira Projects…", "Tunnels…", SidebarModel.sshHostMenuTitle(sshHost)]
+        var titles = ["New Task…", "New Review…", "New Terminal…", "Jira Projects…", "Tunnels…", SidebarModel.sshHostMenuTitle(sshHost), branchNamesTitle]
         if let sshHost, canOpenSSHHost { titles.append(SidebarModel.openSSHHostTitle(sshHost)) }
         if let pullTitle { titles.append(pullTitle) }
         return titles + [RearrangeMenuItem.title, "Remove Project…"]
@@ -506,3 +520,25 @@ struct NativeRowHighlight: NSViewRepresentable {
 
 /// The view `NativeRowHighlight` looks no further than: the sidebar's hosting view.
 protocol RowHighlightBoundary: NSView {}
+
+extension BranchFormat {
+    /// The Branch Names item for it.
+    var menuTitle: String {
+        switch self {
+        case .typeAndName: "Type and Name"
+        case .ticketKey: "Ticket Key Only"
+        }
+    }
+}
+
+/// The Branch Names choices as VoiceOver actions, left out in Rearrange mode like the menu.
+private struct BranchFormatAccessibilityActions: ViewModifier {
+    let enabled: Bool
+    let set: (BranchFormat) -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .modifier(NamedAccessibilityAction(name: ProjectHeaderRow.voiceOverBranchActions[0], enabled: enabled, action: { set(.typeAndName) }))
+            .modifier(NamedAccessibilityAction(name: ProjectHeaderRow.voiceOverBranchActions[1], enabled: enabled, action: { set(.ticketKey) }))
+    }
+}

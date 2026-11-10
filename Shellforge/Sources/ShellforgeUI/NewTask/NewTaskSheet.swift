@@ -178,12 +178,15 @@ struct NewTaskSheet: View {
     private var branchFields: some View {
         VStack(alignment: .leading, spacing: Space.block) {
             HStack(alignment: .top, spacing: Space.gap) {
-                FormField("Type") {
-                    Select(values: BranchType.allCases, selection: Binding(get: { model.draft.branchType }, set: { model.draft.setBranchType($0) }),
-                           label: { $0.rawValue }, detail: { $0.summary }, monospaced: true)
-                }.frame(width: Self.branchTypeWidth)
+                // The ticket’s key alone has no type to choose.
+                if !model.draft.usesTicketKey {
+                    FormField("Type") {
+                        Select(values: BranchType.allCases, selection: Binding(get: { model.draft.branchType }, set: { model.draft.setBranchType($0) }),
+                               label: { $0.rawValue }, detail: { $0.summary }, monospaced: true)
+                    }.frame(width: Self.branchTypeWidth)
+                }
                 FormField("New branch") {
-                    Input(placeholder: "branch-name", text: Binding(get: { model.draft.branchName }, set: { model.draft.setBranch($0) }), monospaced: true)
+                    Input(placeholder: "branch-name", text: Binding(get: { model.draft.branchFieldText }, set: { model.draft.setBranch($0) }), monospaced: true)
                 }
                 FormField("Base branch") {
                     Select(values: baseBranchChoices, selection: $model.draft.baseBranch, label: { $0 }, monospaced: true)
@@ -218,7 +221,7 @@ struct NewTaskSheet: View {
         case .new:
             let slug = model.worktreeSlug
             guard !slug.isEmpty else { return nil }
-            return .worktree(project: model.project, slug: slug, branch: model.draft.branchName.isEmpty ? "" : model.draft.branch)
+            return .worktree(project: model.project, slug: slug, branch: model.draft.branchFieldText.isEmpty ? "" : model.draft.branch)
         }
     }
 

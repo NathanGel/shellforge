@@ -1,6 +1,15 @@
 // Ported from AiTerm (app/Sources/AiTermCore/Git/BranchNaming.swift), GPLv3, Laurens D'Hondt.
 import Foundation
 
+/// How a project names its tasks' branches.
+public enum BranchFormat: String, Codable, Sendable, CaseIterable {
+    /// `feat/jvs-5819-jarvis-alarms-and-relay`: the type, then the ticket key and the summary.
+    case typeAndName
+    /// `JVS-5819`: the ticket key alone, for a repository whose convention that is. A task with no
+    /// ticket falls back to `typeAndName`.
+    case ticketKey
+}
+
 /// The names Shellforge gives, as AiTerm gives them: what it creates: a task's branch from its ticket and title, and the
 /// worktree directory a task's or review's branch is checked out in.
 public enum BranchNaming {

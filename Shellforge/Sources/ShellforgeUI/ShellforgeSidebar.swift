@@ -434,7 +434,9 @@ struct SidebarView: View {
                              pullTitle: SidebarModel.offersPull(model.providers[node.id] ?? .git)
                                  ? SidebarModel.pullTitle(branch: model.defaultBranch(of: node.id)) : nil,
                              pulling: model.isPulling(node.id),
-                             pull: { Task { await model.pullDefault(project: node.id) } })
+                             pull: { Task { await model.pullDefault(project: node.id) } },
+                             branchFormat: node.project.branchFormat,
+                             setBranchFormat: { model.setBranchFormat($0, of: node.id) })
                 .listRowSeparator(.hidden)
         case .terminal(let node, let selected):
             TerminalRowView(node: node, selected: selected, agents: model.avatars(forTerminal: node.id),

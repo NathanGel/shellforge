@@ -387,6 +387,7 @@ public final class SidebarModel: ObservableObject {
         let agentId = last.flatMap { available.contains($0) ? $0 : nil }
             ?? agents.first { available.contains($0.id) }?.id ?? agents[0].id
         var draft = TaskDraft(baseBranch: Repository.fallbackDefaultBranch, agentId: agentId, model: "", reasoning: nil)
+        draft.branchFormat = project.branchFormat
         draft.paneHost = paneHost(of: project)
         draft.openSSH = draft.paneHost != nil && document.workspace.lastOpenSSHByProject[projectId] ?? true
         let path = project.path
@@ -680,6 +681,15 @@ public final class SidebarModel: ObservableObject {
     }
 
     /// Folds or unfolds a project, as AiTerm's chevron does; kept with the workspace.
+    /// Branch Names: how New Task names this project’s branches from now on.
+    public func setBranchFormat(_ format: BranchFormat, of project: UUID) {
+        attempt {
+            try document.update { workspace in
+                if let i = workspace.projects.firstIndex(where: { $0.id == project }) { workspace.projects[i].branchFormat = format }
+            }
+        }
+    }
+
     public func toggleCollapsed(_ project: UUID) {
         attempt {
             try document.update { workspace in

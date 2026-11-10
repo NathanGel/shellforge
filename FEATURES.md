@@ -75,6 +75,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
   - New Task…, New Review… and New Terminal…;
   - Open in Finder and Open in VS Code (when VS Code is installed);
   - Jira Projects…, Tunnels… and SSH Host…;
+  - Branch Names, a submenu: Type and Name or Ticket Key Only (see Worktree and branch);
   - Pull <default branch>, for a GitLab or GitHub project;
   - Rearrange (see [Rearranging the sidebar](#rearranging-the-sidebar));
   - Remove Project….
@@ -136,7 +137,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
   - Shellforge remembers the last agent per project and the last model per agent.
 - **Worktree and branch.** (A project-folder task has neither: it uses the project’s own folder and its checked-out branch.)
   - A task works in `<project>/.worktrees/<slug>`, with `.worktrees/` excluded from git.
-  - Its branch is `<type>/<key>-<slug>`.
+  - Its branch is `<type>/<key>-<slug>`. A project set to Branch Names › Ticket Key Only names it after the picked ticket alone instead (`JVS-5819`); with no ticket it is `<type>/<slug>` as usual, the Type select is hidden while the key is the branch, and a branch you type still wins. The worktree folder stays `<key>-<slug>`.
   - A long first prompt goes to `.shellforge/first-prompt.md` in the worktree.
   - If creating the worktree fails, nothing is saved and the sheet keeps what you typed.
   - While it creates, the sheet is locked and says what it is doing — fetching the base, making the worktree, or running the repository's own checkout hook (a pre-commit `uv sync` can take a while). Cancel, or ⎋, stops it: the command and everything it started end, the half-made worktree and branch are removed, and nothing is saved.
