@@ -51,9 +51,8 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
   - A window sized some other way, such as tiling or a smaller screen, can still end up too narrow. There the sidebar steps aside.
 - **Selection.** The selected row uses the system's selection: the accent while the window is active, grey while it is not.
 - **Banners** are inline notices with an icon; an error stays until you click its ×.
-- **Header.** Projects, then five buttons, left to right:
+- **Header.** Projects, then four buttons, left to right:
   - Agent hooks (the bolt);
-  - Settings (the gear);
   - New Tab in Home Folder (the terminal icon), which opens a shell in `~` that belongs to no project;
   - "+", with Add Project… and Add Divider…;
   - Hide Sidebar, at the far right.
@@ -318,7 +317,7 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
 
 ## Settings and connections
 
-- **Opening Settings.** Click the sidebar's gear, or right-click the Mac row › Mac Settings….
+- **Opening Settings.** Click the gear at the bottom of the activity bar, or right-click the Metrics panel's Mac row › Mac Settings….
   - **Core:** the Mac card (Backpack setup), the Environment card and the Feedback switch.
   - **Agents:** every agent, built in, ready-made and your own, to add, edit, duplicate or remove ([Agents](#agents)); then one row per installed agent, with its **Default model** and **Default reasoning**.
   - **Services:** Jira (site, email, API token), GitLab (host, token) and GitHub (token).

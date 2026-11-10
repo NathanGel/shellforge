@@ -7,14 +7,14 @@ import ShellforgeCore
 import ShellforgeDesign
 import SwiftUI
 
-/// `PROJECTS`, the Agent hooks and Settings buttons, the menu that adds a project, and Hide Sidebar.
+/// `PROJECTS`, the Agent hooks and New Tab in Home Folder buttons, the menu that adds a project, and
+/// Hide Sidebar. Settings is the activity bar's gear alone.
 struct SidebarHeader: View {
     let addProject: () -> Void
     var addDivider: () -> Void = {}
     /// Greyed with no project: a divider would divide nothing.
     var canAddDivider = true
     let showHooks: () -> Void
-    let showMacSettings: () -> Void
     /// A shell of no project, in the home folder.
     var newHomeTab: () -> Void = {}
     /// ⌃⌘S as a button; while hidden, the window's title bar shows the same icon to bring it back.
@@ -36,13 +36,6 @@ struct SidebarHeader: View {
             .frame(width: SidebarRowLayout.trailingSlot(scale), height: SidebarRowLayout.trailingSlot(scale))
             .help("Agent hooks")
             .accessibilityLabel("Agent hooks")
-            Button(action: showMacSettings) {
-                Image(systemName: "gearshape").font(Typography.label).foregroundStyle(surface.secondaryInk)
-            }
-            .buttonStyle(.plain)
-            .frame(width: SidebarRowLayout.trailingSlot(scale), height: SidebarRowLayout.trailingSlot(scale))
-            .help("Settings…")
-            .accessibilityLabel("Settings")
             Button(action: newHomeTab) {
                 Image(systemName: "terminal").font(Typography.label).foregroundStyle(surface.secondaryInk)
             }
