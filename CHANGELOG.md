@@ -9,6 +9,23 @@ it and refuses to release a version that has none.
 
 ## 1.0.0 — unreleased
 
+### Added
+
+- **Activity bar.** A column of icons down the sidebar's left edge switches its panel: Sessions,
+  the sidebar as it was, and Metrics. Each window shows its own panel; drag the icons to reorder
+  them, and every window keeps the same order after a restart. Settings is the gear at its foot.
+  The sidebar is 44 pt wider to make room, so the Sessions panel keeps its old width.
+- **Metrics panel.** Everything the footer showed, in full and scrolling: the selected task's
+  context and token counts, the Mac's readings and Backpack Mode (click for Backpack Mode,
+  right-click for Mac Settings…), and each vendor's windows with their reset times.
+
+### Changed
+
+- **The footer is a one-line strip; vendors you don't use are hidden.** Under every panel, one
+  line shows `cpu`, `ram` and each vendor's first window; it folds the last vendors into `+N`
+  rather than wrap, and a click opens the Metrics panel. A vendor with no usage data whose CLI
+  isn't installed, such as Codex on a Mac without it, no longer shows "No usage data yet".
+
 ## 0.10.0 — 2026-11-10
 
 ### Added

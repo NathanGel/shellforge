@@ -85,11 +85,23 @@ import Testing
     }
 
     @Test func aMissingStatusLineSaysUsageIsDisconnected() async throws {
-        let (model, _, _, _, _) = try await sidebar()
+        let model = SidebarModel(host: FakeTerminalHost(), document: WorkspaceDocument(store: WorkspaceStore(folder: folder)),
+                                 launcher: try GitRepoForUI(installed: ["claude", "codex"]).launcher, feed: FakeFeed(), jiraSettings: { nil })
+        await model.refreshInstalledAgents()
         let rows = model.vendorRows(now: Date(), calendar: .current, claudeStatusLineInstalled: false)
         #expect(rows.map(\.vendor) == [.claude, .codex])
         #expect(rows[0].note == UsageRows.statusLineMissingNote && rows[0].warning)
         #expect(rows[1].note == "No usage data yet" && !rows[1].warning)
+    }
+
+    /// The footer leaves out a vendor you don’t use: the model finds which agents’ CLIs are on PATH,
+    /// off the main actor, and only those wait for usage data.
+    @Test func theModelFindsTheInstalledAgents() async throws {
+        let model = SidebarModel(host: FakeTerminalHost(), document: WorkspaceDocument(store: WorkspaceStore(folder: folder)),
+                                 launcher: try GitRepoForUI(installed: ["codex"]).launcher, feed: FakeFeed(), jiraSettings: { nil })
+        await model.refreshInstalledAgents()
+        #expect(model.installedAgents == [.codex])
+        #expect(model.vendorRows(now: Date(), calendar: .current, claudeStatusLineInstalled: true).map(\.vendor) == [.codex])
     }
 
     @Test func theFooterRedrawsOnTheMinute() async throws {

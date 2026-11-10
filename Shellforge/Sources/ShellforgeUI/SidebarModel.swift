@@ -153,6 +153,9 @@ public final class SidebarModel: ObservableObject {
     let launcher: CommandLauncher
     /// The agents New Task offers; Settings › Agents' changes come in through `reloadAgents`.
     @Published public private(set) var agents: [AgentDefinition]
+    /// The agents whose CLIs were found on `PATH` at the last look (`refreshInstalledAgents`): the
+    /// footer leaves out a vendor you don’t use. Empty until the first look.
+    @Published public internal(set) var installedAgents: Set<SessionAgent> = []
     /// The ids of the ready-made agents among them: shipped whether or not their CLIs are installed,
     /// so New Task doesn't name each one that isn't.
     public private(set) var readyMadeAgents: Set<String>
@@ -284,6 +287,7 @@ public final class SidebarModel: ObservableObject {
     public func reloadAgents(_ agents: [AgentDefinition], readyMade: Set<String>) {
         if agents != self.agents { self.agents = agents }
         readyMadeAgents = readyMade
+        Task { [weak self] in await self?.refreshInstalledAgents() }
     }
 
     /// What a row's mark is called: a built-in's name, a custom agent's as its definition names it —
@@ -310,6 +314,7 @@ public final class SidebarModel: ObservableObject {
         Task { [weak self] in
             let source = await BackgroundWork.run { launcher.environment.source }
             self?.environmentWarning = Self.warning(source)
+            await self?.refreshInstalledAgents()
         }
     }
 

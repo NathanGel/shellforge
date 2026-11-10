@@ -133,9 +133,18 @@ extension EnvironmentValues {
     }
 }
 
-/// AiTerm's `SidebarFooterHost`: the vendor rows recomputed on the minute — a window that has reset
-/// is dropped, and a reset time gains its weekday across midnight — and the selected row's context
-/// and the Mac's readings over them.
+extension SidebarModel {
+    /// The vendor rows for the minute `date`, or for the test's pinned `clock`: what the strip and the
+    /// Metrics panel both draw.
+    func vendorRows(at date: Date, clock: FooterClock?, hooks: AgentHooksModel) -> [UsageVendorRow] {
+        vendorRows(now: clock?.now ?? date, calendar: clock?.calendar ?? .current,
+                   claudeStatusLineInstalled: hooks.claudeStatusLineInstalled)
+    }
+}
+
+/// AiTerm's `SidebarFooterHost`, now the Metrics panel's content: the vendor rows recomputed on the
+/// minute — a window that has reset is dropped, and a reset time gains its weekday across midnight —
+/// and the selected row's context and the Mac's readings over them.
 struct SidebarFooterHost: View {
     @ObservedObject var model: SidebarModel
     @ObservedObject var hooks: AgentHooksModel
@@ -145,25 +154,14 @@ struct SidebarFooterHost: View {
     let openMacSettings: () -> Void
     @Environment(\.footerClock) private var footerClock
 
-    @Environment(\.interfaceScale) private var scale
-
     var body: some View {
         TimelineView(.everyMinute) { context in
             SidebarFooter(task: model.footerRow,
-                          rows: model.vendorRows(now: footerClock?.now ?? context.date, calendar: footerClock?.calendar ?? .current,
-                                                 claudeStatusLineInstalled: hooks.claudeStatusLineInstalled),
+                          rows: model.vendorRows(at: context.date, clock: footerClock, hooks: hooks),
                           machine: machine.lines,
                           mac: MacModePresentation.line(mode: MacMode(state: backpack.state, transition: backpack.transition),
                                                         hotspot: backpack.network, wifi: backpack.currentNetwork),
                           toggleMac: toggleMac, openMacSettings: openMacSettings)
-        }
-        // The footer on a rounded card, inside its own frame, so the footer's geometry is unchanged;
-        // its edges in line with the rows' pills, at the list's inset.
-        .background {
-            RoundedRectangle(cornerRadius: scale(Radius.group), style: .continuous)
-                .fill(Palette.footerCard)
-                .padding(.horizontal, SidebarRowLayout.listInset)
-                .padding(.bottom, scale(Space.base))
         }
     }
 }
@@ -365,7 +363,11 @@ struct SidebarView: View {
             }
             HStack(spacing: 0) {
                 ActivityBar(model: activity, openSettings: showMacSettings)
-                panels.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                // The metrics strip is pinned under whichever panel shows.
+                VStack(spacing: 0) {
+                    panels.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    MetricsStripHost(model: model, hooks: hooks, machine: machine, open: MetricsStrip.opener(activity))
+                }
             }
         }
         // The header places itself on the buttons' row, so the title bar's safe area is not wanted.
@@ -430,14 +432,18 @@ struct SidebarView: View {
                 .accessibilityHidden(!showsSessions)
                 .disabled(!showsSessions)
             if activity.layout.selected == .metrics {
-                ActivityPanelPlaceholder(panel: .metrics, titled: chrome.windowControls == nil)
+                MetricsPanel(titled: chrome.windowControls == nil,
+                             footer: SidebarFooterHost(model: model, hooks: hooks, machine: machine, backpack: backpack,
+                                                       toggleMac: { BackpackToggle(backpack: backpack, presentSheet: presentBackpack).run() },
+                                                       openMacSettings: showMacSettings))
             }
         }
     }
 
     private var showsSessions: Bool { activity.layout.selected == .sessions }
 
-    /// Today's sidebar: the header (unless pinned on the buttons' row), the banners, the list and the footer.
+    /// Today's sidebar: the header (unless pinned on the buttons' row), the banners and the list; the
+    /// footer that was under it is the Metrics panel now, and the strip below every panel.
     private var sessionsPanel: some View {
         VStack(spacing: 0) {
             // Its buttons wait while the sidebar is rearranged.
@@ -454,9 +460,6 @@ struct SidebarView: View {
             .background(NativeRowHighlight.off)
             .background(ListKeyboardGate(enabled: showsSessions))
             .environment(\.isRearranging, model.isRearranging)
-            SidebarFooterHost(model: model, hooks: hooks, machine: machine, backpack: backpack,
-                              toggleMac: { BackpackToggle(backpack: backpack, presentSheet: presentBackpack).run() },
-                              openMacSettings: showMacSettings)
         }
     }
 

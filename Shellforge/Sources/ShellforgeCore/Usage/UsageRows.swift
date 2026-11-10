@@ -111,10 +111,15 @@ public enum UsageRows {
     /// Context is not here: it belongs to the selected row and is drawn on ``usageTaskRow``. PI and
     /// Grok Build have no account-quota source AiTerm can read (see the Grok spec's usage spike),
     /// so neither gets a vendor row; both show `ctx` on the task row.
+    ///
+    /// `installed` are the agents whose CLIs were found. A vendor with no usage data that is not
+    /// among them is one you don’t use, so it gets no row rather than a “No usage data yet” that will
+    /// never change; a vendor that has reported keeps its row either way, as its numbers are real.
     public static func vendorRows(_ snap: UsageSnapshot, now: Date, calendar: Calendar,
-                                       claudeStatusLineInstalled: Bool = true) -> [UsageVendorRow] {
-        [(SessionAgent.claude, snap.claude), (.codex, snap.codex)].map { vendor, usage in
+                                       claudeStatusLineInstalled: Bool = true, installed: Set<SessionAgent>) -> [UsageVendorRow] {
+        [(SessionAgent.claude, snap.claude), (.codex, snap.codex)].compactMap { vendor, usage in
             guard let usage else {
+                guard installed.contains(vendor) else { return nil }
                 let broken = vendor == .claude && !claudeStatusLineInstalled
                 return UsageVendorRow(vendor: vendor, lines: [], note: broken ? statusLineMissingNote : "No usage data yet", warning: broken)
             }

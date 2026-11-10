@@ -18,9 +18,21 @@ extension SidebarModel {
                                  contexts: contexts.percents(forRow: .tab(tab.tabId)), preferring: id)
     }
 
-    /// USAGE's rows for this minute: Claude's and Codex's windows, as AiTerm's footer works them out.
+    /// USAGE's rows for this minute: Claude's and Codex's windows, as AiTerm's footer works them out,
+    /// leaving out a vendor with no data whose CLI is not installed (`installedAgents`).
     public func vendorRows(now: Date, calendar: Calendar, claudeStatusLineInstalled: Bool) -> [UsageVendorRow] {
-        UsageRows.vendorRows(sessions.usage, now: now, calendar: calendar, claudeStatusLineInstalled: claudeStatusLineInstalled)
+        UsageRows.vendorRows(sessions.usage, now: now, calendar: calendar, claudeStatusLineInstalled: claudeStatusLineInstalled,
+                             installed: installedAgents)
+    }
+
+    /// Finds which agents' CLIs are on the login shell's `PATH`, off the main actor (the first read of
+    /// the environment runs a login shell), and publishes them as `installedAgents`.
+    public func refreshInstalledAgents() async {
+        let (launcher, agents) = (self.launcher, self.agents)
+        let found = await BackgroundWork.run {
+            Set(agents.filter { launcher.locate($0.command) != nil }.map { SessionAgent(agentId: $0.id) })
+        }
+        if found != installedAgents { installedAgents = found }
     }
 
     /// The agents of a task's tabs, as AiTerm's avatar group takes them: in tab order, a shell's too

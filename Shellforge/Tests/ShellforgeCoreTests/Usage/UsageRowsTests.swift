@@ -6,6 +6,9 @@ import Testing
 /// AiTerm's footer cases from its `SidebarModelTests`, their assertions as AiTerm wrote them. Its
 /// `usageTaskRow` and `usageTerminalRow` filtered the sessions and took the counts as a map; here
 /// the two helpers below do that and call `UsageRows.taskRow`, which takes one row's own sessions.
+/// Both vendors' CLIs found, for the cases that are not about which agents are installed.
+private let bothInstalled: Set<SessionAgent> = [.claude, .codex]
+
 @Suite struct UsageRowsTests {
     func session(_ id: String, task: String?, agent: SessionAgent, state: SessionState, tab: Int, window: String = "w1", project: String? = nil,
                  cwd: String = "", agentCwd: String? = nil, active: Bool = false, context: Int? = nil) -> SessionInfo {
@@ -55,7 +58,7 @@ import Testing
         let snap = UsageSnapshot(
             claude: Usage(fiveHour: UsageWindow(usedPercent: 23, resetsAt: today1640), sevenDay: UsageWindow(usedPercent: 84, resetsAt: monday2100), spend: nil, plan: nil, updatedAt: Int(now.timeIntervalSince1970)),
             codex: Usage(fiveHour: nil, sevenDay: UsageWindow(usedPercent: 23, resetsAt: wednesday1628), spend: nil, plan: "self_serve_business_prolite", updatedAt: Int(now.timeIntervalSince1970)))
-        let rows = UsageRows.vendorRows(snap, now: now, calendar: cal)
+        let rows = UsageRows.vendorRows(snap, now: now, calendar: cal, installed: bothInstalled)
         #expect(rows == [
             UsageVendorRow(vendor: .claude, lines: [UsageLine(window: .weekly, percent: 84, reset: "Mon 21:00", warning: true, resetInFull: "Monday 21:00"),
                                                     UsageLine(window: .fiveHour, percent: 23, reset: "16:40", warning: false, resetInFull: "16:40")], note: nil),
@@ -63,10 +66,10 @@ import Testing
         ])
         // Each segment's tooltip and VoiceOver label say it in words.
         #expect(rows[0].lines.map(\.help) == ["Weekly limit, 84 % used, resets Monday 21:00", "5-hour limit, 23 % used, resets 16:40"])
-        let none = UsageRows.vendorRows(UsageSnapshot(claude: nil, codex: Usage(fiveHour: nil, sevenDay: nil, spend: nil, plan: nil, updatedAt: Int(now.timeIntervalSince1970))), now: now, calendar: cal)
+        let none = UsageRows.vendorRows(UsageSnapshot(claude: nil, codex: Usage(fiveHour: nil, sevenDay: nil, spend: nil, plan: nil, updatedAt: Int(now.timeIntervalSince1970))), now: now, calendar: cal, installed: bothInstalled)
         #expect(none[0] == UsageVendorRow(vendor: .claude, lines: [], note: "No usage data yet"))
         #expect(none[1] == UsageVendorRow(vendor: .codex, lines: [], note: "No usage data reported"))
-        let noReset = UsageRows.vendorRows(UsageSnapshot(claude: Usage(fiveHour: UsageWindow(usedPercent: 5, resetsAt: nil), sevenDay: nil, spend: nil, plan: nil, updatedAt: Int(now.timeIntervalSince1970)), codex: nil), now: now, calendar: cal)
+        let noReset = UsageRows.vendorRows(UsageSnapshot(claude: Usage(fiveHour: UsageWindow(usedPercent: 5, resetsAt: nil), sevenDay: nil, spend: nil, plan: nil, updatedAt: Int(now.timeIntervalSince1970)), codex: nil), now: now, calendar: cal, installed: bothInstalled)
         #expect(noReset[0].lines == [UsageLine(window: .fiveHour, percent: 5, reset: nil, warning: false)])
         #expect(noReset[0].lines[0].help == "5-hour limit, 5 % used")
     }
@@ -79,14 +82,39 @@ import Testing
         let cal = Calendar(identifier: .gregorian)
         let empty = UsageSnapshot(claude: nil, codex: nil)
         let claude = { (rows: [UsageVendorRow]) in rows.first { $0.vendor == .claude }! }
-        #expect(claude(UsageRows.vendorRows(empty, now: now, calendar: cal)).note == "No usage data yet")
-        #expect(claude(UsageRows.vendorRows(empty, now: now, calendar: cal, claudeStatusLineInstalled: false)).note == "Usage disconnected")
-        let codex = UsageRows.vendorRows(empty, now: now, calendar: cal, claudeStatusLineInstalled: false).first { $0.vendor == .codex }!
+        #expect(claude(UsageRows.vendorRows(empty, now: now, calendar: cal, installed: bothInstalled)).note == "No usage data yet")
+        #expect(claude(UsageRows.vendorRows(empty, now: now, calendar: cal, claudeStatusLineInstalled: false, installed: bothInstalled)).note == "Usage disconnected")
+        let codex = UsageRows.vendorRows(empty, now: now, calendar: cal, claudeStatusLineInstalled: false, installed: bothInstalled).first { $0.vendor == .codex }!
         #expect(codex.note == "No usage data yet", "Codex's rate limits come from its own rollout file; the status line is not its feed")
         // Only the broken feed is a warning; the footer reads the flag, not the wording.
-        #expect(claude(UsageRows.vendorRows(empty, now: now, calendar: cal, claudeStatusLineInstalled: false)).warning)
-        #expect(!claude(UsageRows.vendorRows(empty, now: now, calendar: cal)).warning)
+        #expect(claude(UsageRows.vendorRows(empty, now: now, calendar: cal, claudeStatusLineInstalled: false, installed: bothInstalled)).warning)
+        #expect(!claude(UsageRows.vendorRows(empty, now: now, calendar: cal, installed: bothInstalled)).warning)
         #expect(!codex.warning)
+    }
+
+    /// A vendor you don’t use is left out: no usage data and no CLI found means no row, rather than a
+    /// “No usage data yet” that will never change. Installed, its waiting row stays.
+    @Test func aVendorWithNoDataAndNoAgentIsHidden() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000), cal = Calendar(identifier: .gregorian)
+        let epoch = Int(now.timeIntervalSince1970)
+        let claudeOnly = UsageSnapshot(claude: Usage(fiveHour: UsageWindow(usedPercent: 12, resetsAt: epoch + 3600), sevenDay: nil,
+                                                     spend: nil, plan: nil, updatedAt: epoch), codex: nil)
+        let without = UsageRows.vendorRows(claudeOnly, now: now, calendar: cal, installed: [.claude])
+        #expect(without.map(\.vendor) == [.claude])
+        let with = UsageRows.vendorRows(claudeOnly, now: now, calendar: cal, installed: [.claude, .codex])
+        #expect(with.map(\.vendor) == [.claude, .codex])
+        #expect(with[1] == UsageVendorRow(vendor: .codex, lines: [], note: "No usage data yet"))
+        // A vendor that has reported keeps its row, found on PATH or not: its numbers are real.
+        #expect(UsageRows.vendorRows(claudeOnly, now: now, calendar: cal, installed: []).map(\.vendor) == [.claude])
+        #expect(UsageRows.vendorRows(.empty, now: now, calendar: cal, installed: []).isEmpty)
+    }
+
+    /// The broken status line keeps its amber row for an installed Claude Code: hiding it would hide
+    /// the one sign that its usage stopped arriving.
+    @Test func claudeStatusLineMissingStillShows() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000), cal = Calendar(identifier: .gregorian)
+        let rows = UsageRows.vendorRows(.empty, now: now, calendar: cal, claudeStatusLineInstalled: false, installed: [.claude])
+        #expect(rows == [UsageVendorRow(vendor: .claude, lines: [], note: UsageRows.statusLineMissingNote, warning: true)])
     }
 
     /// A window whose reset time has passed has cleared: whatever it last reported, that limit is at
@@ -99,12 +127,12 @@ import Testing
             claude: Usage(fiveHour: UsageWindow(usedPercent: 91, resetsAt: epoch - 1),
                           sevenDay: UsageWindow(usedPercent: 40, resetsAt: epoch + 3600), spend: nil, plan: nil, updatedAt: epoch),
             codex: Usage(fiveHour: nil, sevenDay: UsageWindow(usedPercent: 28, resetsAt: epoch - 86_400), spend: nil, plan: nil, updatedAt: epoch))
-        let rows = UsageRows.vendorRows(snap, now: now, calendar: cal)
+        let rows = UsageRows.vendorRows(snap, now: now, calendar: cal, installed: bothInstalled)
         #expect(rows[0].lines.map(\.window) == [.weekly])
         #expect(rows[1] == UsageVendorRow(vendor: .codex, lines: [], note: "No usage data reported"))
         // A window with no reset time at all never expires.
         let open = UsageSnapshot(claude: Usage(fiveHour: UsageWindow(usedPercent: 5, resetsAt: nil), sevenDay: nil, spend: nil, plan: nil, updatedAt: epoch), codex: nil)
-        #expect(UsageRows.vendorRows(open, now: now, calendar: cal)[0].lines.map(\.window) == [.fiveHour])
+        #expect(UsageRows.vendorRows(open, now: now, calendar: cal, installed: bothInstalled)[0].lines.map(\.window) == [.fiveHour])
     }
 
     /// Both feeds only move while their agent runs, so a quiet vendor is idle, not broken. Its last
@@ -117,7 +145,7 @@ import Testing
             UsageSnapshot(claude: nil, codex: Usage(fiveHour: nil, sevenDay: UsageWindow(usedPercent: 28, resetsAt: epoch + 86_400),
                                                      spend: nil, plan: nil, updatedAt: epoch - age))
         }
-        let rows = { (age: Int) in UsageRows.vendorRows(usage(age), now: now, calendar: cal)[1].lines }
+        let rows = { (age: Int) in UsageRows.vendorRows(usage(age), now: now, calendar: cal, installed: bothInstalled)[1].lines }
         #expect(rows(86_400) == rows(0))
         #expect(rows(0) == [UsageLine(window: .weekly, percent: 28, reset: "Wed 23:13", warning: false, resetInFull: "Wednesday 23:13")])
     }
@@ -231,12 +259,12 @@ import Testing
     /// PI has no account-quota source, so it never gets a vendor row: its context lives on the task.
     @Test func testVendorRowsAreClaudeAndCodexOnly() {
         let now = Date(timeIntervalSince1970: 1_700_000_000), cal = Calendar(identifier: .gregorian)
-        #expect(UsageRows.vendorRows(.empty, now: now, calendar: cal).map(\.vendor) == [.claude, .codex])
+        #expect(UsageRows.vendorRows(.empty, now: now, calendar: cal, installed: bothInstalled).map(\.vendor) == [.claude, .codex])
     }
 
     /// Grok Build has no account-quota source either, so it follows PI: no vendor row, only ctx.
     @Test func grokGetsAContextRowAndNoVendorRow() {
-        let rows = UsageRows.vendorRows(.empty, now: Date(), calendar: .current)
+        let rows = UsageRows.vendorRows(.empty, now: Date(), calendar: .current, installed: bothInstalled)
         #expect(rows.map(\.vendor) == [.claude, .codex])
         let task = UUID()
         let tab = session("g", task: task.uuidString, agent: .grok, state: .working, tab: 0, active: true)

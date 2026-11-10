@@ -70,7 +70,7 @@ struct SidebarFooter: View {
                 macReadings
                 backpackLine
             }
-            // Inside the footer card, not past its edges.
+            // Inside the footer's edges, not past them.
             Hairline().padding(.horizontal, edge)
             group("Usage") {
                 ForEach(rows, id: \.vendor) { row in

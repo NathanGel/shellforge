@@ -21,7 +21,7 @@ sidebar inside every terminal window:
   task.
 - **SSH tunnels** per project, started and stopped from the sidebar, and a project's SSH host
   beside its agent.
-- **Usage** of each agent's plan in the footer, and **Backpack Mode** for a Mac that keeps working
+- **Usage** of each agent's plan in the metrics strip and the Metrics panel, and **Backpack Mode** for a Mac that keeps working
   with its lid closed.
 - **At home on macOS 26:** a floating glass sidebar that follows light and dark, and an optional
   switch to match the terminal's colours to Shellforge.

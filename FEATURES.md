@@ -5,13 +5,14 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 ## Contents
 
 - [The sidebar](#the-sidebar)
+- [Activity bar](#activity-bar)
 - [Projects](#projects)
 - [Dividers](#dividers)
 - [Tasks and reviews](#tasks-and-reviews)
 - [Agents](#agents)
 - [Tabs and panes](#tabs-and-panes)
 - [Terminals](#terminals)
-- [Footer](#footer)
+- [Metrics](#metrics)
 - [Dock badge](#dock-badge)
 - [Backpack Mode](#backpack-mode)
 - [Tunnels](#tunnels)
@@ -38,14 +39,14 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 - **Getting it back.** While the sidebar is hidden, the same icon sits in the window's title bar, beside the window buttons. In full screen there is no title bar, so use ⌃⌘S or the View menu.
 - **New windows** open the way the last toggle left them.
 - **Width.** Drag the sidebar's right edge, marked by a thin line, to resize it.
-  - The default width is 420 pt, the minimum 360 and the maximum 720.
+  - The default width is 464 pt, the minimum 404 and the maximum 720. Both include the 44 pt activity bar, so the panel beside it opens at 420 pt and narrows to 360.
   - Each window keeps its own width. The last width you dragged is the starting width for new windows.
 - **Text size.** Click anywhere in the sidebar, then use ⌘+ / ⌘− to make its text bigger or smaller, and ⌘0 for normal size.
   - There are three sizes: normal (13 pt), large (15 pt) and extra large (17 pt).
   - The keys act on the sidebar until you click in the terminal again; then they size the terminal's font, as in iTerm2. Clicking a task or tab row counts as a click in the sidebar, though your typing goes to its terminal.
   - Every window's sidebar uses the same size, and it is kept after a restart. Sheets and menus stay at normal size. The sidebar's width does not change with it.
 - **Terminal space.** The terminal always keeps at least 320 pt, about 40 columns, with iTerm2's toolbelt counted.
-  - While the sidebar shows, the window can't be dragged narrower than both minimums together: 680 pt, plus the toolbelt's width when it is open. The sidebar shrinks to its minimum, then the window stops, rather than the sidebar jumping away.
+  - While the sidebar shows, the window can't be dragged narrower than both minimums together: 724 pt, plus the toolbelt's width when it is open. The sidebar shrinks to its minimum, then the window stops, rather than the sidebar jumping away.
   - A window sized some other way, such as tiling or a smaller screen, can still end up too narrow. There the sidebar steps aside.
 - **Selection.** The selected row uses the system's selection: the accent while the window is active, grey while it is not.
 - **Banners** are inline notices with an icon; an error stays until you click its ×.
@@ -61,6 +62,16 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
   - problems with the helper;
   - the last error, until you click its × or a later action succeeds;
   - work in progress, such as "Adding X…".
+
+## Activity bar
+
+- **Where it is.** A narrow column of icons down the sidebar's left edge, VS Code's way. Each icon shows one panel beside it:
+  - Sessions (the stack of cards): projects, tasks, terminals and tabs, as the sidebar has always shown them;
+  - Metrics (the gauge): see [Metrics](#metrics).
+- **Switching.** Click an icon. The selected one has an accent edge. Each window shows its own panel; Sessions keeps its scroll position and selection while another panel shows, and the Tasks menu's commands work whatever the panel.
+- **Panel order.** Drag an icon up or down the bar to reorder the panels. Every window's bar follows the same order, and it is kept after a restart.
+- **Settings** is the gear at the bottom of the bar.
+- **Rearrange mode** keeps its Done / Cancel bar at the top whichever panel shows.
 
 ## Projects
 
@@ -230,17 +241,18 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
   - Rearrange;
   - Remove Terminal, which closes its tabs and asks nothing, because nothing on disk is touched.
 
-## Footer
+## Metrics
 
-- **System** shows the selected task's or tab's agent:
-  - its context ring and percent;
-  - its token counts, such as `in 936k · out 5.6k`, with exact figures in the tooltip.
-- **Mac** shows `cpu` and `ram`, plus `bat` on battery, sampled every 5 s.
-  - A reading turns amber only when macOS warns.
-  - Click it for Backpack Mode, or right-click for Mac Settings….
-- **Usage** has one row per vendor (Claude, Codex) with the weekly (`wk`) and 5-hour (`5h`) windows and their reset times.
-  - Rings turn amber at 80%.
-  - Claude reads "Usage disconnected" until its status-line shim is installed (Agent hooks).
+- **The strip.** One line pinned at the bottom of every panel: the Mac's `cpu` and `ram`, then each vendor's mark with its first window (`wk` when it reports one) as a ring and a percent, such as `cpu ◔ 23%  ram ◔ 61%  Ⓒ ◔ 84%`.
+  - It never wraps: when the sidebar is too narrow, the last vendors fold into `+1`, `+2`….
+  - Hover a reading for its words. Click the strip to open the Metrics panel.
+- **The Metrics panel** shows everything in full, scrolling when the window is short:
+  - **System**: the selected task's or tab's agent, with its context ring and percent and its token counts, such as `in 936k · out 5.6k`, with exact figures in the tooltip;
+  - **Mac**: `cpu` and `ram`, plus `bat` on battery, sampled every 5 s. A reading turns amber only when macOS warns. Click it for Backpack Mode, or right-click for Mac Settings…. While Backpack Mode is on or switching, a line below says so;
+  - **Usage**: one row per vendor (Claude, Codex) with the weekly (`wk`) and 5-hour (`5h`) windows and their reset times.
+- **Rings** turn amber at 80%.
+- **Vendors you don't use are hidden.** A vendor with no usage data whose CLI isn't installed gets no row and no gauge. Once installed, it reads "No usage data yet" until its first report.
+- Claude reads "Usage disconnected" (amber) until its status-line shim is installed (Agent hooks).
 
 ## Dock badge
 
@@ -248,7 +260,7 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
 
 ## Backpack Mode
 
-- **Turning it on.** Use View › Backpack Mode (⌘B), or click the footer's Mac row. Both open its sheet; with the mode on, they turn it off.
+- **Turning it on.** Use View › Backpack Mode (⌘B), or click the Mac row in the Metrics panel. Both open its sheet; with the mode on, they turn it off.
 - **The sheet:**
   - setup checks for this Mac;
   - the iPhone hotspot and its password, kept in the Keychain once joined;
@@ -352,7 +364,7 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
   - dividers: Rename, Rearrange and Remove Divider;
   - project, task and SSH rows: Rearrange (greyed menus aside, it is left out while another window is rearranging);
   - in Rearrange mode, every row: Move Up / Move Down (while possible), one step within its own list, and a project's Fold / Unfold.
-- **Labels:** tunnel rows read their state, and the footer's Mac row reads its readings.
+- **Labels:** tunnel rows read their state, the Metrics panel's Mac row reads its readings, and the metrics strip reads all of its readings and opens the panel.
 
 ## The helper (shellforged)
 
