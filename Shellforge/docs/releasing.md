@@ -30,13 +30,20 @@ marked as development builds: they never offer or install an update.
 First, the changelog. `CHANGELOG.md` keeps the next version's section as `## <version> — unreleased`
 while work lands. To release it, replace `unreleased` with today's date (`## 0.4.0 — 2026-10-15`),
 commit and push. That section, without its heading, becomes the GitHub release notes; check it with
-`Shellforge/scripts/changelog-notes.sh <version>`. Then, from a clean `master` that matches
-`origin/master`:
+`Shellforge/scripts/changelog-notes.sh <version>`.
+
+The app ships the helper's folder whole, so the release refuses while
+`Shellforge/daemon/shellforged` holds files git doesn't track, such as the `__pycache__/` a test
+run of the helper leaves: `git clean -ndX -- Shellforge/daemon/shellforged` lists them. Move them
+out of the repository rather than deleting them; Python makes `__pycache__/` again by itself.
+
+Then, from a clean `master` that matches `origin/master`:
 
     Shellforge/scripts/release.sh <version>
 
 It:
-1. checks the branch, the tag, the version's dated `CHANGELOG.md` section, `gh` and the certificate;
+1. checks the branch, the working tree and the helper's folder, `origin`, the tag, that the version
+   is newer than the last release, its dated `CHANGELOG.md` section, `gh` and the certificate;
 2. builds with `make-app.sh` (iTerm2's Deployment configuration, Apple silicon), stamps the version and build number, and signs with the certificate;
 3. wraps the app in `build/Shellforge-<version>.dmg` with `make-dmg.sh`, and checks it;
 4. pushes the tag and publishes the GitHub release with the DMG attached and the changelog section as its notes, as a draft first, so updaters never see a release without its image.
@@ -60,7 +67,15 @@ Running Shellforge sees the new version under **Check for Updates…**.
 ## Development builds
 
 - `Shellforge/scripts/make-app.sh` alone builds `build/Shellforge.app`, marked as a development build.
-- Day-to-day work uses iTerm2's Development configuration: `tools/build.sh` builds it, and `make run` builds and runs it.
+- Day-to-day work uses iTerm2's Development configuration: `tools/build.sh` builds it, and `make run`
+  builds and runs it.
+- `make run` starts the app with `-suite shellforge-dev` (the checkout folder's name and `-dev`), so
+  a dev build has its own preferences (`~/Library/Preferences/shellforge-dev.plist`) and its own
+  data folder, `~/Library/Application Support/shellforge-dev/`: its workspace, agents and error log.
+  The plain folder name would share the installed app's `Shellforge` folder, as macOS folder names
+  ignore case. It has the installed app's bundle id, so both share the Jira, GitLab and GitHub
+  settings and tokens, and the helper's folder and hook port (`~/Library/Application
+  Support/Shellforge/`, 47831).
 
 ## README screenshots
 

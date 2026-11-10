@@ -13,7 +13,8 @@ it and refuses to release a version that has none.
 
 - **Activity bar.** A column of icons down the sidebar's left edge switches its panel: Sessions,
   the sidebar as it was, and Metrics. Each window shows its own panel; drag the icons to reorder
-  them, and every window keeps the same order after a restart. Settings is the gear at its foot.
+  them (VoiceOver offers Move Up and Move Down), and every window keeps the same order after a
+  restart. Settings is the gear at its foot.
   View › Show Sessions (⌃⌘E) and Show Metrics (⌃⌘M) switch panels from the keyboard.
   The panel keeps its width and the sidebar grows by the bar's 44 pt: a width you dragged before
   grows by 44 pt once (up to the 720 pt maximum), and a window now needs 724 pt to show the
@@ -35,7 +36,8 @@ it and refuses to release a version that has none.
 - **The Sessions header no longer has a Settings gear.** Settings is the gear at the foot of the
   activity bar; Mac Settings… is on the Metrics panel's Mac row (right-click).
 - **Banners show above every panel.** An error, work in progress such as "Adding demo…", a
-  fallback PATH or a helper problem is pinned at the top of the sidebar, whichever panel shows.
+  fallback PATH, a helper problem or the feedback note is pinned at the top of the sidebar,
+  whichever panel shows, and so is Rearrange mode's Cancel and Done.
 
 ## 0.10.0 — 2026-11-10
 
