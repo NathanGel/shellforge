@@ -69,6 +69,34 @@ import Testing
         #expect(model.layout.order == [.sessions, .metrics])
     }
 
+    /// A drag's drop, as `move(fromOffsets:toOffset:)` takes it: past half a cell the icon trades
+    /// places with its neighbour, beyond either end it stops there, and a click's small slip of the
+    /// mouse moves nothing.
+    @Test func aDragDropsWhereItIsReleased() {
+        let cell: CGFloat = 44
+        func drop(_ from: Int, _ translation: CGFloat) -> Int? {
+            ActivityBar.dropOffset(from: from, translation: translation, cell: cell, count: 3)
+        }
+        #expect(drop(0, cell) == 2, "down one cell")
+        #expect(drop(2, -cell) == 1, "up one cell")
+        #expect(drop(1, 0.6 * cell) == 3 && drop(1, -0.6 * cell) == 0, "past half a cell")
+        #expect(drop(0, 10 * cell) == 3, "beyond the end")
+        #expect(drop(2, -10 * cell) == 0, "beyond the start")
+        #expect(drop(1, 2) == nil && drop(1, -2) == nil, "a click’s slip")
+        #expect(drop(1, 0.4 * cell) == nil, "short of half a cell")
+        #expect(drop(0, -cell) == nil && drop(2, cell) == nil, "already at that end")
+        #expect(!ActivityBar.lifts(2) && ActivityBar.lifts(ActivityBar.liftDistance), "a click does not lift the icon")
+    }
+
+    /// The drop, handed to the model: the dragged panel lands where it was released.
+    @Test func aDropMovesThePanel() throws {
+        let model = ActivityModel(source: ActivityOrderSource(defaults: nil))
+        let cell = ActivityBar.width(.standard)
+        let destination = try #require(ActivityBar.dropOffset(from: 0, translation: cell, cell: cell, count: model.layout.order.count))
+        model.move(fromOffsets: IndexSet(integer: 0), toOffset: destination)
+        #expect(model.layout.order == [.metrics, .sessions])
+    }
+
     /// The whole sidebar, hosted in a window, with this window's activity bar `activity`.
     private func hosted(_ sidebar: SidebarModel, activity: ActivityModel, controls: SidebarWindowControls?) -> (NSHostingView<AnyView>, NSWindow) {
         let hooks = AgentHooksModel(integrations: HookIntegrations(home: TestScratch.root.appendingPathComponent("activity-home-\(UUID().uuidString)"),
@@ -273,6 +301,51 @@ import Testing
         #expect(shown(SidebarBanner.markName, in: host).count == 1, "the error is out of sight on Metrics")
         activity.select(.sessions)
         #expect(shown(SidebarBanner.markName, in: host).count == 1, "the error is out of sight on Sessions")
+    }
+
+    /// `view`'s frame in `host`, measured from its top-left corner.
+    private func frame(of view: NSView, in host: NSView) -> CGRect {
+        let frame = view.convert(view.bounds, to: host)
+        return host.isFlipped ? frame : CGRect(x: frame.minX, y: host.bounds.height - frame.maxY, width: frame.width, height: frame.height)
+    }
+
+    /// The one drawn mark named `name`'s frame in `host`.
+    private func shownFrame(_ name: String, in host: NSView) throws -> CGRect {
+        let marks = shown(name, in: host)
+        #expect(marks.count == 1, "\(marks.count) \(name) drawn")
+        return frame(of: try #require(marks.first), in: host)
+    }
+
+    /// VS Code's bar: each icon, the gear too, centred in the bar; the selected one's accent stripe
+    /// flush with its left edge and a cell high; the bar from the top of the sidebar, or from below
+    /// the window buttons' band; and the panel's header in the column beside it, not across it.
+    @Test(arguments: [nil, SidebarWindowControls(buttonsMaxX: 70, buttonsMidY: 20),
+                      SidebarWindowControls(buttonsMaxX: 40, buttonsMidY: 20, stacked: true)])
+    func theBarIsCentredAndRunsBesideThePanel(controls: SidebarWindowControls?) throws {
+        let (sidebar, _) = try sidebarModel()
+        let activity = ActivityModel(source: ActivityOrderSource(defaults: nil))
+        let (host, window) = hosted(sidebar, activity: activity, controls: controls)
+        defer { window.close() }
+        for panel in ActivityPanel.allCases {
+            activity.select(panel)
+            let bar = try shownFrame(ActivityBar.markName, in: host)
+            #expect(abs(bar.width - ActivityBar.width(.standard)) < 0.5)
+            #expect(abs(bar.minY - (controls?.bandHeight ?? 0)) < 0.5, "the bar starts at \(bar.minY)")
+            let icons = shown(ActivityBar.iconMarkName, in: host).map { frame(of: $0, in: host) }
+            #expect(icons.count == ActivityPanel.allCases.count + 1, "a panel icon each, and the gear")
+            for icon in icons { #expect(abs(icon.midX - bar.midX) <= 0.5, "an icon off-centre: \(icon) in \(bar)") }
+            let stripe = try shownFrame(ActivityBar.stripeMarkName, in: host)
+            #expect(abs(stripe.minX - bar.minX) < 0.5, "the stripe is detached from the bar's edge")
+            #expect(abs(stripe.height - ActivityBar.width(.standard)) < 0.5, "the stripe is a cell high")
+            let index = try #require(activity.layout.order.firstIndex(of: panel))
+            #expect(abs(stripe.minY - (bar.minY + CGFloat(index) * ActivityBar.width(.standard))) < 0.5, "the stripe is beside its icon")
+            let header = try shownFrame(SidebarHeader.markName, in: host)
+            #expect(header.minX >= bar.maxX, "the header reaches across the bar: \(header)")
+            #expect(header.minY >= bar.minY, "the header is above the bar's top")
+        }
+        sidebar.beginRearrange()
+        let bar = try shownFrame(ActivityBar.markName, in: host)
+        #expect(try shownFrame(RearrangeBar.markName, in: host).minX >= bar.maxX, "the Rearrange bar reaches across the bar")
     }
 
     /// The marks named `name` that are drawn.

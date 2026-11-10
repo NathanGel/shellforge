@@ -1,17 +1,15 @@
 import AppKit
-import ShellforgeDesign
 
 /// Where the window's buttons sit inside a floating sidebar (macOS 26), in the sidebar's own points
-/// from its top-left corner. The header shares their row: its title starts a gap past the zoom
-/// button and the row is centred on the buttons, as Finder's sidebar shares the toolbar's band.
+/// from its top-left corner. Their band across the sidebar's top is theirs alone, as VS Code's title
+/// bar is: the activity bar and the panel's header start below it.
 public struct SidebarWindowControls: Equatable, Sendable {
     /// The zoom button's right edge.
     public var buttonsMaxX: CGFloat
     /// The buttons' vertical centre, from the sidebar's top.
     public var buttonsMidY: CGFloat
 
-    /// Full screen: no window buttons share the row, so the toggle has a row of its own and the
-    /// header sits below it, at the rows' own leading edge.
+    /// Full screen: no window buttons, so the toggle has the band to itself.
     public var stacked: Bool
 
     public init(buttonsMaxX: CGFloat, buttonsMidY: CGFloat, stacked: Bool = false) {
@@ -20,9 +18,7 @@ public struct SidebarWindowControls: Equatable, Sendable {
         self.stacked = stacked
     }
 
-    /// Where the header's title starts: a gap past the zoom button.
-    var headerLeading: CGFloat { buttonsMaxX + Space.gap }
-    /// The header's height: a band from the sidebar's top, centred on the buttons.
+    /// The band's height: from the sidebar's top, centred on the buttons.
     var bandHeight: CGFloat { 2 * buttonsMidY }
 }
 

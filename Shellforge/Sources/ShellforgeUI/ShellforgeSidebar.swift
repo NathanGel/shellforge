@@ -215,6 +215,20 @@ struct SidebarGround: View {
     }
 }
 
+/// A floating panel's content kept inside its rounded corners: the activity bar's accent stripe
+/// runs flush with the panel's edge, and must not paint the corner. The classic sidebar is as before.
+struct PanelClip: ViewModifier {
+    let cornerRadius: CGFloat?
+
+    func body(content: Content) -> some View {
+        if let cornerRadius {
+            content.clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        } else {
+            content
+        }
+    }
+}
+
 /// The sidebar's host: where `NativeRowHighlight` stops looking for its list.
 final class SidebarHostingView<Content: View>: NSHostingView<Content>, RowHighlightBoundary {
     /// A floating sidebar's window moves by its background; a click in the sidebar is the
@@ -379,33 +393,22 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // With the window's buttons inside the panel, the selected panel's header is their row,
-            // pinned across the whole sidebar; the activity bar starts below it. Rearrange mode's bar
-            // is pinned above every panel, so the mode is never left out of sight with Done.
-            if let controls = chrome.windowControls {
-                pinnedHeader(controls)
-            } else if model.isRearranging {
-                rearrangeBar(nil)
-            }
-            // The banners — an error, work under way, a fallback PATH, the helper — are pinned the
-            // same way, so they are seen whatever the panel. Their buttons wait while rearranging.
-            SidebarBanners(model: model, feedback: feedback, giveFeedback: presentFeedback)
-                .allowsHitTesting(!model.isRearranging)
+            // With the window's buttons inside the panel, their band — the buttons and the sidebar
+            // toggle, drawn by the window — runs across the top, and holds nothing of the sidebar's.
+            if let controls = chrome.windowControls { Color.clear.frame(height: controls.bandHeight) }
             HStack(spacing: 0) {
+                // VS Code's way: the bar the full height below the band, the panel's column beside it.
                 ActivityBar(model: activity, openSettings: showMacSettings)
-                // The metrics strip is pinned under whichever panel shows.
-                VStack(spacing: 0) {
-                    panels.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                    MetricsStripHost(model: model, hooks: hooks, machine: machine, open: MetricsStrip.opener(activity))
-                }
+                panelColumn
             }
         }
-        // The header places itself on the buttons' row, so the title bar's safe area is not wanted.
+        // The band is measured from the sidebar's top, so the title bar's safe area is not wanted.
         .ignoresSafeArea(.container, edges: chrome.windowControls == nil ? [] : .top)
         .overlay(alignment: .trailing) { if chrome.panelCornerRadius == nil { SidebarEdge() } }
         // As wide as its panel and no wider: the window keeps the sidebar to its narrowest, and a
         // minimum here — scaled with the zoom — spilled the content past a narrower panel's edges.
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .modifier(PanelClip(cornerRadius: chrome.panelCornerRadius))
         .background { SidebarGround(cornerRadius: chrome.panelCornerRadius) }
         .surface(.sidebar)
         .tint(Palette.accent)
@@ -427,8 +430,31 @@ struct SidebarView: View {
         }
     }
 
-    /// The header on the window buttons' row: Rearrange mode's bar while the mode is on, whatever the
-    /// panel, so Done stays in reach; otherwise the selected panel's.
+    /// The column beside the activity bar: the panel's header, the banners, the panel, and the
+    /// metrics strip under it.
+    private var panelColumn: some View {
+        VStack(spacing: 0) {
+            // With the window's buttons inside the panel, the selected panel's header is pinned at
+            // the column's top. Rearrange mode's bar is pinned there over every panel, so the mode is
+            // never left out of sight with Done.
+            if let controls = chrome.windowControls {
+                pinnedHeader(controls)
+            } else if model.isRearranging {
+                rearrangeBar(nil)
+            }
+            // The banners — an error, work under way, a fallback PATH, the helper — are pinned the
+            // same way, so they are seen whatever the panel. Their buttons wait while rearranging.
+            SidebarBanners(model: model, feedback: feedback, giveFeedback: presentFeedback)
+                .allowsHitTesting(!model.isRearranging)
+            panels.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            // The metrics strip is pinned under whichever panel shows.
+            MetricsStripHost(model: model, hooks: hooks, machine: machine, open: MetricsStrip.opener(activity))
+        }
+    }
+
+    /// The header pinned at the panel column's top while the window's buttons are inside the
+    /// sidebar: Rearrange mode's bar while the mode is on, whatever the panel, so Done stays in
+    /// reach; otherwise the selected panel's.
     @ViewBuilder private func pinnedHeader(_ controls: SidebarWindowControls) -> some View {
         if model.isRearranging {
             rearrangeBar(controls)
@@ -443,6 +469,7 @@ struct SidebarView: View {
     private func panelTitle(_ panel: ActivityPanel, _ controls: SidebarWindowControls) -> some View {
         HStack { SidebarHeading(panel.title); Spacer() }
             .frame(height: scale(Size.menuRow))
+            .background(ViewMark(name: SidebarHeader.markName))
             .modifier(HeaderPlacement(windowControls: controls, scale: scale))
     }
 
@@ -472,7 +499,7 @@ struct SidebarView: View {
 
     private var showsSessions: Bool { activity.layout.selected == .sessions }
 
-    /// Today's sidebar: the header (unless pinned on the buttons' row) and the list; the banners
+    /// Today's sidebar: the header (unless pinned above the panel) and the list; the banners
     /// over it are pinned above every panel, the footer that was under it is the Metrics panel now,
     /// and the strip below every panel.
     private var sessionsPanel: some View {

@@ -19,7 +19,8 @@ struct SidebarHeader: View {
     var newHomeTab: () -> Void = {}
     /// ⌃⌘S as a button; while hidden, the window's title bar shows the same icon to bring it back.
     var hideSidebar: () -> Void = {}
-    /// Set while the window's buttons sit inside the sidebar: the header shares their row.
+    /// Set while the window's buttons sit inside the sidebar: the header is pinned below their band,
+    /// and the sidebar toggle is the window's.
     var windowControls: SidebarWindowControls? = nil
     @Environment(\.interfaceScale) private var scale
     @Environment(\.surface) private var surface
@@ -66,30 +67,28 @@ struct SidebarHeader: View {
             }
         }
         .frame(height: scale(Size.menuRow))
+        .background(ViewMark(name: Self.markName))
         .modifier(HeaderPlacement(windowControls: windowControls, scale: scale))
     }
+
+    /// The header's `ViewMark`, also on another panel's title in its place.
+    static let markName = "SidebarHeader"
 }
 
 /// The header's place: a row of the list as before, or — while the window's buttons sit inside the
-/// sidebar — their band, pinned above the list: the title a gap past the zoom button, the row
-/// centred on the buttons, its trailing buttons in line with the rows' below.
+/// sidebar — pinned at the top of the panel column, below the buttons' band and beside the activity
+/// bar, its title and trailing buttons in line with the rows' below.
 struct HeaderPlacement: ViewModifier {
     let windowControls: SidebarWindowControls?
     let scale: InterfaceScale
 
     func body(content: Content) -> some View {
-        if let windowControls, windowControls.stacked {
-            // Below the toggle's own row, at the rows' leading edge.
+        if windowControls != nil {
+            // Outside the list, so its inset is added to the rows' own.
             content
                 .padding(.leading, SidebarRowLayout.listInset + scale(Space.base))
                 .padding(.trailing, SidebarRowLayout.trailingInset(scale) + SidebarRowLayout.listInset)
-                .padding(.top, windowControls.bandHeight)
-                .padding(.bottom, scale(Space.tight))
-        } else if let windowControls {
-            content
-                .padding(.leading, windowControls.headerLeading)
-                .padding(.trailing, SidebarRowLayout.trailingInset(scale) + SidebarRowLayout.listInset)
-                .frame(height: windowControls.bandHeight)
+                .padding(.top, scale(Space.base)).padding(.bottom, scale(Space.tight))
         } else {
             content
                 .padding(.leading, scale(Space.base)).padding(.trailing, SidebarRowLayout.trailingInset(scale))

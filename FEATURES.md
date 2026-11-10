@@ -29,7 +29,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 ## The sidebar
 
 - **Where it is.** Every terminal window has a sidebar on its left. It follows the window's appearance: light or dark, as macOS or iTerm2's Appearance setting has it. iTerm2's tab bar is hidden in these windows, because the sidebar lists the tabs instead.
-- **On macOS 26 and later** the sidebar floats: a rounded glass panel 10 pt inside the window and 10 pt from the terminal (in full screen too), on the terminal's own colour, with the window buttons in its top corner and the Projects header on their row. The window's title sits over the terminal on the same row. Earlier macOS versions keep the full-height sidebar.
+- **On macOS 26 and later** the sidebar floats: a rounded glass panel 10 pt inside the window and 10 pt from the terminal (in full screen too), on the terminal's own colour, with the window buttons in its top corner; their row is left to them, and the Projects header sits below it, beside the activity bar. The window's title sits over the terminal on the same row. Earlier macOS versions keep the full-height sidebar.
   - With Match the terminal to Shellforge on, the window keeps its own title bar and buttons; only the colours change.
   - The sidebar button sits just after the window buttons and stays there open or closed. In full screen it has its own row at the top of the panel, above Projects; with the sidebar closed, a slim bar in the terminal's colour keeps the button in the same place; click it to open the sidebar, or move the pointer to the screen's left edge and it slides in over the terminal, and away again when you leave it.
 - **Hide and show.** Use any of these:
@@ -66,12 +66,12 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 
 ## Activity bar
 
-- **Where it is.** A narrow column of icons down the sidebar's left edge, VS Code's way. Each icon shows one panel beside it:
+- **Where it is.** A narrow column of plain line icons down the sidebar's left edge, VS Code's way: the full height of the sidebar, below the window buttons' row when they are in the sidebar. The panel's header, the banners and the metrics strip sit in the column beside it. Each icon shows one panel beside it:
   - Sessions (the stack of cards): projects, tasks, terminals and tabs, as the sidebar has always shown them;
   - Metrics (the gauge): see [Metrics](#metrics).
-- **Switching.** Click an icon. The selected one has an accent edge. Each window shows its own panel; Sessions keeps its scroll position and selection while another panel shows, and the Tasks menu's commands work whatever the panel.
+- **Switching.** Click an icon. The selected one is drawn brighter, with an accent stripe along the bar's left edge. Each window shows its own panel; Sessions keeps its scroll position and selection while another panel shows, and the Tasks menu's commands work whatever the panel.
 - **From the keyboard.** View › Show Sessions (⌃⌘E) and Show Metrics (⌃⌘M) show that panel in the key window's sidebar, opening the sidebar if it is hidden. Back on Sessions, the keyboard returns to its list if it was there.
-- **Panel order.** Drag an icon up or down the bar to reorder the panels. Every window's bar follows the same order, and it is kept after a restart.
+- **Panel order.** Drag an icon up or down the bar to reorder the panels: it follows the pointer, the others make room, and it lands where you let go. A click that doesn't move only selects. Every window's bar follows the same order, and it is kept after a restart.
 - **Settings** is the gear at the bottom of the bar.
 - **Rearrange mode** keeps its Done / Cancel bar at the top whichever panel shows.
 
