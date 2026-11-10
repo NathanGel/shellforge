@@ -13,6 +13,10 @@ public struct UsageLine: Equatable, Sendable {
         case context, weekly, fiveHour
         case cpu, ram, battery
 
+        /// The order a vendor's account windows are drawn in, by the strip and the Metrics panel
+        /// alike: `5h` first, the one that runs out during a session.
+        public static let displayOrder: [UsageLine.Window] = [.fiveHour, .weekly]
+
         /// The glyphs before the ring: `ctx`, `wk`, `5h`, `cpu`, `ram`, `bat`.
         public var shortLabel: String {
             switch self {
@@ -74,6 +78,14 @@ public struct UsageVendorRow: Equatable, Sendable {
 
     public init(vendor: SessionAgent, lines: [UsageLine], note: String?, warning: Bool = false) {
         self.vendor = vendor; self.lines = lines; self.note = note; self.warning = warning
+    }
+}
+
+extension UsageVendorRow {
+    /// The row's windows in ``UsageLine/Window/displayOrder``: one the vendor did not report is
+    /// left out, and a row with only a note has none.
+    public var linesInDisplayOrder: [UsageLine] {
+        UsageLine.Window.displayOrder.compactMap { window in lines.first { $0.window == window } }
     }
 }
 /// The footer's first row: what runs in the selected task's or terminal's active tab, its `ctx` line

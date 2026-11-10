@@ -208,3 +208,19 @@ import Testing
         #expect(model.footerRow?.agent == .claude && model.footerRow?.context?.percent == 20)
     }
 }
+
+@Suite struct SidebarFooterWindowOrderTests {
+    @Test func thePanelListsFiveHourBeforeWeek() {
+        let week = UsageLine(window: .weekly, percent: 73, reset: "Mon 21:00", warning: false)
+        let hours = UsageLine(window: .fiveHour, percent: 42, reset: "16:40", warning: false)
+        let row = UsageVendorRow(vendor: .claude, lines: [week, hours], note: nil)
+        #expect(SidebarFooter.windows(row).map(\.window.shortLabel) == ["5h", "wk"])
+        #expect(SidebarFooter.windows(row).map(\.window) == MetricsStrip.windows(row).map(\.window))
+    }
+
+    @Test func aWindowTheVendorDidNotReportIsLeftOut() {
+        let week = UsageLine(window: .weekly, percent: 12, reset: nil, warning: false)
+        let row = UsageVendorRow(vendor: .codex, lines: [week], note: nil)
+        #expect(SidebarFooter.windows(row).map(\.window.shortLabel) == ["wk"])
+    }
+}

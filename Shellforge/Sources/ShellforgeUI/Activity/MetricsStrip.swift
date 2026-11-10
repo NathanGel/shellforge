@@ -20,8 +20,6 @@ struct MetricsStrip: View {
     /// The strip's `ViewMark`.
     static let markName = "MetricsStrip"
     static let helpText = "Show Metrics"
-    /// The order line 2 draws a vendor's windows in: `5h` first, the one that runs out during a session.
-    static let windowOrder: [UsageLine.Window] = [.fiveHour, .weekly]
 
     /// Its height: two menu rows on its card, `Space.tight` above and below inside it, and the
     /// footer's own `Space.base` under the card.
@@ -40,10 +38,10 @@ struct MetricsStrip: View {
         machine.filter { $0.window == .cpu || $0.window == .ram }
     }
 
-    /// A vendor's gauges in ``windowOrder``: a window it did not report is left out, and a vendor
+    /// A vendor's gauges in ``UsageLine/Window/displayOrder``: a window it did not report is left out, and a vendor
     /// with only a note has none.
     static func windows(_ row: UsageVendorRow) -> [UsageLine] {
-        windowOrder.compactMap { window in row.lines.first { $0.window == window } }
+        row.linesInDisplayOrder
     }
 
     /// A window's number ink: amber past its own warning, the text ink below it.
@@ -97,7 +95,7 @@ struct MetricsStrip: View {
     }
 
     /// The strip read as words: each reading's own, then each vendor by name with its windows in
-    /// ``windowOrder`` — “Claude Code: 5-hour limit 42 % used, weekly limit 84 % used” — or its note.
+    /// ``UsageLine/Window/displayOrder`` — “Claude Code: 5-hour limit 42 % used, weekly limit 84 % used” — or its note.
     static func label(machine: [UsageLine], vendors: [UsageVendorRow], name: (SessionAgent) -> String) -> String {
         let readings = vendors.map { row in
             let lines = windows(row)

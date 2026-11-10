@@ -251,7 +251,7 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
 - **The Metrics panel** shows everything in full, scrolling when the window is short:
   - **System**: the selected task's or tab's agent, with its context ring and percent and its token counts, such as `in 936k · out 5.6k`, with exact figures in the tooltip;
   - **Mac**: `cpu` and `ram`, plus `bat` on battery, sampled every 5 s. A reading turns amber only when macOS warns. Click it for Backpack Mode, or right-click for Mac Settings…. While Backpack Mode is on or switching, a line below says so;
-  - **Usage**: one row per vendor (Claude, Codex) with the weekly (`wk`) and 5-hour (`5h`) windows and their reset times. With no vendor to show, the group is left out.
+  - **Usage**: one row per vendor (Claude, Codex) with the 5-hour (`5h`) and weekly (`wk`) windows, in that order as in the strip, and their reset times. With no vendor to show, the group is left out.
 - **Rings** turn amber at 80%.
 - **Vendors you don't use are hidden.** A vendor with no usage data whose CLI isn't installed gets no row and no gauge. Once installed, it reads "No usage data yet" until its first report. Claude Code counts as installed when it is on your PATH or `~/.claude` exists.
 - Claude reads "Usage disconnected" (amber) until its status-line shim is installed (Agent hooks).

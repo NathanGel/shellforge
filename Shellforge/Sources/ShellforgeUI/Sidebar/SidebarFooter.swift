@@ -10,7 +10,7 @@ import ShellforgeDesign
 /// battery, under its `macbook` mark, and while Backpack Mode is on or switching, a line in a
 /// `SettingsTone` — `● backpack enabled`. At the desk there is no such line: the readings row is the
 /// Mac's row, and its click is ⌘B. USAGE is one row per vendor with its account windows:
-/// `Ⓒ wk ◔ 84% Mon 21:00 · 5h ◔ 23% 16:40`. With nothing selected SYSTEM holds the Mac alone.
+/// `Ⓒ 5h ◔ 23% 16:40 · wk ◔ 84% Mon 21:00`. With nothing selected SYSTEM holds the Mac alone.
 ///
 /// It sits on the list's grid rather than its own (proposal A, 23 Sep 2026): the headings are the
 /// `PROJECTS` header's treatment, the rows are ``Size/menuRow`` like the header and `DividerRow`,
@@ -83,7 +83,7 @@ struct SidebarFooter: View {
                             if let note = row.note {
                                 Text(note).foregroundStyle(Self.noteInk(row))
                             } else {
-                                usageWindows(row.lines)
+                                usageWindows(Self.windows(row))
                             }
                         }
                     }
@@ -174,10 +174,16 @@ struct SidebarFooter: View {
         .frame(height: scale(Size.menuRow), alignment: .leading)
     }
 
+    /// A vendor's windows in ``UsageLine/Window/displayOrder``, as the strip draws them: one it did
+    /// not report is left out.
+    static func windows(_ row: UsageVendorRow) -> [UsageLine] {
+        row.linesInDisplayOrder
+    }
+
     /// A zero-spacing stack keeps punctuation and colour changes from adding invisible layout
     /// gaps; each segment's own spaces live inside its `Text`, so the ring sits in the gap the
-    /// four-cell bar used to occupy. `usageVendorRows` supplies wk before 5h; this renderer
-    /// preserves that order. Every window names itself, the context row's `ctx` included.
+    /// four-cell bar used to occupy. It draws the lines in the order given; a vendor's come
+    /// through ``windows(_:)``. Every window names itself, the context row's `ctx` included.
     private func usageWindows(_ lines: [UsageLine]) -> some View {
         HStack(spacing: 0) {
             ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
