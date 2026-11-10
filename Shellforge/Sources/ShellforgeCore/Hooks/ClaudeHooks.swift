@@ -10,7 +10,9 @@ struct ClaudeHooks: HookDriver {
     static let endpoint = "/hook/claude"
 
     let home: URL, port: Int, shimPath: String
-    /// Where the shim's port and the user's own status line are recorded: the app's support folder.
+    /// Where the shim's port is recorded: the app's support folder. The user's own status line is
+    /// always recorded in the installed app's folder, as the settings file it comes from is global:
+    /// a dev build's record would be lost to the installed app's shim.
     let support: ShellforgeSupport
 
     var settings: UserConfigFile { UserConfigFile(home: home, Self.settingsPath) }
@@ -54,7 +56,7 @@ struct ClaudeHooks: HookDriver {
         try ShimPort.record(port, in: support)
         try StatusLineOriginal.record(StatusLineOriginal.handedOver(before(original: original, data: data), home: home,
                                                                  aitermShim: "claude-statusline-shim.sh", aitermRecord: "statusline-original.cmd"),
-                                      command: support.statusLineOriginalURL)
+                                      command: ShellforgeSupport.default(home: home).statusLineOriginalURL)
         guard !ClaudeSettings.same(data, merged) else { return }
         try file.backUp()
         try file.write(merged)

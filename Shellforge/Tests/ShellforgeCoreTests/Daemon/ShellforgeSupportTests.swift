@@ -46,9 +46,9 @@ import Testing
         #expect(ShellforgeSupport(folder: devFolder, home: home).hookPort == support.hookPort)
     }
 
-    @Test func everySessionCarriesTheFolder() {
+    @Test func aDevBuildsSessionsCarryItsFolder() {
         #expect(ShellforgeSupport(folder: devFolder, home: home).sessionEnvironment == ["SHELLFORGE_SUPPORT": devFolder.path])
-        #expect(ShellforgeSupport.default(home: home).sessionEnvironment == ["SHELLFORGE_SUPPORT": installedFolder])
+        #expect(ShellforgeSupport.default(home: home).sessionEnvironment.isEmpty, "the installed app's tabs gain no variable")
     }
 
     /// The helper is started with the folder's own socket, port and `--support-dir`.
@@ -59,21 +59,62 @@ import Testing
                     "--hook-port", String(support.hookPort)])
     }
 
-    /// Installing Claude's hooks from a dev build records its port in its own folder, and points the
-    /// hooks at that port; the installed app's folder is not touched.
-    @Test func aDevBuildRecordsItsPortInItsOwnFolder() throws {
-        let home = TestScratch.root.appendingPathComponent("sf-support-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: home) }
-        let hooksFolder = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+    private static var hooksFolder: URL {
+        URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("hooks")
+    }
+
+    private static func resources() -> HookResources {
+        HookResources(folder: hooksFolder, installationAllowed: true, unavailableReason: nil)
+    }
+
+    /// A scratch home, its dev build's folder, and that build's hooks.
+    private static func devBuild() -> (home: URL, support: ShellforgeSupport, hooks: HookIntegrations) {
+        let home = TestScratch.root.appendingPathComponent("sf-support-\(UUID().uuidString)")
         let support = ShellforgeSupport(folder: home.appendingPathComponent("Library/Application Support/example-dev"), home: home)
-        let hooks = HookIntegrations(home: home, support: support,
-                                     resources: HookResources(folder: hooksFolder, installationAllowed: true, unavailableReason: nil))
-        try hooks.install("claude")
+        return (home, support, HookIntegrations(home: home, support: support, resources: resources()))
+    }
+
+    /// The agents' settings are global: a dev build's sheet shows the installed app's install, on
+    /// 47831 and the installed app's `hook-port`, as it really is.
+    @Test func aDevBuildProbesTheInstalledAppsHooks() throws {
+        let (home, _, dev) = Self.devBuild()
+        defer { try? FileManager.default.removeItem(at: home) }
+        #expect(dev.isSharedWithInstalledApp)
+        #expect(!HookIntegrations(home: home, resources: Self.resources()).isSharedWithInstalledApp)
+        try HookIntegrations(home: home, resources: Self.resources()).install("claude")
+        try HookIntegrations(home: home, resources: Self.resources()).install("codex")
+        #expect(dev.probe("claude").state == .current)
+        #expect(dev.probe("codex").state == .current)
+    }
+
+    /// A dev build's plain install is refused, and writes nothing.
+    @Test func aDevBuildsInstallIsRefusedUnlessMadeForThisBuild() throws {
+        let (home, _, dev) = Self.devBuild()
+        defer { try? FileManager.default.removeItem(at: home) }
+        #expect(throws: HookIntegrationError.sharedWithInstalledApp) { try dev.install("claude") }
+        #expect(!FileManager.default.fileExists(atPath: home.path))
+        #expect(HookIntegrationError.sharedWithInstalledApp.errorDescription == HookIntegrations.sharedExplanation)
+    }
+
+    /// Made for this build anyway, the install records the build's port in its own folder and points
+    /// the hooks at it; the user's own status line is still recorded in the installed app's folder,
+    /// which describes the global settings file, so the installed app's shim keeps running it.
+    @Test func aDevBuildsInstallForThisBuildUsesItsPortAndKeepsTheOriginalGlobal() throws {
+        let (home, support, dev) = Self.devBuild()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let settingsURL = home.appendingPathComponent(".claude/settings.json")
+        try FileManager.default.createDirectory(at: settingsURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(#"{"statusLine":{"type":"command","command":"my-own-line"}}"#.utf8).write(to: settingsURL)
+        try dev.install("claude", forThisBuild: true)
         #expect(try String(contentsOf: support.hookPortURL, encoding: .utf8) == "\(support.hookPort)\n")
-        #expect(!FileManager.default.fileExists(atPath: ShellforgePaths.supportDirectory(home: home).path))
-        let settings = try String(contentsOf: home.appendingPathComponent(".claude/settings.json"), encoding: .utf8)
+        let settings = try String(contentsOf: settingsURL, encoding: .utf8)
         #expect(settings.contains("127.0.0.1:\(support.hookPort)/hook/claude"))
-        #expect(hooks.probe("claude").state == .current)
+        let installed = ShellforgeSupport.default(home: home)
+        #expect(try String(contentsOf: installed.statusLineOriginalURL, encoding: .utf8) == "my-own-line")
+        #expect(!FileManager.default.fileExists(atPath: support.statusLineOriginalURL.path))
+        #expect(!FileManager.default.fileExists(atPath: installed.hookPortURL.path))
+        // The installed app's hooks are now elsewhere, so the sheet says so.
+        #expect(dev.probe("claude").state != .current)
     }
 }

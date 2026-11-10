@@ -9,8 +9,9 @@ import Foundation
 public struct ShellforgeSupport: Sendable, Equatable {
     /// The installed app's hook port. Not 47821, AiTerm's.
     public static let defaultHookPort = 47831
-    /// The variable the shims and `shellforge-status`/`shellforge-run` read the folder from, which
-    /// every session the app starts inherits (`sessionEnvironment`). Unset, they read the default.
+    /// The variable the shims and `shellforge-status`/`shellforge-run` read the folder from, an
+    /// absolute path, which every session a dev build starts inherits (`sessionEnvironment`). Unset,
+    /// they read the default.
     public static let environmentVariable = "SHELLFORGE_SUPPORT"
     /// Where another folder's port is picked from: above the default and past AiTerm's 47821.
     static let derivedPorts = 47832..<48832
@@ -54,8 +55,9 @@ public struct ShellforgeSupport: Sendable, Equatable {
     /// The user's own Grok Build status line, which Shellforge's Grok shim runs after posting.
     public var grokStatusLineOriginalURL: URL { folder.appendingPathComponent("grok-statusline-original.cmd") }
 
-    /// What every session the app starts carries, so an agent in it reports to this app's helper.
-    public var sessionEnvironment: [String: String] { [Self.environmentVariable: folder.path] }
+    /// What every session a dev build starts carries, so an agent in it reports to that build's
+    /// helper. The installed app's sessions carry nothing new: the default is the variable unset.
+    public var sessionEnvironment: [String: String] { isDefault ? [:] : [Self.environmentVariable: folder.path] }
 }
 
 /// The running app's `ShellforgeSupport`: the default until the host configures its data folder at

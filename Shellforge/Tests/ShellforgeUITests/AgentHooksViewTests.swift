@@ -33,6 +33,39 @@ import Testing
         #expect(AgentHooksView.buttonTitle(state) == action)
     }
 
+    /// A development build offers only the install for this build, where an install is allowed at all.
+    @Test func aDevBuildOffersOnlyTheInstallForThisBuild() {
+        #expect(AgentHooksView.buttonTitle(.outdated, sharedWithInstalledApp: true) == "Install for This Build Anyway…")
+        #expect(AgentHooksView.buttonTitle(.current, sharedWithInstalledApp: false) == "Reinstall")
+        #expect(AgentHooksView.buttonTitle(.foreign, sharedWithInstalledApp: true) == nil)
+    }
+
+    private static var hooksFolder: URL {
+        URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("hooks")
+    }
+
+    /// A dev build's model asks first: Cancel writes nothing; a yes installs with the build's port.
+    @Test func aDevBuildInstallsOnlyOnceConfirmed() async throws {
+        let home = TestScratch.root.appendingPathComponent("dev-hooks-home-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: home) }
+        let support = ShellforgeSupport(folder: home.appendingPathComponent("Library/Application Support/example-dev"), home: home)
+        let model = AgentHooksModel(integrations: HookIntegrations(home: home, support: support,
+                                                                   resources: HookResources(folder: Self.hooksFolder, installationAllowed: true, unavailableReason: nil)),
+                                    names: ["codex": "Codex"])
+        let prompter = ScriptedPrompter([AlertAnswer(button: 1), AlertAnswer(button: 0)])
+        model.prompter = prompter
+        #expect(model.isSharedWithInstalledApp)
+        await model.install("codex")
+        #expect(!FileManager.default.fileExists(atPath: home.path), "Cancel writes nothing")
+        #expect(prompter.asked.first == AgentHooksModel.installForThisBuildPrompt(name: "Codex"))
+        await model.install("codex")
+        #expect(model.lastError == nil)
+        let config = try String(contentsOf: home.appendingPathComponent(".codex/config.toml"), encoding: .utf8)
+        #expect(config.contains("127.0.0.1:\(support.hookPort)/"))
+        #expect(prompter.asked.count == 2)
+    }
+
     /// The sheet keeps every sheet's keys: ⌘↩ presses Done and ⎋ closes; a plain ↩ does neither.
     @Test func doneAnswersCommandReturnAndEscapeButNotAPlainReturn() async throws {
         final class Count { var dismissals = 0 }

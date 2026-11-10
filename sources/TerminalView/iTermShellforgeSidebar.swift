@@ -21,8 +21,13 @@ final class iTermShellforgeSidebar: NSObject {
 
     /// The Agent hooks sheet every window's sidebar opens: the hooks bundled in
     /// `Contents/Resources/hooks`, installed into the user's home only on a click.
-    static let hooks = AgentHooksModel(integrations: HookIntegrations(support: support, resources: .bundled(resourceURL: Bundle.main.resourceURL)),
-                                       names: Dictionary(uniqueKeysWithValues: AgentPresets.all.map { ($0.id, $0.name) }))
+    static let hooks: AgentHooksModel = {
+        let model = AgentHooksModel(integrations: HookIntegrations(support: support, resources: .bundled(resourceURL: Bundle.main.resourceURL)),
+                                    names: Dictionary(uniqueKeysWithValues: AgentPresets.all.map { ($0.id, $0.name) }))
+        // A dev build asks before installing over the installed app's hooks.
+        model.prompter = ModalPrompter()
+        return model
+    }()
 
     /// The Mac's cpu, ram and battery for every window's footer, sampled every five seconds while
     /// the helper runs and some window's sidebar can be seen (`refreshShownSidebars`).
@@ -504,11 +509,13 @@ extension iTermShellforgeSidebar {
 
     /// Removes the agent-session markers Shellforge inherited from whoever started it, before any
     /// window is restored or shell started: every tab, and every login-shell read, starts from this
-    /// process's environment (InheritedEnvironment). Then sets this app's support folder in it,
-    /// over any inherited from another copy, so an agent in any of its tabs — iTerm2's own New Tab
-    /// included — reports to this app's helper (`ShellforgeSupport.sessionEnvironment`).
+    /// process's environment (InheritedEnvironment). Then drops any support folder inherited from
+    /// another copy (a dev build's terminal) and, in a dev build, sets its own, so an agent in any of
+    /// its tabs — iTerm2's own New Tab included — reports to its helper
+    /// (`ShellforgeSupport.sessionEnvironment`). The installed app's tabs carry no new variable.
     @objc static func scrubInheritedEnvironment() {
         for name in InheritedEnvironment.agentMarkers(in: ProcessInfo.processInfo.environment) { unsetenv(name) }
+        unsetenv(ShellforgeSupport.environmentVariable)
         for (name, value) in support.sessionEnvironment { setenv(name, value, 1) }
     }
 

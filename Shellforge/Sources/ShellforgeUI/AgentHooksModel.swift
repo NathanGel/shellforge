@@ -23,6 +23,12 @@ public final class AgentHooksModel: ObservableObject {
     @Published public private(set) var lastError: String?
 
     private let integrations: HookIntegrations
+    /// Asks a development build's person before an install for this build; the app sets the modal one.
+    public var prompter: Prompter = NullPrompter()
+
+    /// A development build's sheet: it shows the installed app's hooks, and installs only for this
+    /// build, once confirmed.
+    public var isSharedWithInstalledApp: Bool { integrations.isSharedWithInstalledApp }
 
     public init(integrations: HookIntegrations, names: [String: String]) {
         self.integrations = integrations
@@ -39,12 +45,19 @@ public final class AgentHooksModel: ObservableObject {
         if claudeStatusLineInstalled != statusLine { claudeStatusLineInstalled = statusLine }
     }
 
-    /// Installs or repairs one agent's hooks, then reads them again.
+    /// Installs or repairs one agent's hooks, then reads them again. A development build asks first,
+    /// and installs for this build only on a yes.
     public func install(_ agent: String) async {
+        let forThisBuild = isSharedWithInstalledApp
+        if forThisBuild {
+            let name = rows.first { $0.id == agent }?.name ?? agent
+            let answer = await prompter.ask(Self.installForThisBuildPrompt(name: name))
+            guard answer.confirmed else { return }
+        }
         update(agent) { $0.working = true }
         let integrations = self.integrations
         let outcome = await BackgroundWork.run { () -> (Result<Void, Error>, HookProbe, Bool) in
-            let result = Result { try integrations.install(agent) }
+            let result = Result { try integrations.install(agent, forThisBuild: forThisBuild) }
             return (result, integrations.probe(agent), integrations.claudeStatusLineIsInstalled())
         }
         update(agent) { $0.working = false; $0.probe = outcome.1 }
@@ -53,6 +66,13 @@ public final class AgentHooksModel: ObservableObject {
         case .success: lastError = nil
         case .failure(let error): lastError = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
         }
+    }
+
+    /// The question before a development build points an agent's shared hooks at itself.
+    static func installForThisBuildPrompt(name: String) -> AlertPrompt {
+        AlertPrompt(message: "Install \(name)’s hooks for this build?",
+                    detail: "\(name)’s hooks are shared with the installed Shellforge. Installing them here points them at this development build, so the installed Shellforge stops showing working and done until you repair them from there.",
+                    buttons: [AgentHooksView.installForThisBuildTitle, "Cancel"])
     }
 
     private func update(_ agent: String, _ change: (inout Row) -> Void) {

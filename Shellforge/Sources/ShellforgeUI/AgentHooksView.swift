@@ -18,6 +18,7 @@ public struct AgentHooksView: View {
         VStack(alignment: .leading, spacing: Space.block) {
             Text("Agent hooks").font(Typography.title).foregroundStyle(Palette.text)
             HelpText("Shellforge changes an agent’s settings only when you click its button. Each file is backed up once before the first change.")
+            if model.isSharedWithInstalledApp { HelpText(HookIntegrations.sharedExplanation, tone: .warning) }
             VStack(alignment: .leading, spacing: Space.gap) {
                 ForEach(model.rows) { row in rowView(row) }
             }
@@ -49,7 +50,7 @@ public struct AgentHooksView: View {
                 }
             }
             Spacer()
-            if let title = Self.buttonTitle(row.probe.state) {
+            if let title = Self.buttonTitle(row.probe.state, sharedWithInstalledApp: model.isSharedWithInstalledApp) {
                 Button(title) { Task { await model.install(row.id) } }
                     .disabled(row.working)
             }
@@ -73,7 +74,16 @@ public struct AgentHooksView: View {
         }
     }
 
-    /// The one action the state allows; none where an install would be refused anyway.
+    /// A development build's one action, whatever the state: the install it allows.
+    static let installForThisBuildTitle = "Install for This Build Anyway…"
+
+    /// The one action the state allows; none where an install would be refused anyway. A
+    /// development build offers only the install for this build.
+    static func buttonTitle(_ state: HookState, sharedWithInstalledApp: Bool) -> String? {
+        guard let title = buttonTitle(state) else { return nil }
+        return sharedWithInstalledApp ? installForThisBuildTitle : title
+    }
+
     static func buttonTitle(_ state: HookState) -> String? {
         switch state {
         case .missing: "Install"

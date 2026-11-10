@@ -6,7 +6,9 @@ import Foundation
 /// the driver current but adds a failed Context check to the card.
 struct GrokHooks: HookDriver {
     let home: URL, port: Int, shimPath: String
-    /// Where the shim's port and the user's own status line are recorded: the app's support folder.
+    /// Where the shim's port is recorded: the app's support folder. The user's own status line is
+    /// always recorded in the installed app's folder, as the settings file it comes from is global:
+    /// a dev build's record would be lost to the installed app's shim.
     let support: ShellforgeSupport
 
     var hooks: UserConfigFile { UserConfigFile(home: home, GrokHooksFile.path) }
@@ -64,7 +66,7 @@ struct GrokHooks: HookDriver {
         if reading.hooksState != .current { try hooks.write(GrokHooksFile.contents(port: port)) }
         try ShimPort.record(port, in: support)
         try GrokStatusLineConfig.install(reading.config.value, into: config,
-                                         original: support.grokStatusLineOriginalURL, shimPath: shimPath, home: home)
+                                         original: ShellforgeSupport.default(home: home).grokStatusLineOriginalURL, shimPath: shimPath, home: home)
     }
 
 }
