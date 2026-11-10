@@ -23,10 +23,11 @@ it and refuses to release a version that has none.
   that doesn’t exist yet, use the worktree that already has the branch, or switch anyway while
   another task works in the folder. Cancel leaves the folder as it was and the sheet open.
 - **Rearrange mode.** Right-click a project, divider, task, terminal or SSH row › Rearrange, then
-  drag rows by their handles. Projects and dividers move among each other, and a project’s SSH rows,
-  and its tasks and terminals in any mix, move within that project. Done saves the order; Cancel,
-  Esc in the sidebar, or hiding the sidebar puts it back. Next Task and Previous Task follow the
-  order you set. VoiceOver offers Move Up and Move Down on each row while rearranging.
+  drag rows with the mouse. Projects and dividers move among each other, and a project’s SSH rows,
+  and its tasks and terminals in any mix, move within that project; a drop the rules don’t allow
+  jumps back. Done saves the order; Cancel, Esc in the sidebar, or hiding the sidebar puts it
+  back. Next Task and Previous Task follow the order you set. VoiceOver offers Move Up and Move
+  Down on each row while rearranging.
 
 ### Changed
 

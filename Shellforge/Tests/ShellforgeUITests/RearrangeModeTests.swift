@@ -102,14 +102,6 @@ import Testing
         #expect(ids == ["project-\(s.a.id)", "task-\(s.task.id)", "terminal-\(s.terminal.id)"])
     }
 
-    @Test func draggingAProjectFoldsIt() throws {
-        let s = try setup()
-        s.first.beginRearrange()
-        #expect(s.first.rows.count == 3)
-        s.first.draggingProject = s.a.id
-        #expect(s.first.rows.map(\.id) == ["project-\(s.a.id)"])
-    }
-
     @Test func rowsFollowTheDraftsOrder() throws {
         let s = try setup()
         s.first.beginRearrange()
@@ -146,17 +138,5 @@ import Testing
         try s.document.update { $0.projects[0].collapsed = true }
         s.first.beginRearrange()
         #expect(s.first.rows.map(\.id) == ["project-\(s.a.id)"])
-    }
-
-    @Test func draggingIsClearedOnDoneAndOnCancel() throws {
-        let s = try setup()
-        s.first.beginRearrange()
-        s.first.draggingProject = s.a.id
-        s.first.finishRearrange()
-        #expect(s.first.draggingProject == nil)
-        s.first.beginRearrange()
-        s.first.draggingProject = s.a.id
-        s.first.cancelRearrange()
-        #expect(s.first.draggingProject == nil)
     }
 }

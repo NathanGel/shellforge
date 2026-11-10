@@ -337,13 +337,14 @@ struct SidebarView: View {
                 .allowsHitTesting(!model.isRearranging)
             List {
                 if chrome.windowControls == nil && !model.isRearranging { header(nil) }
+                // In Rearrange mode only, the List's own move drags the rows (moveRows).
                 ForEach(model.rows) { row in rowView(row) }
+                    .onMove(perform: model.isRearranging ? { [model] source, destination in model.moveRows(from: source, to: destination) } : nil)
             }
             .listStyle(.sidebar)
             .scrollContentBackground(.hidden)
             .background(NativeRowHighlight.off)
             .environment(\.isRearranging, model.isRearranging)
-            .rearrangeListDrop(model)
             SidebarFooterHost(model: model, hooks: hooks, machine: machine, backpack: backpack,
                               toggleMac: { BackpackToggle(backpack: backpack, presentSheet: presentBackpack).run() },
                               openMacSettings: showMacSettings)
@@ -381,13 +382,14 @@ struct SidebarView: View {
                       windowControls: controls)
     }
 
-    /// A row as drawn: in Rearrange mode, behind its handle and taking drops (RearrangeRow).
+    /// A row as drawn: in Rearrange mode, behind its handle (RearrangeRow); a row that does not move
+    /// is kept out of the List's move.
     @ViewBuilder private func rowView(_ row: SidebarRow) -> some View {
         if model.isRearranging, let item = RearrangeDrop.item(of: row) {
-            RearrangeRow(model: model, item: item, id: row.id, label: Self.rearrangeLabel(row), fold: fold(of: row)) { rowContent(row) }
+            RearrangeRow(model: model, item: item, label: Self.rearrangeLabel(row), fold: fold(of: row)) { rowContent(row) }
                 .listRowSeparator(.hidden)
         } else {
-            rowContent(row)
+            rowContent(row).moveDisabled(true)
         }
     }
 

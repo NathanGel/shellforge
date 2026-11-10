@@ -1,26 +1,9 @@
 import ShellforgeCore
 import ShellforgeDesign
 import SwiftUI
-import UniformTypeIdentifiers
 
-/// The row a drag in Rearrange mode is over, and whether over its lower half: the accent line is
-/// drawn under the row then, over it otherwise.
-public struct RearrangeDropTarget: Equatable, Sendable {
-    public var item: RearrangeDraft.Item
-    public var lowerHalf: Bool
-
-    public init(item: RearrangeDraft.Item, lowerHalf: Bool) {
-        self.item = item
-        self.lowerHalf = lowerHalf
-    }
-}
-
-/// Where a drop in Rearrange mode lands, read off the rows as drawn.
+/// Where a move in Rearrange mode lands, read off the rows as drawn.
 enum RearrangeDrop {
-    /// What a dragged row is on the pasteboard: a type of Shellforge's own, offered to this process
-    /// only, so a row let go over the terminal or Finder is no text to paste or clip.
-    static let rowType = UTType(exportedAs: "io.github.nathangel.shellforge.sidebar-row", conformingTo: .data)
-
     /// The draft's item a row stands for; nil for a row that does not move (the empty state, a tab, a heading).
     static func item(of row: SidebarRow) -> RearrangeDraft.Item? {
         switch row {
@@ -44,33 +27,24 @@ enum RearrangeDrop {
         }
     }
 
-    /// The `before:` item for a drop on `item`: on its upper half, `item` itself; on its lower half,
-    /// the next row of the same list, or nil at that list's end. An unfolded project with rows under
-    /// it takes either half as before itself: the line is drawn at its header, so that is where the
-    /// drop lands, not past rows the line does not reach.
-    static func target(for item: RearrangeDraft.Item, lowerHalf: Bool, in rows: [SidebarRow]) -> RearrangeDraft.Item? {
-        guard lowerHalf else { return item }
-        let items = rows.compactMap(Self.item(of:))
-        guard let index = items.firstIndex(of: item) else { return nil }
-        let following = items[(index + 1)...]
-        if case .entry(.project) = item, let next = following.first, !sameList(item, next) { return item }
-        for next in following {
-            // An entry's list runs past its project's own rows; an SSH row's or a child's ends with its run.
-            if sameList(item, next) { return next }
-            if case .entry = item { continue }
-            return nil
+    /// What the List's move of the row at `source` to `destination` (SwiftUI's onMove index: the row
+    /// it goes before, `rows.count` for the end) means for the draft: the item and the `before:` it
+    /// lands at, or nil when it lands nowhere its list allows. A project or divider goes before the
+    /// first project or divider at or after `destination`, so one dropped among a project's rows
+    /// lands after that project. An SSH row, task or terminal lands only on a row of its own list or
+    /// one past that list's last row (its end). The draft's own rules still decide the move.
+    static func landing(moving source: Int, to destination: Int,
+                        in rows: [SidebarRow]) -> (item: RearrangeDraft.Item, before: RearrangeDraft.Item?)? {
+        guard rows.indices.contains(source), let item = item(of: rows[source]) else { return nil }
+        let items = rows.map(Self.item(of:))
+        let after = items.dropFirst(max(destination, 0))
+        if case .entry = item {
+            let before = after.lazy.compactMap { $0 }.first { if case .entry = $0 { true } else { false } }
+            return (item, before)
         }
+        if let target = after.first ?? nil, sameList(item, target) { return (item, target) }
+        if let last = items.lastIndex(where: { $0.map { sameList(item, $0) } ?? false }), destination == last + 1 { return (item, nil) }
         return nil
-    }
-
-    /// The `before:` item for dropping `dragged` on `item`, or nil (outer) when the draft refuses it:
-    /// a drop lands only in the dragged row's own list.
-    static func landing(of dragged: RearrangeDraft.Item, on item: RearrangeDraft.Item, lowerHalf: Bool,
-                        in rows: [SidebarRow], draft: RearrangeDraft) -> RearrangeDraft.Item?? {
-        guard sameList(dragged, item) else { return nil }
-        let before = target(for: item, lowerHalf: lowerHalf, in: rows)
-        var trial = draft
-        return trial.move(dragged, before: before) ? .some(before) : nil
     }
 }
 
@@ -147,25 +121,19 @@ struct RearrangeFold {
     let toggle: () -> Void
 }
 
-/// A row in Rearrange mode: a drag handle before it, the row itself inert, dragged and dropped onto,
-/// with an accent line where a drop would land and VoiceOver's one-step moves.
+/// A row in Rearrange mode: a handle mark before it, the row itself inert, and VoiceOver's one-step
+/// moves. The List's own move drags it (`moveRows`), drawing the insertion line itself.
 struct RearrangeRow<Content: View>: View {
     @ObservedObject var model: SidebarModel
     let item: RearrangeDraft.Item
-    let id: String
     let label: String
     /// A project's fold: its row stays live for it (the row keeps its other controls quiet itself).
     var fold: RearrangeFold? = nil
     @ViewBuilder let content: () -> Content
-    @State private var height: CGFloat = 0
     @Environment(\.interfaceScale) private var scale
     @Environment(\.surface) private var surface
 
-    /// The line's thickness, in points.
-    private static var lineWidth: CGFloat { 2 }
-
     var body: some View {
-        let line = model.dropTarget.flatMap { $0.item == item ? $0.lowerHalf : nil }
         let actions = model.rearrange.map { RearrangeRowActions.titles(for: item, in: $0) } ?? []
         HStack(spacing: 0) {
             SymbolMark(symbol: "line.3.horizontal", size: scale(Size.avatar), tint: surface.secondaryInk)
@@ -174,17 +142,6 @@ struct RearrangeRow<Content: View>: View {
             content().allowsHitTesting(fold != nil)
         }
         .contentShape(Rectangle())
-        .background { GeometryReader { proxy in Color.clear.onAppear { height = proxy.size.height }.onChange(of: proxy.size.height) { height = $0 } } }
-        .overlay(alignment: line == true ? .bottom : .top) {
-            if line != nil { Rectangle().fill(Palette.accent).frame(height: Self.lineWidth).allowsHitTesting(false) }
-        }
-        .onDrag { [weak model, item, id] in
-            let session = model?.startDragging(item) ?? 0
-            return RearrangeDragProvider(payload: id) { [weak model] in
-                Task { @MainActor in model?.dragEnded(session) }
-            }
-        }
-        .onDrop(of: [RearrangeDrop.rowType], delegate: RearrangeRowDrop(model: model, item: item, height: height))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(label)
         .accessibilityHint("Drag to rearrange")
@@ -197,118 +154,5 @@ struct RearrangeRow<Content: View>: View {
         .modifier(NamedAccessibilityAction(name: RearrangeRowActions.foldTitle(collapsed: fold?.collapsed == true), enabled: fold != nil) {
             fold?.toggle()
         })
-    }
-}
-
-/// A drop over one row: where it would land, and the move.
-private struct RearrangeRowDrop: DropDelegate {
-    let model: SidebarModel
-    let item: RearrangeDraft.Item
-    let height: CGFloat
-
-    private func lowerHalf(_ info: DropInfo) -> Bool { info.location.y > height / 2 }
-
-    /// What moves is read from the payload at the drop, never from what this sidebar thinks is dragged.
-    func validateDrop(info: DropInfo) -> Bool {
-        MainActor.assumeIsolated { model.isRearranging } && info.hasItemsConforming(to: [RearrangeDrop.rowType])
-    }
-
-    func dropUpdated(info: DropInfo) -> DropProposal? {
-        let accepted = MainActor.assumeIsolated { model.hover(over: item, lowerHalf: lowerHalf(info)) }
-        return DropProposal(operation: accepted ? .move : .forbidden)
-    }
-
-    func dropExited(info: DropInfo) {
-        MainActor.assumeIsolated { if model.dropTarget?.item == item { model.dropTarget = nil } }
-    }
-
-    func performDrop(info: DropInfo) -> Bool {
-        let model = model, item = item, lowerHalf = lowerHalf(info)
-        rearrangeLog.info("performDrop on a row, providers \(info.itemProviders(for: [RearrangeDrop.rowType]).count)")
-        guard let provider = info.itemProviders(for: [RearrangeDrop.rowType]).first else {
-            MainActor.assumeIsolated { model.endDrag() }
-            return false
-        }
-        MainActor.assumeIsolated { model.dropTarget = nil }
-        RearrangeDragProvider.loadPayload(from: provider) { payload in
-            Task { @MainActor in
-                if let payload { model.drop(payload: payload, on: item, lowerHalf: lowerHalf) } else { model.endDrag() }
-            }
-        }
-        return true
-    }
-}
-
-/// A dragged row's id, under `RearrangeDrop.rowType` only, for this process only. AppKit holds it
-/// for as long as the drag session lasts; letting go of it, dropped or abandoned, tells the sidebar
-/// the drag is over.
-final class RearrangeDragProvider: NSItemProvider, @unchecked Sendable {
-    private let ended: @Sendable () -> Void
-
-    init(payload: String, ended: @escaping @Sendable () -> Void) {
-        self.ended = ended
-        super.init()
-        let data = Data(payload.utf8)
-        registerDataRepresentation(forTypeIdentifier: RearrangeDrop.rowType.identifier, visibility: .ownProcess) { completion in
-            completion(data, nil)
-            return nil
-        }
-    }
-
-    /// The row id a drop carries, or nil when it carries none.
-    static func loadPayload(from provider: NSItemProvider, then handle: @escaping @Sendable (String?) -> Void) {
-        _ = provider.loadDataRepresentation(forTypeIdentifier: RearrangeDrop.rowType.identifier) { data, error in
-            if let error { rearrangeLog.error("payload failed to load: \(error.localizedDescription, privacy: .public)") }
-            handle(data.flatMap { String(data: $0, encoding: .utf8) })
-        }
-    }
-
-    deinit { ended() }
-}
-
-/// A drop anywhere else in the list: nothing moves. Leaving the list ends the drag, so a project
-/// dropped outside the sidebar unfolds again; passing onto a row inside it does not.
-private struct RearrangeListDrop: DropDelegate {
-    let model: SidebarModel
-    let size: CGSize
-
-    func validateDrop(info: DropInfo) -> Bool {
-        MainActor.assumeIsolated { model.isRearranging } && info.hasItemsConforming(to: [RearrangeDrop.rowType])
-    }
-
-    func dropUpdated(info: DropInfo) -> DropProposal? {
-        MainActor.assumeIsolated { model.dropTarget = nil }
-        return DropProposal(operation: .forbidden)
-    }
-
-    func dropExited(info: DropInfo) {
-        let inside = CGRect(origin: .zero, size: size).insetBy(dx: 1, dy: 1).contains(info.location)
-        MainActor.assumeIsolated { if !inside { model.endDrag() } }
-    }
-
-    func performDrop(info: DropInfo) -> Bool {
-        rearrangeLog.info("performDrop on the list, outside any row")
-        MainActor.assumeIsolated { model.endDrag() }
-        return false
-    }
-}
-
-extension View {
-    /// The list's own drop target in Rearrange mode, under the rows' (RearrangeListDrop). Always
-    /// there, so the list keeps its identity (and its scroll) as the mode comes and goes; it
-    /// accepts nothing outside the mode.
-    func rearrangeListDrop(_ model: SidebarModel) -> some View {
-        modifier(RearrangeListDropArea(model: model))
-    }
-}
-
-private struct RearrangeListDropArea: ViewModifier {
-    let model: SidebarModel
-    @State private var size: CGSize = .zero
-
-    func body(content: Content) -> some View {
-        content
-            .background { GeometryReader { proxy in Color.clear.onAppear { size = proxy.size }.onChange(of: proxy.size) { size = $0 } } }
-            .onDrop(of: [RearrangeDrop.rowType], delegate: RearrangeListDrop(model: model, size: size))
     }
 }

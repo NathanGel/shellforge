@@ -96,14 +96,6 @@ public final class SidebarModel: ObservableObject {
     @Published private(set) var drawnDividers: [SidebarDivider] = []
     /// The order being rearranged, held until Done (SidebarModel+Rearrange.swift); nil outside the mode.
     @Published public internal(set) var rearrange: RearrangeDraft?
-    /// The project being dragged in the mode: only its header is drawn while it is.
-    @Published public var draggingProject: UUID?
-    /// The row a drag in the mode is over, and which half: where its accent line is drawn.
-    @Published public var dropTarget: RearrangeDropTarget?
-    /// The row being dragged in the mode: what a drop moves. Not drawn, so not published.
-    public internal(set) var draggedItem: RearrangeDraft.Item?
-    /// Counts the drags begun, so a drag session that ends late clears only its own state.
-    var dragSession = 0
     @Published public internal(set) var selectedTaskId: UUID?
     /// The terminal row shown, when the selected tab is a terminal's (Terminals/).
     @Published public internal(set) var selectedTerminalId: UUID?
@@ -641,7 +633,7 @@ public final class SidebarModel: ObservableObject {
 
     /// The rows of the projects and dividers in `entries`, in that order: the one builder both the
     /// normal sidebar and rearrange mode draw with. A draft supplies each project's SSH and child
-    /// order and turns the tabs off; a project being dragged shows only its header.
+    /// order and turns the tabs off.
     private func entryRows(_ entries: [SidebarEntry], draft: RearrangeDraft?) -> [SidebarRow] {
         var rows: [SidebarRow] = []
         // A hand-edited workspace may repeat a project: the first is drawn, never a crash.
@@ -654,7 +646,7 @@ public final class SidebarModel: ObservableObject {
             case .project(let id):
                 guard let node = nodes[id] else { continue }
                 rows.append(.project(node, collapsed: node.project.collapsed))
-                guard !node.project.collapsed, draft == nil || draggingProject != id else { continue }
+                guard !node.project.collapsed else { continue }
                 rows += tunnelRows(of: node.project, in: draft?.tunnels[id]).map(SidebarRow.tunnel)
                 rows += childRows(of: node, order: draft?.children[id] ?? node.children, listsTabs: draft == nil)
             }

@@ -2,7 +2,7 @@ import Foundation
 import os
 import ShellforgeCore
 
-/// Each step of a drag, for finding where one stops: `log stream --level info --predicate
+/// Each move and refusal in Rearrange mode, for finding where one goes wrong: `log stream --level info --predicate
 /// 'subsystem == "io.github.nathangel.shellforge" AND category == "rearrange"'`.
 let rearrangeLog = Logger(subsystem: "io.github.nathangel.shellforge", category: "rearrange")
 
@@ -47,7 +47,6 @@ extension SidebarModel {
 
     private func leaveRearrange() {
         rearrange = nil
-        endDrag()
         if document.rearranger === self { document.rearranger = nil }
     }
 }
@@ -55,75 +54,18 @@ extension SidebarModel {
 // -- dragging -------------------------------------------------------------------
 
 extension SidebarModel {
-    /// A row is picked up: a project folds to its header until the drag ends. Returns the drag's
-    /// session, which `dragEnded` takes when AppKit lets go of it.
+    /// The List's own move in the mode: the row at `source.first` dragged to `destination` (SwiftUI's
+    /// onMove index into `rows`). Moved in the draft when it lands in the row's own list and the rules
+    /// allow it; otherwise refused, and the List puts the row back. Nothing happens outside the mode.
     @discardableResult
-    public func startDragging(_ item: RearrangeDraft.Item) -> Int {
-        dragSession += 1
-        rearrangeLog.info("drag \(self.dragSession) starts: \(String(describing: item), privacy: .public), rearranging \(self.isRearranging)")
-        guard isRearranging else { return dragSession }
-        draggedItem = item
-        dropTarget = nil
-        if case .entry(.project(let id)) = item { draggingProject = id } else { draggingProject = nil }
-        return dragSession
-    }
-
-    /// The drag `session` is over, dropped or abandoned (Esc, let go outside the sidebar): its
-    /// project unfolds and nothing is left dragged. A later drag's state is left alone.
-    public func dragEnded(_ session: Int) {
-        rearrangeLog.info("drag \(session) ended (current \(self.dragSession))")
-        guard session == dragSession else { return }
-        endDrag()
-    }
-
-    /// The drag is over `item`'s upper or lower half: the line is drawn there when the draft would
-    /// take the drop, and none when it would refuse it. True when it would take it. With no drag of
-    /// this sidebar's under way (a text drag from elsewhere), nothing is drawn.
-    @discardableResult
-    public func hover(over item: RearrangeDraft.Item, lowerHalf: Bool) -> Bool {
-        guard let dragged = draggedItem, landing(of: dragged, on: item, lowerHalf: lowerHalf) != nil else {
-            if dropTarget != nil {
-                dropTarget = nil
-                rearrangeLog.info("hover refused over \(String(describing: item), privacy: .public), dragged \(String(describing: self.draggedItem), privacy: .public)")
-            }
+    public func moveRows(from source: IndexSet, to destination: Int) -> Bool {
+        guard isRearranging, let index = source.first else { return false }
+        guard let landing = RearrangeDrop.landing(moving: index, to: destination, in: rows) else {
+            rearrangeLog.info("move of row \(index) to \(destination) refused: no landing")
             return false
         }
-        // Drawn where the drop lands: an unfolded project takes its lower half as before itself.
-        let landsBefore = RearrangeDrop.target(for: item, lowerHalf: lowerHalf, in: rows) == item
-        let target = RearrangeDropTarget(item: item, lowerHalf: lowerHalf && !landsBefore)
-        if dropTarget != target {
-            dropTarget = target
-            rearrangeLog.info("hover over \(String(describing: item), privacy: .public), lower \(target.lowerHalf)")
-        }
-        return true
-    }
-
-    /// A drop on `item`'s upper or lower half carrying `payload`, the dragged row's id: moved in the
-    /// draft when the payload is a row of this draft and the rules allow it. What was dragged is
-    /// read from the payload alone, so a stale or foreign drag moves nothing. The drag is over either way.
-    @discardableResult
-    public func drop(payload: String, on item: RearrangeDraft.Item, lowerHalf: Bool) -> Bool {
-        defer { endDrag() }
-        guard let dragged = rows.first(where: { $0.id == payload }).flatMap(RearrangeDrop.item(of:)),
-              let before = landing(of: dragged, on: item, lowerHalf: lowerHalf) else {
-            rearrangeLog.info("drop refused: payload \(payload, privacy: .public) on \(String(describing: item), privacy: .public)")
-            return false
-        }
-        let moved = moveInDraft(dragged, before: before)
-        rearrangeLog.info("drop of \(payload, privacy: .public): moved \(moved)")
+        let moved = moveInDraft(landing.item, before: landing.before)
+        rearrangeLog.info("move of \(String(describing: landing.item), privacy: .public) before \(String(describing: landing.before), privacy: .public): \(moved ? "moved" : "refused", privacy: .public)")
         return moved
-    }
-
-    /// Nothing is dragged and no line is drawn.
-    public func endDrag() {
-        draggedItem = nil
-        if draggingProject != nil { draggingProject = nil }
-        if dropTarget != nil { dropTarget = nil }
-    }
-
-    /// Where dropping `dragged` on `item` would put it (`.some(nil)` = the end of its list), or nil when refused.
-    private func landing(of dragged: RearrangeDraft.Item, on item: RearrangeDraft.Item, lowerHalf: Bool) -> RearrangeDraft.Item?? {
-        guard let draft = rearrange else { return nil }
-        return RearrangeDrop.landing(of: dragged, on: item, lowerHalf: lowerHalf, in: rows, draft: draft)
     }
 }

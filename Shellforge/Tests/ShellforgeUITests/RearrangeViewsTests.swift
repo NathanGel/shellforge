@@ -3,12 +3,11 @@ import Combine
 import Foundation
 import SwiftUI
 import Testing
-import UniformTypeIdentifiers
 @testable import ShellforgeCore
 @testable import ShellforgeUI
 @testable import ShellforgeTestSupport
 
-/// Rearrange mode as it is drawn: where a drop lands, what the menus and VoiceOver offer, and the bar.
+/// Rearrange mode as it is drawn: where a move lands, what the menus and VoiceOver offer, and the bar.
 @MainActor @Suite struct RearrangeViewsTests {
     @MainActor private struct Setup {
         let model: SidebarModel, document: WorkspaceDocument
@@ -33,118 +32,129 @@ import UniformTypeIdentifiers
         return Setup(model: model, document: document, a: a, b: b, task: task, terminal: terminal, other: other)
     }
 
-    @Test func dropTargets() throws {
-        let s = try setup()
-        s.model.beginRearrange()
-        let rows = s.model.rows
-        let a = s.a.id
-        let x = RearrangeDraft.Item.child(project: a, .terminal(s.terminal.id))
-        #expect(RearrangeDrop.target(for: .tunnel(project: a, alias: "a2"), lowerHalf: true, in: rows) == nil,
-                "the end of A’s SSH rows")
-        #expect(RearrangeDrop.target(for: .tunnel(project: a, alias: "a1"), lowerHalf: true, in: rows) == .tunnel(project: a, alias: "a2"))
-        #expect(RearrangeDrop.target(for: x, lowerHalf: false, in: rows) == x)
-        #expect(RearrangeDrop.target(for: .child(project: a, .task(s.task.id)), lowerHalf: true, in: rows) == x)
-        #expect(RearrangeDrop.target(for: x, lowerHalf: true, in: rows) == nil, "the end of A’s tasks and terminals")
-        #expect(RearrangeDrop.target(for: .entry(.project(a)), lowerHalf: true, in: rows) == .entry(.project(a)),
-                "A is unfolded with rows under it: its lower half lands before it, where the line is drawn")
-        s.model.draggingProject = a
-        #expect(RearrangeDrop.target(for: .entry(.project(a)), lowerHalf: true, in: s.model.rows) == .entry(.project(s.b.id)),
-                "folded to its header, its lower half lands before the next project")
+    /// The setup with a second task t2 in A and a divider D between A and B, in the mode, A's
+    /// children ordered t1, t2, x. Rows: A 0, a1 1, a2 2, t1 3, t2 4, x 5, D 6, B 7, w1 8.
+    @MainActor private struct Arranged {
+        let s: Setup, t2: TaskItem, divider: SidebarDivider
+        var model: SidebarModel { s.model }
+        var a: UUID { s.a.id }
+        var t1: RearrangeDraft.Item { .child(project: s.a.id, .task(s.task.id)) }
+        var t2Item: RearrangeDraft.Item { .child(project: s.a.id, .task(t2.id)) }
+        var x: RearrangeDraft.Item { .child(project: s.a.id, .terminal(s.terminal.id)) }
+        func ids() -> [String] { model.rows.map(\.id) }
     }
 
-    @Test func aDropOnlyLandsInItsOwnList() throws {
+    private func arranged() throws -> Arranged {
         let s = try setup()
+        let t2 = TaskItem(projectId: s.a.id, title: "t2", branch: "t2", worktreePath: "/api-worktrees/t2", baseBranch: "main")
+        let divider = SidebarDivider(name: "Work", position: 1)
+        try s.document.update { w in w.addTask(t2); w.dividers = [divider] }
         s.model.beginRearrange()
-        let a = s.a.id
-        let t1 = RearrangeDraft.Item.child(project: a, .task(s.task.id))
-        let x = RearrangeDraft.Item.child(project: a, .terminal(s.terminal.id))
-        s.model.startDragging(t1)
-        #expect(!s.model.hover(over: .child(project: s.b.id, .task(s.other.id)), lowerHalf: true), "not onto another project")
-        #expect(s.model.dropTarget == nil, "a refused drop draws no line")
-        #expect(!s.model.hover(over: .tunnel(project: a, alias: "a2"), lowerHalf: true), "not among the SSH rows")
-        #expect(s.model.hover(over: x, lowerHalf: true))
-        #expect(s.model.dropTarget == RearrangeDropTarget(item: x, lowerHalf: true))
-        #expect(s.model.drop(payload: "task-\(s.task.id)", on: x, lowerHalf: true))
-        #expect(s.model.rearrange?.children[a] == [.terminal(s.terminal.id), .task(s.task.id)])
-        #expect(s.model.dropTarget == nil && s.model.draggingProject == nil)
+        #expect(s.model.moveInDraft(.child(project: s.a.id, .terminal(s.terminal.id)), before: nil))
+        let r = Arranged(s: s, t2: t2, divider: divider)
+        #expect(r.ids() == ["project-\(s.a.id)", "tunnel-\(s.a.id)-a1", "tunnel-\(s.a.id)-a2", "task-\(s.task.id)", "task-\(t2.id)",
+                            "terminal-\(s.terminal.id)", "divider-\(divider.id)", "project-\(s.b.id)", "task-\(s.other.id)"])
+        return r
     }
 
-    @Test func draggingAProjectFoldsItUntilTheDrop() throws {
-        let s = try setup()
-        s.model.beginRearrange()
-        s.model.startDragging(.entry(.project(s.a.id)))
-        #expect(s.model.draggingProject == s.a.id)
-        s.model.endDrag()
-        #expect(s.model.draggingProject == nil && s.model.dropTarget == nil)
+    @Test func aProjectMovedAboveAnotherTakesItsRows() throws {
+        let r = try arranged()
+        let b = r.s.b.id
+        let landing = try #require(RearrangeDrop.landing(moving: 7, to: 0, in: r.model.rows))
+        #expect(landing.item == .entry(.project(b)) && landing.before == .entry(.project(r.a)))
+        #expect(r.model.moveRows(from: [7], to: 0))
+        #expect(Array(r.ids().prefix(3)) == ["project-\(b)", "task-\(r.s.other.id)", "project-\(r.a)"], "B’s task comes along under it")
+        #expect(r.ids().last == "divider-\(r.divider.id)")
     }
 
-    /// Esc during a drag, or a let-go outside the sidebar: the session ends with no drop, and the
-    /// project unfolds. A late end of an older session leaves the current drag alone.
-    @Test func anAbandonedDragUnfoldsTheProject() throws {
-        let s = try setup()
-        s.model.beginRearrange()
-        let first = s.model.startDragging(.entry(.project(s.a.id)))
-        #expect(s.model.rows.count == 3, "A folds to its header while dragged: A, B, B’s task")
-        s.model.dragEnded(first)
-        #expect(s.model.draggingProject == nil && s.model.draggedItem == nil)
-        #expect(s.model.rows.count == 7, "A’s SSH rows and children are back")
-        let older = s.model.startDragging(.entry(.project(s.a.id)))
-        _ = s.model.startDragging(.entry(.project(s.b.id)))
-        s.model.dragEnded(older)
-        #expect(s.model.draggingProject == s.b.id, "only its own session clears a drag")
+    /// Projects cannot go inside projects: a drop among A’s rows lands after A.
+    @Test func aProjectDroppedAmongAnotherProjectsRowsLandsAfterIt() throws {
+        let r = try arranged()
+        let b = r.s.b.id
+        let landing = try #require(RearrangeDrop.landing(moving: 7, to: 4, in: r.model.rows))
+        #expect(landing.before == .entry(.divider(r.divider.id)))
+        #expect(r.model.moveRows(from: [7], to: 4))
+        #expect(r.model.rearrange?.entries == [.project(r.a), .project(b), .divider(r.divider.id)])
+        #expect(r.ids()[6] == "project-\(b)" && r.ids()[5] == "terminal-\(r.s.terminal.id)", "A keeps all its rows")
     }
 
-    /// What moves is read from the drop's payload: one that is no row of this draft — another app's
-    /// text, or a row that is gone — moves nothing, even with a stale drag left over.
-    @Test func aDropWhosePayloadIsNoDraftRowIsRefused() throws {
-        let s = try setup()
-        s.model.beginRearrange()
-        let a = s.a.id
-        let x = RearrangeDraft.Item.child(project: a, .terminal(s.terminal.id))
-        s.model.startDragging(.child(project: a, .task(s.task.id)))
-        let before = s.model.rearrange
-        #expect(!s.model.drop(payload: "hello from another app", on: x, lowerHalf: true))
-        #expect(!s.model.drop(payload: "task-\(UUID())", on: x, lowerHalf: true))
-        #expect(s.model.rearrange == before)
-        #expect(s.model.draggedItem == nil && s.model.dropTarget == nil)
-        // Without any drag of its own, a hover draws nothing.
-        #expect(!s.model.hover(over: x, lowerHalf: false) && s.model.dropTarget == nil)
+    @Test func aDividerMovesAlone() throws {
+        let r = try arranged()
+        #expect(r.model.moveRows(from: [6], to: 0))
+        #expect(r.model.rearrange?.entries == [.divider(r.divider.id), .project(r.a), .project(r.s.b.id)])
+        #expect(r.ids().count == 9)
+        #expect(r.model.moveRows(from: [0], to: 9), "to the end")
+        #expect(r.model.rearrange?.entries == [.project(r.a), .project(r.s.b.id), .divider(r.divider.id)])
     }
 
-    /// The lower half of an unfolded project lands before it, so the line is drawn above its header.
-    @Test func theLineOnAnUnfoldedProjectIsDrawnWhereItLands() throws {
-        let s = try setup()
-        s.model.beginRearrange()
-        s.model.startDragging(.entry(.project(s.b.id)))
-        #expect(s.model.hover(over: .entry(.project(s.a.id)), lowerHalf: true))
-        #expect(s.model.dropTarget == RearrangeDropTarget(item: .entry(.project(s.a.id)), lowerHalf: false))
+    @Test func aTerminalMovesBetweenTwoTasks() throws {
+        let r = try arranged()
+        let landing = try #require(RearrangeDrop.landing(moving: 5, to: 4, in: r.model.rows))
+        #expect(landing.item == r.x && landing.before == r.t2Item)
+        #expect(r.model.moveRows(from: [5], to: 4))
+        #expect(r.model.rearrange?.children[r.a] == [.task(r.s.task.id), .terminal(r.s.terminal.id), .task(r.t2.id)])
     }
 
-    @Test func leavingTheModeClearsTheDropTarget() throws {
-        let s = try setup()
-        s.model.beginRearrange()
-        s.model.startDragging(.entry(.project(s.b.id)))
-        #expect(s.model.hover(over: .entry(.project(s.a.id)), lowerHalf: false))
-        s.model.cancelRearrange()
-        #expect(s.model.dropTarget == nil)
-        s.model.beginRearrange()
-        s.model.startDragging(.entry(.project(s.b.id)))
-        #expect(s.model.hover(over: .entry(.project(s.a.id)), lowerHalf: false))
-        s.model.finishRearrange()
-        #expect(s.model.dropTarget == nil)
+    /// One past A’s last child is the end of A’s list, though it is also the divider’s place.
+    @Test func aTaskMovedOnePastItsProjectsChildrenLandsAtTheEnd() throws {
+        let r = try arranged()
+        let landing = try #require(RearrangeDrop.landing(moving: 3, to: 6, in: r.model.rows))
+        #expect(landing.item == r.t1 && landing.before == nil)
+        #expect(r.model.moveRows(from: [3], to: 6))
+        #expect(r.model.rearrange?.children[r.a] == [.task(r.t2.id), .terminal(r.s.terminal.id), .task(r.s.task.id)])
     }
 
-    /// A dragged row is no text: let go over the terminal it pastes nothing, over Finder it makes no
-    /// clipping. Its own type carries the row id back to the sidebar.
-    @Test func aDraggedRowIsNoText() async {
-        let provider = RearrangeDragProvider(payload: "project-1", ended: {})
-        let types = provider.registeredTypeIdentifiers
-        #expect(types == [RearrangeDrop.rowType.identifier], "\(types)")
-        for text in [UTType.text, .plainText, .utf8PlainText] {
-            #expect(!provider.hasItemConformingToTypeIdentifier(text.identifier), "\(text.identifier)")
+    @Test func aTaskMovedIntoAnotherProjectIsRefused() throws {
+        let r = try arranged()
+        let before = r.model.rearrange
+        for destination in [7, 8, 9] {
+            #expect(RearrangeDrop.landing(moving: 3, to: destination, in: r.model.rows) == nil, "\(destination)")
+            #expect(!r.model.moveRows(from: [3], to: destination), "\(destination)")
         }
-        let payload = await withCheckedContinuation { done in RearrangeDragProvider.loadPayload(from: provider) { done.resume(returning: $0) } }
-        #expect(payload == "project-1")
+        #expect(r.model.rearrange == before)
+    }
+
+    @Test func aTaskMovedAmongOrAboveTheSSHRowsIsRefused() throws {
+        let r = try arranged()
+        let before = r.model.rearrange
+        for destination in [0, 1, 2] {
+            #expect(RearrangeDrop.landing(moving: 4, to: destination, in: r.model.rows) == nil, "\(destination)")
+            #expect(!r.model.moveRows(from: [4], to: destination), "\(destination)")
+        }
+        #expect(r.model.rearrange == before)
+    }
+
+    @Test func anSSHRowMovesAmongItsOwnOnly() throws {
+        let r = try arranged()
+        #expect(r.model.moveRows(from: [2], to: 1))
+        #expect(r.model.rearrange?.tunnels[r.a] == ["a2", "a1"])
+        #expect(r.model.moveRows(from: [1], to: 3), "one past the SSH rows: their end")
+        #expect(r.model.rearrange?.tunnels[r.a] == ["a1", "a2"])
+        let before = r.model.rearrange
+        for destination in [0, 4, 5, 6] {
+            #expect(!r.model.moveRows(from: [1], to: destination), "\(destination)")
+        }
+        #expect(r.model.rearrange == before)
+    }
+
+    /// Rows that stand for nothing in the draft do not move.
+    @Test func rowsThatDoNotMoveAreRefused() {
+        let tab = SidebarRow.tab(TabSnapshot(id: "t1", tabId: 1, title: "zsh", taskId: nil, projectId: nil), selected: false)
+        let rows: [SidebarRow] = [.empty, .otherTabsHeading, tab]
+        for source in rows.indices {
+            for destination in 0...rows.count {
+                #expect(RearrangeDrop.landing(moving: source, to: destination, in: rows) == nil, "\(source) to \(destination)")
+            }
+        }
+        #expect(RearrangeDrop.landing(moving: 5, to: 0, in: rows) == nil, "no such row")
+    }
+
+    @Test func outsideTheModeMoveRowsDoesNothing() throws {
+        let s = try setup()
+        let before = s.document.workspace
+        let rows = s.model.rows.map(\.id)
+        #expect(!s.model.moveRows(from: [5], to: 0))
+        #expect(s.document.workspace == before && s.model.rows.map(\.id) == rows && !s.model.isRearranging)
     }
 
     @Test func menusOfferRearrangeNotMoves() {
