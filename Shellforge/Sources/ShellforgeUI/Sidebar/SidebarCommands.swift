@@ -31,7 +31,7 @@ extension SidebarModel {
 
     /// The tasks waiting on the user — needing input, or done and not yet seen — in sidebar order.
     public var waitingOnYou: [UUID] {
-        tree.projects.flatMap(\.tasks).map(\.id)
+        tree.projects.flatMap(Self.taskIds)
             .filter { removals[$0] == nil && [.needsInput, .done].contains(status(ofTask: $0)) }
     }
 
@@ -39,7 +39,12 @@ extension SidebarModel {
     var steppableTasks: [UUID] {
         // A task being removed has had its tabs closed: stepping onto it would only open a shell in
         // a worktree on its way out.
-        tree.projects.filter { !$0.project.collapsed }.flatMap(\.tasks).map(\.id).filter { removals[$0] == nil }
+        tree.projects.filter { !$0.project.collapsed }.flatMap(Self.taskIds).filter { removals[$0] == nil }
+    }
+
+    /// A project's tasks in the order its rows are drawn, arranged or not.
+    private static func taskIds(_ node: ProjectNode) -> [UUID] {
+        node.children.compactMap { if case .task(let id) = $0 { id } else { nil } }
     }
 
     public func can(_ command: SidebarCommand) -> Bool {

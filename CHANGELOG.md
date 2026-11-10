@@ -25,7 +25,8 @@ it and refuses to release a version that has none.
 - **Rearrange mode.** Right-click a project, divider, task, terminal or SSH row › Rearrange, then
   drag rows by their handles. Projects and dividers move among each other, and a project’s SSH rows,
   and its tasks and terminals in any mix, move within that project. Done saves the order; Cancel,
-  Esc in the sidebar, or hiding the sidebar puts it back. VoiceOver offers Move Up and Move Down on each row while rearranging.
+  Esc in the sidebar, or hiding the sidebar puts it back. Next Task and Previous Task follow the
+  order you set. VoiceOver offers Move Up and Move Down on each row while rearranging.
 
 ### Changed
 
@@ -36,6 +37,7 @@ it and refuses to release a version that has none.
   the issues can’t be flooded. GitHub’s own form, under your own account, stays open in the meantime.
 - **Move Up and Move Down leave the menus.** A project’s and a divider’s right-click menus, and a
   divider’s VoiceOver actions, now offer Rearrange instead.
+- **A new task goes to the bottom of its project,** below its terminals, as a new terminal does.
 
 ## 0.9.0 — 2026-11-09
 

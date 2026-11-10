@@ -55,11 +55,9 @@ public enum SidebarRow: Equatable, Identifiable {
     }
 }
 
-/// A divider as its row draws it, with which ways it can move.
+/// A divider as its row draws it. It moves in Rearrange mode only.
 public struct DividerRowItem: Equatable, Sendable {
     public let divider: SidebarDivider
-    public let canMoveUp: Bool
-    public let canMoveDown: Bool
 }
 
 extension TaskStatus {

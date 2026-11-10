@@ -123,7 +123,7 @@ extension SidebarModel {
                                        sharedWithAnotherTask: shared, launcher: launcher)
             }
             await settleBranch(of: task, in: project, after: result)
-            try document.update { $0.tasks.removeAll { $0.id == id } }
+            try document.update { $0.removeTask(id) }
             removalBoard.removals[id] = nil
             return true
         } catch {

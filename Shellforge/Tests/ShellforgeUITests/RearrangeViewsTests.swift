@@ -1,7 +1,9 @@
 import AppKit
+import Combine
 import Foundation
 import SwiftUI
 import Testing
+import UniformTypeIdentifiers
 @testable import ShellforgeCore
 @testable import ShellforgeUI
 @testable import ShellforgeTestSupport
@@ -43,8 +45,11 @@ import Testing
         #expect(RearrangeDrop.target(for: x, lowerHalf: false, in: rows) == x)
         #expect(RearrangeDrop.target(for: .child(project: a, .task(s.task.id)), lowerHalf: true, in: rows) == x)
         #expect(RearrangeDrop.target(for: x, lowerHalf: true, in: rows) == nil, "the end of A’s tasks and terminals")
-        #expect(RearrangeDrop.target(for: .entry(.project(a)), lowerHalf: true, in: rows) == .entry(.project(s.b.id)),
-                "past A’s own rows, to the next project")
+        #expect(RearrangeDrop.target(for: .entry(.project(a)), lowerHalf: true, in: rows) == .entry(.project(a)),
+                "A is unfolded with rows under it: its lower half lands before it, where the line is drawn")
+        s.model.draggingProject = a
+        #expect(RearrangeDrop.target(for: .entry(.project(a)), lowerHalf: true, in: s.model.rows) == .entry(.project(s.b.id)),
+                "folded to its header, its lower half lands before the next project")
     }
 
     @Test func aDropOnlyLandsInItsOwnList() throws {
@@ -120,6 +125,19 @@ import Testing
         #expect(s.model.dropTarget == nil)
     }
 
+    /// A dragged row is no text: let go over the terminal it pastes nothing, over Finder it makes no
+    /// clipping. Its own type carries the row id back to the sidebar.
+    @Test func aDraggedRowIsNoText() async {
+        let provider = RearrangeDragProvider(payload: "project-1", ended: {})
+        let types = provider.registeredTypeIdentifiers
+        #expect(types == [RearrangeDrop.rowType.identifier], "\(types)")
+        for text in [UTType.text, .plainText, .utf8PlainText] {
+            #expect(!provider.hasItemConformingToTypeIdentifier(text.identifier), "\(text.identifier)")
+        }
+        let payload = await withCheckedContinuation { done in RearrangeDragProvider.loadPayload(from: provider) { done.resume(returning: $0) } }
+        #expect(payload == "project-1")
+    }
+
     @Test func menusOfferRearrangeNotMoves() {
         let lists = [
             ProjectHeaderRow.menuTitles(provider: .git, sshHost: nil, canOpenSSHHost: false, pullTitle: nil),
@@ -136,8 +154,7 @@ import Testing
     }
 
     @Test func voiceOverMovesOnlyInTheMode() throws {
-        let divider = SidebarDivider(name: "Work", position: 0)
-        let outside = DividerRow.voiceOverActions(DividerRowItem(divider: divider, canMoveUp: true, canMoveDown: true))
+        let outside = DividerRow.voiceOverActions()
         #expect(!outside.contains("Move Up") && !outside.contains("Move Down"))
         let s = try setup()
         let a = s.a.id
@@ -239,6 +256,59 @@ import Testing
         #expect(s.model.isRearranging, "not a sidebar: nothing happens")
         ShellforgeSidebar.willHide(sidebar)
         #expect(!s.model.isRearranging)
+    }
+
+    /// The fold still works in the mode, and VoiceOver can do it too.
+    @Test func aProjectStillFoldsInTheMode() throws {
+        let s = try setup()
+        s.model.beginRearrange()
+        #expect(s.model.rows.count == 7)
+        s.model.toggleCollapsed(s.a.id)
+        #expect(s.model.isRearranging)
+        #expect(s.model.rows.map(\.id).first == "project-\(s.a.id)" && s.model.rows.count == 3, "A folded to its header")
+        #expect(RearrangeRowActions.foldTitle(collapsed: false) == "Fold")
+        #expect(RearrangeRowActions.foldTitle(collapsed: true) == "Unfold")
+    }
+
+    /// Every arrangeable row offers Rearrange to VoiceOver alike: outside the mode, while no other window has it.
+    @Test func voiceOverOffersRearrangeAlike() {
+        #expect(RearrangeMenuItem.offeredToVoiceOver(canRearrange: true, isRearranging: false))
+        #expect(!RearrangeMenuItem.offeredToVoiceOver(canRearrange: false, isRearranging: false))
+        #expect(!RearrangeMenuItem.offeredToVoiceOver(canRearrange: true, isRearranging: true))
+    }
+
+    /// Begun from a context menu, the mode takes the keyboard from the terminal so Esc works at once,
+    /// and gives it back on Done or Cancel; Esc typed to the sidebar itself cancels.
+    @Test func theModeTakesTheKeyboardAndGivesItBack() throws {
+        let s = try setup()
+        let sidebar = SidebarHostingView(rootView: EmptyView())
+        sidebar.cancelRearrange = { [model = s.model] in
+            guard model.isRearranging else { return false }
+            model.cancelRearrange()
+            return true
+        }
+        sidebar.watchRearrange(s.model.$rearrange.map { $0 != nil })
+        let terminal = Focusable()
+        let content = NSView()
+        content.addSubview(sidebar)
+        content.addSubview(terminal)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300), styleMask: [], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = content
+        defer { window.close() }
+        #expect(window.makeFirstResponder(terminal))
+        s.model.beginRearrange()
+        #expect(window.firstResponder === sidebar)
+        let esc = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
+                                                context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53))
+        sidebar.keyDown(with: esc)
+        #expect(!s.model.isRearranging, "Esc cancels at once")
+        #expect(window.firstResponder === terminal, "the terminal has the keyboard back")
+        // Moved to the terminal meanwhile: Done leaves it there.
+        s.model.beginRearrange()
+        #expect(window.makeFirstResponder(terminal))
+        s.model.finishRearrange()
+        #expect(window.firstResponder === terminal)
     }
 
     private func descendants<T: NSView>(of type: T.Type, in view: NSView) -> [T] {

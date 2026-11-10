@@ -36,22 +36,14 @@ import Testing
         let (model, document, a, _) = try model()
         model.addDivider(name: "Work")
         let id = try #require(document.workspace.dividers.first).id
-        model.move(.divider(id), up: true)
-        #expect(titles(model) == ["a", "—Work", "b"])
-        model.move(.project(a), up: false)
-        #expect(titles(model) == ["—Work", "a", "b"], "a crossed the divider")
+        model.beginRearrange()
+        #expect(model.moveInDraft(.entry(.divider(id)), before: .entry(.project(a))))
+        model.finishRearrange()
+        #expect(titles(model) == ["—Work", "a", "b"], "moved in Rearrange mode, past both projects")
         model.renameDivider(id, to: "  ")
         #expect(document.workspace.dividers.first?.name == "", "an empty name is a plain rule")
         model.removeDivider(id)
         #expect(document.workspace.dividers.isEmpty)
-    }
-
-    @Test func theRowSaysWhichWayItCanMove() throws {
-        let (model, document, _, _) = try model()
-        model.addDivider(name: "End")
-        let row = model.rows.compactMap { if case .divider(let row) = $0 { row } else { nil } }.first
-        #expect(row?.canMoveUp == true && row?.canMoveDown == false)
-        _ = document
     }
 
     /// With no projects, the empty state stands alone: no bare rules under it.
@@ -64,22 +56,10 @@ import Testing
         #expect(model.rows == [.empty])
     }
 
-    /// Each divider's ends come from its place among everything drawn: two at the top, one between.
-    @Test func eachDividerKnowsItsEnds() throws {
-        let (model, _, _, _) = try model()
-        model.addDivider(name: "One")
-        model.addDivider(name: "Two")
-        let ends = model.rows.compactMap { if case .divider(let row) = $0 { [row.canMoveUp, row.canMoveDown] } else { nil } }
-        #expect(ends == [[true, true], [true, false]])
-    }
-
     /// VoiceOver gets the context menu's actions; moving is Rearrange mode's (RearrangeViewsTests).
     @Test func voiceOverOffersTheMenusEnabledItems() throws {
-        let divider = SidebarDivider(name: "Work", position: 0)
-        #expect(DividerRow.voiceOverActions(DividerRowItem(divider: divider, canMoveUp: true, canMoveDown: true))
-                == ["Rename", "Rearrange", "Remove Divider"])
-        #expect(DividerRow.voiceOverActions(DividerRowItem(divider: divider, canMoveUp: true, canMoveDown: true), canRearrange: false)
-                == ["Rename", "Remove Divider"])
+        #expect(DividerRow.voiceOverActions() == ["Rename", "Rearrange", "Remove Divider"])
+        #expect(DividerRow.voiceOverActions(canRearrange: false) == ["Rename", "Remove Divider"])
         #expect(TerminalRowView.voiceOverActions == ["Rename", "Rearrange", "Remove Terminal"])
     }
 

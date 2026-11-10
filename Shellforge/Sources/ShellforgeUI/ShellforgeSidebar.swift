@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import ShellforgeCore
 import ShellforgeDesign
 import SwiftUI
@@ -54,6 +55,7 @@ public enum ShellforgeSidebar {
             model.cancelRearrange()
             return true
         }
+        host.watchRearrange(model.$rearrange.map { $0 != nil })
         host.backpackPresenter = presenter
         host.feedbackPresenter = feedbackPresenter
         host.frame = NSRect(x: 0, y: 0, width: width, height: 400)
@@ -210,6 +212,49 @@ final class SidebarHostingView<Content: View>: NSHostingView<Content>, RowHighli
     /// How this sidebar opens its feedback form.
     var feedbackPresenter: SheetPresenter?
     var cancelRearrange: (@MainActor () -> Bool)?
+    /// While Rearrange mode holds the keyboard, so Esc reaches it at once: where it was before
+    /// (given back on Done or Cancel), and that the mode took it.
+    private weak var keyboardBefore: NSResponder?
+    private var holdsKeyboard = false
+    private var rearrangeWatch: AnyCancellable?
+
+    /// The host takes the keyboard only while Rearrange mode holds it; otherwise as before.
+    override var acceptsFirstResponder: Bool { holdsKeyboard || super.acceptsFirstResponder }
+
+    func watchRearrange(_ isRearranging: some Publisher<Bool, Never>) {
+        rearrangeWatch = isRearranging.removeDuplicates().sink { [weak self] on in self?.rearrangeChanged(on) }
+    }
+
+    /// Rearrange mode began or ended. Begun — from a context menu, say, with the keyboard still in the
+    /// terminal — the sidebar takes the keyboard, so Esc cancels at once. Ended, it is given back to
+    /// where it was, but only when the mode took it and it is still in the sidebar.
+    func rearrangeChanged(_ on: Bool) {
+        guard let window else { return }
+        if on {
+            let before = window.firstResponder
+            guard !isInside(before) else { return }
+            holdsKeyboard = true
+            if window.makeFirstResponder(self) { keyboardBefore = before } else { holdsKeyboard = false }
+        } else {
+            let took = holdsKeyboard, before = keyboardBefore
+            holdsKeyboard = false
+            keyboardBefore = nil
+            if took, isInside(window.firstResponder) { window.makeFirstResponder(before) }
+        }
+    }
+
+    private func isInside(_ responder: NSResponder?) -> Bool {
+        (responder as? NSView)?.isDescendant(of: self) == true
+    }
+
+    /// Esc typed with the host itself holding the keyboard: SwiftUI's host need not turn it into
+    /// `cancelOperation`, so it is caught here.
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == Self.escapeKeyCode, cancelRearrange?() == true { return }
+        super.keyDown(with: event)
+    }
+
+    private static var escapeKeyCode: UInt16 { 53 }
 
     /// Esc, with the keyboard in the sidebar: cancels Rearrange mode. A responder action, so it
     /// reaches here only from a view inside the sidebar, never from the terminal beside it.
@@ -339,11 +384,17 @@ struct SidebarView: View {
     /// A row as drawn: in Rearrange mode, behind its handle and taking drops (RearrangeRow).
     @ViewBuilder private func rowView(_ row: SidebarRow) -> some View {
         if model.isRearranging, let item = RearrangeDrop.item(of: row) {
-            RearrangeRow(model: model, item: item, id: row.id, label: Self.rearrangeLabel(row)) { rowContent(row) }
+            RearrangeRow(model: model, item: item, id: row.id, label: Self.rearrangeLabel(row), fold: fold(of: row)) { rowContent(row) }
                 .listRowSeparator(.hidden)
         } else {
             rowContent(row)
         }
+    }
+
+    /// A project's fold, live in Rearrange mode; nil for any other row, and for a project with nothing to fold.
+    private func fold(of row: SidebarRow) -> RearrangeFold? {
+        guard case .project(let node, let collapsed) = row, ProjectHeaderRow.collapses(node) else { return nil }
+        return RearrangeFold(collapsed: collapsed) { model.toggleCollapsed(node.id) }
     }
 
     /// What VoiceOver calls a row in Rearrange mode.
@@ -362,7 +413,8 @@ struct SidebarView: View {
         let canRearrange = model.canRearrange
         switch row {
         case .empty:
-            SidebarEmptyState(canAdd: true, add: addProject).listRowSeparator(.hidden)
+            // Its button waits while the sidebar is rearranged, as the banners' do.
+            SidebarEmptyState(canAdd: !model.isRearranging, add: addProject).listRowSeparator(.hidden)
         case .project(let node, let collapsed):
             ProjectHeaderRow(node: node, collapsed: collapsed, provider: model.providers[node.id] ?? .git,
                              statuses: node.tasks.map { model.status(ofTask: $0.id) } + node.terminals.map { model.status(ofTerminal: $0.id) },

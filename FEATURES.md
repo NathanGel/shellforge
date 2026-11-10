@@ -106,9 +106,11 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
   - Each row gets a handle. Drag a row and a line shows where it lands.
   - Projects and dividers move among each other; a project brings its rows along and shows only its header while it is dragged.
   - A project's SSH rows move among themselves, and its tasks and terminals move among themselves, in any mix. Nothing leaves its project, and no task or terminal goes above the SSH rows. A drop the rules refuse shows no line.
-  - Tabs and Other Tabs are hidden, and clicks, menus and banner buttons wait until you are done.
-- **Done** saves the new order. **Cancel** puts everything back, as does Esc while the keyboard is in the sidebar; Return and Esc typed in the terminal stay the terminal's. Hiding the sidebar (⌃⌘S or its button) cancels too.
+  - Tabs and Other Tabs are hidden, and clicks, menus and banner buttons wait until you are done. A project's chevron still folds and unfolds it.
+  - Rearrange takes the keyboard into the sidebar, so Esc works at once; Done and Cancel give it back.
+- **Done** saves the new order. **Cancel** puts everything back, as does Esc while the keyboard is in the sidebar; Return and Esc typed in the terminal stay the terminal's. Hiding the sidebar with ⌃⌘S or the window's sidebar toggle cancels too.
 - **One window at a time.** While one window is rearranging, Rearrange is greyed in the others.
+- **The order counts elsewhere too.** Next Task and Previous Task (⌃⌘] / ⌃⌘[) step through the tasks in the order you set. A new task or terminal goes to the bottom of its project.
 
 ## Tasks and reviews
 
@@ -345,7 +347,8 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
   - tab rows: Close;
   - terminal rows: Rename, Rearrange and Remove Terminal;
   - dividers: Rename, Rearrange and Remove Divider;
-  - in Rearrange mode, every row: Move Up / Move Down (while possible), one step within its own list.
+  - project, task and SSH rows: Rearrange (greyed menus aside, it is left out while another window is rearranging);
+  - in Rearrange mode, every row: Move Up / Move Down (while possible), one step within its own list, and a project's Fold / Unfold.
 - **Labels:** tunnel rows read their state, and the footer's Mac row reads its readings.
 
 ## The helper (shellforged)

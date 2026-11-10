@@ -38,7 +38,7 @@ struct TerminalRowView: View {
         .accessibilityLabel(node.terminal.name)
         .accessibilityValue(status.label)
         .modifier(NamedAccessibilityAction(name: "Rename", enabled: !isRearranging, action: rename))
-        .modifier(NamedAccessibilityAction(name: RearrangeMenuItem.title, enabled: !isRearranging && canRearrange, action: rearrange))
+        .modifier(RearrangeAccessibilityAction(canRearrange: canRearrange, action: rearrange))
         .modifier(NamedAccessibilityAction(name: "Remove Terminal", enabled: !isRearranging, action: remove))
         .rowContextMenu {
             Button("Rename…", action: rename)

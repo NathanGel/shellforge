@@ -158,7 +158,6 @@ import Testing
         let model = SidebarModel(host: FakeTerminalHost(), document: WorkspaceDocument(store: WorkspaceStore(folder: folder)),
                                  launcher: launcher, jiraSettings: { nil })
         #expect(model.rows.count >= 2)
-        _ = model.canMove(.project(project.id), up: false)
     }
 
     // -- Codex's review --

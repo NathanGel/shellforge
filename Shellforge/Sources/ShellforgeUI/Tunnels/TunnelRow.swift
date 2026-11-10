@@ -133,6 +133,7 @@ struct TunnelRowView: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Tunnel \(row.alias)")
         .accessibilityValue(row.missing ? "Not in SSH config" : row.state.rawValue)
+        .modifier(RearrangeAccessibilityAction(canRearrange: canRearrange, action: rearrange))
         .rowContextMenu { RearrangeMenuItem(enabled: canRearrange, action: rearrange) }
     }
 

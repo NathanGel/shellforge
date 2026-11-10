@@ -69,6 +69,19 @@ import Testing
 
     /// Stepping through tasks moves the selection; it never opens a tab for a task with none here —
     /// holding ⌃⌘] over ten tasks must not leave ten new shells.
+    /// Next and Previous follow the rows as arranged, not the order the tasks were made in.
+    @Test func steppingFollowsTheArrangedOrder() throws {
+        let (model, _, _, ids) = try model()
+        let (a, a1, a2) = (try #require(ids["a"]), try #require(ids["a1"]), try #require(ids["a2"]))
+        model.beginRearrange()
+        #expect(model.moveInDraft(.child(project: a, .task(a2)), before: .child(project: a, .task(a1))))
+        model.finishRearrange()
+        model.perform(.nextTask)
+        #expect(model.selectedTaskId == a2, "a2 is drawn first now")
+        model.perform(.nextTask)
+        #expect(model.selectedTaskId == a1)
+    }
+
     @Test func steppingOpensNoTabs() throws {
         let (model, host, _, _) = try model()
         for _ in 0..<5 { model.perform(.nextTask) }

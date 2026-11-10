@@ -1,5 +1,5 @@
 // Ported from AiTerm (app/Sources/AiTerm/ProjectActions.swift: addDivider, rename(divider:),
-// removeDivider, move), GPLv3, Laurens D'Hondt.
+// removeDivider), GPLv3, Laurens D'Hondt.
 import Foundation
 import ShellforgeCore
 
@@ -21,15 +21,6 @@ extension SidebarModel {
     /// Removes it with no question: it holds nothing but its label.
     public func removeDivider(_ id: UUID) {
         updateLayout { _, dividers, _ in dividers.removeAll { $0.id == id } }
-    }
-
-    public func canMove(_ entry: SidebarEntry, up: Bool) -> Bool {
-        SidebarLayout.canMove(entry, up: up, projects: document.workspace.projects, dividers: document.workspace.dividers)
-    }
-
-    /// Moves a project or a divider one drawn step: a project crosses an adjacent divider.
-    public func move(_ entry: SidebarEntry, up: Bool) {
-        updateLayout { projects, dividers, _ in SidebarLayout.move(entry, up: up, projects: &projects, dividers: &dividers) }
     }
 
     private func updateLayout(_ change: (inout [Project], inout [SidebarDivider], Int) -> Void) {

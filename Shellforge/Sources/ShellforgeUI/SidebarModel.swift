@@ -647,13 +647,10 @@ public final class SidebarModel: ObservableObject {
         // A hand-edited workspace may repeat a project: the first is drawn, never a crash.
         let nodes = Dictionary(tree.projects.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let dividers = Dictionary(document.workspace.dividers.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        for (index, entry) in entries.enumerated() {
+        for entry in entries {
             switch entry {
             case .divider(let id):
-                // Its ends from its place in the one layout drawn, not a layout rebuilt per divider.
-                if let divider = dividers[id] {
-                    rows.append(.divider(DividerRowItem(divider: divider, canMoveUp: index > 0, canMoveDown: index < entries.count - 1)))
-                }
+                if let divider = dividers[id] { rows.append(.divider(DividerRowItem(divider: divider))) }
             case .project(let id):
                 guard let node = nodes[id] else { continue }
                 rows.append(.project(node, collapsed: node.project.collapsed))

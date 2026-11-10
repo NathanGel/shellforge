@@ -46,6 +46,24 @@ extension Workspace {
         appendToOrder(terminal.id, in: terminal.projectId)
     }
 
+    /// Removes the task `id`, and its place in its project's saved order.
+    public mutating func removeTask(_ id: UUID) {
+        tasks.removeAll { $0.id == id }
+        forgetInOrder(id)
+    }
+
+    /// Removes the terminal `id`, and its place in its project's saved order.
+    public mutating func removeTerminal(_ id: UUID) {
+        terminals.removeAll { $0.id == id }
+        forgetInOrder(id)
+    }
+
+    private mutating func forgetInOrder(_ id: UUID) {
+        for i in projects.indices where projects[i].childOrder?.contains(id) == true {
+            projects[i].childOrder?.removeAll { $0 == id }
+        }
+    }
+
     private mutating func freezeOrder(of projectId: UUID) {
         guard let i = projects.firstIndex(where: { $0.id == projectId }), projects[i].childOrder == nil else { return }
         projects[i].childOrder = children(in: projectId).map(\.id)

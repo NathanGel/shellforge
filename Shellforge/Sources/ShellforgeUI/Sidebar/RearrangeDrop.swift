@@ -17,6 +17,10 @@ public struct RearrangeDropTarget: Equatable, Sendable {
 
 /// Where a drop in Rearrange mode lands, read off the rows as drawn.
 enum RearrangeDrop {
+    /// What a dragged row is on the pasteboard: a type of Shellforge's own, offered to this process
+    /// only, so a row let go over the terminal or Finder is no text to paste or clip.
+    static let rowType = UTType(exportedAs: "io.github.nathangel.shellforge.sidebar-row", conformingTo: .data)
+
     /// The draft's item a row stands for; nil for a row that does not move (the empty state, a tab, a heading).
     static func item(of row: SidebarRow) -> RearrangeDraft.Item? {
         switch row {
@@ -41,12 +45,16 @@ enum RearrangeDrop {
     }
 
     /// The `before:` item for a drop on `item`: on its upper half, `item` itself; on its lower half,
-    /// the next row of the same list, or nil at that list's end.
+    /// the next row of the same list, or nil at that list's end. An unfolded project with rows under
+    /// it takes either half as before itself: the line is drawn at its header, so that is where the
+    /// drop lands, not past rows the line does not reach.
     static func target(for item: RearrangeDraft.Item, lowerHalf: Bool, in rows: [SidebarRow]) -> RearrangeDraft.Item? {
         guard lowerHalf else { return item }
         let items = rows.compactMap(Self.item(of:))
         guard let index = items.firstIndex(of: item) else { return nil }
-        for next in items[(index + 1)...] {
+        let following = items[(index + 1)...]
+        if case .entry(.project) = item, let next = following.first, !sameList(item, next) { return item }
+        for next in following {
             // An entry's list runs past its project's own rows; an SSH row's or a child's ends with its run.
             if sameList(item, next) { return next }
             if case .entry = item { continue }
@@ -70,6 +78,9 @@ enum RearrangeDrop {
 enum RearrangeRowActions {
     static let moveUp = "Move Up"
     static let moveDown = "Move Down"
+
+    /// A project's fold, which still works in the mode.
+    static func foldTitle(collapsed: Bool) -> String { collapsed ? "Unfold" : "Fold" }
 
     static func titles(for item: RearrangeDraft.Item, in draft: RearrangeDraft) -> [String] {
         (draft.canStep(item, up: true) ? [moveUp] : []) + (draft.canStep(item, up: false) ? [moveDown] : [])
@@ -109,7 +120,31 @@ struct RearrangeMenuItem: View {
 
     static let title = "Rearrange"
 
+    /// Whether a row's VoiceOver actions offer Rearrange: as its menu does, outside the mode, and
+    /// not while another window is rearranging (an action cannot be greyed, only left out).
+    static func offeredToVoiceOver(canRearrange: Bool, isRearranging: Bool) -> Bool { canRearrange && !isRearranging }
+
     var body: some View { Button(Self.title, action: action).disabled(!enabled) }
+}
+
+/// Every arrangeable row's VoiceOver Rearrange action, the same on each.
+struct RearrangeAccessibilityAction: ViewModifier {
+    let canRearrange: Bool
+    let action: () -> Void
+    @Environment(\.isRearranging) private var isRearranging
+
+    func body(content: Content) -> some View {
+        content.modifier(NamedAccessibilityAction(
+            name: RearrangeMenuItem.title,
+            enabled: RearrangeMenuItem.offeredToVoiceOver(canRearrange: canRearrange, isRearranging: isRearranging),
+            action: action))
+    }
+}
+
+/// A project's fold in Rearrange mode: still live, and offered to VoiceOver.
+struct RearrangeFold {
+    let collapsed: Bool
+    let toggle: () -> Void
 }
 
 /// A row in Rearrange mode: a drag handle before it, the row itself inert, dragged and dropped onto,
@@ -119,6 +154,8 @@ struct RearrangeRow<Content: View>: View {
     let item: RearrangeDraft.Item
     let id: String
     let label: String
+    /// A project's fold: its row stays live for it (the row keeps its other controls quiet itself).
+    var fold: RearrangeFold? = nil
     @ViewBuilder let content: () -> Content
     @State private var height: CGFloat = 0
     @Environment(\.interfaceScale) private var scale
@@ -134,7 +171,7 @@ struct RearrangeRow<Content: View>: View {
             SymbolMark(symbol: "line.3.horizontal", size: scale(Size.avatar), tint: surface.secondaryInk)
                 .padding(.leading, scale(Space.tight))
                 .help("Drag to rearrange")
-            content().allowsHitTesting(false)
+            content().allowsHitTesting(fold != nil)
         }
         .contentShape(Rectangle())
         .background { GeometryReader { proxy in Color.clear.onAppear { height = proxy.size.height }.onChange(of: proxy.size.height) { height = $0 } } }
@@ -147,7 +184,7 @@ struct RearrangeRow<Content: View>: View {
                 Task { @MainActor in model?.dragEnded(session) }
             }
         }
-        .onDrop(of: [.text], delegate: RearrangeRowDrop(model: model, item: item, height: height))
+        .onDrop(of: [RearrangeDrop.rowType], delegate: RearrangeRowDrop(model: model, item: item, height: height))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(label)
         .accessibilityHint("Drag to rearrange")
@@ -156,6 +193,9 @@ struct RearrangeRow<Content: View>: View {
         })
         .modifier(NamedAccessibilityAction(name: RearrangeRowActions.moveDown, enabled: actions.contains(RearrangeRowActions.moveDown)) {
             model.stepInDraft(item, up: false)
+        })
+        .modifier(NamedAccessibilityAction(name: RearrangeRowActions.foldTitle(collapsed: fold?.collapsed == true), enabled: fold != nil) {
+            fold?.toggle()
         })
     }
 }
@@ -170,7 +210,7 @@ private struct RearrangeRowDrop: DropDelegate {
 
     /// What moves is read from the payload at the drop, never from what this sidebar thinks is dragged.
     func validateDrop(info: DropInfo) -> Bool {
-        MainActor.assumeIsolated { model.isRearranging } && info.hasItemsConforming(to: [.text])
+        MainActor.assumeIsolated { model.isRearranging } && info.hasItemsConforming(to: [RearrangeDrop.rowType])
     }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
@@ -184,13 +224,12 @@ private struct RearrangeRowDrop: DropDelegate {
 
     func performDrop(info: DropInfo) -> Bool {
         let model = model, item = item, lowerHalf = lowerHalf(info)
-        guard let provider = info.itemProviders(for: [.text]).first else {
+        guard let provider = info.itemProviders(for: [RearrangeDrop.rowType]).first else {
             MainActor.assumeIsolated { model.endDrag() }
             return false
         }
         MainActor.assumeIsolated { model.dropTarget = nil }
-        _ = provider.loadObject(ofClass: NSString.self) { object, _ in
-            let payload = (object as? NSString).map { String($0) }
+        RearrangeDragProvider.loadPayload(from: provider) { payload in
             Task { @MainActor in
                 if let payload { model.drop(payload: payload, on: item, lowerHalf: lowerHalf) } else { model.endDrag() }
             }
@@ -199,15 +238,27 @@ private struct RearrangeRowDrop: DropDelegate {
     }
 }
 
-/// A dragged row's id, as text. AppKit holds it for as long as the drag session lasts; letting go
-/// of it, dropped or abandoned, tells the sidebar the drag is over.
-private final class RearrangeDragProvider: NSItemProvider, @unchecked Sendable {
+/// A dragged row's id, under `RearrangeDrop.rowType` only, for this process only. AppKit holds it
+/// for as long as the drag session lasts; letting go of it, dropped or abandoned, tells the sidebar
+/// the drag is over.
+final class RearrangeDragProvider: NSItemProvider, @unchecked Sendable {
     private let ended: @Sendable () -> Void
 
     init(payload: String, ended: @escaping @Sendable () -> Void) {
         self.ended = ended
         super.init()
-        registerObject(payload as NSString, visibility: .all)
+        let data = Data(payload.utf8)
+        registerDataRepresentation(forTypeIdentifier: RearrangeDrop.rowType.identifier, visibility: .ownProcess) { completion in
+            completion(data, nil)
+            return nil
+        }
+    }
+
+    /// The row id a drop carries, or nil when it carries none.
+    static func loadPayload(from provider: NSItemProvider, then handle: @escaping @Sendable (String?) -> Void) {
+        _ = provider.loadDataRepresentation(forTypeIdentifier: RearrangeDrop.rowType.identifier) { data, _ in
+            handle(data.flatMap { String(data: $0, encoding: .utf8) })
+        }
     }
 
     deinit { ended() }
@@ -220,7 +271,7 @@ private struct RearrangeListDrop: DropDelegate {
     let size: CGSize
 
     func validateDrop(info: DropInfo) -> Bool {
-        MainActor.assumeIsolated { model.isRearranging } && info.hasItemsConforming(to: [.text])
+        MainActor.assumeIsolated { model.isRearranging } && info.hasItemsConforming(to: [RearrangeDrop.rowType])
     }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
@@ -255,6 +306,6 @@ private struct RearrangeListDropArea: ViewModifier {
     func body(content: Content) -> some View {
         content
             .background { GeometryReader { proxy in Color.clear.onAppear { size = proxy.size }.onChange(of: proxy.size) { size = $0 } } }
-            .onDrop(of: [.text], delegate: RearrangeListDrop(model: model, size: size))
+            .onDrop(of: [RearrangeDrop.rowType], delegate: RearrangeListDrop(model: model, size: size))
     }
 }

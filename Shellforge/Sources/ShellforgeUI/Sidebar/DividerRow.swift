@@ -34,7 +34,7 @@ struct DividerRow: View {
         .accessibilityLabel(name.isEmpty ? "Divider" : "\(name) divider")
         // Rearrange mode offers its own moves instead (RearrangeRow).
         .modifier(NamedAccessibilityAction(name: "Rename", enabled: !isRearranging, action: rename))
-        .modifier(NamedAccessibilityAction(name: RearrangeMenuItem.title, enabled: !isRearranging && canRearrange, action: rearrange))
+        .modifier(RearrangeAccessibilityAction(canRearrange: canRearrange, action: rearrange))
         .modifier(NamedAccessibilityAction(name: "Remove Divider", enabled: !isRearranging, action: remove))
         .rowContextMenu {
             Button("Rename…", action: rename)
@@ -47,8 +47,9 @@ struct DividerRow: View {
     }
 
     /// What VoiceOver offers outside Rearrange mode, as the context menu does: its items that can act now.
-    static func voiceOverActions(_ row: DividerRowItem, canRearrange: Bool = true) -> [String] {
-        ["Rename"] + (canRearrange ? [RearrangeMenuItem.title] : []) + ["Remove Divider"]
+    static func voiceOverActions(canRearrange: Bool = true) -> [String] {
+        ["Rename"] + (RearrangeMenuItem.offeredToVoiceOver(canRearrange: canRearrange, isRearranging: false) ? [RearrangeMenuItem.title] : [])
+            + ["Remove Divider"]
     }
 
     /// The context menu's items, in order.

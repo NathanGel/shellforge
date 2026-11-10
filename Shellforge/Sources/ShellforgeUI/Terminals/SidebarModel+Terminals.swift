@@ -51,7 +51,7 @@ extension SidebarModel {
             return
         }
         do {
-            try document.update { $0.terminals.removeAll { $0.id == id } }
+            try document.update { $0.removeTerminal(id) }
         } catch {
             lastError = String(describing: error)
         }

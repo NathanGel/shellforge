@@ -127,6 +127,7 @@ struct ProjectHeaderRow: View {
     var pulling = false
     var pull: () -> Void = {}
     @Environment(\.interfaceScale) private var scale
+    @Environment(\.isRearranging) private var isRearranging
 
     /// An empty project has nothing to fold; its terminals are something.
     private var collapses: Bool { Self.collapses(node) }
@@ -152,6 +153,8 @@ struct ProjectHeaderRow: View {
                     }
                     if let badge = ProjectJiraBadge.badge(for: node.project) {
                         ProjectJiraBadgeView(badge: badge, canChangeWorkspace: true, editProjects: editJiraProjects)
+                            // In Rearrange mode only the fold stays live.
+                            .allowsHitTesting(!isRearranging)
                     }
                 }
                 Spacer(minLength: scale(Space.tight))
@@ -163,9 +166,11 @@ struct ProjectHeaderRow: View {
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(collapses ? .isButton : [])
             AddMenu(help: "New task or review", enabled: true) { newItems }
+                .allowsHitTesting(!isRearranging)
         }
         .frame(height: scale(Size.projectRow)).padding(.leading, scale(Space.base)).padding(.trailing, SidebarRowLayout.trailingInset(scale))
         .modifier(RowPill(selected: false))
+        .modifier(RearrangeAccessibilityAction(canRearrange: canRearrange, action: rearrange))
         // AiTerm's order: what the "+" offers, Open in, what the project links to, Rearrange, then Remove.
         .rowContextMenu {
             newItems
@@ -264,6 +269,7 @@ struct TaskRowView: View {
         }
         .accessibilityLabel(node.task.title)
         .accessibilityValue(status.label)
+        .modifier(RearrangeAccessibilityAction(canRearrange: canRearrange, action: rearrange))
         .rowContextMenu {
             // Greyed while the row is being removed, as AiTerm's is.
             Button("Rename…", action: rename).disabled(removal == .removing)

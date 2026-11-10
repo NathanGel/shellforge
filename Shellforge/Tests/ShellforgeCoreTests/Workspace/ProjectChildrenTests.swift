@@ -71,4 +71,18 @@ import Testing
         let old = try JSONDecoder.workspace.decode(Project.self, from: JSONSerialization.data(withJSONObject: object))
         #expect(old.childOrder == nil)
     }
+
+    /// Removing a task or a terminal takes its id out of the saved order too, so the order holds only rows that are there.
+    @Test func removingAChildForgetsItsPlace() {
+        let project = Project(name: "p", path: "/r")
+        var workspace = Workspace(projects: [project], tasks: [])
+        let (t1, x) = (task(project, "a", at: 1), terminal(project, at: 2))
+        workspace.addTask(t1)
+        workspace.addTerminal(x)
+        #expect(workspace.projects[0].childOrder == [t1.id, x.id])
+        workspace.removeTask(t1.id)
+        #expect(workspace.tasks.isEmpty && workspace.projects[0].childOrder == [x.id])
+        workspace.removeTerminal(x.id)
+        #expect(workspace.terminals.isEmpty && workspace.projects[0].childOrder == [])
+    }
 }
