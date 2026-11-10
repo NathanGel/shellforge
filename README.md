@@ -21,8 +21,8 @@ sidebar inside every terminal window:
   task.
 - **SSH tunnels** per project, started and stopped from the sidebar, and a project's SSH host
   beside its agent.
-- **Usage** of each agent's plan in the metrics strip and the Metrics panel, and **Backpack Mode** for a Mac that keeps working
-  with its lid closed.
+- **Usage** of Claude Code's and Codex's plans in the metrics strip and the Metrics panel, and
+  **Backpack Mode** for a Mac that keeps working with its lid closed.
 - **At home on macOS 26:** a floating glass sidebar that follows light and dark, and an optional
   switch to match the terminal's colours to Shellforge.
 
@@ -78,23 +78,19 @@ kept apart in `Shellforge/` so these merges stay small.
 
 ## Get it
 
-Download the latest `Shellforge-<version>.dmg` from
-[Releases](https://github.com/NathanGel/shellforge/releases/latest). The
-[setup guide](SETUP.md) covers installing, connecting Jira, GitLab and GitHub,
-agent hooks, and moving over from AiTerm. Shellforge updates itself from **Shellforge › Check for
-Updates…**.
-
 **Requirements:** a Mac with Apple silicon on macOS 13 or newer, and Python 3.11 or newer.
 
-## Installing
-
-Drag Shellforge from the disk image to Applications. The app is signed but not notarized by Apple,
-so macOS refuses to open it the first time. Either:
+Download the latest `Shellforge-<version>.dmg` from
+[Releases](https://github.com/NathanGel/shellforge/releases/latest) and drag Shellforge to
+Applications. The app is signed but not notarized by Apple, so macOS refuses to open it the first
+time. Either:
 
 - right-click Shellforge in Applications, choose **Open**, then **Open** again; or
 - run `xattr -dr com.apple.quarantine /Applications/Shellforge.app` once.
 
-After that it opens like any other app.
+After that it opens like any other app, and updates itself from **Shellforge › Check for
+Updates…**. The [setup guide](SETUP.md) covers connecting Jira, GitLab and GitHub, agent hooks,
+and moving over from AiTerm.
 
 ## Docs
 
@@ -113,6 +109,7 @@ After that it opens like any other app.
     Shellforge/scripts/make-app.sh      # → build/Shellforge.app
 
 Xcode 27 and swiftly's Swift 6.4. Tests: `Shellforge/scripts/swift.sh test --package-path Shellforge`.
+Day-to-day builds and dev runs are in [Releasing](Shellforge/docs/releasing.md#development-builds).
 
 ## Contributing
 

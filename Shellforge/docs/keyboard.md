@@ -1,7 +1,7 @@
 # Keyboard
 
-Shellforge's keys leave every iTerm2 key alone: they are all ⌃⌘ and a letter or bracket that
-iTerm2's own main menu does not use. iTerm2 keeps
+Shellforge's keys leave every iTerm2 key alone: apart from ⌘B, they are all ⌃⌘ and a letter or
+bracket that iTerm2's own main menu does not use. iTerm2 keeps
 ⌘N (New Window), ⌘T (New Tab), ⌘R (Clear Buffer), ⌘F (Find), ⌃⌘F (Full Screen) and the ⌃⌘
 arrows (move a split's divider). `ShellforgeHostTest.testShellforgesControlCommandKeysAreTheirsAlone`
 checks in the running app that each key below is in the main menu once.
@@ -18,15 +18,16 @@ checks in the running app that each key below is in the main menu once.
 | ⌃⌘G | Add Divider… | A named rule at the end of the project list. (Not ⌃⌘D: macOS keeps it for Look Up.) |
 | ⌃⌘] / ⌃⌘[ | Next Task / Previous Task | The open projects' tasks in sidebar order, wrapping round. From no selection, the first or the last. |
 | ⌃⌘⌫ | Remove Task… | The selected task; it asks first, as the row's menu does. |
-| ⌃⌘A | Focus View | Opens the projects with a task waiting on you (needing input, or done and unseen), folds the rest, and shows the first such task. |
+| ⌃⌘A | Focus View | Opens the projects with a task or terminal waiting on you (needing input, or done and unseen), folds the rest, and shows the first such task, else the first such terminal. |
 | ⌃⌘L | List View | Opens every project. |
 
 Each acts on the key window's sidebar — a sheet of it may be key — and is off where its rule says.
 
 A profile given a shortcut in Settings › Profiles › General gets ⌃⌘ and that key in the Profiles
-menu. The Tasks and View menus come first in the menu bar, so a profile shortcut on N, R, T, P, G,
-A, L, S, E, M, [ or ] is shadowed by Shellforge's item: give such a profile another key. A key mapping of your
-own (Settings › Keys, or a profile's Keys) runs before any menu item, as in iTerm2.
+menu. The View and Tasks menus come before Profiles in the menu bar, so a profile shortcut on N, R,
+T, P, G, A, L, S, E, M, [ or ] is shadowed by Shellforge's item: give such a profile another key. A
+key mapping of your own (Settings › Keys, or a profile's Keys) runs before any menu item, as in
+iTerm2.
 
 ## View menu
 
@@ -41,9 +42,12 @@ own (Settings › Keys, or a profile's Keys) runs before any menu item, as in iT
 ## The sidebar's edge
 
 Its right edge drags it to a width, from its minimum (404 pt, the 44 pt activity bar included) to
-720 pt. The terminal always keeps at least 320 pt: in a window under 724 pt, too narrow for both,
-the sidebar steps aside until the window is wider. Each window keeps its own width; the last one dragged is where new windows start.
+720 pt; it starts at 464 pt. The terminal always keeps at least 320 pt, so a window with the
+sidebar showing can't be dragged narrower than 724 pt; one made narrower another way has its
+sidebar step aside until the window is wider. Each window keeps its own width; the last one
+dragged is where new windows start.
 
 ## Sheets
 
-⌘↩ presses the primary button; ⎋ closes an open list first, then the sheet — as in AiTerm.
+⌘↩ presses the primary button; ⎋ closes an open list first, then the sheet — or, on New Task's
+and New Review's later steps, goes back a step — as in AiTerm.

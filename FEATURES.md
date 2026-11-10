@@ -8,6 +8,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 - [Activity bar](#activity-bar)
 - [Projects](#projects)
 - [Dividers](#dividers)
+- [Rearranging the sidebar](#rearranging-the-sidebar)
 - [Tasks and reviews](#tasks-and-reviews)
 - [Agents](#agents)
 - [Tabs and panes](#tabs-and-panes)
@@ -32,12 +33,10 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 - **On macOS 26 and later** the sidebar floats: a rounded glass panel 10 pt inside the window and 10 pt from the terminal (in full screen too), on the terminal's own colour, with the window buttons in its top corner; their row is left to them, and the Projects header sits below it, beside the activity bar. The window's title sits over the terminal on the same row. Earlier macOS versions keep the full-height sidebar.
   - With Match the terminal to Shellforge on, the window keeps its own title bar and buttons; only the colours change.
   - The sidebar button sits just after the window buttons and stays there open or closed. In full screen it has its own row at the top of the panel, above Projects; with the sidebar closed, a slim bar in the terminal's colour keeps the button in the same place; click it to open the sidebar, or move the pointer to the screen's left edge and it slides in over the terminal, and away again when you leave it.
-- **Hide and show.** Use any of these:
-  - the sidebar icon in the sidebar's header;
-  - ⌃⌘S;
-  - View › Hide Sidebar / Show Sidebar.
-- **Getting it back.** While the sidebar is hidden, the same icon sits in the window's title bar, beside the window buttons. In full screen there is no title bar, so use ⌃⌘S or the View menu.
-- **New windows** open the way the last toggle left them.
+- **Hide and show.** Use ⌃⌘S, View › Hide Sidebar / Show Sidebar, or the sidebar button.
+  - On macOS 26 the button sits just after the window buttons, as above.
+  - Earlier, it is at the far right of the sidebar's header, and while the sidebar is hidden the same button sits in the window's title bar, beside the window buttons. In full screen there is no title bar, so use ⌃⌘S or the View menu.
+  - New windows open the way the last toggle left them.
 - **Width.** Drag the sidebar's right edge, marked by a thin line, to resize it.
   - The default width is 464 pt, the minimum 404 and the maximum 720. Both include the 44 pt activity bar, so the panel beside it opens at 420 pt and narrows to 360.
   - A width you dragged before the activity bar came grows by its 44 pt once (up to 720 pt), so the panel keeps the width you gave it.
@@ -50,18 +49,18 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
   - While the sidebar shows, the window can't be dragged narrower than both minimums together: 724 pt, plus the toolbelt's width when it is open. The sidebar shrinks to its minimum, then the window stops, rather than the sidebar jumping away.
   - A window sized some other way, such as tiling or a smaller screen, can still end up too narrow. There the sidebar steps aside.
 - **Selection.** The selected row uses the system's selection: the accent while the window is active, grey while it is not.
-- **Banners** are inline notices with an icon; an error stays until you click its ×.
-- **Header.** Projects, then four buttons, left to right:
+- **Header.** Projects, then its buttons, left to right:
   - Agent hooks (the bolt);
   - New Tab in Home Folder (the terminal icon), which opens a shell in `~` that belongs to no project;
   - "+", with Add Project… and Add Divider…;
-  - Hide Sidebar, at the far right.
+  - before macOS 26, Hide Sidebar, at the far right.
 - **Empty state.** With no projects, the sidebar shows "Add a git repository to start." and an Add Project… button.
-- **Banners** at the top of the sidebar, above whichever panel shows, show:
+- **Banners** are inline notices with an icon, at the top of the sidebar above whichever panel shows:
   - a fallback PATH;
   - problems with the helper;
   - the last error, until you click its × or a later action succeeds;
-  - work in progress, such as "Adding X…".
+  - work in progress, such as "Adding X…";
+  - the [feedback](#feedback) note, now and then.
 
 ## Activity bar
 
@@ -70,7 +69,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
   - Metrics (the gauge): see [Metrics](#metrics).
 - **Switching.** Click an icon. The selected one is drawn brighter, with an accent stripe along the bar's left edge. Each window shows its own panel; Sessions keeps its scroll position and selection while another panel shows, and the Tasks menu's commands work whatever the panel.
 - **From the keyboard.** View › Show Sessions (⌃⌘E) and Show Metrics (⌃⌘M) show that panel in the key window's sidebar, opening the sidebar if it is hidden. Back on Sessions, the keyboard returns to its list if it was there.
-- **Panel order.** Drag an icon up or down the bar to reorder the panels: it follows the pointer, the others make room, and it lands where you let go. A click that doesn't move only selects. Every window's bar follows the same order, and it is kept after a restart.
+- **Panel order.** Drag an icon up or down the bar to reorder the panels: it follows the pointer, the others make room, and it lands where you let go. A click that doesn't move only selects, and a drag the system cancels drops nothing. Every window's bar follows the same order, and it is kept after a restart. VoiceOver offers Move Up and Move Down on each icon instead.
 - **Settings** is the gear at the bottom of the bar.
 - **Rearrange mode** keeps its Done / Cancel bar at the top whichever panel shows.
 
@@ -317,8 +316,8 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
 
 ## Settings and connections
 
-- **Opening Settings.** Click the gear at the bottom of the activity bar, or right-click the Metrics panel's Mac row › Mac Settings….
-  - **Core:** the Mac card (Backpack setup), the Environment card and the Feedback switch.
+- **Opening Settings.** Click the gear at the bottom of the activity bar, or right-click the Metrics panel's Mac row › Mac Settings…. It is one sheet in three sections; nothing is saved until Save, apart from the agents themselves.
+  - **Core:** the Mac card (Backpack setup), the Environment card, and the Match the terminal to Shellforge and Feedback switches.
   - **Agents:** every agent, built in, ready-made and your own, to add, edit, duplicate or remove ([Agents](#agents)); then one row per installed agent, with its **Default model** and **Default reasoning**.
   - **Services:** Jira (site, email, API token), GitLab (host, token) and GitHub (token).
 - **Connections.**
@@ -367,7 +366,8 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
   - terminal rows: Rename, Rearrange and Remove Terminal;
   - dividers: Rename, Rearrange and Remove Divider;
   - project, task and SSH rows: Rearrange (greyed menus aside, it is left out while another window is rearranging);
-  - in Rearrange mode, every row: Move Up / Move Down (while possible), one step within its own list, and a project's Fold / Unfold.
+  - in Rearrange mode, every row: Move Up / Move Down (while possible), one step within its own list, and a project's Fold / Unfold;
+  - activity bar icons: Move Up / Move Down (while possible), to reorder the panels.
 - **Labels:** tunnel rows read their state, the Metrics panel's Mac row reads its readings, and the metrics strip reads all of its readings, both windows of each vendor ("Claude Code: 5-hour limit 42 % used, weekly limit 84 % used"), and opens the panel.
 
 ## The helper (shellforged)
@@ -421,7 +421,7 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
 
 Feedback is how Shellforge learns what to add and what to fix: without it, nobody sees what people need. The note and the form both say so.
 
-- **A note in the sidebar.** In a release build, 14 days after you first use Shellforge, a note at the top of the sidebar, under the header, asks what you think. It shows in every window at once. A Development build never shows it.
+- **A note in the sidebar.** In a release build, 14 days after you first use Shellforge, a note among the banners at the top of the sidebar asks what you think. It shows in every window at once. A Development build never shows it.
   - Once it is due, it appears in the next window you open, when you switch back to Shellforge, when your Mac wakes, or when you start a task or review. No relaunch is needed.
   - **Give Feedback** opens the form. **Not Now** hides the note in every window and asks again in 90 days. **Don’t Ask Again** turns the note off; Settings › Core › Ask for feedback now and then turns it back on.
   - Closing the form without sending counts as Not Now. After you send, the next ask is 180 days away.

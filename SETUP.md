@@ -27,6 +27,8 @@ again: `xattr -dr com.apple.quarantine /Applications/Shellforge.app`
 ## 2. First launch
 
 - Every window has the sidebar on its left. **⌃⌘S** hides and shows it.
+- Down its left edge, the activity bar switches between the Sessions panel (projects, tasks and
+  tabs; **⌃⌘E**) and the Metrics panel (**⌃⌘M**). Its gear, at the bottom, opens Settings.
 - A yellow banner about a "fallback PATH" means your login shell could not be read. Settings ›
   Core › Environment shows where each tool was found, and **Reload** reads it again.
 - Shellforge asks for **Location** only if you use Backpack Mode, which needs it to name Wi-Fi
@@ -36,13 +38,13 @@ again: `xattr -dr com.apple.quarantine /Applications/Shellforge.app`
 
 - **Add a project** with **⌃⌘P**, the header's **+**, or the empty sidebar's button. Pick any folder
   inside a git repository.
-- **Right-click a project** for New Task, New Review, New Terminal, Jira Projects…, Tunnels…, SSH
-  Host…, Pull <default branch>, the moves, and Remove Project….
+- **Right-click a project** for New Task, New Review, New Terminal, Open in, Jira Projects…,
+  Tunnels…, SSH Host…, Branch Names, Pull <default branch>, Rearrange and Remove Project….
 - [FEATURES.md](FEATURES.md) lists every feature.
 
 ## 4. Connect Jira, GitLab and GitHub
 
-Click the sidebar's **gear** to open Settings, then **Services**.
+Click the **gear** at the bottom of the activity bar to open Settings, and fill in **Services**.
 
 - **Jira:** your site (`https://<company>.atlassian.net`), your email and an API token from
   https://id.atlassian.com/manage-profile/security/api-tokens
@@ -83,13 +85,14 @@ this:
 | What | Where |
 |---|---|
 | Projects, tasks, terminals, dividers, tunnels | `~/Library/Application Support/Shellforge/workspace.json` (a backup beside it on every save) |
-| Jira site and email, GitLab host | `~/Library/Preferences/io.github.nathangel.shellforge.plist` |
-| iTerm2's own preferences and profiles, the sidebar's width and visibility | `~/Library/Preferences/Shellforge.plist` |
-| Jira, GitLab and GitHub tokens | the Keychain, service `io.github.nathangel.shellforge` |
+| Agents you added or changed | `~/Library/Application Support/Shellforge/agents/` |
+| Jira site and email, GitLab host, each agent's default model, Backpack Mode's hotspot | `~/Library/Preferences/io.github.nathangel.shellforge.plist` |
+| iTerm2's own preferences and profiles; the sidebar's width, visibility, text size and panel order; Match the terminal; the feedback note | `~/Library/Preferences/Shellforge.plist` |
+| Jira, GitLab and GitHub tokens, agent secrets, the hotspot's password | the Keychain, service `io.github.nathangel.shellforge` |
 
 To move to another Mac, quit Shellforge on both. Then:
 1. Copy `~/Library/Application Support/Shellforge/` and the two preference files above to the same places on the new Mac.
-2. Open Shellforge there and enter your tokens again in Settings › Services.
+2. Open Shellforge there and enter your tokens and agent secrets again in Settings.
 
 ## Updates
 
