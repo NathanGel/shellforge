@@ -24,9 +24,11 @@ it and refuses to release a version that has none.
 
 ### Changed
 
-- **The footer is a one-line strip; vendors you don't use are hidden.** Under every panel, one
-  line shows `cpu`, `ram` and each vendor's first window; it folds the last vendors into `+N`
-  rather than wrap, and a click opens the Metrics panel. A vendor with no usage data whose CLI
+- **The footer is a two-line strip; vendors you don't use are hidden.** Under every panel, in
+  text a size larger than the old footer's, one line shows `cpu` and `ram` and the next each
+  vendor's 5-hour and weekly windows, such as `5h 42% · wk 73%`, each amber from 80%. A window a
+  vendor doesn't report is left out. The strip folds the last vendors into `+N` rather than wrap,
+  and a click opens the Metrics panel. A vendor with no usage data whose CLI
   isn't installed, such as Codex on a Mac without it, no longer shows "No usage data yet".
   Claude Code counts as installed when `~/.claude` exists, even off your PATH. With no vendor
   to show, the Metrics panel leaves out its Usage group.

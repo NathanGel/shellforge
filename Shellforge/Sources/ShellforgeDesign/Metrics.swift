@@ -112,6 +112,10 @@ public enum Size {
     /// overflow it; and a tone's dot, leading a Settings card's status line and the footer's
     /// backpack line.
     public static let statusMarkSmall: CGFloat = 8
+    /// A ring in the metrics strip, beside `Typography.monoCode`: one step up from ``statusMark``,
+    /// as its text is one step up from the footer's `Typography.mono`, so the ring keeps its size
+    /// against the digits.
+    public static let stripGauge: CGFloat = 11
     /// The ink in the sidebar's trailing column, centred in a ``slot``.
     public static let trailingGlyph: CGFloat = 10
     /// The column a project row's disclosure chevron sits in, leading its provider tile. Its own

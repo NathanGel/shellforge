@@ -2,10 +2,11 @@ import ShellforgeCore
 import ShellforgeDesign
 import SwiftUI
 
-/// The one line pinned under every panel: the Mac's CPU and memory, then each shown vendor's first
-/// window (`wk` when it reports one) as a ring and a number beside the vendor's mark —
-/// `cpu ◔ 23%  ram ◔ 61%  Ⓒ ◔ 84%  Ⓧ ◔ 12%`. It never wraps: vendors that would not fit fold into
-/// “+N”. The whole strip is one control, and a click shows the Metrics panel, where the full footer is.
+/// The two lines pinned under every panel. The first is the Mac's CPU and memory; the second each
+/// shown vendor's mark, then its `5h` and `wk` windows as a ring and a number —
+/// `cpu ◔ 23%  ram ◔ 61%` over `Ⓒ 5h ◔ 42% · wk ◔ 84%  Ⓧ wk ◔ 12%`. Neither line wraps: vendors
+/// that would not fit fold into “+N”. The whole strip is one control, and a click shows the Metrics
+/// panel, where the full footer is.
 struct MetricsStrip: View {
     /// The Mac's readings (`MachineMonitor.lines`); the strip draws CPU and memory.
     let machine: [UsageLine]
@@ -17,14 +18,16 @@ struct MetricsStrip: View {
     /// The strip's `ViewMark`.
     static let markName = "MetricsStrip"
     static let helpText = "Show Metrics"
+    /// The order line 2 draws a vendor's windows in: `5h` first, the one that runs out during a session.
+    static let windowOrder: [UsageLine.Window] = [.fiveHour, .weekly]
 
-    /// Its height: a menu row on its card, `Space.tight` above and below inside it, and the footer's
-    /// own `Space.base` under the card.
+    /// Its height: two menu rows on its card, `Space.tight` above and below inside it, and the
+    /// footer's own `Space.base` under the card.
     static func height(_ scale: InterfaceScale) -> CGFloat {
-        scale(Size.menuRow) + 2 * scale(Space.tight) + scale(Space.base)
+        2 * scale(Size.menuRow) + 2 * scale(Space.tight) + scale(Space.base)
     }
 
-    /// The leading `fitting` vendors and how many fold into “+N” after them.
+    /// The leading `fitting` vendors, each with its windows, and how many fold into “+N” after them.
     static func visible(_ vendors: [UsageVendorRow], fitting: Int) -> (shown: [UsageVendorRow], hidden: Int) {
         let shown = Array(vendors.prefix(max(0, fitting)))
         return (shown, vendors.count - shown.count)
@@ -35,8 +38,22 @@ struct MetricsStrip: View {
         machine.filter { $0.window == .cpu || $0.window == .ram }
     }
 
-    /// A vendor's gauge: its first window, `wk` before `5h` as `UsageRows` orders them; nil for a note.
-    static func gauge(_ row: UsageVendorRow) -> UsageLine? { row.lines.first }
+    /// A vendor's gauges in ``windowOrder``: a window it did not report is left out, and a vendor
+    /// with only a note has none.
+    static func windows(_ row: UsageVendorRow) -> [UsageLine] {
+        windowOrder.compactMap { window in row.lines.first { $0.window == window } }
+    }
+
+    /// A window's number ink: amber past its own warning, the text ink below it.
+    static func ink(_ line: UsageLine) -> Color { line.warning ? Palette.amber : Palette.text }
+
+    /// What a vendor is called when the strip is read out.
+    static func vendorName(_ agent: SessionAgent) -> String {
+        switch agent {
+        case .claude: "Claude"
+        default: AgentPresets.all.first { $0.id == agent.rawValue }?.name ?? agent.customId ?? agent.rawValue
+        }
+    }
 
     /// What a click on the strip does in `activity`'s window.
     static func opener(_ activity: ActivityModel) -> () -> Void {
@@ -45,19 +62,27 @@ struct MetricsStrip: View {
 
     var body: some View {
         let gauges = Self.machineGauges(machine)
-        HStack(spacing: 0) {
-            // The widest line that fits: every vendor, then one fewer behind a “+N”, down to none.
-            ViewThatFits(in: .horizontal) {
-                ForEach(Array((0...vendors.count).reversed()), id: \.self) { fitting in
-                    line(gauges, Self.visible(vendors, fitting: fitting))
+        VStack(alignment: .leading, spacing: 0) {
+            lineFrame {
+                HStack(spacing: scale(Space.inset)) {
+                    ForEach(gauges, id: \.window) { reading in
+                        labelled(reading).help(reading.help)
+                    }
+                }
+                .fixedSize()
+            }
+            lineFrame {
+                // The widest line that fits: every vendor, then one fewer behind a “+N”, down to none.
+                ViewThatFits(in: .horizontal) {
+                    ForEach(Array((0...vendors.count).reversed()), id: \.self) { fitting in
+                        usage(Self.visible(vendors, fitting: fitting))
+                    }
                 }
             }
-            Spacer(minLength: 0)
         }
-        .font(Typography.mono)
+        .font(Typography.monoCode)
         .monospacedDigit()
         .lineLimit(1)
-        .frame(height: scale(Size.menuRow))
         .padding(.horizontal, SidebarRowLayout.listInset + scale(Space.base))
         .padding(.vertical, scale(Space.tight))
         .background {
@@ -77,42 +102,58 @@ struct MetricsStrip: View {
         .accessibilityAction(.default, open)
     }
 
-    /// The strip read as words: each reading's own, then each vendor's first window or its note.
+    /// The strip read as words: each reading's own, then each vendor by name with its windows in
+    /// ``windowOrder`` — “Claude: 5-hour limit 42 % used, weekly limit 84 % used” — or its note.
     static func label(machine: [UsageLine], vendors: [UsageVendorRow]) -> String {
-        (machine.map(\.help) + vendors.map { row in gauge(row)?.help ?? row.note ?? "" }).filter { !$0.isEmpty }.joined(separator: ", ")
+        let readings = vendors.map { row in
+            let lines = windows(row)
+            let said = lines.isEmpty ? (row.note ?? "") : lines.map { "\($0.window.name.lowercased()) \($0.percent) % used" }.joined(separator: ", ")
+            return said.isEmpty ? "" : "\(vendorName(row.vendor)): \(said)"
+        }
+        return (machine.map(\.help) + readings).filter { !$0.isEmpty }.joined(separator: ", ")
     }
 
-    private func line(_ gauges: [UsageLine], _ folded: (shown: [UsageVendorRow], hidden: Int)) -> some View {
+    /// One of the strip's lines: a menu row high, leading, its content never wrapped.
+    private func lineFrame(@ViewBuilder _ content: () -> some View) -> some View {
+        HStack(spacing: 0) {
+            content()
+            Spacer(minLength: 0)
+        }
+        .frame(height: scale(Size.menuRow))
+    }
+
+    /// Line 2: each shown vendor's mark and windows, then “+N” for those folded away.
+    private func usage(_ folded: (shown: [UsageVendorRow], hidden: Int)) -> some View {
         HStack(spacing: scale(Space.inset)) {
-            ForEach(gauges, id: \.window) { reading in
-                HStack(spacing: 0) {
-                    Text(reading.window.shortLabel + " ").foregroundStyle(Palette.muted)
-                    ring(reading)
-                }
-                .help(reading.help)
-            }
             ForEach(folded.shown, id: \.vendor) { row in
+                let lines = Self.windows(row)
                 HStack(spacing: scale(Space.tight)) {
                     VendorMark(agent: row.vendor, size: scale(Size.vendorMark))
-                    if let window = Self.gauge(row) {
-                        ring(window)
+                    if lines.isEmpty {
+                        // A vendor waiting for data, or whose feed is broken: its note is the tooltip
+                        // and in the panel, and the dash takes the note's ink — amber when broken.
+                        Text("–").foregroundStyle(SidebarFooter.noteInk(row)).help(row.note ?? "")
                     } else {
-                        // A vendor waiting for data, or whose feed is broken: its note is in the panel.
-                        Text("–").foregroundStyle(SidebarFooter.noteInk(row))
+                        HStack(spacing: 0) {
+                            ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
+                                if index > 0 { Text(" · ").foregroundStyle(Palette.muted) }
+                                labelled(line).help(line.help)
+                            }
+                        }
                     }
                 }
-                .help(Self.gauge(row)?.help ?? row.note ?? "")
             }
             if folded.hidden > 0 { Text("+\(folded.hidden)").foregroundStyle(Palette.muted) }
         }
         .fixedSize()
     }
 
-    /// A reading's ring and number, amber past its warning, as the footer draws them.
-    private func ring(_ line: UsageLine) -> some View {
+    /// A reading's short label, ring and number, amber past its warning, as the footer draws them.
+    private func labelled(_ line: UsageLine) -> some View {
         HStack(spacing: 0) {
-            UsageRing(percent: line.percent, warning: line.warning, size: scale(Size.statusMark))
-            Text(" \(line.percent)%").foregroundStyle(line.warning ? Palette.amber : Palette.text)
+            Text(line.window.shortLabel + " ").foregroundStyle(Palette.muted)
+            UsageRing(percent: line.percent, warning: line.warning, size: scale(Size.stripGauge))
+            Text(" \(line.percent)%").foregroundStyle(Self.ink(line))
         }
     }
 }

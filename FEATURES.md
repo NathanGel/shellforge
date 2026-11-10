@@ -245,8 +245,10 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
 
 ## Metrics
 
-- **The strip.** One line pinned at the bottom of every panel: the Mac's `cpu` and `ram`, then each vendor's mark with its first window (`wk` when it reports one) as a ring and a percent, such as `cpu ◔ 23%  ram ◔ 61%  Ⓒ ◔ 84%`.
-  - It never wraps: when the sidebar is too narrow, the last vendors fold into `+1`, `+2`….
+- **The strip.** Two lines pinned at the bottom of every panel. The first shows the Mac's `cpu` and `ram`, such as `cpu ◔ 23%  ram ◔ 61%`. The second shows each vendor's mark with its 5-hour (`5h`) and weekly (`wk`) windows, each as a ring and a percent, such as `Ⓒ 5h ◔ 42% · wk ◔ 84%  Ⓧ wk ◔ 12%`.
+  - `5h` comes first, as it is the one that runs out during a session. A window the vendor doesn't report is left out. Each window turns amber on its own from 80%.
+  - A vendor with no numbers yet shows its mark and a dash, amber when its feed is broken; hover it for the note.
+  - Neither line wraps: when the sidebar is too narrow, the last vendors fold into `+1`, `+2`….
   - Hover a reading for its words. Click the strip to open the Metrics panel.
 - **The Metrics panel** shows everything in full, scrolling when the window is short:
   - **System**: the selected task's or tab's agent, with its context ring and percent and its token counts, such as `in 936k · out 5.6k`, with exact figures in the tooltip;
@@ -367,7 +369,7 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
   - dividers: Rename, Rearrange and Remove Divider;
   - project, task and SSH rows: Rearrange (greyed menus aside, it is left out while another window is rearranging);
   - in Rearrange mode, every row: Move Up / Move Down (while possible), one step within its own list, and a project's Fold / Unfold.
-- **Labels:** tunnel rows read their state, the Metrics panel's Mac row reads its readings, and the metrics strip reads all of its readings and opens the panel.
+- **Labels:** tunnel rows read their state, the Metrics panel's Mac row reads its readings, and the metrics strip reads all of its readings, both windows of each vendor ("Claude: 5-hour limit 42 % used, weekly limit 84 % used"), and opens the panel.
 
 ## The helper (shellforged)
 
