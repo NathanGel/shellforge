@@ -129,7 +129,7 @@ extension SidebarModel {
                 } catch let TaskRemoval.Blocked.folderInUse(users) {
                     // Something still writes into the folder: Try Again runs the removal once more,
                     // when the person says so — nothing here waits for the folder to free up.
-                    let answer = await prompter.ask(Self.folderInUsePrompt(title: task.title, users: users))
+                    let answer = await prompter.ask(Self.folderInUsePrompt(title: task.title, kind: task.kindName.lowercased(), users: users))
                     guard answer.confirmed else {
                         TaskRemoval.log("Not removed, folder in use: task \(id.uuidString)")
                         removalBoard.removals[id] = .stopped("Not removed: its folder is in use")
@@ -180,12 +180,13 @@ extension SidebarModel {
     }
 
     /// The removal stopped because something still writes into the worktree: who holds it, when
-    /// lsof found anyone, and Try Again.
-    static func folderInUsePrompt(title: String, users: [FolderUser]) -> AlertPrompt {
-        AlertPrompt(message: "“\(title)” couldn’t be removed: its folder is still in use.",
-                    detail: users.isEmpty ? "Something is still writing into it, such as a dev server."
-                                          : "In use by \(FolderUsers.describe(users)).",
-                    buttons: ["Try Again", "Cancel"])
+    /// lsof found anyone, and Try Again. The tabs closed already, so it says what Cancel leaves.
+    static func folderInUsePrompt(title: String, kind: String, users: [FolderUser]) -> AlertPrompt {
+        let holders = users.isEmpty ? "Something is still writing into it, such as a dev server."
+                                    : "In use by \(FolderUsers.describe(users))."
+        return AlertPrompt(message: "“\(title)” couldn’t be removed: its folder is still in use.",
+                           detail: holders + " Its tabs are closed; the \(kind) stays in the sidebar.",
+                           buttons: ["Try Again", "Cancel"])
     }
 
     /// Says it in the banner, and keeps it in the log: the banner holds git's first line only.

@@ -71,6 +71,7 @@ import Testing
             ("Authorization: token ghp_16C7e42F292c6912E7710c838347Ae178B4a refused",
              "Authorization: token ‹redacted› refused"),
             ("gho_abc123 ghs_DEF456, github_pat_11ABC_def789", "‹redacted› ‹redacted›, ‹redacted›"),
+            ("ghu_user1 ghr_Refresh2 ghx_kept", "‹redacted› ‹redacted› ghx_kept"),
             ("remote: glpat-xY_z-12345 is expired", "remote: ‹redacted› is expired"),
             // Words that only look like the start of one stay.
             ("tokens=3 ghp_ highlight_x glpat", "tokens=3 ghp_ highlight_x glpat"),

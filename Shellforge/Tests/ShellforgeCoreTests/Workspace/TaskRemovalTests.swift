@@ -191,6 +191,63 @@ import Testing
         #expect(written.contains("still in use"), "\(written)")
     }
 
+    /// The real case: git deletes its record of the worktree even when deleting the folder fails,
+    /// so the removal goes on to delete the leftover, and that deletion finds the folder refilling.
+    /// The git stub drops the record, as git does, and leaves the files; the deletion fails as
+    /// `FileManager` does with a writer still busy there.
+    @Test func aLeftoverThatRefillsWhileDeletedReportsTheFolderInUse() throws {
+        let repo = try GitRepoFixture()
+        let task = try task(repo)
+        let bin = TestScratch.root.appendingPathComponent("unregistering-git-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: bin, withIntermediateDirectories: true)
+        let script = """
+        #!/bin/sh
+        case "$*" in *"worktree remove"*)
+          for admin in "$2"/.git/worktrees/*; do
+            grep -q "/$(basename "$5")/.git$" "$admin/gitdir" && rm -rf "$admin"
+          done
+          echo "error: failed to delete '$5': Directory not empty" >&2; exit 255;;
+        esac
+        exec /usr/bin/git "$@"
+        """
+        try script.write(toFile: bin + "/git", atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin + "/git")
+        var variables = repo.launcher.reload().variables
+        variables["PATH"] = bin + ":" + (variables["PATH"] ?? "/usr/bin:/bin")
+        let env = variables
+        let unregistering = CommandLauncher { ResolvedEnvironment(variables: env, source: .loginShell("/bin/sh")) }
+        let deletions = Locked<[String]>([])
+        let refilling: TaskRemoval.FolderDeletion = { path in
+            deletions.withLock { $0.append(path) }
+            throw NSError(domain: NSCocoaErrorDomain, code: NSFileWriteUnknownError,
+                          userInfo: [NSUnderlyingErrorKey: NSError(domain: NSPOSIXErrorDomain, code: Int(ENOTEMPTY))])
+        }
+
+        let thrown = #expect(throws: TaskRemoval.Blocked.self) {
+            _ = try TaskRemoval.remove(task: task, project: repo.project, deleteBranch: false, force: false,
+                                       sharedWithAnotherTask: false, launcher: unregistering, deleteFolder: refilling)
+        }
+        guard case .folderInUse? = thrown else { Issue.record("not .folderInUse: \(String(describing: thrown))"); return }
+        // The leftover branch ran: git no longer knows the worktree, and its folder was being deleted.
+        #expect(try TaskRemoval.registered(task.worktreePath, in: repo.path, launcher: repo.launcher) == nil)
+        #expect(deletions.withLock { $0 } == [task.worktreePath])
+        #expect(FileManager.default.fileExists(atPath: task.worktreePath))
+    }
+
+    /// Only a deletion that found the folder filling up counts as “in use”: not a refused permission.
+    @Test func onlyAFolderRefillingCountsAsInUse() {
+        let posix = { (code: Int32) in NSError(domain: NSPOSIXErrorDomain, code: Int(code)) }
+        let cocoa = { (code: Int32) in
+            NSError(domain: NSCocoaErrorDomain, code: NSFileWriteUnknownError, userInfo: [NSUnderlyingErrorKey: posix(code)])
+        }
+        #expect(TaskRemoval.refillsWhileDeleted(cocoa(ENOTEMPTY)))
+        #expect(TaskRemoval.refillsWhileDeleted(posix(EBUSY)))
+        #expect(TaskRemoval.refillsWhileDeleted(GitFailure(command: "git worktree remove", message: "error: failed to delete 'x': Directory not empty")))
+        #expect(!TaskRemoval.refillsWhileDeleted(cocoa(EACCES)))
+        #expect(!TaskRemoval.refillsWhileDeleted(posix(EACCES)))
+        #expect(!TaskRemoval.refillsWhileDeleted(GitFailure(command: "git worktree remove", message: "fatal: contains modified or untracked files")))
+    }
+
     /// A row left behind by a worktree deleted outside Shellforge shares its path with a newer task
     /// of the same title: removing the old row must not take the new task's worktree.
     @Test func aWorktreeOfAnotherBranchAtTheTasksPathIsNeverRemoved() throws {

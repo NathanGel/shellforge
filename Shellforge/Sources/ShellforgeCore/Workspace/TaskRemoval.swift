@@ -66,6 +66,18 @@ public enum TaskRemoval {
     /// worktree still goes: its commits stay on that branch, and its changes were asked about.
     public static func remove(task: TaskItem, project: Project, deleteBranch: Bool, force: Bool,
                               sharedWithAnotherTask: Bool, launcher: CommandLauncher) throws -> Removed {
+        try remove(task: task, project: project, deleteBranch: deleteBranch, force: force,
+                   sharedWithAnotherTask: sharedWithAnotherTask, launcher: launcher, deleteFolder: deleteFolder)
+    }
+
+    /// How a leftover folder is deleted.
+    typealias FolderDeletion = @Sendable (String) throws -> Void
+    static let deleteFolder: FolderDeletion = { try FileManager.default.removeItem(atPath: $0) }
+
+    /// `remove`, with the leftover's deletion handed in: a test's can fail as a folder filling up
+    /// again does, which no real deletion does on cue.
+    static func remove(task: TaskItem, project: Project, deleteBranch: Bool, force: Bool,
+                       sharedWithAnotherTask: Bool, launcher: CommandLauncher, deleteFolder: FolderDeletion) throws -> Removed {
         let owned = ownsWorktree(of: task, in: project)
         removalLog.notice("remove task=\(task.id.uuidString, privacy: .public) worktree=\(task.worktreePath, privacy: .public) branch=\(task.branch, privacy: .public) base=\(task.baseBranch, privacy: .public) deleteBranch=\(deleteBranch, privacy: .public) force=\(force, privacy: .public) owned=\(owned, privacy: .public)")
         // Not Shellforge's worktree: the task goes, the checkout and its branch stay.
@@ -73,7 +85,8 @@ public enum TaskRemoval {
         var switchedBranch: String?
         if FileManager.default.fileExists(atPath: task.worktreePath) {
             switchedBranch = try removeWorktree(at: task.worktreePath, branch: task.branch, in: project.path, force: force,
-                                                sharedWithAnotherTask: sharedWithAnotherTask, launcher: launcher)
+                                                sharedWithAnotherTask: sharedWithAnotherTask, launcher: launcher,
+                                                deleteFolder: deleteFolder)
         } else {
             // Locked worktrees cannot be pruned until their lock is released. Refused for one that is
             // not locked, which is no reason to stop.
@@ -138,7 +151,8 @@ public enum TaskRemoval {
     /// The worktree removed: registered, through git; else a leftover git no longer knows. Returns
     /// the branch it had checked out when that was not the task's.
     private static func removeWorktree(at worktreePath: String, branch: String, in projectPath: String, force: Bool,
-                                       sharedWithAnotherTask: Bool, launcher: CommandLauncher) throws -> String? {
+                                       sharedWithAnotherTask: Bool, launcher: CommandLauncher,
+                                       deleteFolder: FolderDeletion) throws -> String? {
         var switchedBranch: String?
         if let worktree = try registered(worktreePath, in: projectPath, launcher: launcher) {
             if let checkedOut = worktree.branch, checkedOut != "refs/heads/" + branch {
@@ -153,10 +167,11 @@ public enum TaskRemoval {
                 removalLog.notice("worktree \(worktreePath, privacy: .public) has \(name, privacy: .public) checked out instead of \(branch, privacy: .public): switchedBranch")
                 ErrorLogging.record("removal", "Branch \(name) kept: \(worktreePath) had it checked out instead of \(branch)")
             }
-            try removeRegistered(worktreePath, lockedWith: worktree.lockReason, in: projectPath, force: force, launcher: launcher)
+            try removeRegistered(worktreePath, lockedWith: worktree.lockReason, in: projectPath, force: force,
+                                 launcher: launcher, deleteFolder: deleteFolder)
         } else {
             // A removal git gave up on halfway, retried: there is nothing left to unlock or refuse.
-            try deleteLeftover(worktreePath, in: projectPath, launcher: launcher)
+            try deleteLeftover(worktreePath, in: projectPath, launcher: launcher, deleteFolder: deleteFolder)
         }
         // The checkout is gone either way.
         _ = try? git(["worktree", "prune"], in: projectPath, launcher)
@@ -166,7 +181,7 @@ public enum TaskRemoval {
     /// `lockReason` is the one git listed before unlocking: a refused removal puts back what was
     /// there. A worktree that was not locked is left unlocked.
     private static func removeRegistered(_ worktreePath: String, lockedWith lockReason: String?, in projectPath: String,
-                                         force: Bool, launcher: CommandLauncher) throws {
+                                         force: Bool, launcher: CommandLauncher, deleteFolder: FolderDeletion) throws {
         if lockReason != nil { _ = try? git(["worktree", "unlock", worktreePath], in: projectPath, launcher) }
         do {
             try git(["worktree", "remove"] + (force ? ["--force"] : []) + [worktreePath], in: projectPath, launcher)
@@ -175,7 +190,7 @@ public enum TaskRemoval {
             // still running there wrote files back — and every later `remove` then fails "is not a
             // working tree". The checkout is gone; what is left is files nothing tracks.
             if (try? registered(worktreePath, in: projectPath, launcher: launcher) == nil) == true {
-                return try deleteLeftover(worktreePath, in: projectPath, launcher: launcher)
+                return try deleteLeftover(worktreePath, in: projectPath, launcher: launcher, deleteFolder: deleteFolder)
             }
             if let lockReason {
                 _ = try? git(["worktree", "lock", worktreePath] + (lockReason.isEmpty ? [] : ["--reason", lockReason]),
@@ -188,7 +203,8 @@ public enum TaskRemoval {
     /// What a half-finished removal left of a worktree git no longer knows. Only ever a folder
     /// directly under the project's `.worktrees/`, and never through a symlink: anywhere else, a
     /// folder git does not know is not Shellforge's to delete.
-    private static func deleteLeftover(_ worktreePath: String, in projectPath: String, launcher: CommandLauncher) throws {
+    private static func deleteLeftover(_ worktreePath: String, in projectPath: String, launcher: CommandLauncher,
+                                       deleteFolder: FolderDeletion) throws {
         guard FileManager.default.fileExists(atPath: worktreePath) else { return }
         guard TaskWorktrees.isInWorktreesFolder(worktreePath, project: Project(name: "", path: projectPath)),
               (try? FileManager.default.destinationOfSymbolicLink(atPath: projectPath + "/.worktrees")) == nil,
@@ -196,7 +212,7 @@ public enum TaskRemoval {
             throw GitFailure(command: "remove \(worktreePath)", message: "\(worktreePath) is not a worktree of this project.")
         }
         do {
-            try FileManager.default.removeItem(atPath: worktreePath)
+            try deleteFolder(worktreePath)
         } catch {
             throw stillInUse(worktreePath, after: error, launcher: launcher) ?? error
         }
@@ -215,8 +231,9 @@ public enum TaskRemoval {
         return .folderInUse(users)
     }
 
-    /// A folder something wrote into while it was being deleted.
-    private static func refillsWhileDeleted(_ error: Error) -> Bool {
+    /// A folder something wrote into while it was being deleted: git's “Directory not empty”, or
+    /// POSIX ENOTEMPTY or EBUSY, bare or under a Cocoa error as `FileManager` reports it.
+    static func refillsWhileDeleted(_ error: Error) -> Bool {
         if let failure = error as? GitFailure { return failure.message.contains("Directory not empty") }
         let underlying = (error as NSError).userInfo[NSUnderlyingErrorKey] as? NSError
         return [error as NSError, underlying].contains { error in

@@ -344,7 +344,7 @@ import Testing
         #expect(s.prompter.asked.count == 2)
         let asked = try #require(s.prompter.asked.last)
         #expect(asked.message == "“Fix login” couldn’t be removed: its folder is still in use.")
-        #expect(asked.detail == "Something is still writing into it, such as a dev server.")
+        #expect(asked.detail == "Something is still writing into it, such as a dev server. Its tabs are closed; the task stays in the sidebar.")
         #expect(asked.buttons == ["Try Again", "Cancel"] && asked.escapeButton == 1)
         #expect(s.row != nil)
         #expect(FileManager.default.fileExists(atPath: s.task.worktreePath))
@@ -366,9 +366,9 @@ import Testing
 
     /// The programs found are named, by name and pid.
     @Test func theFolderInUsePromptNamesWhatHoldsIt() {
-        let prompt = SidebarModel.folderInUsePrompt(title: "Fix login",
+        let prompt = SidebarModel.folderInUsePrompt(title: "Add gift card", kind: "review",
                                                     users: [FolderUser(pid: 4211, name: "node"), FolderUser(pid: 4230, name: "nuxt")])
-        #expect(prompt.detail == "In use by node (4211), nuxt (4230).")
+        #expect(prompt.detail == "In use by node (4211), nuxt (4230). Its tabs are closed; the review stays in the sidebar.")
     }
 
     // -- reviews -----------------------------------------------------------------------------

@@ -92,7 +92,7 @@ public final class ErrorLog: Sendable {
 
     /// The message on one line, the home folder as `~`, a URL's `user:password@` left out, and a
     /// token blanked: a `token=`, `access_token=` or `private_token=` value, or a bare GitHub
-    /// (`ghp_`, `gho_`, `ghs_`, `github_pat_`) or GitLab (`glpat-`) one — git's stderr can echo one.
+    /// (`ghp_`, `gho_`, `ghs_`, `ghu_`, `ghr_`, `github_pat_`) or GitLab (`glpat-`) one — git's stderr can echo one.
     static func cleaned(_ message: String, home: String = NSHomeDirectory()) -> String {
         var text = message.trimmingCharacters(in: .whitespacesAndNewlines)
         text = text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
@@ -100,7 +100,7 @@ public final class ErrorLog: Sendable {
         text = text.replacingOccurrences(of: #"(\w+://)[^/\s@]+@"#, with: "$1…@", options: .regularExpression)
         // `token=` also ends `access_token=` and `private_token=`.
         text = text.replacingOccurrences(of: ##"(?i)(token=)[^&\s'"#]+"##, with: "$1" + redacted, options: .regularExpression)
-        text = text.replacingOccurrences(of: #"(?<![A-Za-z0-9_])(?:gh[pos]_[A-Za-z0-9]+|github_pat_[A-Za-z0-9_]+|glpat-[A-Za-z0-9_-]+)"#,
+        text = text.replacingOccurrences(of: #"(?<![A-Za-z0-9_])(?:gh[posur]_[A-Za-z0-9]+|github_pat_[A-Za-z0-9_]+|glpat-[A-Za-z0-9_-]+)"#,
                                          with: redacted, options: .regularExpression)
         if !home.isEmpty, home != "/" {
             // The home folder itself, not a longer name that only starts like it.
