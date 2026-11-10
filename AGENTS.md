@@ -2,6 +2,18 @@
 
 > Essential guide for AI agents working on iTerm2.
 
+## Shellforge
+
+This repository is Shellforge, a fork of iTerm2. The rest of this guide is iTerm2's own.
+
+- Shellforge's code is the Swift package in `Shellforge/` ([Shellforge/README.md](Shellforge/README.md));
+  test it with `Shellforge/scripts/swift.sh test --package-path Shellforge`. Its glue in iTerm2's
+  sources is `sources/TerminalView/iTermShellforge*.swift`.
+- Keep changes to iTerm2's own files few, and list each one in
+  [Shellforge/docs/upstream-hook-points.md](Shellforge/docs/upstream-hook-points.md).
+- What the app does is in [FEATURES.md](FEATURES.md); user-visible changes go in
+  [CHANGELOG.md](CHANGELOG.md)'s unreleased section.
+
 ## Critical Rules
 
 **Read `CLAUDE.md` first** - it contains mandatory coding practices. Key rules:
