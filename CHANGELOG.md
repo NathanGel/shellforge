@@ -14,7 +14,10 @@ it and refuses to release a version that has none.
 - **Activity bar.** A column of icons down the sidebar's left edge switches its panel: Sessions,
   the sidebar as it was, and Metrics. Each window shows its own panel; drag the icons to reorder
   them, and every window keeps the same order after a restart. Settings is the gear at its foot.
-  The sidebar is 44 pt wider to make room, so the Sessions panel keeps its old width.
+  View › Show Sessions (⌃⌘E) and Show Metrics (⌃⌘M) switch panels from the keyboard.
+  The panel keeps its width and the sidebar grows by the bar's 44 pt: a width you dragged before
+  grows by 44 pt once (up to the 720 pt maximum), and a window now needs 724 pt to show the
+  sidebar beside the terminal (it was 680).
 - **Metrics panel.** Everything the footer showed, in full and scrolling: the selected task's
   context and token counts, the Mac's readings and Backpack Mode (click for Backpack Mode,
   right-click for Mac Settings…), and each vendor's windows with their reset times.
@@ -25,6 +28,10 @@ it and refuses to release a version that has none.
   line shows `cpu`, `ram` and each vendor's first window; it folds the last vendors into `+N`
   rather than wrap, and a click opens the Metrics panel. A vendor with no usage data whose CLI
   isn't installed, such as Codex on a Mac without it, no longer shows "No usage data yet".
+  Claude Code counts as installed when `~/.claude` exists, even off your PATH. With no vendor
+  to show, the Metrics panel leaves out its Usage group.
+- **Banners show above every panel.** An error, work in progress such as "Adding demo…", a
+  fallback PATH or a helper problem is pinned at the top of the sidebar, whichever panel shows.
 
 ## 0.10.0 — 2026-11-10
 

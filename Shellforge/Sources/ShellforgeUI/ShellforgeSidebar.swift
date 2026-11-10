@@ -97,6 +97,16 @@ public enum ShellforgeSidebar {
         (view as? SidebarHostingView<ZoomedSidebar>)?.chrome?.windowControls
     }
 
+    /// Shows `panel` in the sidebar `view` (one `makeView` made): View › Show Sessions, Show Metrics.
+    public static func show(_ panel: ActivityPanel, on view: NSView) {
+        (view as? SidebarHostingView<ZoomedSidebar>)?.activity?.select(panel)
+    }
+
+    /// The panel the sidebar `view` shows, for the View menu's checkmark.
+    public static func shownPanel(of view: NSView) -> ActivityPanel? {
+        (view as? SidebarHostingView<ZoomedSidebar>)?.activity?.layout.selected
+    }
+
     /// How far the sidebar's list insets its rows: what lines the host's toggle up with them.
     public static var listInset: CGFloat { SidebarRowLayout.listInset }
 
@@ -227,6 +237,9 @@ final class SidebarHostingView<Content: View>: NSHostingView<Content>, RowHighli
     private var panelWatch: AnyCancellable?
     /// Set only while the host takes the keyboard from a panel being hidden.
     private var parksKeyboard = false
+    /// Where the keyboard was in the Sessions panel when another panel took its place: given back
+    /// when Sessions shows again, if the host still holds it.
+    private weak var keyboardToRestore: NSView?
 
     /// The host takes the keyboard only while Rearrange mode holds it; otherwise as before.
     override var acceptsFirstResponder: Bool { holdsKeyboard || parksKeyboard || super.acceptsFirstResponder }
@@ -238,9 +251,11 @@ final class SidebarHostingView<Content: View>: NSHostingView<Content>, RowHighli
     }
 
     /// The keyboard was on a view inside the sidebar whose panel is going out of sight: it moves to
-    /// the host itself, still inside the sidebar, so Esc keeps reaching Rearrange mode.
+    /// the host itself, still inside the sidebar, so Esc keeps reaching Rearrange mode. Where it was
+    /// is remembered for the panel's return (`listTakesKeyboardAgain`).
     func releaseKeyboard() {
         guard let window, let responder = window.firstResponder as? NSView, responder !== self, isInside(responder) else { return }
+        keyboardToRestore = responder
         parksKeyboard = true
         defer { parksKeyboard = false }
         if !window.makeFirstResponder(self) { window.makeFirstResponder(nil) }
@@ -299,6 +314,17 @@ protocol RearrangeCancelling: AnyObject {
 }
 
 extension SidebarHostingView: RearrangeCancelling {}
+
+extension SidebarHostingView: ListKeyboardHome {
+    /// The Sessions list can take the keyboard again: it gets back what `releaseKeyboard` took from
+    /// it, unless the keyboard has gone elsewhere meanwhile (the terminal, another panel's field).
+    func listTakesKeyboardAgain() {
+        guard let view = keyboardToRestore else { return }
+        keyboardToRestore = nil
+        guard let window, window.firstResponder === self, view.window === window, isInside(view) else { return }
+        window.makeFirstResponder(view)
+    }
+}
 
 /// Calls back once when a window closes, unless stopped first: how a sheet learns it was closed
 /// rather than answered. The panel's own buttons stop it.
@@ -361,6 +387,10 @@ struct SidebarView: View {
             } else if model.isRearranging {
                 rearrangeBar(nil)
             }
+            // The banners — an error, work under way, a fallback PATH, the helper — are pinned the
+            // same way, so they are seen whatever the panel. Their buttons wait while rearranging.
+            SidebarBanners(model: model, feedback: feedback, giveFeedback: presentFeedback)
+                .allowsHitTesting(!model.isRearranging)
             HStack(spacing: 0) {
                 ActivityBar(model: activity, openSettings: showMacSettings)
                 // The metrics strip is pinned under whichever panel shows.
@@ -442,13 +472,11 @@ struct SidebarView: View {
 
     private var showsSessions: Bool { activity.layout.selected == .sessions }
 
-    /// Today's sidebar: the header (unless pinned on the buttons' row), the banners and the list; the
-    /// footer that was under it is the Metrics panel now, and the strip below every panel.
+    /// Today's sidebar: the header (unless pinned on the buttons' row) and the list; the banners
+    /// over it are pinned above every panel, the footer that was under it is the Metrics panel now,
+    /// and the strip below every panel.
     private var sessionsPanel: some View {
         VStack(spacing: 0) {
-            // Its buttons wait while the sidebar is rearranged.
-            SidebarBanners(model: model, feedback: feedback, giveFeedback: presentFeedback)
-                .allowsHitTesting(!model.isRearranging)
             List {
                 if chrome.windowControls == nil && !model.isRearranging { header(nil) }
                 // In Rearrange mode only, the List's own move drags the rows (moveRows).

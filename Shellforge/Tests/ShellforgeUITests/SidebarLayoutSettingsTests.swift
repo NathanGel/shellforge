@@ -17,20 +17,52 @@ import Testing
         #expect(!settings.hidden)
     }
 
-    /// A width saved before the activity bar widened the minimum reads as the new minimum; a wider
-    /// saved width is kept as it was. Nothing is rewritten.
+    private static let widthKey = "ShellforgeSidebarWidth"
+
+    /// A width saved before the activity bar was the Sessions list's alone: once, it grows by the
+    /// bar, so the list keeps its width and the sidebar widens around it. The marker stops a second
+    /// widening, however many settings read it.
+    @Test func aSavedWidthGrowsByTheActivityBarOnce() {
+        let store = defaults()
+        store.set(Double(500), forKey: Self.widthKey)
+        #expect(SidebarLayoutSettings(defaults: store).width == 500 + Size.activityBar)
+        #expect(store.bool(forKey: SidebarLayoutSettings.activityBarMigrationKey), "the marker is set")
+        #expect(SidebarLayoutSettings(defaults: store).width == 500 + Size.activityBar, "widened twice")
+        #expect(CGFloat(store.double(forKey: Self.widthKey)) == 500 + Size.activityBar)
+    }
+
+    /// Nothing saved: nothing to widen — the default width already includes the bar — but the marker
+    /// is set, so a width dragged later is never widened.
+    @Test func noSavedWidthIsLeftAlone() {
+        let store = defaults()
+        let settings = SidebarLayoutSettings(defaults: store)
+        #expect(store.object(forKey: Self.widthKey) == nil)
+        #expect(store.bool(forKey: SidebarLayoutSettings.activityBarMigrationKey))
+        #expect(settings.width == Size.sidebarWidth)
+        settings.width = 500
+        #expect(SidebarLayoutSettings(defaults: store).width == 500, "a width dragged after the bar came was widened")
+    }
+
+    /// The widening stops at the widest the sidebar can be dragged.
+    @Test func aWideSavedWidthStopsAtTheMaximum() {
+        let store = defaults()
+        store.set(Double(SidebarLayoutSettings.maxWidth - 10), forKey: Self.widthKey)
+        #expect(SidebarLayoutSettings(defaults: store).width == SidebarLayoutSettings.maxWidth)
+        #expect(CGFloat(store.double(forKey: Self.widthKey)) == SidebarLayoutSettings.maxWidth)
+    }
+
+    /// A saved width still below the new minimum after widening reads as the minimum; the saved
+    /// value itself is only widened, not clamped.
     @Test func aWidthSavedBelowTheNewMinimumReadsAsTheMinimum() {
         let store = defaults()
-        store.set(Double(380), forKey: "ShellforgeSidebarWidth")
+        store.set(Double(300), forKey: Self.widthKey)
         #expect(SidebarLayoutSettings(defaults: store).width == Size.sidebarMinWidth)
-        #expect(store.double(forKey: "ShellforgeSidebarWidth") == 380)
-        store.set(Double(500), forKey: "ShellforgeSidebarWidth")
-        #expect(SidebarLayoutSettings(defaults: store).width == 500)
+        #expect(CGFloat(store.double(forKey: Self.widthKey)) == 300 + Size.activityBar)
     }
 
     @Test func theWidthIsRememberedAndClamped() {
         let store = defaults()
-        var settings = SidebarLayoutSettings(defaults: store)
+        let settings = SidebarLayoutSettings(defaults: store)
         settings.width = 500
         #expect(SidebarLayoutSettings(defaults: store).width == 500)
         settings.width = 10
@@ -41,7 +73,7 @@ import Testing
 
     @Test func hiddenIsRemembered() {
         let store = defaults()
-        var settings = SidebarLayoutSettings(defaults: store)
+        let settings = SidebarLayoutSettings(defaults: store)
         settings.hidden = true
         #expect(SidebarLayoutSettings(defaults: store).hidden)
     }

@@ -67,23 +67,3 @@ struct ActivityBar: View {
             .accessibilityAction { model.select(panel) }
     }
 }
-
-/// A panel still to come: its title, where its content will be. `titled` false when the title is
-/// already on the window buttons' row.
-struct ActivityPanelPlaceholder: View {
-    let panel: ActivityPanel
-    let titled: Bool
-    @Environment(\.interfaceScale) private var scale
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            if titled {
-                SidebarHeading(panel.title)
-                    .frame(height: scale(Size.menuRow))
-                    .padding(.horizontal, scale(Space.base))
-            }
-            Spacer(minLength: 0)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    }
-}

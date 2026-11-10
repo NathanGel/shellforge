@@ -84,9 +84,20 @@ import Testing
         #expect(model.footerRow == UsageTaskRow(agent: .pi, context: nil, tokens: nil))
     }
 
+    /// A home folder of the test's own, with `~/.claude` in it when `claude` is true.
+    private func home(claude: Bool) throws -> URL {
+        let home = TestScratch.root.appendingPathComponent("footer-home-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: claude ? home.appendingPathComponent(".claude") : home, withIntermediateDirectories: true)
+        return home
+    }
+
+    private func model(installed: [String], home: URL) throws -> SidebarModel {
+        SidebarModel(host: FakeTerminalHost(), document: WorkspaceDocument(store: WorkspaceStore(folder: folder)),
+                     launcher: try GitRepoForUI(installed: installed).launcher, feed: FakeFeed(), jiraSettings: { nil }, home: home)
+    }
+
     @Test func aMissingStatusLineSaysUsageIsDisconnected() async throws {
-        let model = SidebarModel(host: FakeTerminalHost(), document: WorkspaceDocument(store: WorkspaceStore(folder: folder)),
-                                 launcher: try GitRepoForUI(installed: ["claude", "codex"]).launcher, feed: FakeFeed(), jiraSettings: { nil })
+        let model = try model(installed: ["claude", "codex"], home: try home(claude: false))
         await model.refreshInstalledAgents()
         let rows = model.vendorRows(now: Date(), calendar: .current, claudeStatusLineInstalled: false)
         #expect(rows.map(\.vendor) == [.claude, .codex])
@@ -97,11 +108,49 @@ import Testing
     /// The footer leaves out a vendor you don’t use: the model finds which agents’ CLIs are on PATH,
     /// off the main actor, and only those wait for usage data.
     @Test func theModelFindsTheInstalledAgents() async throws {
-        let model = SidebarModel(host: FakeTerminalHost(), document: WorkspaceDocument(store: WorkspaceStore(folder: folder)),
-                                 launcher: try GitRepoForUI(installed: ["codex"]).launcher, feed: FakeFeed(), jiraSettings: { nil })
+        let model = try model(installed: ["codex"], home: try home(claude: false))
         await model.refreshInstalledAgents()
         #expect(model.installedAgents == [.codex])
         #expect(model.vendorRows(now: Date(), calendar: .current, claudeStatusLineInstalled: true).map(\.vendor) == [.codex])
+    }
+
+    /// Claude Code installed off `PATH` still has its `~/.claude`: it counts as in use, so a broken
+    /// status line still says “Usage disconnected” rather than the row going missing.
+    @Test func claudesHomeFolderCountsAsInUse() async throws {
+        let model = try model(installed: [], home: try home(claude: true))
+        await model.refreshInstalledAgents()
+        #expect(model.installedAgents == [.claude])
+        let rows = model.vendorRows(now: Date(), calendar: .current, claudeStatusLineInstalled: false)
+        #expect(rows == [UsageVendorRow(vendor: .claude, lines: [], note: UsageRows.statusLineMissingNote, warning: true)])
+        let without = try self.model(installed: [], home: try home(claude: false))
+        await without.refreshInstalledAgents()
+        #expect(without.vendorRows(now: Date(), calendar: .current, claudeStatusLineInstalled: false).isEmpty)
+    }
+
+    /// Two looks overlap and the older finishes last: its answer is dropped, so the newer one stands.
+    /// The older look is held open by a stream the test finishes once the newer one has published.
+    @Test func anOlderLookFinishingLastIsDropped() async throws {
+        let model = try model(installed: [], home: try home(claude: false))
+        // The model's own first look, at init, is done before the two the test starts.
+        await model.environmentRead?.value
+        let (started, startedSignal) = AsyncStream<Void>.makeStream()
+        let (gate, open) = AsyncStream<Void>.makeStream()
+        let older = Task { @MainActor in
+            await model.publishInstalledAgents {
+                startedSignal.yield()
+                for await _ in gate {}
+                return [.claude]
+            }
+        }
+        for await _ in started { break }
+        await model.publishInstalledAgents { [.codex] }
+        #expect(model.installedAgents == [.codex])
+        open.finish()
+        await older.value
+        #expect(model.installedAgents == [.codex], "the older look's answer replaced the newer one's")
+        // On its own, a look publishes as before.
+        await model.publishInstalledAgents { [.claude] }
+        #expect(model.installedAgents == [.claude])
     }
 
     @Test func theFooterRedrawsOnTheMinute() async throws {

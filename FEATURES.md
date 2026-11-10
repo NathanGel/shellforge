@@ -40,6 +40,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 - **New windows** open the way the last toggle left them.
 - **Width.** Drag the sidebar's right edge, marked by a thin line, to resize it.
   - The default width is 464 pt, the minimum 404 and the maximum 720. Both include the 44 pt activity bar, so the panel beside it opens at 420 pt and narrows to 360.
+  - A width you dragged before the activity bar came grows by its 44 pt once (up to 720 pt), so the panel keeps the width you gave it.
   - Each window keeps its own width. The last width you dragged is the starting width for new windows.
 - **Text size.** Click anywhere in the sidebar, then use ⌘+ / ⌘− to make its text bigger or smaller, and ⌘0 for normal size.
   - There are three sizes: normal (13 pt), large (15 pt) and extra large (17 pt).
@@ -57,7 +58,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
   - "+", with Add Project… and Add Divider…;
   - Hide Sidebar, at the far right.
 - **Empty state.** With no projects, the sidebar shows "Add a git repository to start." and an Add Project… button.
-- **Banners** above the list show:
+- **Banners** at the top of the sidebar, above whichever panel shows, show:
   - a fallback PATH;
   - problems with the helper;
   - the last error, until you click its × or a later action succeeds;
@@ -69,6 +70,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
   - Sessions (the stack of cards): projects, tasks, terminals and tabs, as the sidebar has always shown them;
   - Metrics (the gauge): see [Metrics](#metrics).
 - **Switching.** Click an icon. The selected one has an accent edge. Each window shows its own panel; Sessions keeps its scroll position and selection while another panel shows, and the Tasks menu's commands work whatever the panel.
+- **From the keyboard.** View › Show Sessions (⌃⌘E) and Show Metrics (⌃⌘M) show that panel in the key window's sidebar, opening the sidebar if it is hidden. Back on Sessions, the keyboard returns to its list if it was there.
 - **Panel order.** Drag an icon up or down the bar to reorder the panels. Every window's bar follows the same order, and it is kept after a restart.
 - **Settings** is the gear at the bottom of the bar.
 - **Rearrange mode** keeps its Done / Cancel bar at the top whichever panel shows.
@@ -249,9 +251,9 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
 - **The Metrics panel** shows everything in full, scrolling when the window is short:
   - **System**: the selected task's or tab's agent, with its context ring and percent and its token counts, such as `in 936k · out 5.6k`, with exact figures in the tooltip;
   - **Mac**: `cpu` and `ram`, plus `bat` on battery, sampled every 5 s. A reading turns amber only when macOS warns. Click it for Backpack Mode, or right-click for Mac Settings…. While Backpack Mode is on or switching, a line below says so;
-  - **Usage**: one row per vendor (Claude, Codex) with the weekly (`wk`) and 5-hour (`5h`) windows and their reset times.
+  - **Usage**: one row per vendor (Claude, Codex) with the weekly (`wk`) and 5-hour (`5h`) windows and their reset times. With no vendor to show, the group is left out.
 - **Rings** turn amber at 80%.
-- **Vendors you don't use are hidden.** A vendor with no usage data whose CLI isn't installed gets no row and no gauge. Once installed, it reads "No usage data yet" until its first report.
+- **Vendors you don't use are hidden.** A vendor with no usage data whose CLI isn't installed gets no row and no gauge. Once installed, it reads "No usage data yet" until its first report. Claude Code counts as installed when it is on your PATH or `~/.claude` exists.
 - Claude reads "Usage disconnected" (amber) until its status-line shim is installed (Agent hooks).
 
 ## Dock badge
@@ -348,6 +350,7 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
 | ⌃⌘⌫ | Remove Task |
 | ⌃⌘A / ⌃⌘L | Focus View / List View |
 | ⌃⌘S | Hide / Show Sidebar |
+| ⌃⌘E / ⌃⌘M | Show Sessions / Show Metrics |
 | ⌘B | Backpack Mode |
 | ⌘+ / ⌘− / ⌘0 | Sidebar text bigger / smaller / normal, after a click in the sidebar |
 

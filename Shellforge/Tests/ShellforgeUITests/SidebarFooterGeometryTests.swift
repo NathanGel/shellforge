@@ -270,11 +270,11 @@ extension SidebarFooterGeometryTests {
     }
 
     /// In the backpack, and while it switches, the mode's line adds one row under the readings.
+    /// With no vendor rows there is no USAGE group, nor its rule: SYSTEM is the whole footer.
     @Test(arguments: [MacMode.turningOn, .on, .needsYou(.lostHotspot), .turningOff])
     func theBackpackLineAddsOneRow(mode: MacMode) {
-        let usage = Space.tight + Size.menuRow + Space.base
         let system = Space.tight + Size.menuRow * 3 + Space.base
-        #expect(abs(host([], mode: mode).fittingSize.height - (system + 1 + usage)) < 0.5)
+        #expect(abs(host([], mode: mode).fittingSize.height - system) < 0.5)
     }
 
     /// The readings row at its widest — three readings, each at 100 % — paints inside the sidebar's

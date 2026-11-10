@@ -44,8 +44,9 @@ public final class ActivityModel: ObservableObject {
         }
     }
 
-    /// A window of its own over the order saved in `defaults`.
-    public convenience init(defaults: UserDefaults) {
+    /// A window of its own over the order saved in `defaults`: for tests only. The app's windows
+    /// share one `ActivityOrderSource`, so a drag in one moves every bar.
+    convenience init(defaults: UserDefaults) {
         self.init(source: ActivityOrderSource(defaults: defaults))
     }
 

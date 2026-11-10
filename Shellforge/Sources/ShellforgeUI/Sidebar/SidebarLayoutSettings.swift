@@ -7,9 +7,26 @@ public struct SidebarLayoutSettings {
     private static let widthKey = "ShellforgeSidebarWidth"
     private static let hiddenKey = "ShellforgeSidebarHidden"
     private static let scaleKey = "ShellforgeSidebarScale"
+    /// Set once a saved width has been widened by the activity bar (`migrateForActivityBar`): this
+    /// Mac's bookkeeping, not a setting, so it never syncs.
+    static let activityBarMigrationKey = "NoSyncShellforgeSidebarWidthIncludesActivityBar"
     private let defaults: UserDefaults
 
-    public init(defaults: UserDefaults) { self.defaults = defaults }
+    public init(defaults: UserDefaults) {
+        self.defaults = defaults
+        Self.migrateForActivityBar(defaults)
+    }
+
+    /// Before the activity bar, a saved width was the Sessions list's alone; now it includes the bar.
+    /// Once per Mac, a saved width grows by the bar (within `maxWidth`), so the list beside it keeps
+    /// the width it was dragged to. Nothing saved, nothing to widen: only the marker is set.
+    static func migrateForActivityBar(_ defaults: UserDefaults) {
+        guard !defaults.bool(forKey: activityBarMigrationKey) else { return }
+        defaults.set(true, forKey: activityBarMigrationKey)
+        let saved = defaults.double(forKey: widthKey)
+        guard saved > 0 else { return }
+        defaults.set(Double(min(saved + Size.activityBar, maxWidth)), forKey: widthKey)
+    }
 
     // The sidebar's own geometry, not a design token: `Metrics.swift` stays AiTerm's (TokenParityTests).
     /// The widest it can be dragged: past it a row's branch has all the room it can use, and the

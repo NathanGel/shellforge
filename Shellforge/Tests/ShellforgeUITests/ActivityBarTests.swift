@@ -170,10 +170,11 @@ import Testing
 
     /// Behind Metrics the Sessions list is out of the keyboard's reach too: it cannot take the
     /// keyboard, so Tab, the arrows, Return and type-select never land on a list nobody sees.
-    @Test func theHiddenSessionsListCannotTakeTheKeyboard() throws {
+    @Test(arguments: [nil, SidebarWindowControls(buttonsMaxX: 70, buttonsMidY: 20)])
+    func theHiddenSessionsListCannotTakeTheKeyboard(controls: SidebarWindowControls?) throws {
         let (sidebar, _) = try sidebarModel()
         let activity = ActivityModel(source: ActivityOrderSource(defaults: nil))
-        let (host, window) = hosted(sidebar, activity: activity, controls: nil)
+        let (host, window) = hosted(sidebar, activity: activity, controls: controls)
         defer { window.close() }
         let list = try sessionsTable(in: host)
         _ = window.makeFirstResponder(list)
@@ -205,6 +206,79 @@ import Testing
         sidebar.beginRearrange()
         _ = window.firstResponder?.tryToPerform(#selector(NSResponder.cancelOperation(_:)), with: nil)
         #expect(!sidebar.isRearranging, "Esc in the sidebar cancels")
+    }
+
+    /// Back on Sessions, the keyboard the host took for the switch goes back to the list it came from.
+    @Test func theKeyboardReturnsToTheListWithSessions() throws {
+        let (sidebar, _) = try sidebarModel()
+        let (view, window, activity) = try made(sidebar)
+        defer { window.close() }
+        let list = try sessionsTable(in: view)
+        _ = window.makeFirstResponder(list)
+        activity.select(.metrics)
+        view.layoutSubtreeIfNeeded()
+        #expect(window.firstResponder === view)
+        activity.select(.sessions)
+        view.layoutSubtreeIfNeeded()
+        #expect(window.firstResponder === list, "the keyboard stayed on \(String(describing: window.firstResponder))")
+    }
+
+    /// The keyboard left the sidebar while Metrics showed: coming back to Sessions does not take it back.
+    @Test func theKeyboardIsNotTakenBackFromElsewhere() throws {
+        let (sidebar, _) = try sidebarModel()
+        let (view, window, activity) = try made(sidebar)
+        defer { window.close() }
+        let list = try sessionsTable(in: view)
+        _ = window.makeFirstResponder(list)
+        activity.select(.metrics)
+        view.layoutSubtreeIfNeeded()
+        _ = window.makeFirstResponder(nil)
+        activity.select(.sessions)
+        view.layoutSubtreeIfNeeded()
+        #expect(window.firstResponder !== list)
+    }
+
+    /// View › Show Sessions and Show Metrics: each item names its panel, its key is a free ⌃⌘ one,
+    /// and showing it on a sidebar selects that panel.
+    @Test func theViewMenusPanelCommandsSelectThePanel() throws {
+        let (sidebar, _) = try sidebarModel()
+        let (view, window, activity) = try made(sidebar)
+        defer { window.close() }
+        let items = SidebarCommandMenu.panels
+        #expect(items.map(\.panel) == ActivityPanel.allCases)
+        #expect(items.map(\.title) == ["Show Sessions", "Show Metrics"])
+        for item in items.reversed() {
+            ShellforgeSidebar.show(item.panel, on: view)
+            #expect(activity.layout.selected == item.panel)
+            #expect(ShellforgeSidebar.shownPanel(of: view) == item.panel)
+        }
+        let taken = (SidebarCommandMenu.items.filter { $0.command != nil } + [SidebarCommandMenu.toggleSidebar]).map(\.key)
+        let keys = items.map(\.key)
+        #expect(Set(keys).count == keys.count && Set(keys).isDisjoint(with: taken), "a key used twice")
+        #expect(Set(keys).isDisjoint(with: SidebarCommandMenu.systemReserved.union(["f"])), "macOS’s or iTerm2’s")
+        #expect(items.allSatisfy { $0.modifiers == [.control, .command] })
+    }
+
+    /// An error raised while Metrics shows — a ⌃⌘ command that failed, say — is seen there: the
+    /// banners are pinned above every panel, not inside Sessions.
+    @Test(arguments: [nil, SidebarWindowControls(buttonsMaxX: 70, buttonsMidY: 20)])
+    func bannersShowWhateverPanelIsSelected(controls: SidebarWindowControls?) throws {
+        let (sidebar, _) = try sidebarModel()
+        let activity = ActivityModel(source: ActivityOrderSource(defaults: nil))
+        let (host, window) = hosted(sidebar, activity: activity, controls: controls)
+        defer { window.close() }
+        activity.select(.metrics)
+        #expect(shown(SidebarBanner.markName, in: host).isEmpty)
+        sidebar.lastError = "The worktree for demo couldn’t be created."
+        #expect(shown(SidebarBanner.markName, in: host).count == 1, "the error is out of sight on Metrics")
+        activity.select(.sessions)
+        #expect(shown(SidebarBanner.markName, in: host).count == 1, "the error is out of sight on Sessions")
+    }
+
+    /// The marks named `name` that are drawn.
+    private func shown(_ name: String, in host: NSView) -> [NSView] {
+        host.layoutSubtreeIfNeeded()
+        return descendants(of: host).filter { $0.identifier?.rawValue == name && isShown($0, in: host) }
     }
 
     /// The Tasks menu's commands go through the model, so they work while Metrics shows.

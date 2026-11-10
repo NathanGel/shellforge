@@ -88,6 +88,17 @@ import Testing
         }
     }
 
+    /// With no vendor in use the Metrics panel leaves out USAGE, heading and rule; one vendor brings it back.
+    @Test func theUsageGroupIsLeftOutWithoutVendors() {
+        for (rows, expected) in [([UsageVendorRow](), 0), ([vendor(.claude)], 1)] {
+            let footer = NSHostingView(rootView: AnyView(SidebarFooter(task: nil, rows: rows, machine: cpu)
+                .interfaceScale(.standard).frame(width: Size.sidebarWidth)))
+            footer.frame = NSRect(x: 0, y: 0, width: Size.sidebarWidth, height: 300)
+            footer.layoutSubtreeIfNeeded()
+            #expect(shown(SidebarFooter.usageMarkName, in: footer).count == expected, "\(rows.count) vendor rows")
+        }
+    }
+
     /// One strip under whichever panel shows, at the panel's foot; the full footer only on Metrics.
     @Test(arguments: [nil, SidebarWindowControls(buttonsMaxX: 70, buttonsMidY: 20)])
     func theStripIsPinnedUnderEveryPanel(controls: SidebarWindowControls?) throws {

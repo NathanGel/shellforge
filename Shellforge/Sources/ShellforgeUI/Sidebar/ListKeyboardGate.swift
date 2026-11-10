@@ -18,9 +18,17 @@ struct ListKeyboardGate: NSViewRepresentable {
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
         func apply() {
-            guard let table = found ?? list() else { return }
+            // A table found in another window — the view moved — is not this window's list.
+            let cached = found.flatMap { $0.window != nil && $0.window === window ? $0 : nil }
+            guard let table = cached ?? list() else { return }
             found = table
-            if table.isEnabled != enabled { table.isEnabled = enabled }
+            guard table.isEnabled != enabled else { return }
+            table.isEnabled = enabled
+            // Back in sight: the sidebar's host may give the list the keyboard it took away.
+            guard enabled else { return }
+            var ancestor = superview
+            while let view = ancestor, !(view is ListKeyboardHome) { ancestor = view.superview }
+            (ancestor as? ListKeyboardHome)?.listTakesKeyboardAgain()
         }
 
         /// The table under the sidebar's host whose scroll view lies where this view does.
@@ -50,4 +58,10 @@ struct ListKeyboardGate: NSViewRepresentable {
     }
 
     func updateNSView(_ gate: Gate, context: Context) { gate.enabled = enabled }
+}
+
+/// The view holding the keyboard while the list is out of sight: told when the list can take it again.
+@MainActor
+protocol ListKeyboardHome: AnyObject {
+    func listTakesKeyboardAgain()
 }

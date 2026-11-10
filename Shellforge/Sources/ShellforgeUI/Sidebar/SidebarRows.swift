@@ -390,6 +390,9 @@ struct SidebarBanners: View {
 struct SidebarBanner: View {
     enum Tone { case error, warning, info }
 
+    /// A banner's `ViewMark`.
+    static let markName = "SidebarBanner"
+
     let text: String
     let tone: Tone
     var trailing: CGFloat = Space.base
@@ -436,6 +439,7 @@ struct SidebarBanner: View {
         NoticeGround(tone: tone, trailing: trailing, vertical: vertical) {
             NoticeLine(text: text, tone: tone, dismiss: dismiss)
         }
+        .background(ViewMark(name: Self.markName))
     }
 }
 

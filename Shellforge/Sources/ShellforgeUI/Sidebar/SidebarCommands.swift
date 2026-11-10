@@ -169,6 +169,22 @@ public enum SidebarCommandMenu {
 
     /// View › Hide Sidebar (Show Sidebar while hidden), the key Finder and Mail use.
     public static let toggleSidebar = Item(title: "Hide Sidebar", key: "s", modifiers: keys, command: nil)
+
+    /// A View menu item that shows one of the activity bar's panels in the key window's sidebar.
+    public struct PanelItem: Sendable {
+        public let panel: ActivityPanel
+        public let key: String
+        public let modifiers: NSEventModifierFlagsValue
+        public var title: String { "Show \(panel.title)" }
+    }
+
+    /// View › Show Sessions (⌃⌘E) and Show Metrics (⌃⌘M): two more ⌃⌘ letters iTerm2 and macOS
+    /// leave free — M for Metrics, and E, the first letter of Sessions still free (S is Hide
+    /// Sidebar's). Keyed by panel, not by place in the bar, as the bar's order is the person's own.
+    public static let panels: [PanelItem] = [
+        PanelItem(panel: .sessions, key: "e", modifiers: keys),
+        PanelItem(panel: .metrics, key: "m", modifiers: keys),
+    ]
 }
 
 /// Each window's sidebar, so a menu command acts on the key window's and never another's.

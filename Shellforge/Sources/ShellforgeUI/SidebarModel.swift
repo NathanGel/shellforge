@@ -156,6 +156,14 @@ public final class SidebarModel: ObservableObject {
     /// The agents whose CLIs were found on `PATH` at the last look (`refreshInstalledAgents`): the
     /// footer leaves out a vendor you don’t use. Empty until the first look.
     @Published public internal(set) var installedAgents: Set<SessionAgent> = []
+    /// Counts the looks `refreshInstalledAgents` starts: only the latest one's answer is published,
+    /// so an older look that finishes last never undoes a newer one (as `CommandLauncher.reload`).
+    var installedAgentsGeneration = 0
+    /// The home folder whose `~/.claude` says Claude Code is in use even when it is not on `PATH`.
+    let home: URL
+    /// The last `environmentChanged` read, with its look for the installed agents: a test waits for
+    /// it so that look cannot land in the middle of its own.
+    private(set) var environmentRead: Task<Void, Never>?
     /// The ids of the ready-made agents among them: shipped whether or not their CLIs are installed,
     /// so New Task doesn't name each one that isn't.
     public private(set) var readyMadeAgents: Set<String>
@@ -203,8 +211,9 @@ public final class SidebarModel: ObservableObject {
                 gitHubSettings: @escaping @Sendable () -> GitHubConfig? = { GitHubSettings.load() },
                 modelDefaults: (@Sendable () -> [String: ModelPreference])? = nil,
                 sshConfig: SSHConfigSource = .none, readyMade: Set<String> = [], secrets: any SecretStore & Sendable = MemorySecretStore(),
-                tools: AgentTools = .none) {
+                tools: AgentTools = .none, home: URL = FileManager.default.homeDirectoryForCurrentUser) {
         self.host = host
+        self.home = home
         self.sshConfig = sshConfig
         self.jiraSettings = jiraSettings
         self.gitLabSettings = gitLabSettings
@@ -311,7 +320,7 @@ public final class SidebarModel: ObservableObject {
     public func environmentChanged() {
         let launcher = self.launcher
         // Weak: a window closed before the login shell answers is not kept alive (nor its rearrange lock).
-        Task { [weak self] in
+        environmentRead = Task { [weak self] in
             let source = await BackgroundWork.run { launcher.environment.source }
             self?.environmentWarning = Self.warning(source)
             await self?.refreshInstalledAgents()

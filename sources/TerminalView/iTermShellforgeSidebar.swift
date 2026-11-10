@@ -689,6 +689,55 @@ extension iTermShellforgeSidebar {
     static var keySidebar: SidebarModel? {
         windows.model(for: keyWindowTerminal)
     }
+
+    private static let panelsController = PanelMenuController()
+
+    /// View › Show Sessions and Show Metrics, for the key window's sidebar.
+    @objc static func panelMenuItems() -> [NSMenuItem] { panelsController.items }
+
+    /// The key window's sidebar view, as `makeView` made it.
+    static var keySidebarView: NSView? { keySidebar.flatMap { sidebarViews.object(forKey: $0) } }
+
+    /// Shows `panel` in the key window's sidebar, revealing the sidebar first if it is hidden.
+    static func show(_ panel: ActivityPanel) {
+        guard let view = keySidebarView else { return }
+        if let root = keyWindowTerminal?.contentView as? iTermRootTerminalView, root.shellforgeSidebarHidden {
+            root.toggleShellforgeSidebar()
+        }
+        ShellforgeSidebar.show(panel, on: view)
+    }
+}
+
+/// View › Show Sessions and Show Metrics: each item's tag is its panel's place in `ActivityPanel.allCases`.
+@MainActor
+private final class PanelMenuController: NSObject, NSMenuItemValidation {
+    private(set) var items: [NSMenuItem] = []
+
+    override init() {
+        super.init()
+        items = SidebarCommandMenu.panels.map { item in
+            let menuItem = NSMenuItem(title: item.title, action: #selector(showPanel(_:)), keyEquivalent: item.key)
+            menuItem.keyEquivalentModifierMask = NSEvent.ModifierFlags(rawValue: item.modifiers.rawValue)
+            menuItem.target = self
+            menuItem.tag = ActivityPanel.allCases.firstIndex(of: item.panel) ?? 0
+            return menuItem
+        }
+    }
+
+    private static func panel(of item: NSMenuItem) -> ActivityPanel? {
+        ActivityPanel.allCases.indices.contains(item.tag) ? ActivityPanel.allCases[item.tag] : nil
+    }
+
+    @objc func showPanel(_ sender: NSMenuItem) {
+        guard let panel = Self.panel(of: sender) else { return }
+        iTermShellforgeSidebar.show(panel)
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        guard let panel = Self.panel(of: menuItem), let view = iTermShellforgeSidebar.keySidebarView else { return false }
+        menuItem.state = ShellforgeSidebar.shownPanel(of: view) == panel ? .on : .off
+        return true
+    }
 }
 
 @MainActor

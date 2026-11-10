@@ -53,13 +53,13 @@ final class ShellforgeHostTest: XCTestCase {
         XCTAssertEqual(commandB.map(\.title), ["Backpack Mode"])
     }
 
-    /// Each of Shellforge's ⌃⌘ keys (the Tasks menu and Hide Sidebar) is in the main menu once:
+    /// Each of Shellforge's ⌃⌘ keys (the Tasks menu, Hide Sidebar and the panels) is in the main menu once:
     /// none shadows an iTerm2 shortcut, and none is shadowed.
     func testShellforgesControlCommandKeysAreTheirsAlone() {
         guard let main = NSApp.mainMenu else { return XCTFail("no main menu") }
         func items(_ menu: NSMenu) -> [NSMenuItem] { menu.items.flatMap { [$0] + ($0.submenu.map(items) ?? []) } }
         let all = items(main)
-        for key in ["n", "r", "t", "p", "g", "]", "[", "\u{8}", "a", "l", "s"] {
+        for key in ["n", "r", "t", "p", "g", "]", "[", "\u{8}", "a", "l", "s", "e", "m"] {
             let users = all.filter {
                 $0.keyEquivalent == key && $0.keyEquivalentModifierMask.intersection(.deviceIndependentFlagsMask) == [.control, .command]
             }

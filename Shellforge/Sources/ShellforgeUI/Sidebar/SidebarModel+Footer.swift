@@ -26,12 +26,27 @@ extension SidebarModel {
     }
 
     /// Finds which agents' CLIs are on the login shell's `PATH`, off the main actor (the first read of
-    /// the environment runs a login shell), and publishes them as `installedAgents`.
+    /// the environment runs a login shell), and publishes them as `installedAgents`. Claude Code also
+    /// counts as in use when `~/.claude` exists: installed outside `PATH` (its own local install, say),
+    /// its broken status line must still say “Usage disconnected”.
     public func refreshInstalledAgents() async {
-        let (launcher, agents) = (self.launcher, self.agents)
-        let found = await BackgroundWork.run {
-            Set(agents.filter { launcher.locate($0.command) != nil }.map { SessionAgent(agentId: $0.id) })
+        let (launcher, agents, home) = (self.launcher, self.agents, self.home)
+        await publishInstalledAgents {
+            await BackgroundWork.run {
+                var found = Set(agents.filter { launcher.locate($0.command) != nil }.map { SessionAgent(agentId: $0.id) })
+                if FileManager.default.fileExists(atPath: home.appendingPathComponent(".claude").path) { found.insert(.claude) }
+                return found
+            }
         }
+    }
+
+    /// Publishes what `find` answers, unless a later look started meanwhile: overlapping refreshes
+    /// (a reload of the agents and of the environment at once) publish the newest answer only.
+    func publishInstalledAgents(_ find: () async -> Set<SessionAgent>) async {
+        installedAgentsGeneration += 1
+        let generation = installedAgentsGeneration
+        let found = await find()
+        guard generation == installedAgentsGeneration else { return }
         if found != installedAgents { installedAgents = found }
     }
 

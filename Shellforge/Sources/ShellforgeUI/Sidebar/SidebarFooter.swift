@@ -45,6 +45,8 @@ struct SidebarFooter: View {
     /// The first group's heading. It holds more than the context, so the context row names its
     /// gauge with `ctx`.
     static let systemHeading = "System"
+    /// The USAGE group's `ViewMark`.
+    static let usageMarkName = "SidebarFooter.Usage"
     /// The Mac's mark on its readings row, as the Mac card draws it.
     static let macSymbol = "macbook"
 
@@ -70,18 +72,23 @@ struct SidebarFooter: View {
                 macReadings
                 backpackLine
             }
-            // Inside the footer's edges, not past them.
-            Hairline().padding(.horizontal, edge)
-            group("Usage") {
-                ForEach(rows, id: \.vendor) { row in
-                    telemetryRow(mark: vendorMark(row.vendor)) {
-                        if let note = row.note {
-                            Text(note).foregroundStyle(Self.noteInk(row))
-                        } else {
-                            usageWindows(row.lines)
+            // No vendor to show — none in use — and USAGE is left out, its rule with it: an empty
+            // heading would only promise rows that are not coming.
+            if !rows.isEmpty {
+                // Inside the footer's edges, not past them.
+                Hairline().padding(.horizontal, edge)
+                group("Usage") {
+                    ForEach(rows, id: \.vendor) { row in
+                        telemetryRow(mark: vendorMark(row.vendor)) {
+                            if let note = row.note {
+                                Text(note).foregroundStyle(Self.noteInk(row))
+                            } else {
+                                usageWindows(row.lines)
+                            }
                         }
                     }
                 }
+                .background(ViewMark(name: Self.usageMarkName))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
