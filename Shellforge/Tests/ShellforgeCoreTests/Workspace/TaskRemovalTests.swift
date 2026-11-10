@@ -150,6 +150,73 @@ import Testing
         #expect(try String(contentsOfFile: file, encoding: .utf8) == "work in progress")
     }
 
+    /// The error log's lines, each one.
+    private func logLines(_ log: ErrorLog) -> [String] {
+        ((try? String(contentsOf: log.fileURL, encoding: .utf8)) ?? "").split(separator: "\n").map(String.init)
+    }
+
+    private func scratchLog(_ name: String) -> ErrorLog {
+        ErrorLog(folder: TestScratch.root.appendingPathComponent("\(name)-\(UUID().uuidString)"), version: "1")
+    }
+
+    /// A branch kept because it isn’t merged is one line in the error log — the kept one — not git’s
+    /// own refusal as well.
+    @Test func anUnmergedBranchKeptIsOneLineInTheErrorLog() throws {
+        let repo = try GitRepoFixture()
+        let task = try task(repo)
+        try repo.git(["commit", "-q", "--allow-empty", "-m", "work"], in: task.worktreePath)
+        let log = scratchLog("kept-log")
+        let result = try ErrorLogging.$testLog.withValue(log) {
+            try TaskRemoval.remove(task: task, project: repo.project, deleteBranch: true, force: true, sharedWithAnotherTask: false, launcher: repo.launcher)
+        }
+        #expect(result.branchRefusal == .notMerged(base: "main"))
+        let lines = logLines(log)
+        #expect(lines.count == 1, "\(lines)")
+        #expect(lines.first?.hasSuffix(" · removal · Branch \(task.branch) kept: not merged into main") == true, "\(lines)")
+    }
+
+    /// The routine git calls whose failures removal ignores — unlocking, locking again, pruning —
+    /// write nothing to the error log when they fail.
+    @Test func routineGitCallsThatFailWriteNothingToTheErrorLog() throws {
+        let repo = try GitRepoFixture()
+        let bin = TestScratch.root.appendingPathComponent("routine-git-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: bin, withIntermediateDirectories: true)
+        let script = """
+        #!/bin/sh
+        case "$*" in *"worktree prune"*|*"worktree unlock"*|*"worktree lock"*)
+          echo "fatal: refused for the test" >&2; exit 128;;
+        esac
+        exec /usr/bin/git "$@"
+        """
+        try script.write(toFile: bin + "/git", atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin + "/git")
+        var variables = repo.launcher.reload().variables
+        variables["PATH"] = bin + ":" + (variables["PATH"] ?? "/usr/bin:/bin")
+        let env = variables
+        let refusing = CommandLauncher { ResolvedEnvironment(variables: env, source: .loginShell("/bin/sh")) }
+
+        // A removal that works: its prune afterwards fails, and is no problem.
+        let merged = try task(repo, "Merged work")
+        let log = scratchLog("routine-log")
+        try ErrorLogging.$testLog.withValue(log) {
+            _ = try TaskRemoval.remove(task: merged, project: repo.project, deleteBranch: true, force: true, sharedWithAnotherTask: false, launcher: refusing)
+        }
+        #expect(!FileManager.default.fileExists(atPath: merged.worktreePath))
+        #expect(logLines(log).isEmpty, "\(logLines(log))")
+
+        // A locked one git refuses: the refusal is written; the failed unlock and lock again are not.
+        let locked = try task(repo, "Locked work")
+        try repo.git("worktree", "lock", "--reason", "mine", locked.worktreePath)
+        ErrorLogging.$testLog.withValue(log) {
+            #expect(throws: (any Error).self) {
+                _ = try TaskRemoval.remove(task: locked, project: repo.project, deleteBranch: false, force: false, sharedWithAnotherTask: false, launcher: refusing)
+            }
+        }
+        let lines = logLines(log)
+        #expect(lines.contains { $0.contains("git worktree remove") }, "\(lines)")
+        #expect(!lines.contains { $0.contains("worktree unlock") || $0.contains("worktree lock") || $0.contains("worktree prune") }, "\(lines)")
+    }
+
     /// A git whose `worktree remove` fails as it does while a dev server writes into the folder,
     /// deleting nothing; every other command is the real git.
     private func busyGit(_ repo: GitRepoFixture) throws -> CommandLauncher {

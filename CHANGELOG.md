@@ -25,12 +25,16 @@ it and refuses to release a version that has none.
   shows, failed removals and kept branches, a lost helper, failed updates, workspace and Project
   folder problems, and Backpack Mode failures. Help › Show Error Log shows it in Finder. It never
   holds terminal contents, commands, prompts, tokens, passwords or environment values, writes your
-  home folder as `~`, and stays on your Mac. The bug form mentions it.
+  home folder as `~`, and stays on your Mac. The same problem again within five minutes, such as a
+  helper retried every few seconds or one event seen by every open window, is written once. The
+  bug form mentions it.
 - **Branch names from the ticket key.** A project’s right-click menu has a Branch Names choice.
   Type and Name is as before (`feat/jvs-5819-jarvis-alarms-and-relay`); Ticket Key Only names a
   task’s branch after its Jira ticket alone (`JVS-5819`), for a repository whose agents expect
-  that. A task with no ticket keeps the type and name, a branch you type still wins, and the
-  worktree folder keeps its readable name. Nothing changes until you pick it.
+  that. A task with no ticket keeps the type and name, and the worktree folder keeps its readable
+  name. A branch you type still wins: in a Ticket Key Only project, one typed without a type, such
+  as `JVS-5819-v2`, is the whole branch as typed, while one starting `fix/` picks that type. Nothing
+  changes until you pick it.
 - **A branch for Project folder tasks.** New Task’s Project folder option now has a Branch field. It
   starts as the branch checked out; type another and the folder switches to it before the agent
   starts. When git can’t simply switch, Shellforge asks: stash clashing changes, create a branch

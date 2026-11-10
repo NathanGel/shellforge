@@ -36,6 +36,26 @@ import Testing
     @Test func theMenuOffersBothFormatsAndMarksTheCurrent() {
         #expect(BranchFormat.allCases.map(\.menuTitle) == ["Type and Name", "Ticket Key Only"])
         #expect(ProjectHeaderRow.menuTitles(provider: .git, sshHost: nil, canOpenSSHHost: false, pullTitle: nil).contains("Branch Names"))
-        #expect(ProjectHeaderRow.voiceOverBranchActions == ["Branch Names: Type and Name", "Branch Names: Ticket Key Only"])
+    }
+
+    /// Branch Names comes after the SSH host’s own items, which stay together, and before Pull.
+    @Test func branchNamesFollowsTheSSHHostItemsAndPrecedesPull() {
+        let titles = ProjectHeaderRow.menuTitles(provider: .gitlab, sshHost: "dev", canOpenSSHHost: true, pullTitle: "Pull main")
+        let ssh = SidebarModel.sshHostMenuTitle("dev"), open = SidebarModel.openSSHHostTitle("dev")
+        let i = { (title: String) in titles.firstIndex(of: title) ?? -1 }
+        #expect(i(open) == i(ssh) + 1, "got \(titles)")
+        #expect(i("Branch Names") == i(open) + 1, "got \(titles)")
+        #expect(i("Pull main") == i("Branch Names") + 1, "got \(titles)")
+        // Without an SSH host to open, it follows SSH Host… itself.
+        let plain = ProjectHeaderRow.menuTitles(provider: .git, sshHost: nil, canOpenSSHHost: false, pullTitle: nil)
+        #expect(plain.firstIndex(of: "Branch Names") == plain.firstIndex(of: SidebarModel.sshHostMenuTitle(nil)).map { $0 + 1 })
+    }
+
+    /// VoiceOver says which format is in use, as the menu’s checkmark does.
+    @Test func voiceOverSaysWhichFormatIsCurrent() {
+        #expect(BranchFormat.allCases.map { ProjectHeaderRow.voiceOverBranchAction($0, current: .typeAndName) }
+                    == ["Branch Names: Type and Name (current)", "Branch Names: Ticket Key Only"])
+        #expect(BranchFormat.allCases.map { ProjectHeaderRow.voiceOverBranchAction($0, current: .ticketKey) }
+                    == ["Branch Names: Type and Name", "Branch Names: Ticket Key Only (current)"])
     }
 }

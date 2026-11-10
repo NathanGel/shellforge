@@ -110,14 +110,15 @@ public enum TaskRemoval {
         }
         do {
             // Already-deleted branches are a successful retry.
-            let refs = try git(["for-each-ref", "--format=%(refname)", "refs/heads/" + task.branch], in: project.path, launcher)
+            // Not recorded by `git`: the catches below write the one line, the kept branch's.
+            let refs = try git(["for-each-ref", "--format=%(refname)", "refs/heads/" + task.branch], in: project.path, launcher, record: false)
             if refs.split(separator: "\n").contains(Substring("refs/heads/" + task.branch)) {
                 // `git branch -d` asks about HEAD and the branch's upstream, and the project's checkout
                 // is usually on some other branch; that refused branches already merged into their
                 // base. Ask about the base ourselves: `-D` is then no less safe than `-d`, the commits
                 // demonstrably living on in the base. Not merged there, git has the last word.
                 let merged = isMerged(task.branch, into: task.baseBranch, in: project.path, launcher: launcher)
-                try git(["branch", merged ? "-D" : "-d", task.branch], in: project.path, launcher)
+                try git(["branch", merged ? "-D" : "-d", task.branch], in: project.path, launcher, record: false)
             }
             return Removed(branchRefusal: nil, switchedBranch: switchedBranch)
         } catch let failure as GitFailure where failure.message.contains("not fully merged") {
@@ -174,7 +175,7 @@ public enum TaskRemoval {
             try deleteLeftover(worktreePath, in: projectPath, launcher: launcher, deleteFolder: deleteFolder)
         }
         // The checkout is gone either way.
-        _ = try? git(["worktree", "prune"], in: projectPath, launcher)
+        _ = try? git(["worktree", "prune"], in: projectPath, launcher, record: false)
         return switchedBranch
     }
 
@@ -182,7 +183,7 @@ public enum TaskRemoval {
     /// there. A worktree that was not locked is left unlocked.
     private static func removeRegistered(_ worktreePath: String, lockedWith lockReason: String?, in projectPath: String,
                                          force: Bool, launcher: CommandLauncher, deleteFolder: FolderDeletion) throws {
-        if lockReason != nil { _ = try? git(["worktree", "unlock", worktreePath], in: projectPath, launcher) }
+        if lockReason != nil { _ = try? git(["worktree", "unlock", worktreePath], in: projectPath, launcher, record: false) }
         do {
             try git(["worktree", "remove"] + (force ? ["--force"] : []) + [worktreePath], in: projectPath, launcher)
         } catch {
@@ -194,7 +195,7 @@ public enum TaskRemoval {
             }
             if let lockReason {
                 _ = try? git(["worktree", "lock", worktreePath] + (lockReason.isEmpty ? [] : ["--reason", lockReason]),
-                             in: projectPath, launcher)
+                             in: projectPath, launcher, record: false)
             }
             throw stillInUse(worktreePath, after: error, launcher: launcher) ?? error
         }
@@ -277,13 +278,15 @@ public enum TaskRemoval {
 
     // -- git -------------------------------------------------------------------------------
 
+    /// `record: false` for a call whose failure is routine and ignored, or one its caller records
+    /// in its own words: the error log gets one line per problem, not git's stderr as well.
     @discardableResult
-    private static func git(_ args: [String], in directory: String, _ launcher: CommandLauncher) throws -> String {
+    private static func git(_ args: [String], in directory: String, _ launcher: CommandLauncher, record: Bool = true) throws -> String {
         let out = try launcher.run("git", ["-C", directory] + args)
         guard out.status == 0 else {
             let command = "git " + args.joined(separator: " ")
             removalLog.notice("\(command, privacy: .public) in \(directory, privacy: .public) failed, status \(out.status, privacy: .public): \(out.stderr, privacy: .public)")
-            ErrorLogging.record("removal", "\(command) in \(directory) failed, status \(out.status): \(out.stderr)")
+            if record { ErrorLogging.record("removal", "\(command) in \(directory) failed, status \(out.status): \(out.stderr)") }
             throw GitFailure(command: command, message: out.stderr)
         }
         return out.stdout.trimmingCharacters(in: .whitespacesAndNewlines)

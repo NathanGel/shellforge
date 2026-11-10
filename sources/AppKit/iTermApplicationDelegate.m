@@ -387,6 +387,11 @@ static NSModalResponse iTermCompareRenderingRunModal(id self, SEL _cmd) {
 - (void)awakeFromNib {
     [ArchivesMenuBuilder setShared:[[ArchivesMenuBuilder alloc] initWithMenuItem:_archivesMenuItem]];
 
+    // Shellforge: the error log records from here on. This must stay first among the Shellforge
+    // setup: the Tasks and Tunnels menus below reach iTermShellforgeSidebar.document, which loads
+    // the workspace, and a problem loading it would otherwise go unrecorded.
+    [iTermShellforgeErrorLog configure];
+
     // Shellforge: Sparkle asks this delegate before every check, and is always refused. Shellforge
     // updates from its own GitHub releases; iTerm2's builds are never offered.
     suUpdater.delegate = self;
@@ -418,9 +423,6 @@ static NSModalResponse iTermCompareRenderingRunModal(id self, SEL _cmd) {
     NSMenuItem *tunnelsItem = [[[NSMenuItem alloc] initWithTitle:@"Tunnels" action:nil keyEquivalent:@""] autorelease];
     tunnelsItem.submenu = [iTermShellforgeSidebar tunnelsMenu];
     [viewMenu addItem:tunnelsItem];
-
-    // Shellforge: the error log records from here on, before any window loads the workspace.
-    [iTermShellforgeErrorLog configure];
 
     // Shellforge: Help › Send Feedback…, which works whether or not the sidebar's reminder is on.
     // The nib doesn't name its Help menu to AppKit, so find it by its iTerm2 Help item and say so.

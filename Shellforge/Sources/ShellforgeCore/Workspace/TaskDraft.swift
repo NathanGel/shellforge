@@ -28,6 +28,9 @@ public struct TaskDraft: Equatable, Sendable {
     /// The branch a Project folder task switches the folder to first; nil keeps the one checked out.
     public var folderBranch: String?
     private var titleEdited = false, branchEdited = false, typeEdited = false
+    /// The branch was typed whole, with no type, where the field held the whole branch: a Ticket Key
+    /// Only project's `JVS-5819-v2`.
+    private var typedWhole = false
 
     /// How the project names its branches, set when the sheet opens for it.
     public var branchFormat = BranchFormat.typeAndName
@@ -36,7 +39,14 @@ public struct TaskDraft: Equatable, Sendable {
     /// the branch was not typed by hand.
     public var usesTicketKey: Bool { branchFormat == .ticketKey && ticket != nil && !branchEdited }
 
-    public var branch: String { usesTicketKey ? ticket?.key ?? "" : typeAndNameBranch }
+    /// Whether the branch field holds the whole branch, with no type to choose beside it: the
+    /// ticket's key, or a branch typed in its place.
+    public var namesWholeBranch: Bool { usesTicketKey || typedWhole }
+
+    public var branch: String {
+        if usesTicketKey { return ticket?.key ?? "" }
+        return typedWhole ? branchName : typeAndNameBranch
+    }
 
     /// What the branch field shows: the key while the branch is that, else the name half.
     public var branchFieldText: String { usesTicketKey ? ticket?.key ?? "" : branchName }
@@ -73,13 +83,16 @@ public struct TaskDraft: Equatable, Sendable {
     }
 
     /// The branch field's text: a name, or a whole branch whose known type prefix moves into the
-    /// select — typing `fix/` is picking the type.
+    /// select — typing `fix/` is picking the type. Where the field holds the whole branch (a Ticket
+    /// Key Only project's key), a branch with no known type prefix is the whole branch as typed.
     public mutating func setBranch(_ b: String) {
         if usesTicketKey && b == ticket?.key { return }
         let split = BranchType.split(b)
         if let split { branchType = split.type; typeEdited = true }
-        guard (split?.name ?? b) != branchName else { return }
-        branchName = split?.name ?? b; branchEdited = true
+        let whole = split == nil && namesWholeBranch
+        let name = split?.name ?? b
+        guard name != branchName || whole != typedWhole else { return }
+        branchName = name; branchEdited = true; typedWhole = whole
     }
 
     /// The worktree to continue in: the task takes its branch's name, unless one was typed.

@@ -52,6 +52,10 @@ final class DaemonConnection {
         // connection the same way, moments after its snapshot said "Connected", so what that one
         // says waits until it has held.
         var mismatched = false
+        // Whether the next failure to connect goes in the error log: the first ever, and the first
+        // after a connection that held. The retries after it, every few seconds while the helper
+        // is down, would write thousands of lines a day about one problem.
+        var recordsConnectFailure = true
         while !Task.isCancelled {
             let connection = DaemonClient(socketPath: socketPath)
             client = connection
@@ -93,6 +97,11 @@ final class DaemonConnection {
                 // one this app cannot speak to, as with a snapshot it cannot read, not one gone away.
                 if !Task.isCancelled { ended(connection.ending == .unreadable ? .helperMismatch : .helperUnreachable) }
             } catch {
+                if !Task.isCancelled, recordsConnectFailure, let error = error as? DaemonError,
+                   error.code == .connect || error.code == .socket {
+                    recordsConnectFailure = false
+                    ErrorLogging.record("daemon", "Connecting to the helper failed: \(error.message)")
+                }
                 if !Task.isCancelled {
                     // A helper we cannot fully understand — a stale protocol version, or a snapshot
                     // with a shape this app's `Decodable`s reject — is not the same as one that is
@@ -110,7 +119,10 @@ final class DaemonConnection {
             // A connection that held is a helper that works, and its end starts the backoff over.
             // One that ended moments after its snapshot will end so again: each retry waits longer,
             // rather than reconnecting to it once a second.
-            if let attached, ContinuousClock.now - attached >= steadyAfter { attempt = 0 }
+            if let attached, ContinuousClock.now - attached >= steadyAfter {
+                attempt = 0
+                recordsConnectFailure = true
+            }
             do { try await Task.sleep(for: .seconds(backoff(attempt))) }
             catch { break }
             attempt += 1

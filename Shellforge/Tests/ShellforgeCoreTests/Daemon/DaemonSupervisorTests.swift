@@ -211,6 +211,26 @@ private let neverAbandoned: TimeInterval = 3600
         #expect(box.states.count == countAfterStop, "no further state changes should arrive after stop()")
     }
 
+    /// The error log hears of a helper that fails from the second attempt on, in words that stay
+    /// the same from one attempt to the next, so the log writes a helper that stays down once
+    /// rather than once every few seconds. A first failure a restart mends is no problem.
+    @Test func theErrorLogHearsOfAFailureFromTheSecondAttemptOn() async {
+        let box = StateBox()
+        let recorded = Locked<[String]>([])
+        let sup = DaemonSupervisor(python: URL(fileURLWithPath: "/nonexistent/python3"), daemonDir: URL(fileURLWithPath: "/tmp"), socketPath: "/tmp/y.sock", logURL: logURL,
+                                   backoff: { _ in 0.01 }, recordError: { message in recorded.withLock { $0.append(message) } }) { state in
+            box.append(state)
+        }
+        sup.start()
+        func failures() -> Int { box.states.count { if case .failed = $0 { return true } else { return false } } }
+        await eventually { failures() >= 3 }
+        sup.stop()
+        let messages = recorded.withLock { $0 }
+        #expect(messages.count == failures() - 1, "one per failure after the first, got \(messages) for \(box.states)")
+        #expect(Set(messages).count == 1, "the same words each time, got \(messages)")
+        #expect(messages.first?.hasPrefix("The helper stopped or didn’t start, again: ") == true)
+    }
+
     // The bug this fixes: an app that died without a graceful quit leaves a healthy daemon
     // holding the socket. The next launch's daemon refuses to start (exit
     // `alreadyRunningExitStatus`), and treating that as a crash restart-looped forever behind a

@@ -42,7 +42,35 @@ import Testing
         var d = draft(.ticketKey)
         d.apply(ticket: ticket)
         d.setBranch("fix/my-own")
-        #expect(d.branch == "fix/my-own" && !d.usesTicketKey)
+        #expect(d.branch == "fix/my-own" && !d.usesTicketKey && !d.namesWholeBranch)
+    }
+
+    /// In a Ticket Key Only project the field holds the whole branch: one typed there with no known
+    /// type prefix is the branch exactly as typed, and the Type select stays hidden.
+    @Test func underTicketKeyOnlyABranchTypedWithoutATypeIsTheWholeBranch() {
+        var d = draft(.ticketKey)
+        d.apply(ticket: ticket)
+        d.setBranch("JVS-5819-v2")
+        #expect(d.branch == "JVS-5819-v2")
+        #expect(d.branchFieldText == "JVS-5819-v2")
+        #expect(d.namesWholeBranch && !d.usesTicketKey)
+        #expect(d.worktreeSlug == "jvs-5819-v2")
+        // SwiftUI writing the same text back changes nothing.
+        d.setBranch(d.branchFieldText)
+        #expect(d.branch == "JVS-5819-v2" && d.namesWholeBranch)
+        // Typing a known type prefix after all picks the type, and the select is back.
+        d.setBranch("fix/alarms")
+        #expect(d.branch == "fix/alarms" && d.branchType == .fix && !d.namesWholeBranch)
+    }
+
+    /// A project using Type and Name is as it was: a branch typed without a type is the name half.
+    @Test func underTypeAndNameABranchTypedWithoutATypeIsStillTheName() {
+        var d = draft()
+        d.apply(ticket: ticket)
+        #expect(!d.namesWholeBranch)
+        d.setBranch("JVS-5819-v2")
+        #expect(d.branch == "fix/JVS-5819-v2")
+        #expect(!d.namesWholeBranch)
     }
 
     @Test func aWriteOfTheShownKeyIsNotAnEdit() {
@@ -59,6 +87,16 @@ import Testing
         #expect(project.branchFormat == .typeAndName)
         let out = String(decoding: try JSONEncoder().encode(project), as: UTF8.self)
         #expect(!out.contains("branchFormat"))
+    }
+
+    /// A format only a newer build knows reads as the default, rather than setting the whole
+    /// workspace aside.
+    @Test func anUnknownFormatReadsAsTheDefault() throws {
+        let id = UUID()
+        let json = #"{"id":"\#(id.uuidString)","name":"api","path":"/api","addedAt":0,"branchFormat":"ticketKeyAndName"}"#
+        let project = try JSONDecoder().decode(Project.self, from: Data(json.utf8))
+        #expect(project.branchFormat == .typeAndName)
+        #expect(project.id == id && project.name == "api")
     }
 
     @Test func aChosenFormatRoundTrips() throws {

@@ -13,15 +13,38 @@ private let errorLogLog = Logger(subsystem: "io.github.nathangel.shellforge", ca
 /// When a line would take the file past `maxBytes`, the file becomes `errors.1.log`, replacing an
 /// older one, and a new file starts. Writing never throws: a log that can't be written must not
 /// cost the work that failed a second failure.
+///
+/// One problem is one line: a category and message already written within `repeatWindow` (five
+/// minutes) are not written again — a helper that stays down, retried every few seconds, or the
+/// same event reaching every open window's sidebar, writes once. A message is at most
+/// `maxMessageLength` characters.
 public final class ErrorLog: Sendable {
+    /// How long the same category and message stay written once.
+    public static let repeatWindow: TimeInterval = 5 * 60
+    /// The most recent lines remembered for `repeatWindow`; past it the oldest is forgotten.
+    static let rememberedLines = 64
+    /// The longest message written, in characters, the cut marked with “…”.
+    static let maxMessageLength = 4096
+
     public let fileURL: URL
     private let olderURL: URL
     private let folder: URL
     private let version: String
     private let now: @Sendable () -> Date
     private let maxBytes: Int
-    /// The formatter, behind the lock that also orders the writes.
-    private let state: Locked<DateFormatter>
+    /// The formatter and the lines written lately, behind the lock that also orders the writes.
+    private let state: Locked<State>
+
+    private struct State {
+        let formatter: DateFormatter
+        /// Each recently written category and message, with when it was written.
+        var recent: [Key: Date] = [:]
+    }
+
+    private struct Key: Hashable {
+        let category: String
+        let message: String
+    }
 
     public init(folder: URL, version: String, now: @escaping @Sendable () -> Date = Date.init, maxBytes: Int = 1_000_000) {
         self.folder = folder
@@ -36,15 +59,32 @@ public final class ErrorLog: Sendable {
         formatter.timeZone = .current
         // `xxxxx`: always `+hh:mm`, `+00:00` too, where `XXXXX` would write `Z`.
         formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ssxxxxx"
-        self.state = Locked(formatter)
+        self.state = Locked(State(formatter: formatter))
     }
 
     public func record(_ category: String, _ message: String) {
         let text = Self.cleaned(message)
-        state.withLock { formatter in
-            let line = "\(formatter.string(from: now())) · \(version) · \(category) · \(text)\n"
+        state.withLock { state in
+            let moment = now()
+            guard Self.isNew(Key(category: category, message: text), at: moment, in: &state.recent) else { return }
+            let line = "\(state.formatter.string(from: moment)) · \(version) · \(category) · \(text)\n"
             append(Data(line.utf8))
         }
+    }
+
+    /// Whether `key` was not written within `repeatWindow` before `moment`; if so it is remembered
+    /// as written now. Lines older than the window are forgotten, and past `rememberedLines` the
+    /// oldest too, so the memory stays small.
+    private static func isNew(_ key: Key, at moment: Date, in recent: inout [Key: Date]) -> Bool {
+        if let written = recent[key], moment.timeIntervalSince(written) < repeatWindow, moment >= written {
+            return false
+        }
+        recent = recent.filter { moment.timeIntervalSince($0.value) < repeatWindow }
+        while recent.count >= rememberedLines, let oldest = recent.min(by: { $0.value < $1.value }) {
+            recent[oldest.key] = nil
+        }
+        recent[key] = moment
+        return true
     }
 
     /// An empty log, for Help › Show Error Log to show before anything has gone wrong; one that
@@ -93,6 +133,7 @@ public final class ErrorLog: Sendable {
     /// The message on one line, the home folder as `~`, a URL's `user:password@` left out, and a
     /// token blanked: a `token=`, `access_token=` or `private_token=` value, or a bare GitHub
     /// (`ghp_`, `gho_`, `ghs_`, `ghu_`, `ghr_`, `github_pat_`) or GitLab (`glpat-`) one — git's stderr can echo one.
+    /// At most `maxMessageLength` characters, the last of them “…” when it was cut.
     static func cleaned(_ message: String, home: String = NSHomeDirectory()) -> String {
         var text = message.trimmingCharacters(in: .whitespacesAndNewlines)
         text = text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
@@ -106,6 +147,9 @@ public final class ErrorLog: Sendable {
             // The home folder itself, not a longer name that only starts like it.
             let pattern = NSRegularExpression.escapedPattern(for: home) + #"(?![^/\s'"`)\],;:])"#
             text = text.replacingOccurrences(of: pattern, with: "~", options: .regularExpression)
+        }
+        if text.count > maxMessageLength {
+            text = String(text.prefix(maxMessageLength - 1)) + "…"
         }
         return text
     }

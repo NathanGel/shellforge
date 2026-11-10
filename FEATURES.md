@@ -74,8 +74,8 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 - **The project's "+" and right-click menu:**
   - New Task…, New Review… and New Terminal…;
   - Open in Finder and Open in VS Code (when VS Code is installed);
-  - Jira Projects…, Tunnels… and SSH Host…;
-  - Branch Names, a submenu: Type and Name or Ticket Key Only (see Worktree and branch);
+  - Jira Projects…, Tunnels… and SSH Host…, then Open ssh <host> when the host is in `~/.ssh/config`;
+  - Branch Names, a submenu: Type and Name or Ticket Key Only (see Worktree and branch). VoiceOver offers each as an action, the one in use marked “(current)”;
   - Pull <default branch>, for a GitLab or GitHub project;
   - Rearrange (see [Rearranging the sidebar](#rearranging-the-sidebar));
   - Remove Project….
@@ -137,7 +137,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
   - Shellforge remembers the last agent per project and the last model per agent.
 - **Worktree and branch.** (A project-folder task has neither: it uses the project’s own folder and its checked-out branch.)
   - A task works in `<project>/.worktrees/<slug>`, with `.worktrees/` excluded from git.
-  - Its branch is `<type>/<key>-<slug>`. A project set to Branch Names › Ticket Key Only names it after the picked ticket alone instead (`JVS-5819`); with no ticket it is `<type>/<slug>` as usual, the Type select is hidden while the key is the branch, and a branch you type still wins. The worktree folder stays `<key>-<slug>`.
+  - Its branch is `<type>/<key>-<slug>`. A project set to Branch Names › Ticket Key Only names it after the picked ticket alone instead (`JVS-5819`); with no ticket it is `<type>/<slug>` as usual, and the Type select is hidden while the key is the branch. A branch you type still wins: typed in place of the key without a type, such as `JVS-5819-v2`, it is the whole branch exactly as typed and the Type select stays hidden; typed with a type, such as `fix/alarms`, it picks that type. A project using Type and Name works as before. The worktree folder stays `<key>-<slug>`.
   - A long first prompt goes to `.shellforge/first-prompt.md` in the worktree.
   - If creating the worktree fails, nothing is saved and the sheet keeps what you typed.
   - While it creates, the sheet is locked and says what it is doing — fetching the base, making the worktree, or running the repository's own checkout hook (a pre-commit `uv sync` can take a while). Cancel, or ⎋, stops it: the command and everything it started end, the half-made worktree and branch are removed, and nothing is saved.
@@ -396,7 +396,8 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
 
 - **What it is.** A plain text file with one line for each real problem: an error the sidebar shows, a task or review whose removal failed or whose branch was kept and why, the helper not starting or its connection lost, an update that didn't check, download, verify or install, the workspace file that couldn't be read or saved, a Project folder that couldn't switch branch, and Backpack Mode steps that failed.
 - **Where it lives.** `logs/errors.log` in Shellforge's data folder, `~/Library/Application Support/Shellforge/logs/` for the installed app; a dev build keeps its own. Past about 1 MB it becomes `errors.1.log`, replacing the older one, and a new file starts.
-- **Each line** is the time with its offset, the version, the part of Shellforge, and what happened: `2026-11-10T09:14:11+01:00 · 0.9.1 · removal · Branch fix/login kept: not merged into main`. A message of several lines becomes one, with ⏎ where each break was.
+- **Each line** is the time with its offset, the version, the part of Shellforge, and what happened: `2026-11-10T09:14:11+01:00 · 0.9.1 · removal · Branch fix/login kept: not merged into main`. A message of several lines becomes one, with ⏎ where each break was, and one longer than 4,096 characters is cut, ending in “…”.
+- **One problem, one line.** The same part and message again within five minutes is not written again: a helper that stays down, retried every few seconds, or one event that every open window's sidebar sees. The helper not starting is written from its second try on, and a failed connection to it once until a connection holds again.
 - **What it never holds:** terminal contents, typed commands, prompts, tokens, passwords or environment values. Paths in your home folder are written with `~`, and a URL's user and password are left out. It stays on your Mac and is never sent anywhere.
 - **Help › Show Error Log** shows the file in Finder, an empty one if nothing has gone wrong yet.
 

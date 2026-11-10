@@ -33,6 +33,8 @@ public final class DaemonSupervisor: Sendable {
     private let adoptedProbeInterval: TimeInterval
     private let bindDeadline: TimeInterval
     private let backoff: @Sendable (_ attempt: Int) -> TimeInterval
+    /// Where a failure goes in the error log: `ErrorLogging`, or a test's own list.
+    private let recordError: @Sendable (_ message: String) -> Void
     private let onStateChange: @Sendable (State) -> Void
     private struct Supervision {
         var process: RunningChild?
@@ -49,8 +51,8 @@ public final class DaemonSupervisor: Sendable {
     private let state = Locked(Supervision())
     private let queue = DispatchQueue(label: "shellforge.supervisor")
 
-    public init(python: URL, daemonDir: URL, socketPath: String = ShellforgePaths.socketPath, hookPort: Int = ShellforgePaths.hookPort, arguments: [String]? = nil, logURL: URL = ShellforgePaths.daemonLogURL, adoptedProbeInterval: TimeInterval = 5, bindDeadline: TimeInterval = DaemonSupervisor.bindDeadline, backoff: @escaping @Sendable (_ attempt: Int) -> TimeInterval = { Backoff.delay(attempt: $0) }, onStateChange: @escaping @Sendable (State) -> Void) {
-        self.python = python; self.daemonDir = daemonDir; self.socketPath = socketPath; self.hookPort = hookPort; self.arguments = arguments; self.logURL = logURL; self.adoptedProbeInterval = adoptedProbeInterval; self.bindDeadline = bindDeadline; self.backoff = backoff; self.onStateChange = onStateChange
+    public init(python: URL, daemonDir: URL, socketPath: String = ShellforgePaths.socketPath, hookPort: Int = ShellforgePaths.hookPort, arguments: [String]? = nil, logURL: URL = ShellforgePaths.daemonLogURL, adoptedProbeInterval: TimeInterval = 5, bindDeadline: TimeInterval = DaemonSupervisor.bindDeadline, backoff: @escaping @Sendable (_ attempt: Int) -> TimeInterval = { Backoff.delay(attempt: $0) }, recordError: @escaping @Sendable (_ message: String) -> Void = { ErrorLogging.record("daemon", $0) }, onStateChange: @escaping @Sendable (State) -> Void) {
+        self.python = python; self.daemonDir = daemonDir; self.socketPath = socketPath; self.hookPort = hookPort; self.arguments = arguments; self.logURL = logURL; self.adoptedProbeInterval = adoptedProbeInterval; self.bindDeadline = bindDeadline; self.backoff = backoff; self.recordError = recordError; self.onStateChange = onStateChange
     }
 
     public func start() {
@@ -241,7 +243,11 @@ public final class DaemonSupervisor: Sendable {
     /// retrying forever at `Backoff.delay(0)`.
     private func recordFailure(message: String) {
         let attempt = state.withLock { $0.attempt += 1; return $0.attempt }
-        ErrorLogging.record("daemon", "The helper stopped or didn’t start (attempt \(attempt)): \(message)")
+        // From the second attempt on: one failure that a restart mends is not a problem. Without
+        // the attempt number, so the error log writes a helper that keeps failing the same way once.
+        if attempt >= 2 {
+            recordError("The helper stopped or didn’t start, again: \(message)")
+        }
         onStateChange(.failed(attempt: attempt, message: message))
         schedule(after: backoff(attempt - 1)) { $0.launch() }
     }

@@ -142,6 +142,51 @@ while True:
         return (attempts.all, states)
     }
 
+    /// A helper that stays down is retried every few seconds; the error log hears of the first
+    /// failure to connect, not of each retry — and again of the first after a connection that held.
+    /// The log's clock moves ten minutes a line, so its own repeat rule plays no part here.
+    @Test func theErrorLogHearsOfTheFirstFailureToConnectAndTheFirstAfterAConnectionHeld() async throws {
+        let path = "/tmp/at-\(UUID().uuidString.prefix(8)).sock"
+        defer { unlink(path) }
+        let clock = Locked(Date(timeIntervalSince1970: 0))
+        let log = ErrorLog(folder: TestScratch.root.appendingPathComponent("connect-log-\(UUID().uuidString)"), version: "1",
+                           now: { clock.withLock { $0 += 600; return $0 } })
+        func connectFailures() -> [String] {
+            let text = (try? String(contentsOf: log.fileURL, encoding: .utf8)) ?? ""
+            return text.split(separator: "\n").map(String.init).filter { $0.contains(" · daemon · Connecting to the helper failed: ") }
+        }
+        let attempts = Attempts()
+        try await ErrorLogging.$testLog.withValue(log) {
+            let connection = DaemonConnection(socketPath: path, onClient: { _ in }, onStatus: { _ in }, onEvent: { _ in },
+                                              backoff: { attempts.record($0); return 0.01 }, steadyAfter: .zero)
+            connection.start()
+            defer { connection.stop() }
+            // Nothing listens yet: several failures, one line.
+            await eventually { attempts.all.count >= 3 }
+            #expect(connectFailures().count == 1, "got \(connectFailures())")
+
+            // A helper answers one connection, which holds, and then is gone.
+            let server = try await PythonSocketServer.start(script: """
+import json,socket,sys
+s=socket.socket(socket.AF_UNIX)
+s.bind(sys.argv[2]);s.listen()
+c,_=s.accept()
+with c:
+ f=c.makefile('rb')
+ line=f.readline()
+ m=json.loads(line)
+ result={'protocolVersion':2,'connected':True,'sessions':[],'usage':{'claude':None,'codex':None}}
+ c.sendall((json.dumps({'id':m['id'],'result':result})+'\\n').encode())
+""", arguments: [path])
+            defer { server.stop() }
+            // The held connection starts the backoff over; then several more failures.
+            await eventually { attempts.all.dropFirst(3).contains(0) }
+            let afterHeld = attempts.all.count
+            await eventually { attempts.all.count >= afterHeld + 3 }
+            #expect(connectFailures().count == 2, "got \(connectFailures())")
+        }
+    }
+
     /// The loop delivers nothing that came before its own snapshot: a daemon may broadcast between
     /// accepting the socket and answering, and those events are older than the snapshot. The fake
     /// writes its early event before the reply, so the order on the wire is fixed.

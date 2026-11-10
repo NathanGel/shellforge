@@ -46,7 +46,9 @@ public struct Project: Codable, Equatable, Sendable, Identifiable {
         tunnels = try c.decodeIfPresent([TunnelDefinition].self, forKey: .tunnels) ?? []
         sshHost = try c.decodeIfPresent(String.self, forKey: .sshHost)
         childOrder = try c.decodeIfPresent([UUID].self, forKey: .childOrder)
-        branchFormat = try c.decodeIfPresent(BranchFormat.self, forKey: .branchFormat) ?? .typeAndName
+        // A format a newer build knows reads as the default rather than setting the whole workspace
+        // aside.
+        branchFormat = (try? c.decodeIfPresent(BranchFormat.self, forKey: .branchFormat)) ?? .typeAndName
     }
 
     public func encode(to encoder: Encoder) throws {

@@ -174,7 +174,7 @@ struct ProjectHeaderRow: View {
         .frame(height: scale(Size.projectRow)).padding(.leading, scale(Space.base)).padding(.trailing, SidebarRowLayout.trailingInset(scale))
         .modifier(RowPill(selected: false))
         .modifier(RearrangeAccessibilityAction(canRearrange: canRearrange, action: rearrange))
-        .modifier(BranchFormatAccessibilityActions(enabled: !isRearranging, set: setBranchFormat))
+        .modifier(BranchFormatAccessibilityActions(current: branchFormat, enabled: !isRearranging, set: setBranchFormat))
         // AiTerm's order: what the "+" offers, Open in, what the project links to, Rearrange, then Remove.
         .rowContextMenu {
             newItems
@@ -184,12 +184,13 @@ struct ProjectHeaderRow: View {
             Button("Jira Projects…", action: editJiraProjects)
             Button("Tunnels…", action: editTunnels)
             Button(SidebarModel.sshHostMenuTitle(node.project.sshHost), action: editSSHHost)
+            // After the SSH host's own items, which stay together.
+            if let alias = node.project.sshHost, canOpenSSHHost { Button(SidebarModel.openSSHHostTitle(alias), action: openSSHHost) }
             Menu(Self.branchNamesTitle) {
                 ForEach(BranchFormat.allCases, id: \.self) { format in
                     Toggle(format.menuTitle, isOn: Binding(get: { branchFormat == format }, set: { _ in setBranchFormat(format) }))
                 }
             }
-            if let alias = node.project.sshHost, canOpenSSHHost { Button(SidebarModel.openSSHHostTitle(alias), action: openSSHHost) }
             if let pullTitle {
                 Divider()
                 Button(pullTitle, action: pull).disabled(pulling)
@@ -203,13 +204,17 @@ struct ProjectHeaderRow: View {
 
     static let branchNamesTitle = "Branch Names"
 
-    /// What VoiceOver offers for the same choice, as one action each.
-    static let voiceOverBranchActions = BranchFormat.allCases.map { "\(branchNamesTitle): \($0.menuTitle)" }
+    /// What VoiceOver offers for the same choice, as one action each, the one in use saying so as
+    /// the menu's checkmark does.
+    static func voiceOverBranchAction(_ format: BranchFormat, current: BranchFormat) -> String {
+        "\(branchNamesTitle): \(format.menuTitle)" + (format == current ? " (current)" : "")
+    }
 
     /// The context menu's items, in order, apart from Open in's.
     static func menuTitles(provider: Provider, sshHost: String?, canOpenSSHHost: Bool, pullTitle: String?) -> [String] {
-        var titles = ["New Task…", "New Review…", "New Terminal…", "Jira Projects…", "Tunnels…", SidebarModel.sshHostMenuTitle(sshHost), branchNamesTitle]
+        var titles = ["New Task…", "New Review…", "New Terminal…", "Jira Projects…", "Tunnels…", SidebarModel.sshHostMenuTitle(sshHost)]
         if let sshHost, canOpenSSHHost { titles.append(SidebarModel.openSSHHostTitle(sshHost)) }
+        titles.append(branchNamesTitle)
         if let pullTitle { titles.append(pullTitle) }
         return titles + [RearrangeMenuItem.title, "Remove Project…"]
     }
@@ -533,12 +538,17 @@ extension BranchFormat {
 
 /// The Branch Names choices as VoiceOver actions, left out in Rearrange mode like the menu.
 private struct BranchFormatAccessibilityActions: ViewModifier {
+    let current: BranchFormat
     let enabled: Bool
     let set: (BranchFormat) -> Void
 
     func body(content: Content) -> some View {
         content
-            .modifier(NamedAccessibilityAction(name: ProjectHeaderRow.voiceOverBranchActions[0], enabled: enabled, action: { set(.typeAndName) }))
-            .modifier(NamedAccessibilityAction(name: ProjectHeaderRow.voiceOverBranchActions[1], enabled: enabled, action: { set(.ticketKey) }))
+            .modifier(action(.typeAndName))
+            .modifier(action(.ticketKey))
+    }
+
+    private func action(_ format: BranchFormat) -> NamedAccessibilityAction {
+        NamedAccessibilityAction(name: ProjectHeaderRow.voiceOverBranchAction(format, current: current), enabled: enabled, action: { set(format) })
     }
 }

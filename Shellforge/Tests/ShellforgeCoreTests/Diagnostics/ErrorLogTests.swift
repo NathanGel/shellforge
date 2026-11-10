@@ -81,6 +81,70 @@ import Testing
         }
     }
 
+    /// The same problem again within five minutes — a helper retried every few seconds, or one
+    /// event reaching every window's sidebar — is one line; after five minutes it is written again,
+    /// and a different message, or the same one in another category, is written at once.
+    @Test func aRepeatWithinFiveMinutesIsOneLine() {
+        let start = moment
+        let clock = Locked(start)
+        let log = ErrorLog(folder: folder(), version: "1", now: { clock.withLock { $0 } })
+        log.record("daemon", "Connecting to the helper failed")
+        clock.withLock { $0 = start.addingTimeInterval(10) }
+        log.record("daemon", "Connecting to the helper failed")
+        clock.withLock { $0 = start.addingTimeInterval(ErrorLog.repeatWindow - 1) }
+        log.record("daemon", "Connecting to the helper failed")
+        #expect(lines(log.fileURL).count == 1)
+
+        log.record("daemon", "The helper stopped")
+        log.record("sidebar", "Connecting to the helper failed")
+        #expect(lines(log.fileURL).count == 3)
+
+        clock.withLock { $0 = start.addingTimeInterval(ErrorLog.repeatWindow) }
+        log.record("daemon", "Connecting to the helper failed")
+        let written = lines(log.fileURL)
+        #expect(written.count == 4)
+        #expect(written.last == "\(timestamp(start.addingTimeInterval(ErrorLog.repeatWindow))) · 1 · daemon · Connecting to the helper failed")
+    }
+
+    /// A message that differs only in what the log blanks — the home folder — is the same line.
+    @Test func aRepeatIsJudgedOnTheCleanedMessage() {
+        let moment = self.moment
+        let log = ErrorLog(folder: folder(), version: "1", now: { moment })
+        log.record("removal", "failed in \(NSHomeDirectory())/a\n")
+        log.record("removal", "failed in ~/a")
+        #expect(lines(log.fileURL).count == 1)
+    }
+
+    /// The memory of recent lines stays small: past its limit the oldest is forgotten, and may be
+    /// written again within the window.
+    @Test func theMemoryOfRecentLinesIsBounded() {
+        let start = moment
+        let clock = Locked(start)
+        let log = ErrorLog(folder: folder(), version: "1", now: { clock.withLock { $0 } })
+        log.record("c", "first")
+        clock.withLock { $0 = start.addingTimeInterval(1) }
+        for n in 1..<ErrorLog.rememberedLines { log.record("c", "m\(n)") }
+        // Still remembered: the memory is just full.
+        log.record("c", "first")
+        #expect(lines(log.fileURL).count == ErrorLog.rememberedLines)
+        // One more line, and the oldest, “first”, is forgotten.
+        log.record("c", "one more")
+        log.record("c", "first")
+        #expect(lines(log.fileURL).count == ErrorLog.rememberedLines + 2)
+    }
+
+    /// A very long message is cut at 4096 characters, the last of them “…”.
+    @Test func aLongMessageIsCut() throws {
+        let log = ErrorLog(folder: folder(), version: "1", now: { Date(timeIntervalSince1970: 0) })
+        log.record("removal", String(repeating: "x", count: 10_000))
+        let line = try #require(lines(log.fileURL).first)
+        let message = try #require(line.components(separatedBy: " · removal · ").last)
+        #expect(message.count == ErrorLog.maxMessageLength)
+        #expect(message == String(repeating: "x", count: ErrorLog.maxMessageLength - 1) + "…")
+        #expect(ErrorLog.cleaned(String(repeating: "y", count: ErrorLog.maxMessageLength), home: "")
+                    == String(repeating: "y", count: ErrorLog.maxMessageLength))
+    }
+
     /// A message of several lines stays one line in the log, with ⏎ where each break was.
     @Test func newlinesBecomeOneLine() {
         let log = ErrorLog(folder: folder(), version: "1", now: { Date(timeIntervalSince1970: 0) })

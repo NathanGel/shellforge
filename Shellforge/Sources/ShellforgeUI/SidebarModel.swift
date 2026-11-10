@@ -680,7 +680,6 @@ public final class SidebarModel: ObservableObject {
         return rows
     }
 
-    /// Folds or unfolds a project, as AiTerm's chevron does; kept with the workspace.
     /// Branch Names: how New Task names this project’s branches from now on.
     public func setBranchFormat(_ format: BranchFormat, of project: UUID) {
         attempt {
@@ -690,6 +689,7 @@ public final class SidebarModel: ObservableObject {
         }
     }
 
+    /// Folds or unfolds a project, as AiTerm's chevron does; kept with the workspace.
     public func toggleCollapsed(_ project: UUID) {
         attempt {
             try document.update { workspace in

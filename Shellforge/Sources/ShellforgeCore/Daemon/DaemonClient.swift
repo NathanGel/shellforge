@@ -128,7 +128,8 @@ public final class DaemonClient: Sendable {
         guard rc == 0 else {
             let e = errno; Darwin.close(s)
             let reason = String(cString: strerror(e))
-            ErrorLogging.record("daemon", "Connecting to the helper failed: \(reason)")
+            // Not recorded here: `DaemonConnection` retries every few seconds while the helper is
+            // down, and records only the first failure of each run of them.
             throw DaemonError(code: .connect, message: reason)
         }
         _ = fcntl(s, F_SETFL, flags)
