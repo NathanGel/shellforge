@@ -5,7 +5,7 @@
 # The work is run_agent.py, under the helper's own Python (named in helper-python), isolated (-I).
 # Without that Python it prints the one failure line and exits 1: the agent never starts without its settings.
 set -u
-SUPPORT="$HOME/Library/Application Support/Shellforge"
+SUPPORT="${SHELLFORGE_SUPPORT:-$HOME/Library/Application Support/Shellforge}"
 PY=""
 [[ -f "$SUPPORT/helper-python" ]] && { PY="$(<"$SUPPORT/helper-python")" 2>/dev/null; }
 if [[ $PY != /* || ! -x $PY ]]; then

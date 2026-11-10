@@ -47,6 +47,17 @@ def test_sends_the_agent_from_the_environment(home, daemon):
     assert wait_for(daemon)[0][2] == {"state": "working", "agent": "my-agent_1"}
 
 
+def test_posts_to_the_port_in_the_folder_the_app_set(home, daemon, tmp_path):
+    """In a dev build's terminal SHELLFORGE_SUPPORT names its folder, whose port is its helper's."""
+    (home / "Library" / "Application Support" / "Shellforge" / "hook-port").unlink()
+    dev = tmp_path / "example-dev"
+    dev.mkdir()
+    (dev / "hook-port").write_text(f"{daemon.server_port}\n")
+    result = run_status(home, "done", extra_env={"SHELLFORGE_SUPPORT": str(dev)})
+    assert result.returncode == 0
+    assert wait_for(daemon)[0][2] == {"state": "done"}
+
+
 @pytest.mark.parametrize("agent", ['a"b', "a b", "a" * 65, "a\\b", "x$(id)"])
 def test_hostile_agent_id_is_left_out(home, daemon, agent):
     result = run_status(home, "done", extra_env={"SHELLFORGE_AGENT_ID": agent})

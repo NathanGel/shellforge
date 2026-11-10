@@ -29,9 +29,10 @@ def home(tmp_path, daemon):
     return tmp_path
 
 
-def run_shim(home, payload=PAYLOAD):
+def run_shim(home, payload=PAYLOAD, extra_env=None):
     return subprocess.run([str(SHIM)], input=json.dumps(payload), capture_output=True,
-                          text=True, env={"HOME": str(home), "PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin"})
+                          text=True, env={"HOME": str(home), "PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin",
+                                          **(extra_env or {})})
 
 
 def forwarded(daemon, timeout=3.0):
@@ -162,3 +163,18 @@ def run_bounded(home, seconds=5):
         os.killpg(process.pid, signal.SIGKILL)
         process.communicate()
         pytest.fail("the chain did not end")
+
+
+def test_reads_the_folder_the_app_that_started_the_terminal_set(home, daemon, tmp_path):
+    """A dev build's terminal has SHELLFORGE_SUPPORT: the shim posts to the port and runs the original
+    recorded there, not the installed app's under HOME."""
+    (support_of(home) / "hook-port").unlink()
+    (support_of(home) / "statusline-original.cmd").write_text("cat >/dev/null; printf 'installed'")
+    dev = tmp_path / "Library" / "Application Support" / "example-dev"
+    dev.mkdir(parents=True)
+    (dev / "hook-port").write_text(f"{daemon.server_port}\n")
+    (dev / "statusline-original.cmd").write_text("cat >/dev/null; printf 'dev'")
+    result = run_shim(home, extra_env={"SHELLFORGE_SUPPORT": str(dev)})
+    assert (result.returncode, result.stdout, result.stderr) == (0, "dev", "")
+    assert forwarded(daemon)[0][0] == "/statusline"
+    assert run_shim(home, extra_env={"SHELLFORGE_SUPPORT": ""}).stdout == "installed"

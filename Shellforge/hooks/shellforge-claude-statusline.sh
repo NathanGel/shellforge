@@ -21,7 +21,9 @@ set -u
 [ -n "${SHELLFORGE_STATUSLINE_ACTIVE-}" ] && exit 0
 export SHELLFORGE_STATUSLINE_ACTIVE=1
 IFS= read -r -d '' INPUT || true
-SUPPORT="$HOME/Library/Application Support/Shellforge"
+# The app that started this terminal sets SHELLFORGE_SUPPORT to its own folder (a dev build's is not
+# the installed app's); unset, it is the installed app's.
+SUPPORT="${SHELLFORGE_SUPPORT:-$HOME/Library/Application Support/Shellforge}"
 PORT=""
 [ -f "$SUPPORT/hook-port" ] && { PORT="$(<"$SUPPORT/hook-port")" 2>/dev/null; }
 # Only a port, 1-65535 in digits, goes into the URL: a zsh pattern, so the check forks nothing.

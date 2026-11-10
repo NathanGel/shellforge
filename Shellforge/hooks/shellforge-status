@@ -10,7 +10,7 @@ STATE="${1-}"
 case $STATE in working|needs-input|done) ;; *) exit 0 ;; esac
 [[ $# -le 1 ]] || exit 0
 PORT=""
-SUPPORT="$HOME/Library/Application Support/Shellforge"
+SUPPORT="${SHELLFORGE_SUPPORT:-$HOME/Library/Application Support/Shellforge}"
 [ -f "$SUPPORT/hook-port" ] && { PORT="$(<"$SUPPORT/hook-port")" 2>/dev/null; }
 # Only a port, 1-65535 in digits, goes into the URL: a zsh pattern, so the check forks nothing.
 [[ $PORT == <1-65535> ]] || exit 0

@@ -21,11 +21,11 @@ def home(tmp_path, daemon):
     return tmp_path
 
 
-def run_shim(home, payload=PAYLOAD):
+def run_shim(home, payload=PAYLOAD, extra_env=None):
     """Runs the shim the way Grok does: in a process group of its own, which is killed the moment
     the script exits (25-status-line.md, "Background work does not survive")."""
     env = {"HOME": str(home), "PATH": "/usr/bin:/bin",
-           "ITERM_SESSION_ID": "w0t0p0:tab-1"}
+           "ITERM_SESSION_ID": "w0t0p0:tab-1", **(extra_env or {})}
     shim = subprocess.Popen([str(SHIM)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True, env=env, start_new_session=True)
     stdout, stderr = shim.communicate(json.dumps(payload), timeout=5)
@@ -112,3 +112,17 @@ def run_bounded(home, seconds=5):
         os.killpg(process.pid, signal.SIGKILL)
         process.communicate()
         pytest.fail("the chain did not end")
+
+
+def test_shim_reads_the_folder_the_app_that_started_the_terminal_set(home, daemon, tmp_path):
+    """With SHELLFORGE_SUPPORT, a dev build's folder: its port and its original, not HOME's."""
+    installed = home / "Library" / "Application Support" / "Shellforge"
+    (installed / "hook-port").unlink()
+    (installed / "grok-statusline-original.cmd").write_text("cat >/dev/null; printf 'installed'")
+    dev = tmp_path / "example-dev"
+    dev.mkdir()
+    (dev / "hook-port").write_text(f"{daemon.server_port}\n")
+    (dev / "grok-statusline-original.cmd").write_text("cat >/dev/null; printf 'dev'")
+    result = run_shim(home, extra_env={"SHELLFORGE_SUPPORT": str(dev)})
+    assert (result.returncode, result.stdout) == (0, "dev")
+    assert wait_for(daemon)[0][0] == "/statusline/grok"
