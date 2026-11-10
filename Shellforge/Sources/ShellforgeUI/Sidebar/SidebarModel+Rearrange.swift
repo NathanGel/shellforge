@@ -78,7 +78,9 @@ extension SidebarModel {
             if dropTarget != nil { dropTarget = nil }
             return false
         }
-        let target = RearrangeDropTarget(item: item, lowerHalf: lowerHalf)
+        // Drawn where the drop lands: an unfolded project takes its lower half as before itself.
+        let landsBefore = RearrangeDrop.target(for: item, lowerHalf: lowerHalf, in: rows) == item
+        let target = RearrangeDropTarget(item: item, lowerHalf: lowerHalf && !landsBefore)
         if dropTarget != target { dropTarget = target }
         return true
     }

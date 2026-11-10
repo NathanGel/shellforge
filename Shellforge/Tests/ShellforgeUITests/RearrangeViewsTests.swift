@@ -111,6 +111,15 @@ import UniformTypeIdentifiers
         #expect(!s.model.hover(over: x, lowerHalf: false) && s.model.dropTarget == nil)
     }
 
+    /// The lower half of an unfolded project lands before it, so the line is drawn above its header.
+    @Test func theLineOnAnUnfoldedProjectIsDrawnWhereItLands() throws {
+        let s = try setup()
+        s.model.beginRearrange()
+        s.model.startDragging(.entry(.project(s.b.id)))
+        #expect(s.model.hover(over: .entry(.project(s.a.id)), lowerHalf: true))
+        #expect(s.model.dropTarget == RearrangeDropTarget(item: .entry(.project(s.a.id)), lowerHalf: false))
+    }
+
     @Test func leavingTheModeClearsTheDropTarget() throws {
         let s = try setup()
         s.model.beginRearrange()

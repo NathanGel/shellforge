@@ -405,5 +405,18 @@
         <string>$(SHELLFORGE_DEV_BUILD)</string>
         <key>SUPublicEDKey</key>
         <string>xdqAa0KXBPhMbUrutVTe87i6U7yWf7WKaCeRG7AAZ0w=</string>
+        <key>UTExportedTypeDeclarations</key>
+        <array>
+                <dict>
+                        <key>UTTypeIdentifier</key>
+                        <string>io.github.nathangel.shellforge.sidebar-row</string>
+                        <key>UTTypeDescription</key>
+                        <string>Shellforge sidebar row</string>
+                        <key>UTTypeConformsTo</key>
+                        <array>
+                                <string>public.data</string>
+                        </array>
+                </dict>
+        </array>
 </dict>
 </plist>
