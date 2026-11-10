@@ -6,7 +6,7 @@ import SwiftUI
 /// each centred in a square cell, the selected one in the primary ink with an accent stripe flush
 /// against the bar's left edge, and Settings fixed at the bottom. A click selects; a press dragged
 /// past `liftDistance` lifts the icon, which follows the pointer up or down the bar, and the release
-/// drops it where it is (`dropOffset`). A drag gesture of the bar's own rather than a `List`'s move,
+/// drops it where it is (`release`). VoiceOver reorders with Move Up and Move Down instead. A drag gesture of the bar's own rather than a `List`'s move,
 /// whose table added margins of its own, or per-icon `onDrag`/`onDrop`, which proved unreliable in
 /// this sidebar.
 struct ActivityBar: View {
@@ -14,8 +14,9 @@ struct ActivityBar: View {
     let openSettings: () -> Void
     @Environment(\.interfaceScale) private var scale
     @Environment(\.surface) private var surface
-    /// The icon being dragged and how far, while one is lifted.
-    @State private var drag: Drag?
+    /// The icon being dragged and how far, while one is lifted. Gesture state, so a drag the system
+    /// cancels never leaves an icon lifted.
+    @GestureState private var drag: Drag?
     @State private var hovered: ActivityPanel?
 
     private struct Drag: Equatable {
@@ -52,6 +53,36 @@ struct ActivityBar: View {
         let landing = target(from: index, translation: translation, cell: cell, count: count)
         guard landing != index else { return nil }
         return landing > index ? landing + 1 : landing
+    }
+
+    /// What a release does: a press that never lifted is a click.
+    enum Release: Equatable {
+        case select
+        case move(toOffset: Int)
+        /// Lifted, and dropped where it was.
+        case stay
+    }
+
+    /// The release of a press on the icon at `index`, `translation` points from where it began.
+    static func release(from index: Int, translation: CGFloat, cell: CGFloat, count: Int) -> Release {
+        guard lifts(translation) else { return .select }
+        return dropOffset(from: index, translation: translation, cell: cell, count: count).map { .move(toOffset: $0) } ?? .stay
+    }
+
+    /// VoiceOver's way to reorder, which a pointer drag is not.
+    static let moveUp = "Move Up", moveDown = "Move Down"
+
+    /// VoiceOver's Move Up or Move Down on the icon at `index`, as `move(fromOffsets:toOffset:)`
+    /// takes it; nil when the icon is already at that end.
+    static func stepOffset(from index: Int, up: Bool, count: Int) -> Int? {
+        if up { return index > 0 ? index - 1 : nil }
+        return index < count - 1 ? index + 2 : nil
+    }
+
+    /// The move actions the icon at `index` offers: only the ways it can go.
+    static func voiceOverActions(at index: Int, count: Int) -> [String] {
+        (stepOffset(from: index, up: true, count: count) == nil ? [] : [moveUp])
+            + (stepOffset(from: index, up: false, count: count) == nil ? [] : [moveDown])
     }
 
     private static let space = "ActivityBar"
@@ -116,6 +147,16 @@ struct ActivityBar: View {
             .accessibilityLabel(panel.title)
             .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
             .accessibilityAction { model.select(panel) }
+            .modifier(step(at: index, up: true, count: count))
+            .modifier(step(at: index, up: false, count: count))
+    }
+
+    /// Move Up or Move Down for VoiceOver, offered only where the icon can go.
+    private func step(at index: Int, up: Bool, count: Int) -> NamedAccessibilityAction {
+        let destination = Self.stepOffset(from: index, up: up, count: count)
+        return NamedAccessibilityAction(name: up ? Self.moveUp : Self.moveDown, enabled: destination != nil) { [model] in
+            if let destination { model.move(fromOffsets: IndexSet(integer: index), toOffset: destination) }
+        }
     }
 
     /// Where the icon at `index` is drawn during a drag: the lifted one under the pointer, held to
@@ -134,21 +175,17 @@ struct ActivityBar: View {
     /// A press on `panel`'s icon: released where it began it selects the panel; dragged, it moves it.
     private func press(_ panel: ActivityPanel, at index: Int, cell: CGFloat, count: Int) -> some Gesture {
         DragGesture(minimumDistance: 0, coordinateSpace: .named(Self.space))
-            .onChanged { value in
+            .updating($drag) { value, drag, _ in
                 let translation = value.translation.height
                 if drag != nil || Self.lifts(translation) {
                     drag = Drag(panel: panel, from: index, translation: translation)
                 }
             }
-            .onEnded { value in
-                let lifted = drag
-                drag = nil
-                guard let lifted else {
-                    model.select(panel)
-                    return
-                }
-                if let destination = Self.dropOffset(from: lifted.from, translation: value.translation.height, cell: cell, count: count) {
-                    model.move(fromOffsets: IndexSet(integer: lifted.from), toOffset: destination)
+            .onEnded { [model] value in
+                switch Self.release(from: index, translation: value.translation.height, cell: cell, count: count) {
+                case .select: model.select(panel)
+                case .move(let destination): model.move(fromOffsets: IndexSet(integer: index), toOffset: destination)
+                case .stay: break
                 }
             }
     }

@@ -88,6 +88,39 @@ import Testing
         #expect(!ActivityBar.lifts(2) && ActivityBar.lifts(ActivityBar.liftDistance), "a click does not lift the icon")
     }
 
+    /// A release: short of a lift it is a click and selects; lifted, it moves the icon, or nothing
+    /// when it lands where it was.
+    @Test func aReleaseSelectsOrMoves() {
+        let cell: CGFloat = 44
+        #expect(ActivityBar.release(from: 1, translation: 1, cell: cell, count: 3) == .select)
+        #expect(ActivityBar.release(from: 0, translation: cell, cell: cell, count: 3) == .move(toOffset: 2))
+        #expect(ActivityBar.release(from: 1, translation: 0.3 * cell, cell: cell, count: 3) == .stay)
+    }
+
+    /// VoiceOver's Move Up and Move Down, as `move(fromOffsets:toOffset:)` takes them, and only where
+    /// the icon can go that way.
+    @Test func voiceOverStepsAnIconOneCell() {
+        #expect(ActivityBar.stepOffset(from: 1, up: true, count: 3) == 0)
+        #expect(ActivityBar.stepOffset(from: 1, up: false, count: 3) == 3)
+        #expect(ActivityBar.stepOffset(from: 0, up: true, count: 3) == nil)
+        #expect(ActivityBar.stepOffset(from: 2, up: false, count: 3) == nil)
+        #expect(ActivityBar.voiceOverActions(at: 0, count: 3) == [ActivityBar.moveDown])
+        #expect(ActivityBar.voiceOverActions(at: 1, count: 3) == [ActivityBar.moveUp, ActivityBar.moveDown])
+        #expect(ActivityBar.voiceOverActions(at: 2, count: 3) == [ActivityBar.moveUp])
+        #expect(ActivityBar.voiceOverActions(at: 0, count: 1).isEmpty)
+        #expect([ActivityBar.moveUp, ActivityBar.moveDown] == ["Move Up", "Move Down"])
+    }
+
+    /// Move Up and Move Down, handed to the model, step the panel one place.
+    @Test func voiceOverStepsMoveThePanel() throws {
+        let model = ActivityModel(source: ActivityOrderSource(defaults: nil))
+        let count = model.layout.order.count
+        model.move(fromOffsets: IndexSet(integer: 0), toOffset: try #require(ActivityBar.stepOffset(from: 0, up: false, count: count)))
+        #expect(model.layout.order == [.metrics, .sessions])
+        model.move(fromOffsets: IndexSet(integer: 1), toOffset: try #require(ActivityBar.stepOffset(from: 1, up: true, count: count)))
+        #expect(model.layout.order == [.sessions, .metrics])
+    }
+
     /// The drop, handed to the model: the dragged panel lands where it was released.
     @Test func aDropMovesThePanel() throws {
         let model = ActivityModel(source: ActivityOrderSource(defaults: nil))
@@ -331,9 +364,16 @@ import Testing
             let bar = try shownFrame(ActivityBar.markName, in: host)
             #expect(abs(bar.width - ActivityBar.width(.standard)) < 0.5)
             #expect(abs(bar.minY - (controls?.bandHeight ?? 0)) < 0.5, "the bar starts at \(bar.minY)")
-            let icons = shown(ActivityBar.iconMarkName, in: host).map { frame(of: $0, in: host) }
+            let cell = ActivityBar.width(.standard)
+            let icons = shown(ActivityBar.iconMarkName, in: host).map { frame(of: $0, in: host) }.sorted { $0.midY < $1.midY }
             #expect(icons.count == ActivityPanel.allCases.count + 1, "a panel icon each, and the gear")
             for icon in icons { #expect(abs(icon.midX - bar.midX) <= 0.5, "an icon off-centre: \(icon) in \(bar)") }
+            // Down the bar too: each panel's glyph in the middle of its cell, the gear in the last.
+            for (index, icon) in icons.dropLast().enumerated() {
+                #expect(abs(icon.midY - (bar.minY + (CGFloat(index) + 0.5) * cell)) <= 0.5, "icon \(index) off its cell's middle: \(icon)")
+            }
+            let gear = try #require(icons.last)
+            #expect(abs(gear.midY - (bar.maxY - cell / 2)) <= 0.5, "the gear off its cell's middle: \(gear) in \(bar)")
             let stripe = try shownFrame(ActivityBar.stripeMarkName, in: host)
             #expect(abs(stripe.minX - bar.minX) < 0.5, "the stripe is detached from the bar's edge")
             #expect(abs(stripe.height - ActivityBar.width(.standard)) < 0.5, "the stripe is a cell high")
