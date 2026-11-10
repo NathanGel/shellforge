@@ -78,7 +78,38 @@ import Testing
         #expect(ProjectFiles.list(gone, launcher: launcher) == .missing)
     }
 
-    @Test func anUnreadableFolderIsReported() throws {
+    @Test func aTrackedFileDeletedFromDiskIsNotListed() throws {
+        let repo = try GitRepoFixture()
+        try write("README.md", in: repo.path)
+        try write("src/app.ts", in: repo.path)
+        try repo.git("add", "README.md", "src/app.ts")
+        try repo.git("commit", "-q", "-m", "app")
+        try FileManager.default.removeItem(atPath: repo.path + "/src/app.ts")
+        #expect(paths(ProjectFiles.list(repo.path, launcher: repo.launcher)) == ["README.md"])
+    }
+
+    @Test func aSubmoduleIsAnEmptyFolder() throws {
+        let repo = try GitRepoFixture()
+        let head = try repo.git("rev-parse", "HEAD")
+        try repo.git("update-index", "--add", "--cacheinfo", "160000,\(head),lib/sub")
+        try FileManager.default.createDirectory(atPath: repo.path + "/lib/sub", withIntermediateDirectories: true)
+        #expect(paths(ProjectFiles.list(repo.path, launcher: repo.launcher)) == ["lib/sub/"])
+    }
+
+    @Test func aBrokenRepositoryIsUnreadableNotAPlainFolder() throws {
+        let folder = try plainFolder()
+        try write(".git", in: folder, "")
+        try write("README.md", in: folder)
+        let launcher = try GitRepoFixture().launcher
+        guard case .unreadable(let reason) = ProjectFiles.list(folder, launcher: launcher) else {
+            Issue.record("expected .unreadable")
+            return
+        }
+        #expect(reason.hasPrefix("git: "))
+    }
+
+    /// Root reads every folder, whatever its permissions.
+    @Test(.enabled(if: geteuid() != 0)) func anUnreadableFolderIsReported() throws {
         let folder = try plainFolder()
         try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: folder)
         defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: folder) }
