@@ -10,6 +10,8 @@ struct ClaudeHooks: HookDriver {
     static let endpoint = "/hook/claude"
 
     let home: URL, port: Int, shimPath: String
+    /// Where the shim's port and the user's own status line are recorded: the app's support folder.
+    let support: ShellforgeSupport
 
     var settings: UserConfigFile { UserConfigFile(home: home, Self.settingsPath) }
 
@@ -24,7 +26,7 @@ struct ClaudeHooks: HookDriver {
             // The status-line shim posts to the port in its file, so settings that are current beside
             // another port, or none, are outdated: Repair writes it.
             if ClaudeSettings.isInstalled(object, daemonPort: port, shimPath: shimPath),
-               ShimPort.isRecorded(port, home: home) {
+               ShimPort.isRecorded(port, in: support) {
                 return HookProbe(.current)
             }
             return HookProbe(ClaudeSettings.isOwned(object, shimPath: shimPath) ? .outdated : .missing)
@@ -49,10 +51,10 @@ struct ClaudeHooks: HookDriver {
         // The shim's port and the user's own status line are on disk before `settings.json` points
         // Claude at the shim: a crash or a failed write between the two can never leave it running
         // a shim that posts nowhere, or without the status line it replaced.
-        try ShimPort.record(port, home: home)
+        try ShimPort.record(port, in: support)
         try StatusLineOriginal.record(StatusLineOriginal.handedOver(before(original: original, data: data), home: home,
                                                                  aitermShim: "claude-statusline-shim.sh", aitermRecord: "statusline-original.cmd"),
-                                      command: ShellforgePaths.statusLineOriginalURL(home: home))
+                                      command: support.statusLineOriginalURL)
         guard !ClaudeSettings.same(data, merged) else { return }
         try file.backUp()
         try file.write(merged)
@@ -68,4 +70,11 @@ struct ClaudeHooks: HookDriver {
         return .missing
     }
 
+}
+
+extension ClaudeHooks {
+    /// The installed app's support folder under `home`, as the tests' scratch homes have it.
+    init(home: URL, port: Int, shimPath: String) {
+        self.init(home: home, port: port, shimPath: shimPath, support: .default(home: home))
+    }
 }

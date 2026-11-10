@@ -51,8 +51,8 @@ private let neverAbandoned: TimeInterval = 3600
 
     /// Sessions come from the app, so the daemon is never told to ask it for iTerm2 cookies.
     @Test func theHelperRunsAsShellforgedWithoutCookies() {
-        #expect(DaemonSupervisor.arguments(socketPath: "/tmp/s.sock", hookPort: 47831)
-                == ["-m", "shellforged", "run", "--socket", "/tmp/s.sock", "--hook-port", "47831"])
+        #expect(DaemonSupervisor.arguments(supportDirectory: URL(fileURLWithPath: "/tmp/sf"), socketPath: "/tmp/s.sock", hookPort: 47831)
+                == ["-m", "shellforged", "run", "--support-dir", "/tmp/sf", "--socket", "/tmp/s.sock", "--hook-port", "47831"])
     }
 
     @Test func theDefaultSocketAndLogAreShellforgesNotAiTerms() {

@@ -17,6 +17,7 @@ public final class DaemonLink: ObservableObject {
     public var tunnelOutcomes: AnyPublisher<TunnelOutcome, Never> { outcomes.eraseToAnyPublisher() }
     @Published public private(set) var store = SessionStore()
 
+    private let support: ShellforgeSupport
     private let socketPath: String
     private let daemonDir: URL?
     private let findPython: @Sendable () -> URL?
@@ -34,10 +35,13 @@ public final class DaemonLink: ObservableObject {
     /// The attached client when it turned out not to take lists (`sessions.update` unknown to it).
     private weak var refused: DaemonClient?
 
-    public init(socketPath: String = ShellforgePaths.socketPath, daemonDir: URL?,
+    /// `support` is the helper's folder, socket and port: the app's own (`ShellforgePaths.current`)
+    /// unless given; `socketPath`, a test's socket in place of the folder's.
+    public init(support: ShellforgeSupport = ShellforgePaths.current, socketPath: String? = nil, daemonDir: URL?,
                 findPython: @escaping @Sendable () -> URL?, reports: @escaping @MainActor () -> [SessionReport],
                 environment: @escaping @Sendable () -> [String: String] = { [:] }) {
-        self.socketPath = socketPath
+        self.support = support
+        self.socketPath = socketPath ?? support.socketPath
         self.daemonDir = daemonDir
         self.findPython = findPython
         self.reports = reports
@@ -53,12 +57,12 @@ public final class DaemonLink: ObservableObject {
             status = .helperMissing
             return
         }
-        let findPython = self.findPython, socketPath = self.socketPath
+        let findPython = self.findPython, support = self.support, socketPath = self.socketPath
         startup = Task {
             let found = await BackgroundWork.run { findPython() }
             guard !Task.isCancelled, running else { return }
             guard let python = found else { status = .pythonMissing; return }
-            supervisor = DaemonSupervisor(python: python, daemonDir: daemonDir, socketPath: socketPath) { [weak self] state in
+            supervisor = DaemonSupervisor(python: python, daemonDir: daemonDir, support: support, socketPath: socketPath) { [weak self] state in
                 Task { @MainActor in self?.supervisorChanged(state) }
             }
             supervisor?.start()

@@ -20,7 +20,7 @@ public enum HelperStatus: Equatable, Sendable {
         case .starting: "Starting Shellforge’s helper…"
         case .helperMissing: "Shellforge’s helper is missing from the app; reinstall Shellforge."
         case .pythonMissing: "Shellforge needs Python 3.11 or newer on your login shell’s PATH."
-        case .helperFailing(let message): "Shellforge’s helper keeps stopping (\(message)). Its log is in ~/Library/Application Support/Shellforge/shellforged.log."
+        case .helperFailing(let message): "Shellforge’s helper keeps stopping (\(message)). Its log is in \((ShellforgePaths.daemonLogURL.path as NSString).abbreviatingWithTildeInPath)."
         case .helperMismatch: "Shellforge’s helper is from another version. Quit Shellforge, wait a minute for the old helper to stop, then open Shellforge again."
         case .helperUnreachable: "Reconnecting to Shellforge’s helper…"
         case .connected: "Connected"

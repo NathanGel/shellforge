@@ -49,8 +49,12 @@ public struct HookIntegrations: Sendable {
     /// The Claude status-line shim this copy installs, or its name when the bundle lacks it.
     private let claudeShim: String
 
-    public init(home: URL = FileManager.default.homeDirectoryForCurrentUser, port: Int = ShellforgePaths.hookPort,
+    /// `support` is where the shims' port and the user's own status lines are recorded, and `port`
+    /// the helper's, both the installed app's under `home` unless given: the app passes its own.
+    public init(home: URL = FileManager.default.homeDirectoryForCurrentUser, support: ShellforgeSupport? = nil, port: Int? = nil,
                 resources: HookResources) {
+        let support = support ?? .default(home: home)
+        let port = port ?? support.hookPort
         unavailable = HookProbe(state: .resourceUnavailable, explanation: resources.unavailableReason ?? "The bundled hooks are unavailable.")
         self.home = home
         claudeShim = resources.folder?.appendingPathComponent("shellforge-claude-statusline.sh").path ?? "shellforge-claude-statusline.sh"
@@ -60,9 +64,9 @@ public struct HookIntegrations: Sendable {
                 let path = folder.appendingPathComponent(name).path
                 return FileManager.default.fileExists(atPath: path) ? path : nil
             }
-            if let shim = file("shellforge-claude-statusline.sh") { drivers["claude"] = ClaudeHooks(home: home, port: port, shimPath: shim) }
+            if let shim = file("shellforge-claude-statusline.sh") { drivers["claude"] = ClaudeHooks(home: home, port: port, shimPath: shim, support: support) }
             drivers["codex"] = CodexHooks(home: home, port: port)
-            if let shim = file("shellforge-grok-statusline.sh") { drivers["grok"] = GrokHooks(home: home, port: port, shimPath: shim) }
+            if let shim = file("shellforge-grok-statusline.sh") { drivers["grok"] = GrokHooks(home: home, port: port, shimPath: shim, support: support) }
             if let path = file("pi-shellforge-status.ts"), let source = try? String(contentsOfFile: path, encoding: .utf8) {
                 drivers["pi"] = PiHooks(home: home, port: port, source: source)
             }

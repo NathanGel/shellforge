@@ -21,7 +21,7 @@ final class iTermShellforgeSidebar: NSObject {
 
     /// The Agent hooks sheet every window's sidebar opens: the hooks bundled in
     /// `Contents/Resources/hooks`, installed into the user's home only on a click.
-    static let hooks = AgentHooksModel(integrations: HookIntegrations(resources: .bundled(resourceURL: Bundle.main.resourceURL)),
+    static let hooks = AgentHooksModel(integrations: HookIntegrations(support: support, resources: .bundled(resourceURL: Bundle.main.resourceURL)),
                                        names: Dictionary(uniqueKeysWithValues: AgentPresets.all.map { ($0.id, $0.name) }))
 
     /// The Mac's cpu, ram and battery for every window's footer, sampled every five seconds while
@@ -87,6 +87,15 @@ final class iTermShellforgeSidebar: NSObject {
     /// `-suite` a dev build runs with. The workspace and the agents live here, so a dev build never
     /// reads or writes the installed app's.
     static let dataFolder = URL(fileURLWithPath: FileManager.default.applicationSupportDirectory(), isDirectory: true)
+
+    /// The helper's folder, socket and hook port, and what the status-line shims read: the data
+    /// folder's, so a dev build has a helper of its own. The installed app's data folder is
+    /// `Application Support/Shellforge`, which keeps port 47831. Configured on first use, at launch.
+    static let support: ShellforgeSupport = {
+        let support = ShellforgeSupport(folder: dataFolder)
+        ShellforgePaths.configure(support)
+        return support
+    }()
 
     /// The one workspace every window's sidebar shows and changes.
     static let document = WorkspaceDocument(store: WorkspaceStore(folder: dataFolder))
@@ -453,7 +462,7 @@ final class iTermShellforgeHost: TerminalHost {
 extension iTermShellforgeSidebar {
     /// The daemon's package is copied to `Contents/Resources/daemon/shellforged`, alone in its folder:
     /// that folder is the daemon's PYTHONPATH, and iTerm2's own scripts sit at the top of Resources.
-    static let link = DaemonLink(daemonDir: Bundle.main.resourceURL?.appendingPathComponent("daemon"),
+    static let link = DaemonLink(support: support, daemonDir: Bundle.main.resourceURL?.appendingPathComponent("daemon"),
                                  findPython: { PythonFinder.find(launcher: launcher).map(URL.init(fileURLWithPath:)) },
                                  reports: { allReports() },
                                  environment: { launcher.environment.variables })
@@ -495,9 +504,12 @@ extension iTermShellforgeSidebar {
 
     /// Removes the agent-session markers Shellforge inherited from whoever started it, before any
     /// window is restored or shell started: every tab, and every login-shell read, starts from this
-    /// process's environment (InheritedEnvironment).
+    /// process's environment (InheritedEnvironment). Then sets this app's support folder in it,
+    /// over any inherited from another copy, so an agent in any of its tabs — iTerm2's own New Tab
+    /// included — reports to this app's helper (`ShellforgeSupport.sessionEnvironment`).
     @objc static func scrubInheritedEnvironment() {
         for name in InheritedEnvironment.agentMarkers(in: ProcessInfo.processInfo.environment) { unsetenv(name) }
+        for (name, value) in support.sessionEnvironment { setenv(name, value, 1) }
     }
 
     /// Starts the helper and the report tick; both stop at iTermApplicationWillTerminate.
@@ -506,9 +518,10 @@ extension iTermShellforgeSidebar {
         guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
         // shellforge-status and shellforge-run find the hook server by this file; a custom agent may
         // need it before any built-in's hooks are installed, which also record it. Off the main thread.
+        let support = support
         DispatchQueue.global(qos: .utility).async {
             do {
-                try ShimPort.record(ShellforgePaths.hookPort)
+                try ShimPort.record(support.hookPort, in: support)
             } catch {
                 DLog("Shellforge: couldn’t record the hook port")
             }

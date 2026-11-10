@@ -35,7 +35,7 @@ import Testing
         #expect(driver(home).state == .outdated)
         try driver(home).install()
         #expect(driver(home).state == .current)
-        #expect(ShimPort.isRecorded(port, home: home))
+        #expect(ShimPort.isRecorded(port, in: .default(home: home)))
     }
 
     @Test func hooksWithoutTheStatusLineAreOutdated() throws {

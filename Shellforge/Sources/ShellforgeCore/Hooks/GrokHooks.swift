@@ -6,6 +6,8 @@ import Foundation
 /// the driver current but adds a failed Context check to the card.
 struct GrokHooks: HookDriver {
     let home: URL, port: Int, shimPath: String
+    /// Where the shim's port and the user's own status line are recorded: the app's support folder.
+    let support: ShellforgeSupport
 
     var hooks: UserConfigFile { UserConfigFile(home: home, GrokHooksFile.path) }
     var config: UserConfigFile { UserConfigFile(home: home, GrokStatusLineConfig.path) }
@@ -43,7 +45,7 @@ struct GrokHooks: HookDriver {
         switch GrokStatusLineConfig.state(reading.config.value, shimPath: shimPath) {
         // The shim posts to the port in its file; a status line pointed at it is outdated until
         // that is the daemon's, as Install makes it.
-        case .current: return HookProbe(ShimPort.isRecorded(port, home: home) ? .current : .outdated)
+        case .current: return HookProbe(ShimPort.isRecorded(port, in: support) ? .current : .outdated)
         case .builtin:
             return HookProbe(state: .current, explanation: "Grok’s built-in status line is on, so Shellforge cannot read context.")
         case .unsupportedLayout:
@@ -60,9 +62,16 @@ struct GrokHooks: HookDriver {
         if reading.hooksState == .foreign { throw HookInstallError.foreign(path: hooks.displayPath) }
         if case .refused(let reason) = reading.config { throw config.refusal(reason) }
         if reading.hooksState != .current { try hooks.write(GrokHooksFile.contents(port: port)) }
-        try ShimPort.record(port, home: home)
+        try ShimPort.record(port, in: support)
         try GrokStatusLineConfig.install(reading.config.value, into: config,
-                                         original: ShellforgePaths.grokStatusLineOriginalURL(home: home), shimPath: shimPath, home: home)
+                                         original: support.grokStatusLineOriginalURL, shimPath: shimPath, home: home)
     }
 
+}
+
+extension GrokHooks {
+    /// The installed app's support folder under `home`, as the tests' scratch homes have it.
+    init(home: URL, port: Int, shimPath: String) {
+        self.init(home: home, port: port, shimPath: shimPath, support: .default(home: home))
+    }
 }

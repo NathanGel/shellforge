@@ -15,11 +15,12 @@ import Testing
     @Test func onlyWhatRecordWritesIsTheRecordedPort() throws {
         let home = TestScratch.root.appendingPathComponent("sf-shim-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: home) }
-        try ShimPort.record(Self.port, home: home)
-        #expect(ShimPort.isRecorded(Self.port, home: home))
+        let support = ShellforgeSupport.default(home: home)
+        try ShimPort.record(Self.port, in: support)
+        #expect(ShimPort.isRecorded(Self.port, in: support))
         for written in ["1@127.0.0.1:\(Self.port)\n", " \(Self.port)\n", "\(Self.port)", "\(Self.port)\n\n"] {
-            try Data(written.utf8).write(to: ShellforgePaths.hookPortURL(home: home))
-            #expect(!ShimPort.isRecorded(Self.port, home: home), "\(written.debugDescription) is not the recorded port")
+            try Data(written.utf8).write(to: support.hookPortURL)
+            #expect(!ShimPort.isRecorded(Self.port, in: support), "\(written.debugDescription) is not the recorded port")
         }
     }
 }

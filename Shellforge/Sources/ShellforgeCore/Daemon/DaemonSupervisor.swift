@@ -28,7 +28,7 @@ public final class DaemonSupervisor: Sendable {
     /// past any of those, and is as long as the app waits for any answer from the helper.
     public static let bindDeadline: TimeInterval = 15
 
-    private let python: URL, daemonDir: URL, socketPath: String, hookPort: Int, arguments: [String]?
+    private let python: URL, daemonDir: URL, supportDirectory: URL, socketPath: String, hookPort: Int, arguments: [String]?
     private let logURL: URL
     private let adoptedProbeInterval: TimeInterval
     private let bindDeadline: TimeInterval
@@ -51,8 +51,8 @@ public final class DaemonSupervisor: Sendable {
     private let state = Locked(Supervision())
     private let queue = DispatchQueue(label: "shellforge.supervisor")
 
-    public init(python: URL, daemonDir: URL, socketPath: String = ShellforgePaths.socketPath, hookPort: Int = ShellforgePaths.hookPort, arguments: [String]? = nil, logURL: URL = ShellforgePaths.daemonLogURL, adoptedProbeInterval: TimeInterval = 5, bindDeadline: TimeInterval = DaemonSupervisor.bindDeadline, backoff: @escaping @Sendable (_ attempt: Int) -> TimeInterval = { Backoff.delay(attempt: $0) }, recordError: @escaping @Sendable (_ message: String) -> Void = { ErrorLogging.record("daemon", $0) }, onStateChange: @escaping @Sendable (State) -> Void) {
-        self.python = python; self.daemonDir = daemonDir; self.socketPath = socketPath; self.hookPort = hookPort; self.arguments = arguments; self.logURL = logURL; self.adoptedProbeInterval = adoptedProbeInterval; self.bindDeadline = bindDeadline; self.backoff = backoff; self.recordError = recordError; self.onStateChange = onStateChange
+    public init(python: URL, daemonDir: URL, support: ShellforgeSupport = ShellforgePaths.current, socketPath: String? = nil, hookPort: Int? = nil, arguments: [String]? = nil, logURL: URL? = nil, adoptedProbeInterval: TimeInterval = 5, bindDeadline: TimeInterval = DaemonSupervisor.bindDeadline, backoff: @escaping @Sendable (_ attempt: Int) -> TimeInterval = { Backoff.delay(attempt: $0) }, recordError: @escaping @Sendable (_ message: String) -> Void = { ErrorLogging.record("daemon", $0) }, onStateChange: @escaping @Sendable (State) -> Void) {
+        self.python = python; self.daemonDir = daemonDir; self.supportDirectory = support.folder; self.socketPath = socketPath ?? support.socketPath; self.hookPort = hookPort ?? support.hookPort; self.arguments = arguments; self.logURL = logURL ?? support.daemonLogURL; self.adoptedProbeInterval = adoptedProbeInterval; self.bindDeadline = bindDeadline; self.backoff = backoff; self.recordError = recordError; self.onStateChange = onStateChange
     }
 
     public func start() {
@@ -131,8 +131,9 @@ public final class DaemonSupervisor: Sendable {
     }
 
     /// Sessions come from the app (`sessions.update`), so no iTerm2 cookie is asked for.
-    static func arguments(socketPath: String, hookPort: Int) -> [String] {
-        ["-m", "shellforged", "run", "--socket", socketPath, "--hook-port", String(hookPort)]
+    /// The helper keeps its own files (`daemon.json`, `helper-python`) in `supportDirectory`.
+    static func arguments(supportDirectory: URL, socketPath: String, hookPort: Int) -> [String] {
+        ["-m", "shellforged", "run", "--support-dir", supportDirectory.path, "--socket", socketPath, "--hook-port", String(hookPort)]
     }
 
     /// The app's environment minus its launch identity (`LoginEnvironment.forChildren`): a child that
@@ -151,7 +152,7 @@ public final class DaemonSupervisor: Sendable {
         onStateChange(.starting)
         let child: RunningChild
         do {
-            child = try ChildProcess.launch(python.path, arguments ?? Self.arguments(socketPath: socketPath, hookPort: hookPort),
+            child = try ChildProcess.launch(python.path, arguments ?? Self.arguments(supportDirectory: supportDirectory, socketPath: socketPath, hookPort: hookPort),
                                             environment: Self.daemonEnvironment(inheriting: ProcessInfo.processInfo.environment, daemonDir: daemonDir),
                                             directory: daemonDir.path, output: openLog()) { [weak self] child, status in
                 self?.queue.async { [weak self] in self?.exited(child, status: status) }
