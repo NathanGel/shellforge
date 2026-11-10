@@ -36,10 +36,12 @@ public final class WorkspaceDocument: ObservableObject {
             loadProblem = loaded.recoveredFrom.map {
                 "Your workspace file was damaged. It was kept as \($0), and the last good copy was restored."
             }
+            if let loadProblem { ErrorLogging.record("workspace", loadProblem) }
         } catch {
             workspace = Workspace()
             canSave = false
             loadProblem = Refusal.notLoaded.description
+            ErrorLogging.record("workspace", "Loading the workspace failed: \(error)")
         }
     }
 
@@ -49,7 +51,10 @@ public final class WorkspaceDocument: ObservableObject {
         guard canSave else { throw Refusal.notLoaded }
         var next = workspace
         try change(&next)
-        try store.save(next)
+        do { try store.save(next) } catch {
+            ErrorLogging.record("workspace", "Saving the workspace failed: \(error)")
+            throw error
+        }
         workspace = next
     }
 }

@@ -17,6 +17,11 @@ it and refuses to release a version that has none.
 
 ### Added
 
+- **Error log.** Shellforge now keeps a log of real problems, one line each: errors the sidebar
+  shows, failed removals and kept branches, a lost helper, failed updates, workspace and Project
+  folder problems, and Backpack Mode failures. Help › Show Error Log shows it in Finder. It never
+  holds terminal contents, commands, prompts, tokens, passwords or environment values, writes your
+  home folder as `~`, and stays on your Mac. The bug form mentions it.
 - **A branch for Project folder tasks.** New Task’s Project folder option now has a Branch field. It
   starts as the branch checked out; type another and the folder switches to it before the agent
   starts. When git can’t simply switch, Shellforge asks: stash clashing changes, create a branch

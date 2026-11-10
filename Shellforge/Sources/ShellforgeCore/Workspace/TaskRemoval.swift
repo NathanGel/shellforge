@@ -79,11 +79,13 @@ public enum TaskRemoval {
             guard case .kept(let why) = GitRepository(project.path, launcher: launcher)
                 .releaseReviewBranch(task.branch, target: task.baseBranch) else { return Removed(branchRefusal: nil, switchedBranch: switchedBranch) }
             removalLog.notice("review branch \(task.branch, privacy: .public) kept: \(String(describing: why), privacy: .public)")
+            ErrorLogging.record("removal", "Review removed. " + why.note(branch: task.branch))
             return Removed(branchRefusal: nil, keptBranch: why, switchedBranch: switchedBranch)
         }
         guard deleteBranch else { return Removed(branchRefusal: nil, switchedBranch: switchedBranch) }
         if let refusal = refusal(toDelete: task) {
             removalLog.notice("branch \(task.branch, privacy: .public) kept, refused: \(refusal, privacy: .public)")
+            ErrorLogging.record("removal", "Branch \(task.branch) kept, refused: \(refusal)")
             return Removed(branchRefusal: .other(reason: refusal), switchedBranch: switchedBranch)
         }
         do {
@@ -100,9 +102,11 @@ public enum TaskRemoval {
             return Removed(branchRefusal: nil, switchedBranch: switchedBranch)
         } catch let failure as GitFailure where failure.message.contains("not fully merged") {
             removalLog.notice("branch \(task.branch, privacy: .public) kept: notMerged into \(task.baseBranch, privacy: .public)")
+            ErrorLogging.record("removal", "Branch \(task.branch) kept: not merged into \(task.baseBranch)")
             return Removed(branchRefusal: .notMerged(base: task.baseBranch), switchedBranch: switchedBranch)
         } catch let failure as GitFailure {
             removalLog.notice("branch \(task.branch, privacy: .public) kept: other: \(failure.message, privacy: .public)")
+            ErrorLogging.record("removal", "Branch \(task.branch) kept: \(failure.message)")
             return Removed(branchRefusal: .other(reason: firstLine(of: failure.message)), switchedBranch: switchedBranch)
         }
     }
@@ -140,6 +144,7 @@ public enum TaskRemoval {
                 }
                 switchedBranch = name
                 removalLog.notice("worktree \(worktreePath, privacy: .public) has \(name, privacy: .public) checked out instead of \(branch, privacy: .public): switchedBranch")
+                ErrorLogging.record("removal", "Branch \(name) kept: \(worktreePath) had it checked out instead of \(branch)")
             }
             try removeRegistered(worktreePath, lockedWith: worktree.lockReason, in: projectPath, force: force, launcher: launcher)
         } else {
@@ -228,6 +233,7 @@ public enum TaskRemoval {
         guard out.status == 0 else {
             let command = "git " + args.joined(separator: " ")
             removalLog.notice("\(command, privacy: .public) in \(directory, privacy: .public) failed, status \(out.status, privacy: .public): \(out.stderr, privacy: .public)")
+            ErrorLogging.record("removal", "\(command) in \(directory) failed, status \(out.status): \(out.stderr)")
             throw GitFailure(command: command, message: out.stderr)
         }
         return out.stdout.trimmingCharacters(in: .whitespacesAndNewlines)

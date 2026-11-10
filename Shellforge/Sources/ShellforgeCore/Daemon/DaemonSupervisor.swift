@@ -241,6 +241,7 @@ public final class DaemonSupervisor: Sendable {
     /// retrying forever at `Backoff.delay(0)`.
     private func recordFailure(message: String) {
         let attempt = state.withLock { $0.attempt += 1; return $0.attempt }
+        ErrorLogging.record("daemon", "The helper stopped or didn’t start (attempt \(attempt)): \(message)")
         onStateChange(.failed(attempt: attempt, message: message))
         schedule(after: backoff(attempt - 1)) { $0.launch() }
     }

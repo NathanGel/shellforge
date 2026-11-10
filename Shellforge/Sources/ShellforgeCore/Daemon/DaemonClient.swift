@@ -125,7 +125,12 @@ public final class DaemonClient: Sendable {
             if ready > 0, getsockopt(s, SOL_SOCKET, SO_ERROR, &error, &size) == 0, error == 0 { rc = 0 }
             else { errno = ready == 0 ? ETIMEDOUT : (error == 0 ? errno : error) }
         }
-        guard rc == 0 else { let e = errno; Darwin.close(s); throw DaemonError(code: .connect, message: String(cString: strerror(e))) }
+        guard rc == 0 else {
+            let e = errno; Darwin.close(s)
+            let reason = String(cString: strerror(e))
+            ErrorLogging.record("daemon", "Connecting to the helper failed: \(reason)")
+            throw DaemonError(code: .connect, message: reason)
+        }
         _ = fcntl(s, F_SETFL, flags)
         let generation: Int? = state.withLock { state in
             guard state.events != nil else { return nil }
@@ -166,6 +171,10 @@ public final class DaemonClient: Sendable {
         // belonging to a brand-new connection. `shutdown` makes the pending `read` return 0, and
         // the reader closes its own descriptor on the way out.
         waiting.values.forEach { $0.fail(DaemonError(code: .disconnected, message: "helper connection closed")) }
+        // Only the disconnect that ends the stream, and only one this app didn't ask for.
+        if continuation != nil, reason != .closedHere {
+            ErrorLogging.record("daemon", "The helper connection ended: \(reason)")
+        }
         continuation?.finish()
     }
 
@@ -305,6 +314,7 @@ public final class DaemonClient: Sendable {
         }
         guard due else { return }
         daemonLog.error("Unreadable \(name, privacy: .public) from the helper, so reconnecting to a fresh snapshot (logged at most once a minute): \(String(describing: error), privacy: .public)")
+        ErrorLogging.record("daemon", "Unreadable \(name) from the helper, so reconnecting to a fresh snapshot: \(error)")
     }
 
     private func allocateID() -> Int {
@@ -392,6 +402,7 @@ public final class DaemonClient: Sendable {
         catch let error as DecodingError {
             // A reply this app cannot read: the caller says only that the request failed.
             daemonLog.error("\(method.rawValue, privacy: .public)'s reply could not be read: \(String(describing: error), privacy: .public)")
+            ErrorLogging.record("daemon", "\(method.rawValue)’s reply could not be read: \(error)")
             throw error
         }
     }
@@ -484,8 +495,9 @@ public final class DaemonClient: Sendable {
         let snapshot = try await request(.workspaceSnapshot, params: Optional<NoParams>.none, as: DaemonSnapshot.self,
                                          ordered: { .snapshot($0) }, isLivenessCheck: false)
         guard snapshot.protocolVersion == DaemonProtocol.version else {
-            throw Self.logged(DaemonError(code: .incompatible, message: "The helper speaks protocol \(snapshot.protocolVersion), this app \(DaemonProtocol.version)"),
-                              .workspaceSnapshot)
+            let mismatch = "The helper speaks protocol \(snapshot.protocolVersion), this app \(DaemonProtocol.version)"
+            ErrorLogging.record("daemon", mismatch)
+            throw Self.logged(DaemonError(code: .incompatible, message: mismatch), .workspaceSnapshot)
         }
         return snapshot
     }

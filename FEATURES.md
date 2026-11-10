@@ -22,6 +22,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 - [The helper (shellforged)](#the-helper-shellforged)
 - [Check for Updates…](#check-for-updates)
 - [Reporting a bug](#reporting-a-bug)
+- [Error log](#error-log)
 - [Feedback](#feedback)
 
 ## The sidebar
@@ -387,6 +388,15 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
 - **Shellforge › About Shellforge › Report a bug** opens Shellforge's bug form on GitHub with the version and macOS filled in. [CONTRIBUTING.md](CONTRIBUTING.md) says how requests are handled.
 - **After a crash**, the next launch offers to report it. **Copy and Report…** copies the report — the crash log, your settings, and your name and email in its message — and opens the bug form, where you paste it. Nothing is sent by itself; GitHub issues are public, so delete what you do not want to share. **Discard** forgets that crash.
 - Error messages that ask you to report a bug, and the AI usage item's **Report a Bug**, lead to the same form.
+- The bug form mentions the error log (Help › Show Error Log), so you can paste the lines that apply. Nothing from it is attached by itself.
+
+## Error log
+
+- **What it is.** A plain text file with one line for each real problem: an error the sidebar shows, a task or review whose removal failed or whose branch was kept and why, the helper not starting or its connection lost, an update that didn't check, download, verify or install, the workspace file that couldn't be read or saved, a Project folder that couldn't switch branch, and Backpack Mode steps that failed.
+- **Where it lives.** `logs/errors.log` in Shellforge's data folder, `~/Library/Application Support/Shellforge/logs/` for the installed app; a dev build keeps its own. Past about 1 MB it becomes `errors.1.log`, replacing the older one, and a new file starts.
+- **Each line** is the time with its offset, the version, the part of Shellforge, and what happened: `2026-11-10T09:14:11+01:00 · 0.9.1 · removal · Branch fix/login kept: not merged into main`. A message of several lines becomes one, with ⏎ where each break was.
+- **What it never holds:** terminal contents, typed commands, prompts, tokens, passwords or environment values. Paths in your home folder are written with `~`, and a URL's user and password are left out. It stays on your Mac and is never sent anywhere.
+- **Help › Show Error Log** shows the file in Finder, an empty one if nothing has gone wrong yet.
 
 ## Feedback
 

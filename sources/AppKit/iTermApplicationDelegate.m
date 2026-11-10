@@ -419,6 +419,9 @@ static NSModalResponse iTermCompareRenderingRunModal(id self, SEL _cmd) {
     tunnelsItem.submenu = [iTermShellforgeSidebar tunnelsMenu];
     [viewMenu addItem:tunnelsItem];
 
+    // Shellforge: the error log records from here on, before any window loads the workspace.
+    [iTermShellforgeErrorLog configure];
+
     // Shellforge: Help › Send Feedback…, which works whether or not the sidebar's reminder is on.
     // The nib doesn't name its Help menu to AppKit, so find it by its iTerm2 Help item and say so.
     if (!NSApp.helpMenu) {
@@ -440,6 +443,12 @@ static NSModalResponse iTermCompareRenderingRunModal(id self, SEL _cmd) {
                                                     keyEquivalent:@""] autorelease];
     feedbackItem.target = self;
     [helpMenu addItem:feedbackItem];
+    // Shellforge: Help › Show Error Log, always enabled: with nothing recorded it shows an empty file.
+    NSMenuItem *errorLogItem = [[[NSMenuItem alloc] initWithTitle:@"Show Error Log"
+                                                           action:@selector(shellforgeShowErrorLog:)
+                                                    keyEquivalent:@""] autorelease];
+    errorLogItem.target = self;
+    [helpMenu addItem:errorLogItem];
 
     NSSize tabColorViewSize = [ColorsMenuItemView preferredSize];
     ColorsMenuItemView *labelTrackView = [[[ColorsMenuItemView alloc]
@@ -513,6 +522,10 @@ static NSModalResponse iTermCompareRenderingRunModal(id self, SEL _cmd) {
 
 - (IBAction)shellforgeSendFeedback:(id)sender {
     [iTermShellforgeFeedback sendFeedback];
+}
+
+- (IBAction)shellforgeShowErrorLog:(id)sender {
+    [iTermShellforgeErrorLog showErrorLog];
 }
 
 - (IBAction)shellforgeToggleBackpack:(id)sender {

@@ -20,7 +20,7 @@ body:
     id: actual
     attributes:
       label: What happened
-      description: Screenshots help. Leave out tokens, hostnames and anything private.
+      description: Screenshots help, and so do the lines from Help › Show Error Log that apply. Leave out tokens, hostnames and anything private.
     validations:
       required: true
   - type: input

@@ -10,6 +10,18 @@ extension SidebarModel {
     /// worktree draft when the branch lives in another worktree and the person chose that one.
     /// Cancel throws `CreationDeclined`, with the folder as it was and the sheet still open.
     func prepareProjectFolder(draft: TaskDraft, branch: String, project: Project, taken: [String]) async throws -> TaskDraft {
+        do {
+            return try await switchProjectFolder(draft: draft, branch: branch, project: project, taken: taken)
+        } catch {
+            // A Cancel answered or a create stopped is no problem; anything else is.
+            if !(error is CreationDeclined || error is CreationCancelled || error is CancellationError) {
+                ErrorLogging.record("projectFolder", "Switching \(project.path) to \(branch) failed: \(error)")
+            }
+            throw error
+        }
+    }
+
+    private func switchProjectFolder(draft: TaskDraft, branch: String, project: Project, taken: [String]) async throws -> TaskDraft {
         let launcher = self.launcher
         let obstacle = try await BackgroundWork.run { try ProjectFolderSwitch.check(branch, in: project, launcher: launcher) }
         switch obstacle {

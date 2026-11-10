@@ -24,6 +24,8 @@ enum BackpackLog {
         do { return try work() } catch {
             let description = what()
             logger.log(level: level, "\(description, privacy: .public) failed: \(String(describing: error), privacy: .public)")
+            // Only what is logged as an error: lower levels are expected, such as a setting not yet made.
+            if level == .error || level == .fault { ErrorLogging.record("backpack", "\(description) failed: \(error)") }
             return nil
         }
     }

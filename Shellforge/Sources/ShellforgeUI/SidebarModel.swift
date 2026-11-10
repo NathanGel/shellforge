@@ -99,8 +99,11 @@ public final class SidebarModel: ObservableObject {
     @Published public internal(set) var selectedTaskId: UUID?
     /// The terminal row shown, when the selected tab is a terminal's (Terminals/).
     @Published public internal(set) var selectedTerminalId: UUID?
-    /// The last action's failure, in words the user can act on; cleared by the next success.
-    @Published public var lastError: String?
+    /// The last action's failure, in words the user can act on; cleared by the next success. Each
+    /// one shown also goes in the error log.
+    @Published public var lastError: String? {
+        didSet { if let lastError { ErrorLogging.record("sidebar", lastError) } }
+    }
     /// What is being done right now, such as "Creating Fix login…"; nil when idle.
     @Published public private(set) var working: String?
     /// What a finished action came to, such as "main is already up to date."; clears itself after

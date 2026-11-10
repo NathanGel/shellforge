@@ -44,6 +44,7 @@ public enum UpdateInstaller {
                                            environment: withoutLaunchIdentity(environment), directory: nil, output: nil,
                                            onExit: { _, status in onExit(status) })
         } catch {
+            ErrorLogging.record("updates", "Starting the install helper failed: \(error)")
             throw UpdateError.installFailed(error.localizedDescription)
         }
     }
@@ -81,6 +82,7 @@ public enum UpdateInstaller {
     private static func attempt(_ what: String, _ body: () throws -> Void) {
         do { try body() } catch {
             updatesLog.error("\(what, privacy: .public) failed: \(String(describing: error), privacy: .public)")
+            ErrorLogging.record("updates", "\(what) failed: \(error)")
         }
     }
 

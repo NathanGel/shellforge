@@ -61,6 +61,7 @@ public final class UpdateController {
         case .current(let version):
             _ = await prompter.ask(AlertPrompt(message: "You’re on the latest version (\(version))."))
         case .failed(let error):
+            ErrorLogging.record("updates", "Checking for updates failed: \(Self.message(for: error))")
             await report(error)
         case .available(let release):
             let answer = await prompter.ask(AlertPrompt(message: "Shellforge \(release.version) is available.", buttons: ["Update", "Later"], escape: 1))
@@ -82,10 +83,15 @@ public final class UpdateController {
             let stage = self.stage
             staged = try await BackgroundWork.run { try stage(image, release.version) }
         } catch {
+            ErrorLogging.record("updates", "Downloading or checking Shellforge \(release.version) failed: \(Self.message(for: error))")
             await report(error)
             return false
         }
-        do { try install(staged) } catch { await report(error); return false }
+        do { try install(staged) } catch {
+            ErrorLogging.record("updates", "Installing Shellforge \(release.version) failed: \(Self.message(for: error))")
+            await report(error)
+            return false
+        }
         terminate()
         return true
     }
@@ -97,6 +103,7 @@ public final class UpdateController {
         let status = UpdateInstaller.takePreviousResult(in: updatesDirectory)
         UpdateInstaller.removeLeftovers(in: updatesDirectory)
         if let status, status != 0 {
+            ErrorLogging.record("updates", "The last update didn’t install: the helper exited with status \(status)")
             _ = await prompter.ask(AlertPrompt(message: Self.message(for: UpdateError.installAborted(status))))
         }
     }
