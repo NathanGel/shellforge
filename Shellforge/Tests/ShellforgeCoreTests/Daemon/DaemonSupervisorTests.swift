@@ -225,8 +225,11 @@ private let neverAbandoned: TimeInterval = 3600
         func failures() -> Int { box.states.count { if case .failed = $0 { return true } else { return false } } }
         await eventually { failures() >= 3 }
         sup.stop()
+        // The line is written just before its failure is reported: wait for the two to settle. Were the
+        // first attempt logged too, they would never match and this fails.
+        #expect(await eventually { recorded.withLock { $0.count } == failures() - 1 },
+                "one per failure after the first, got \(recorded.withLock { $0 }) for \(box.states)")
         let messages = recorded.withLock { $0 }
-        #expect(messages.count == failures() - 1, "one per failure after the first, got \(messages) for \(box.states)")
         #expect(Set(messages).count == 1, "the same words each time, got \(messages)")
         #expect(messages.first?.hasPrefix("The helper stopped or didn’t start, again: ") == true)
     }
