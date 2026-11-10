@@ -5,7 +5,11 @@ APPS := /Applications
 ITERM_CONF_PLIST = $(HOME)/Library/Preferences/com.googlecode.iterm2.plist
 # Local checkout of the iterm2-website repo, where built plugins are published.
 ITERM2_WEBSITE ?= $(HOME)/iterm2-website
-SUITE ?= $(notdir $(CURDIR))
+# Dev builds get their own settings and data. The plain folder name (“shellforge”) would land in
+# the installed app's “Shellforge” folder: macOS folder names ignore case.
+SUITE ?= $(notdir $(CURDIR))-dev
+# The app's executable: this fork's bundle runs “Shellforge”, not “iTerm2”.
+APP_EXECUTABLE ?= Shellforge
 COMPACTDATE=$(shell date +"%Y%m%d")
 VERSION = $(shell cat version.txt | sed -e "s/%(extra)s/$(COMPACTDATE)/")
 NAME=$(shell echo $(VERSION) | sed -e "s/\\./_/g")
@@ -363,7 +367,7 @@ run-deployment: ingest-catalogs
 	open -W -n "$(BUILD_DIR)/Deployment/iTerm2.app" --args -suite $(SUITE) $(if $(LANGUAGE),-AppleLanguages '($(LANGUAGE))')
 
 run-nobuild: force
-	"$(BUILD_DIR)/Development/iTerm2.app/Contents/MacOS/iTerm2" -suite $(SUITE) $(if $(LANGUAGE),-AppleLanguages '($(LANGUAGE))') & \
+	"$(BUILD_DIR)/Development/iTerm2.app/Contents/MacOS/$(APP_EXECUTABLE)" -suite $(SUITE) $(if $(LANGUAGE),-AppleLanguages '($(LANGUAGE))') & \
 	pid=$$!; \
 	trap 'kill $$pid 2>/dev/null' INT TERM; \
 	( sleep 1 && osascript -e "tell application \"System Events\" to set frontmost of (first process whose unix id is $$pid) to true" >/dev/null 2>&1 ) & \
@@ -400,7 +404,7 @@ extract-strings: Development
 # then differs from the English source it flushes out code that still matches on English
 # strings (menu-item lookups, window titles, etc.).
 pseudorun: Development
-	"$(BUILD_DIR)/Development/iTerm2.app/Contents/MacOS/iTerm2" -suite $(SUITE) -NSDoubleLocalizedStrings YES & \
+	"$(BUILD_DIR)/Development/iTerm2.app/Contents/MacOS/$(APP_EXECUTABLE)" -suite $(SUITE) -NSDoubleLocalizedStrings YES & \
 	pid=$$!; \
 	trap 'kill $$pid 2>/dev/null' INT TERM; \
 	( sleep 1 && osascript -e "tell application \"System Events\" to set frontmost of (first process whose unix id is $$pid) to true" >/dev/null 2>&1 ) & \
@@ -438,13 +442,13 @@ purge-keychain-test: Development
 	@cat /tmp/iterm2-keychain-purge-result.txt 2>/dev/null || echo "no purge result written (build may lack the entitlement)"
 
 runbg: Development
-	"$(BUILD_DIR)/Development/iTerm2.app/Contents/MacOS/iTerm2" -suite $(SUITE) & \
+	"$(BUILD_DIR)/Development/iTerm2.app/Contents/MacOS/$(APP_EXECUTABLE)" -suite $(SUITE) & \
 	pid=$$!; \
 	trap 'kill $$pid 2>/dev/null' INT TERM; \
 	( sleep 1 && osascript -e "tell application \"System Events\" to set frontmost of (first process whose unix id is $$pid) to true" >/dev/null 2>&1 ) & \
 
 watch: Development
-	tools/run.sh "$(BUILD_DIR)/Development/iTerm2.app/Contents/MacOS/iTerm2" "$(BUILD_DIR)" -suite iterm2-dev
+	tools/run.sh "$(BUILD_DIR)/Development/iTerm2.app/Contents/MacOS/$(APP_EXECUTABLE)" "$(BUILD_DIR)" -suite iterm2-dev
 
 devzip: Development
 	cd $(BUILD_DIR)/Development && \

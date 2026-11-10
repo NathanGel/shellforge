@@ -498,7 +498,7 @@ struct SidebarView: View {
         let environment = model.environmentModel()
         let agentDefaults = model.agentDefaultsModel()
         // The agents' secrets live in the Keychain, and nowhere else.
-        let agents = AgentListModel(registry: AgentRegistry(readyMade: agentTools.readyMade), secrets: Keychain.shared,
+        let agents = AgentListModel(registry: AgentRegistry(folder: agentTools.agentsFolder, readyMade: agentTools.readyMade), secrets: Keychain.shared,
                                     launcher: model.launcher, tasks: { [model] in model.document.workspace.tasks },
                                     prompter: model.prompter, tools: agentTools, store: model.$sessions.eraseToAnyPublisher(),
                                     changed: agentsChanged)

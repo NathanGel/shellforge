@@ -269,4 +269,13 @@ final class AgentSettingsFixture {
         #expect(AgentTools.bundled(resourceURL: nil, bundlePath: "/private/var/folders/x/T/AppTranslocation/1/d/Shellforge.app").translocated)
         #expect(AgentTools.none.runner == nil && AgentTools.none.statusCommand == nil)
     }
+
+    /// A build run with its own data folder (a dev build’s `-suite`) keeps its agents there, never in
+    /// the installed app’s.
+    @Test func theAgentsLiveInTheAppsDataFolder() {
+        let data = URL(fileURLWithPath: "/Users/x/Library/Application Support/shellforge-dev", isDirectory: true)
+        let tools = AgentTools.bundled(resourceURL: nil, bundlePath: "/tmp/Shellforge.app", dataFolder: data)
+        #expect(tools.agentsFolder == data.appendingPathComponent("agents", isDirectory: true))
+        #expect(AgentTools.none.agentsFolder == AgentRegistry.defaultFolder)
+    }
 }

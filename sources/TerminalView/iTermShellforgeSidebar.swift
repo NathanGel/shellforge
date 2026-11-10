@@ -83,18 +83,24 @@ final class iTermShellforgeSidebar: NSObject {
         return prompt
     }()
 
+    /// The running app's Application Support folder, as iTerm2 names it: the executable's name, or the
+    /// `-suite` a dev build runs with. The workspace and the agents live here, so a dev build never
+    /// reads or writes the installed app's.
+    static let dataFolder = URL(fileURLWithPath: FileManager.default.applicationSupportDirectory(), isDirectory: true)
+
     /// The one workspace every window's sidebar shows and changes.
-    static let document = WorkspaceDocument(store: WorkspaceStore())
+    static let document = WorkspaceDocument(store: WorkspaceStore(folder: dataFolder))
 
     /// What the app bundle gives the agents: `shellforge-status`, `shellforge-run` and the ready-made agents.
-    static let agentTools = AgentTools.bundled(resourceURL: Bundle.main.resourceURL, bundlePath: Bundle.main.bundlePath)
+    static let agentTools = AgentTools.bundled(resourceURL: Bundle.main.resourceURL, bundlePath: Bundle.main.bundlePath,
+                                               dataFolder: dataFolder)
 
     /// The agents as last read, for the helper's reports: which custom agent a tab runs.
     private(set) static var agents: [AgentDefinition] = AgentPresets.all
 
     /// The agents in the agents folder, the ready-made ones and the presets, read now.
     private static func loadAgents() -> (agents: [AgentDefinition], problem: String?, readyMade: Set<String>) {
-        let loaded = AgentFiles.load(AgentRegistry(readyMade: agentTools.readyMade))
+        let loaded = AgentFiles.load(AgentRegistry(folder: agentTools.agentsFolder, readyMade: agentTools.readyMade))
         agents = loaded.agents
         return loaded
     }

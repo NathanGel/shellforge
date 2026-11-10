@@ -681,6 +681,7 @@ extension SidebarModel {
 
     // -- Project folder on another branch -------------------------------------------------
 
+    @discardableResult
     private func git(_ model: SidebarModel, _ folder: String, _ args: String...) throws -> String {
         let out = try model.launcher.run("git", ["-C", folder] + args)
         guard out.status == 0 else { throw GitFailure(command: "git " + args.joined(separator: " "), message: out.stderr) }

@@ -1,5 +1,10 @@
 import Foundation
+import os
 import ShellforgeCore
+
+/// Each step of a drag, for finding where one stops: `log stream --level info --predicate
+/// 'subsystem == "io.github.nathangel.shellforge" AND category == "rearrange"'`.
+let rearrangeLog = Logger(subsystem: "io.github.nathangel.shellforge", category: "rearrange")
 
 /// Rearrange mode: the sidebar's order is edited as a draft and written once, on Done.
 extension SidebarModel {
@@ -55,6 +60,7 @@ extension SidebarModel {
     @discardableResult
     public func startDragging(_ item: RearrangeDraft.Item) -> Int {
         dragSession += 1
+        rearrangeLog.info("drag \(self.dragSession) starts: \(String(describing: item), privacy: .public), rearranging \(self.isRearranging)")
         guard isRearranging else { return dragSession }
         draggedItem = item
         dropTarget = nil
@@ -65,6 +71,7 @@ extension SidebarModel {
     /// The drag `session` is over, dropped or abandoned (Esc, let go outside the sidebar): its
     /// project unfolds and nothing is left dragged. A later drag's state is left alone.
     public func dragEnded(_ session: Int) {
+        rearrangeLog.info("drag \(session) ended (current \(self.dragSession))")
         guard session == dragSession else { return }
         endDrag()
     }
@@ -75,13 +82,19 @@ extension SidebarModel {
     @discardableResult
     public func hover(over item: RearrangeDraft.Item, lowerHalf: Bool) -> Bool {
         guard let dragged = draggedItem, landing(of: dragged, on: item, lowerHalf: lowerHalf) != nil else {
-            if dropTarget != nil { dropTarget = nil }
+            if dropTarget != nil {
+                dropTarget = nil
+                rearrangeLog.info("hover refused over \(String(describing: item), privacy: .public), dragged \(String(describing: self.draggedItem), privacy: .public)")
+            }
             return false
         }
         // Drawn where the drop lands: an unfolded project takes its lower half as before itself.
         let landsBefore = RearrangeDrop.target(for: item, lowerHalf: lowerHalf, in: rows) == item
         let target = RearrangeDropTarget(item: item, lowerHalf: lowerHalf && !landsBefore)
-        if dropTarget != target { dropTarget = target }
+        if dropTarget != target {
+            dropTarget = target
+            rearrangeLog.info("hover over \(String(describing: item), privacy: .public), lower \(target.lowerHalf)")
+        }
         return true
     }
 
@@ -92,8 +105,13 @@ extension SidebarModel {
     public func drop(payload: String, on item: RearrangeDraft.Item, lowerHalf: Bool) -> Bool {
         defer { endDrag() }
         guard let dragged = rows.first(where: { $0.id == payload }).flatMap(RearrangeDrop.item(of:)),
-              let before = landing(of: dragged, on: item, lowerHalf: lowerHalf) else { return false }
-        return moveInDraft(dragged, before: before)
+              let before = landing(of: dragged, on: item, lowerHalf: lowerHalf) else {
+            rearrangeLog.info("drop refused: payload \(payload, privacy: .public) on \(String(describing: item), privacy: .public)")
+            return false
+        }
+        let moved = moveInDraft(dragged, before: before)
+        rearrangeLog.info("drop of \(payload, privacy: .public): moved \(moved)")
+        return moved
     }
 
     /// Nothing is dragged and no line is drawn.

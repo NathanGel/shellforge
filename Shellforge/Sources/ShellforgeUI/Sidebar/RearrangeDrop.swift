@@ -224,6 +224,7 @@ private struct RearrangeRowDrop: DropDelegate {
 
     func performDrop(info: DropInfo) -> Bool {
         let model = model, item = item, lowerHalf = lowerHalf(info)
+        rearrangeLog.info("performDrop on a row, providers \(info.itemProviders(for: [RearrangeDrop.rowType]).count)")
         guard let provider = info.itemProviders(for: [RearrangeDrop.rowType]).first else {
             MainActor.assumeIsolated { model.endDrag() }
             return false
@@ -256,7 +257,8 @@ final class RearrangeDragProvider: NSItemProvider, @unchecked Sendable {
 
     /// The row id a drop carries, or nil when it carries none.
     static func loadPayload(from provider: NSItemProvider, then handle: @escaping @Sendable (String?) -> Void) {
-        _ = provider.loadDataRepresentation(forTypeIdentifier: RearrangeDrop.rowType.identifier) { data, _ in
+        _ = provider.loadDataRepresentation(forTypeIdentifier: RearrangeDrop.rowType.identifier) { data, error in
+            if let error { rearrangeLog.error("payload failed to load: \(error.localizedDescription, privacy: .public)") }
             handle(data.flatMap { String(data: $0, encoding: .utf8) })
         }
     }
@@ -285,6 +287,7 @@ private struct RearrangeListDrop: DropDelegate {
     }
 
     func performDrop(info: DropInfo) -> Bool {
+        rearrangeLog.info("performDrop on the list, outside any row")
         MainActor.assumeIsolated { model.endDrag() }
         return false
     }
