@@ -38,6 +38,10 @@ def failure(agent_id: str) -> str:
 
 
 def default_socket(env: Mapping[str, str]) -> str:
+    """The socket of the app that started this terminal: in SHELLFORGE_SUPPORT when it set one (a dev
+    build), else in the installed app's folder."""
+    if support := env.get("SHELLFORGE_SUPPORT"):
+        return os.path.join(os.path.expanduser(support), "shellforged.sock")
     home = env.get("HOME") or os.path.expanduser("~")
     return os.path.join(home, "Library", "Application Support", "Shellforge", "shellforged.sock")
 

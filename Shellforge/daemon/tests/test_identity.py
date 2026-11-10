@@ -7,14 +7,14 @@ from shellforged import models
 
 
 def test_run_defaults_are_shellforges_own():
-    ns = main.build_parser().parse_args(["run"])
+    ns = main.parse_args(["run"])
     support = Path.home() / "Library" / "Application Support" / "Shellforge"
     assert ns.socket == str(support / "shellforged.sock")
     assert ns.hook_port == 47831
 
 
 def test_ctl_talks_to_shellforges_socket():
-    ns = main.build_parser().parse_args(["ctl", "sessions.list"])
+    ns = main.parse_args(["ctl", "sessions.list"])
     assert ns.socket.endswith("/Application Support/Shellforge/shellforged.sock")
 
 
@@ -32,8 +32,8 @@ def test_no_aiterm_name_is_left_in_the_daemon_or_its_shims():
 
 
 def test_run_takes_its_sessions_from_the_app_unless_told_otherwise():
-    assert main.build_parser().parse_args(["run"]).session_source == "app"
-    assert main.build_parser().parse_args(["run", "--session-source", "iterm"]).session_source == "iterm"
+    assert main.parse_args(["run"]).session_source == "app"
+    assert main.parse_args(["run", "--session-source", "iterm"]).session_source == "iterm"
 
 
 def test_the_docs_describe_shellforges_contract_not_aitermds():

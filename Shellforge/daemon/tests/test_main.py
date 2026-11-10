@@ -8,21 +8,61 @@ import sys
 
 import pytest
 
-from shellforged.__main__ import EXIT_ALREADY_RUNNING, IDLE_EXIT_SECONDS, IdleWatchdog, build_parser, ctl_request, main
+from shellforged.__main__ import EXIT_ALREADY_RUNNING, IDLE_EXIT_SECONDS, IdleWatchdog, ctl_request, main, parse_args
 from tests.conftest import wait_until
 
 
 def test_parser_defaults(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
-    ns = build_parser().parse_args(["run"])
+    ns = parse_args(["run"])
     assert ns.command == "run" and ns.hook_port == 47831
     assert ns.socket == str(tmp_path / "Library/Application Support/Shellforge/shellforged.sock")
     assert ns.idle_exit_seconds == IDLE_EXIT_SECONDS
-    assert build_parser().parse_args(["run", "--idle-exit-seconds", "0"]).idle_exit_seconds == 0
+    assert parse_args(["run", "--idle-exit-seconds", "0"]).idle_exit_seconds == 0
     assert not ns.cookies_from_app
-    assert build_parser().parse_args(["run", "--cookies-from-app"]).cookies_from_app
-    ns = build_parser().parse_args(["ctl", "iterm.status", '{"a":1}'])
+    assert parse_args(["run", "--cookies-from-app"]).cookies_from_app
+    ns = parse_args(["ctl", "iterm.status", '{"a":1}'])
     assert ns.method == "iterm.status" and json.loads(ns.params) == {"a": 1}
+
+
+def test_the_support_folder_comes_from_the_option_then_the_environment(tmp_path, monkeypatch):
+    """A dev build passes --support-dir; a shell it started has SHELLFORGE_SUPPORT; without either
+    the folder is the installed app's under HOME, as before."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    default = tmp_path / "Library/Application Support/Shellforge"
+    assert parse_args(["run"]).support_dir == default
+    option = tmp_path / "Application Support/example-dev"
+    ns = parse_args(["run", "--support-dir", str(option)])
+    assert ns.support_dir == option and ns.socket == str(option / "shellforged.sock")
+    assert ns.hook_port == 47831  # the app passes a dev build's port; the default is unchanged
+    assert parse_args(["run", "--support-dir", str(option), "--socket", "/tmp/x.sock"]).socket == "/tmp/x.sock"
+    assert parse_args(["ctl", "sessions.list", "--support-dir", str(option)]).socket == str(option / "shellforged.sock")
+    env_folder = tmp_path / "from-env"
+    monkeypatch.setenv("SHELLFORGE_SUPPORT", str(env_folder))
+    assert parse_args(["run"]).socket == str(env_folder / "shellforged.sock")
+    assert parse_args(["run", "--support-dir", str(option)]).support_dir == option
+    monkeypatch.setenv("SHELLFORGE_SUPPORT", "")
+    assert parse_args(["run"]).support_dir == default
+
+
+async def test_the_helper_writes_its_files_in_the_support_folder_it_is_given(monkeypatch, tmp_path, sock_dir):
+    """daemon.json and helper-python go to --support-dir, never to HOME's folder."""
+    import shellforged.__main__ as entry
+
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    support = tmp_path / "example-dev"
+    ns = parse_args(["run", "--support-dir", str(support), "--socket", os.path.join(sock_dir, "f.sock"), "--hook-port", "0"])
+    daemon = asyncio.create_task(entry.run_daemon(ns))
+    try:
+        await wait_until(lambda: os.path.exists(support / "daemon.json"))
+        assert (support / "helper-python").read_text() == sys.executable
+        assert not (home / "Library/Application Support/Shellforge").exists()
+    finally:
+        daemon.cancel()
+        await asyncio.gather(daemon, return_exceptions=True)
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            asyncio.get_running_loop().remove_signal_handler(sig)
 
 
 async def test_ctl_request_round_trip(sock_dir):
@@ -165,7 +205,7 @@ async def test_run_daemon_quits_once_its_last_app_has_left(monkeypatch, tmp_path
     monkeypatch.setattr(iterm_bridge, "ItermBridge", FakeIterm)
     monkeypatch.setattr(entry, "IDLE_CHECK_SECONDS", 0.02)
     sock = os.path.join(sock_dir, "d.sock")
-    ns = build_parser().parse_args(["run", "--socket", sock, "--hook-port", "0", "--idle-exit-seconds", "0.2"])
+    ns = parse_args(["run", "--socket", sock, "--hook-port", "0", "--idle-exit-seconds", "0.2"])
     daemon = asyncio.create_task(entry.run_daemon(ns))
     try:
         await wait_until(lambda: os.path.exists(tmp_path / "Library/Application Support/Shellforge/daemon.json"))
@@ -190,7 +230,7 @@ async def test_with_sessions_from_the_app_no_iterm2_cookie_is_asked_for(monkeypa
 
     monkeypatch.setenv("HOME", str(tmp_path))
     sock = os.path.join(sock_dir, "c.sock")
-    ns = build_parser().parse_args(["run", "--socket", sock, "--hook-port", "0", "--cookies-from-app"])
+    ns = parse_args(["run", "--socket", sock, "--hook-port", "0", "--cookies-from-app"])
     daemon = asyncio.create_task(entry.run_daemon(ns))
     try:
         await wait_until(lambda: os.path.exists(tmp_path / "Library/Application Support/Shellforge/daemon.json"))
@@ -239,7 +279,7 @@ async def test_the_helper_writes_its_python_for_shellforge_run(monkeypatch, tmp_
     support = tmp_path / "Library/Application Support/Shellforge"
     support.mkdir(parents=True)
     (support / "helper-python").write_text("/an/older/python\n")
-    ns = build_parser().parse_args(["run", "--socket", os.path.join(sock_dir, "p.sock"), "--hook-port", "0"])
+    ns = parse_args(["run", "--socket", os.path.join(sock_dir, "p.sock"), "--hook-port", "0"])
     daemon = asyncio.create_task(entry.run_daemon(ns))
     try:
         await wait_until(lambda: os.path.exists(support / "daemon.json"))

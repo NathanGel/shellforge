@@ -7,7 +7,7 @@ import os
 import signal
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -53,9 +53,19 @@ class IdleWatchdog:
                 return
 
 
-def support_dir() -> Path:
-    """Where Shellforge keeps its socket, info file, log and hook port: its own folder, so the daemon
-    it was copied from can run beside it. Read at call time, so HOME is the current one."""
+#: The folder a dev build's app sets for the sessions it starts, and the helper's fallback when it is
+#: not given --support-dir (`ShellforgeSupport.environmentVariable` in the Swift package).
+SUPPORT_ENV = "SHELLFORGE_SUPPORT"
+
+
+def support_dir(override: str | None = None, env: Mapping[str, str] | None = None) -> Path:
+    """Where Shellforge keeps its socket, info file, log and hook port: `override` (--support-dir),
+    else SHELLFORGE_SUPPORT, else the installed app's own folder, so the daemon it was copied from
+    can run beside it, and a dev build's helper beside the installed app's. Read at call time, so
+    HOME is the current one."""
+    chosen = override or (os.environ if env is None else env).get(SUPPORT_ENV)
+    if chosen:
+        return Path(chosen).expanduser()
     return Path.home() / "Library" / "Application Support" / "Shellforge"
 
 
@@ -74,11 +84,13 @@ DEFAULT_HOOK_PORT = 47831
 
 
 def build_parser() -> argparse.ArgumentParser:
-    folder = support_dir()
+    """`--socket` defaults to the support folder's, which `parse_args` fills in once it knows it."""
     p = argparse.ArgumentParser(prog="shellforged")
     sub = p.add_subparsers(dest="command", required=True)
     run = sub.add_parser("run", help="run the daemon")
-    run.add_argument("--socket", default=str(folder / "shellforged.sock"))
+    support_help = f"the folder for the socket, daemon.json and helper-python (default: ${SUPPORT_ENV}, else ~/Library/Application Support/Shellforge)"
+    run.add_argument("--support-dir", help=support_help)
+    run.add_argument("--socket", help="default: shellforged.sock in the support folder")
     run.add_argument("--hook-port", type=int, default=DEFAULT_HOOK_PORT)
     run.add_argument("--log-level", default="INFO")
     run.add_argument("--idle-exit-seconds", type=float, default=IDLE_EXIT_SECONDS,
@@ -90,8 +102,18 @@ def build_parser() -> argparse.ArgumentParser:
     ctl = sub.add_parser("ctl", help="send one request to a running daemon")
     ctl.add_argument("method")
     ctl.add_argument("params", nargs="?", default="null")
-    ctl.add_argument("--socket", default=str(folder / "shellforged.sock"))
+    ctl.add_argument("--support-dir", help=support_help)
+    ctl.add_argument("--socket", help="default: shellforged.sock in the support folder")
     return p
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """The command line, with `support_dir` resolved to a Path and `socket` defaulted inside it."""
+    ns = build_parser().parse_args(argv)
+    ns.support_dir = support_dir(ns.support_dir)
+    if ns.socket is None:
+        ns.socket = str(ns.support_dir / "shellforged.sock")
+    return ns
 
 
 async def ctl_request(socket_path: str, method: str, params: Any) -> dict[str, Any]:
@@ -137,7 +159,7 @@ async def run_daemon(ns: argparse.Namespace) -> None:
     await svc.start()
     watchdog = asyncio.get_running_loop().create_task(
         IdleWatchdog(lambda: rpc.client_count, ns.idle_exit_seconds, stop.set, check_seconds=IDLE_CHECK_SECONDS).run())
-    folder = support_dir()
+    folder: Path = ns.support_dir
     folder.mkdir(parents=True, exist_ok=True)
     info = folder / "daemon.json"
     # Before daemon.json, which says the helper is up: `hooks/shellforge-run` runs under this Python.
@@ -156,7 +178,7 @@ async def run_daemon(ns: argparse.Namespace) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ns = build_parser().parse_args(argv)
+    ns = parse_args(argv)
     if ns.command == "run":
         # A failure on every 2 s tick is one line every five minutes, not thousands a day. On the
         # helper's own handler only: basicConfig installs it only when nothing else has one.

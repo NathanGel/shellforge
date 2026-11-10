@@ -44,6 +44,13 @@ def temporary_files_in_the_tests_folder(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_support_folder_from_the_running_app(monkeypatch):
+    """A terminal started by Shellforge carries its support folder; the tests start from none, so
+    the default folder they expect is HOME's."""
+    monkeypatch.delenv("SHELLFORGE_SUPPORT", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def no_real_iterm_launch(monkeypatch):
     """Stands in for `open -a iTerm` in every test, and fails the one that reaches it: a supervisor
     built without a launch_iterm of its own would otherwise open the real iTerm2. It records rather

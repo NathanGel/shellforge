@@ -182,6 +182,12 @@ def test_the_default_socket_is_the_helpers(monkeypatch):
     assert run_agent.default_socket({"HOME": "/Users/x"}) == "/Users/x/Library/Application Support/Shellforge/shellforged.sock"
 
 
+def test_the_socket_is_in_the_support_folder_the_app_set():
+    env = {"HOME": "/Users/x", "SHELLFORGE_SUPPORT": "/Users/x/Library/Application Support/example-dev"}
+    assert run_agent.default_socket(env) == "/Users/x/Library/Application Support/example-dev/shellforged.sock"
+    assert run_agent.default_socket({**env, "SHELLFORGE_SUPPORT": ""}).endswith("/Shellforge/shellforged.sock")
+
+
 def serve_once(path, lines):
     """A Unix socket that reads one request and writes `lines`, each built from the request."""
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
