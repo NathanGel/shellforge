@@ -102,7 +102,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 
 ## Rearranging the sidebar
 
-- **Rearrange.** Right-click a project, divider, task, terminal or SSH row › Rearrange. The header becomes an accent-coloured bar that reads Rearranging, with Cancel and Done.
+- **Rearrange.** Right-click a project, divider, task, terminal or SSH row › Rearrange. The header reads Rearranging, with Cancel and an accent Done button.
   - Each row gets a handle. Drag a row with the mouse and a line shows where it goes.
   - Projects and dividers move among each other; a project brings its rows along. A project or divider dropped among a project's rows lands after that project.
   - A project's SSH rows move among themselves, and its tasks and terminals move among themselves, in any mix. Nothing leaves its project, and no task or terminal goes above the SSH rows. A drop the rules don't allow jumps back.
