@@ -91,6 +91,10 @@ final class iTermShellforgeSidebar: NSObject {
     /// The one workspace every window's sidebar shows and changes.
     static let document = WorkspaceDocument(store: WorkspaceStore(folder: dataFolder))
 
+    /// The activity bar's order: one for the app, so every window's bar follows a drag in any of
+    /// them; saved on this Mac only (a `NoSync` default). Each window keeps its own selected panel.
+    static let activityOrder = ActivityOrderSource(defaults: iTermUserDefaults.userDefaults())
+
     /// What the app bundle gives the agents: `shellforge-status`, `shellforge-run` and the ready-made agents.
     static let agentTools = AgentTools.bundled(resourceURL: Bundle.main.resourceURL, bundlePath: Bundle.main.bundlePath,
                                                dataFolder: dataFolder)
@@ -135,7 +139,7 @@ final class iTermShellforgeSidebar: NSObject {
         watchClicks()
         let view = ShellforgeSidebar.makeView(model: model, chooseFolder: FolderChooser.choose, hooks: hooks, machine: machine,
                                           backpack: backpack, zoom: zoom, terminalMatch: iTermShellforgeTerminalMatch.settings,
-                                          feedback: feedback,
+                                          feedback: feedback, activityOrder: activityOrder,
                                           panelCornerRadius: floats ? panelCornerRadius : nil,
                                           agentTools: agentTools, agentsChanged: { agentsChanged() },
                                           showBackpack: { [weak windowController] present in

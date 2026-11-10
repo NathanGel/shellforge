@@ -20,6 +20,12 @@ import Foundation
         #expect(layout.order == [.sessions, .metrics])
     }
 
+    @Test func movingAPanelBeforeItselfChangesNothing() {
+        var layout = ActivityLayout(saved: nil)
+        layout.move(.sessions, before: .sessions)
+        #expect(layout.order == [.sessions, .metrics])
+    }
+
     @Test func savedValueRoundTrips() {
         let defaults = ScratchDefaults.make()
         #expect(ActivityOrderStore.load(defaults) == nil)

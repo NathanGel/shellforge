@@ -23,9 +23,12 @@ public enum ShellforgeSidebar {
     /// the sidebar as a floating panel with those corners (macOS 26); nil draws the classic sidebar.
     /// `agentTools` is what the app bundle gives the agents, for Settings › Agents, and
     /// `agentsChanged` is told each time Settings › Agents adds, changes or removes one.
+    /// `activityOrder` is the app's one activity bar order, which every window's bar follows; each
+    /// sidebar keeps its own selected panel.
     public static func makeView(model: SidebarModel, chooseFolder: @escaping @MainActor () -> String?, hooks: AgentHooksModel,
                                 machine: MachineMonitor, backpack: BackpackController, zoom: SidebarZoom,
-                                terminalMatch: TerminalMatchSettings, feedback: FeedbackPrompt, panelCornerRadius: CGFloat? = nil,
+                                terminalMatch: TerminalMatchSettings, feedback: FeedbackPrompt,
+                                activityOrder: ActivityOrderSource = ActivityOrderSource(defaults: nil), panelCornerRadius: CGFloat? = nil,
                                 agentTools: AgentTools = .none, agentsChanged: @escaping @MainActor () -> Void = {},
                                 showBackpack: @escaping @MainActor (@escaping @MainActor () -> Void) -> Void = { _ in },
                                 showFeedback: @escaping @MainActor (@escaping @MainActor () -> Void) -> Void = { _ in },
@@ -36,8 +39,8 @@ public enum ShellforgeSidebar {
         // reaches it weakly, so whatever keeps that — ⌘B's registry — never keeps the sidebar.
         let presenter = SheetPresenter()
         let feedbackPresenter = SheetPresenter()
-        let sidebar = SidebarView(model: model, chooseFolder: chooseFolder, hooks: hooks, machine: machine,
-                                  backpack: backpack, terminalMatch: terminalMatch, feedback: feedback,
+        let sidebar = SidebarView(model: model, activity: ActivityModel(source: activityOrder), chooseFolder: chooseFolder,
+                                  hooks: hooks, machine: machine, backpack: backpack, terminalMatch: terminalMatch, feedback: feedback,
                                   chrome: chrome, showBackpack: { [weak presenter] present in
             guard let presenter else { return }
             presenter.present = present
@@ -302,10 +305,13 @@ final class SheetPresenter {
     var present: (@MainActor () -> Void)?
 }
 
-/// AiTerm's sidebar, inside iTerm2's window: the PROJECTS header, each project with its tasks and
-/// the selected task's tabs, the tabs of no task, the banners, or the empty state.
+/// The sidebar: the activity bar and the panel it selects. The Sessions panel is AiTerm's sidebar,
+/// inside iTerm2's window: the PROJECTS header, each project with its tasks and the selected task's
+/// tabs, the tabs of no task, the banners, or the empty state.
 struct SidebarView: View {
     @ObservedObject var model: SidebarModel
+    /// This window's activity bar: the shared order and its own selected panel.
+    @ObservedObject var activity: ActivityModel
     let chooseFolder: @MainActor () -> String?
     @ObservedObject var hooks: AgentHooksModel
     let machine: MachineMonitor
@@ -325,29 +331,13 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // With the window's buttons inside the panel, the header is their row, pinned. Rearrange
-            // mode's bar takes the header's place, pinned either way, so Done stays in reach.
-            if model.isRearranging {
-                RearrangeBar(cancel: model.cancelRearrange, done: model.finishRearrange, windowControls: chrome.windowControls)
-            } else if let controls = chrome.windowControls {
-                header(controls)
+            // With the window's buttons inside the panel, the selected panel's header is their row,
+            // pinned across the whole sidebar; the activity bar starts below it.
+            if let controls = chrome.windowControls { pinnedHeader(controls) }
+            HStack(spacing: 0) {
+                ActivityBar(model: activity, openSettings: showMacSettings)
+                selectedPanel.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
-            // Its buttons wait while the sidebar is rearranged.
-            SidebarBanners(model: model, feedback: feedback, giveFeedback: presentFeedback)
-                .allowsHitTesting(!model.isRearranging)
-            List {
-                if chrome.windowControls == nil && !model.isRearranging { header(nil) }
-                // In Rearrange mode only, the List's own move drags the rows (moveRows).
-                ForEach(model.rows) { row in rowView(row) }
-                    .onMove(perform: model.isRearranging ? { [model] source, destination in model.moveRows(from: source, to: destination) } : nil)
-            }
-            .listStyle(.sidebar)
-            .scrollContentBackground(.hidden)
-            .background(NativeRowHighlight.off)
-            .environment(\.isRearranging, model.isRearranging)
-            SidebarFooterHost(model: model, hooks: hooks, machine: machine, backpack: backpack,
-                              toggleMac: { BackpackToggle(backpack: backpack, presentSheet: presentBackpack).run() },
-                              openMacSettings: showMacSettings)
         }
         // The header places itself on the buttons' row, so the title bar's safe area is not wanted.
         .ignoresSafeArea(.container, edges: chrome.windowControls == nil ? [] : .top)
@@ -373,6 +363,59 @@ struct SidebarView: View {
             case .newTerminal(let project): showNewTerminal(in: project)
             case .addDivider: showAddDivider()
             }
+        }
+    }
+
+    /// The header on the window buttons' row. Rearrange mode's bar takes the Sessions header's place,
+    /// pinned either way, so Done stays in reach.
+    @ViewBuilder private func pinnedHeader(_ controls: SidebarWindowControls) -> some View {
+        switch activity.layout.selected {
+        case .sessions:
+            if model.isRearranging {
+                rearrangeBar(controls)
+            } else {
+                header(controls)
+            }
+        case .metrics:
+            HStack { SidebarHeading(ActivityPanel.metrics.title); Spacer() }
+                .frame(height: scale(Size.menuRow))
+                .modifier(HeaderPlacement(windowControls: controls, scale: scale))
+        }
+    }
+
+    private func rearrangeBar(_ controls: SidebarWindowControls?) -> RearrangeBar {
+        RearrangeBar(cancel: model.cancelRearrange, done: model.finishRearrange, windowControls: controls)
+    }
+
+    @ViewBuilder private var selectedPanel: some View {
+        switch activity.layout.selected {
+        case .sessions: sessionsPanel
+        case .metrics: ActivityPanelPlaceholder(panel: .metrics, titled: chrome.windowControls == nil)
+        }
+    }
+
+    /// Today's sidebar: the header (unless pinned on the buttons' row), the banners, the list and the footer.
+    private var sessionsPanel: some View {
+        VStack(spacing: 0) {
+            if model.isRearranging && chrome.windowControls == nil {
+                rearrangeBar(nil)
+            }
+            // Its buttons wait while the sidebar is rearranged.
+            SidebarBanners(model: model, feedback: feedback, giveFeedback: presentFeedback)
+                .allowsHitTesting(!model.isRearranging)
+            List {
+                if chrome.windowControls == nil && !model.isRearranging { header(nil) }
+                // In Rearrange mode only, the List's own move drags the rows (moveRows).
+                ForEach(model.rows) { row in rowView(row) }
+                    .onMove(perform: model.isRearranging ? { [model] source, destination in model.moveRows(from: source, to: destination) } : nil)
+            }
+            .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
+            .background(NativeRowHighlight.off)
+            .environment(\.isRearranging, model.isRearranging)
+            SidebarFooterHost(model: model, hooks: hooks, machine: machine, backpack: backpack,
+                              toggleMac: { BackpackToggle(backpack: backpack, presentSheet: presentBackpack).run() },
+                              openMacSettings: showMacSettings)
         }
     }
 

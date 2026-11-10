@@ -49,4 +49,16 @@ import Testing
         #expect(list.selectionHighlightStyle == .none)
         #expect(foreign.selectionHighlightStyle == .regular)
     }
+
+    /// The activity bar's list sits beside the sessions list in one host: the painter turns off the
+    /// highlight of both, whichever it meets first.
+    @Test func theRowPainterCoversEveryListInTheSidebar() {
+        final class Boundary: NSView, RowHighlightBoundary {}
+        let sidebar = Boundary(), bar = NSTableView(), list = NSTableView()
+        let probe = NativeRowHighlight.Probe(frame: .zero)
+        sidebar.addSubview(bar); sidebar.addSubview(list); sidebar.addSubview(probe)
+        probe.apply()
+        #expect(bar.selectionHighlightStyle == .none)
+        #expect(list.selectionHighlightStyle == .none)
+    }
 }

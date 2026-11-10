@@ -484,7 +484,7 @@ struct NoticeGround<Content: View>: View {
     }
 }
 
-/// Turns off AppKit's own selection highlight on the sidebar's table, so the row pill is the only
+/// Turns off AppKit's own selection highlight on the sidebar's tables, so the row pill is the only
 /// painter (AiTerm's `NativeRowHighlight`, without its global swizzle of NSTableView's context-menu
 /// highlight, which inside iTerm2 would reach iTerm2's own tables).
 struct NativeRowHighlight: NSViewRepresentable {
@@ -494,23 +494,29 @@ struct NativeRowHighlight: NSViewRepresentable {
         override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); apply() }
         override func layout() { super.layout(); apply() }
 
-        private weak var found: NSTableView?
+        /// The sidebar's tables: its list and the activity bar's.
+        private var found = NSHashTable<NSTableView>.weakObjects()
 
         func apply() {
-            if let found, found.window != nil, found.window === window {
-                found.selectionHighlightStyle = .none
+            let known = found.allObjects
+            if !known.isEmpty, known.allSatisfy({ $0.window != nil && $0.window === window }) {
+                known.forEach { $0.selectionHighlightStyle = .none }
                 return
             }
-            func table(in view: NSView) -> NSTableView? {
-                if let table = view as? NSTableView { return table }
-                return view.subviews.lazy.compactMap { table(in: $0) }.first
+            func tables(in view: NSView) -> [NSTableView] {
+                if let table = view as? NSTableView { return [table] }
+                return view.subviews.flatMap { tables(in: $0) }
             }
             // Up to the sidebar's own host and no further: past it are iTerm2's views and tables.
             var ancestor = superview
             while let current = ancestor {
-                if let table = table(in: current) {
-                    table.selectionHighlightStyle = .none
-                    found = table
+                let inside = tables(in: current)
+                if !inside.isEmpty {
+                    found.removeAllObjects()
+                    for table in inside {
+                        table.selectionHighlightStyle = .none
+                        found.add(table)
+                    }
                     return
                 }
                 if current is RowHighlightBoundary { return }

@@ -34,8 +34,10 @@ public struct ActivityLayout: Equatable, Sendable {
         self.selected = selected
     }
 
-    /// Moves `panel` in front of `before`, or to the end when `before` is nil.
+    /// Moves `panel` in front of `before`, or to the end when `before` is nil. A panel dropped on
+    /// itself stays where it is.
     public mutating func move(_ panel: ActivityPanel, before: ActivityPanel?) {
+        guard panel != before else { return }
         order.removeAll { $0 == panel }
         if let before, let index = order.firstIndex(of: before) {
             order.insert(panel, at: index)
