@@ -13,7 +13,8 @@ It keeps its socket (`shellforged.sock`), `daemon.json`, log and `hook-port` in
 beside AiTerm's daemon on one Mac.
 
 `--support-dir <folder>` (on `run` and `ctl`) puts its files in another folder; the socket defaults
-to `shellforged.sock` in it. Without the option it uses `$SHELLFORGE_SUPPORT`, then the folder above.
+to `shellforged.sock` in it. Without the option it uses `$SHELLFORGE_SUPPORT` (an absolute path, as
+the app sets it and the shims read it), then the folder above.
 A dev build passes its own data folder and its own `--hook-port`, so its helper runs beside the
 installed app's:
 

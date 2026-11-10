@@ -165,16 +165,23 @@ def run_bounded(home, seconds=5):
         pytest.fail("the chain did not end")
 
 
-def test_reads_the_folder_the_app_that_started_the_terminal_set(home, daemon, tmp_path):
-    """A dev build's terminal has SHELLFORGE_SUPPORT: the shim posts to the port and runs the original
-    recorded there, not the installed app's under HOME."""
+def test_posts_to_the_folder_the_app_set_and_runs_the_installed_apps_original(home, daemon, tmp_path):
+    """A dev build's terminal has SHELLFORGE_SUPPORT: the shim posts to the port recorded there, and
+    runs the user's original from the installed app's folder, which describes the global settings
+    file: a record in the dev folder is never read."""
     (support_of(home) / "hook-port").unlink()
-    (support_of(home) / "statusline-original.cmd").write_text("cat >/dev/null; printf 'installed'")
+    (support_of(home) / "statusline-original.cmd").write_text("cat >/dev/null; printf 'mine'")
     dev = tmp_path / "Library" / "Application Support" / "example-dev"
     dev.mkdir(parents=True)
     (dev / "hook-port").write_text(f"{daemon.server_port}\n")
-    (dev / "statusline-original.cmd").write_text("cat >/dev/null; printf 'dev'")
+    (dev / "statusline-original.cmd").write_text("cat >/dev/null; printf 'dev record'")
     result = run_shim(home, extra_env={"SHELLFORGE_SUPPORT": str(dev)})
-    assert (result.returncode, result.stdout, result.stderr) == (0, "dev", "")
+    assert (result.returncode, result.stdout, result.stderr) == (0, "mine", "")
     assert forwarded(daemon)[0][0] == "/statusline"
-    assert run_shim(home, extra_env={"SHELLFORGE_SUPPORT": ""}).stdout == "installed"
+
+
+def test_a_release_terminal_runs_the_original_a_dev_build_recorded(home, daemon, tmp_path):
+    """After a dev build's Repair the original is in the installed app's folder, so a release
+    terminal (no SHELLFORGE_SUPPORT) still shows it."""
+    (support_of(home) / "statusline-original.cmd").write_text("cat >/dev/null; printf 'mine'")
+    assert run_shim(home).stdout == "mine"

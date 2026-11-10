@@ -114,15 +114,15 @@ def run_bounded(home, seconds=5):
         pytest.fail("the chain did not end")
 
 
-def test_shim_reads_the_folder_the_app_that_started_the_terminal_set(home, daemon, tmp_path):
-    """With SHELLFORGE_SUPPORT, a dev build's folder: its port and its original, not HOME's."""
+def test_shim_posts_to_the_folder_the_app_set_and_runs_the_installed_apps_original(home, daemon, tmp_path):
+    """With SHELLFORGE_SUPPORT, a dev build's port; the original is always the installed app's record."""
     installed = home / "Library" / "Application Support" / "Shellforge"
     (installed / "hook-port").unlink()
-    (installed / "grok-statusline-original.cmd").write_text("cat >/dev/null; printf 'installed'")
+    (installed / "grok-statusline-original.cmd").write_text("cat >/dev/null; printf 'mine'")
     dev = tmp_path / "example-dev"
     dev.mkdir()
     (dev / "hook-port").write_text(f"{daemon.server_port}\n")
-    (dev / "grok-statusline-original.cmd").write_text("cat >/dev/null; printf 'dev'")
+    (dev / "grok-statusline-original.cmd").write_text("cat >/dev/null; printf 'dev record'")
     result = run_shim(home, extra_env={"SHELLFORGE_SUPPORT": str(dev)})
-    assert (result.returncode, result.stdout) == (0, "dev")
+    assert (result.returncode, result.stdout) == (0, "mine")
     assert wait_for(daemon)[0][0] == "/statusline/grok"

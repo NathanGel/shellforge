@@ -21,16 +21,18 @@ set -u
 [ -n "${SHELLFORGE_STATUSLINE_ACTIVE-}" ] && exit 0
 export SHELLFORGE_STATUSLINE_ACTIVE=1
 IFS= read -r -d '' INPUT || true
-# The app that started this terminal sets SHELLFORGE_SUPPORT to its own folder (a dev build's is not
-# the installed app's); unset, it is the installed app's.
-SUPPORT="${SHELLFORGE_SUPPORT:-$HOME/Library/Application Support/Shellforge}"
+# A dev build sets SHELLFORGE_SUPPORT to its own folder in its terminals, so the post goes to its
+# helper; unset, the installed app's. The user's original command describes a global settings
+# file, so it is always the installed app's record.
+INSTALLED="$HOME/Library/Application Support/Shellforge"
+SUPPORT="${SHELLFORGE_SUPPORT:-$INSTALLED}"
 PORT=""
 [ -f "$SUPPORT/hook-port" ] && { PORT="$(<"$SUPPORT/hook-port")" 2>/dev/null; }
 # Only a port, 1-65535 in digits, goes into the URL: a zsh pattern, so the check forks nothing.
 if [[ $PORT == <1-65535> ]]; then
   { printf '%s' "$INPUT" | curl -s -m 0.3 -X POST -H 'Content-Type: application/json' -H 'X-Shellforge-Hook: 1' -H 'Expect:' --data-binary @- "http://127.0.0.1:$PORT/statusline"; } >/dev/null 2>&1 &
 fi
-ORIG_FILE="$SUPPORT/statusline-original.cmd"
+ORIG_FILE="$INSTALLED/statusline-original.cmd"
 if [ -f "$ORIG_FILE" ]; then
   ORIG_CMD="$(<"$ORIG_FILE")" 2>/dev/null
   if [ -n "$ORIG_CMD" ]; then printf '%s' "$INPUT" | /bin/sh -c "$ORIG_CMD"; exit $?; fi

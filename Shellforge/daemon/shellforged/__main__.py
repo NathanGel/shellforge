@@ -63,9 +63,11 @@ def support_dir(override: str | None = None, env: Mapping[str, str] | None = Non
     else SHELLFORGE_SUPPORT, else the installed app's own folder, so the daemon it was copied from
     can run beside it, and a dev build's helper beside the installed app's. Read at call time, so
     HOME is the current one."""
-    chosen = override or (os.environ if env is None else env).get(SUPPORT_ENV)
-    if chosen:
-        return Path(chosen).expanduser()
+    if override:
+        return Path(override).expanduser()
+    # As the shims read it: an absolute path, used as it is.
+    if chosen := (os.environ if env is None else env).get(SUPPORT_ENV):
+        return Path(chosen)
     return Path.home() / "Library" / "Application Support" / "Shellforge"
 
 

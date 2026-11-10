@@ -5,6 +5,7 @@ import socket
 import signal
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -43,6 +44,8 @@ def test_the_support_folder_comes_from_the_option_then_the_environment(tmp_path,
     assert parse_args(["run", "--support-dir", str(option)]).support_dir == option
     monkeypatch.setenv("SHELLFORGE_SUPPORT", "")
     assert parse_args(["run"]).support_dir == default
+    monkeypatch.setenv("SHELLFORGE_SUPPORT", "~/x")  # absolute only, as the shims read it: never expanded
+    assert parse_args(["run"]).support_dir == Path("~/x")
 
 
 async def test_the_helper_writes_its_files_in_the_support_folder_it_is_given(monkeypatch, tmp_path, sock_dir):
