@@ -61,20 +61,30 @@ public enum GitActions {
             throw GitFailure(message: "Write a commit message first.")
         }
         let addedEverything = status.staged.isEmpty
+        let headBefore = addedEverything ? head(of: repo, launcher: launcher) : nil
         if addedEverything {
             try run(["add", "-A", "--", ".", ":(exclude).worktrees"], in: repo, action: "commit", launcher: launcher)
         }
         do {
             try run(["commit", "-q", "-m", message], in: repo, action: "commit", launcher: launcher, timeout: commitTimeout)
         } catch {
-            if addedEverything {
-                var unborn = false
-                if case .unborn = status.head { unborn = true }
-                let undo = unborn ? ["rm", "--cached", "-r", "-q", "-f", "--", "."] : ["reset", "-q"]
+            // Put the index back only when no commit was made: a commit written and then reported
+            // as failed (a slow post-commit hook) must keep its index, or the next commit would
+            // record every file as deleted. Read from the repository now, not the old status.
+            let headNow = addedEverything ? head(of: repo, launcher: launcher) : nil
+            if addedEverything, headNow == headBefore {
+                let undo = headNow == nil ? ["rm", "--cached", "-r", "-q", "-f", "--", "."] : ["reset", "-q"]
                 _ = try? run(undo, in: repo, action: "commit", launcher: launcher)
             }
             throw error
         }
+    }
+
+    /// The commit HEAD points at, or nil on a branch with no commits yet.
+    private static func head(of repo: String, launcher: CommandLauncher) -> String? {
+        guard let out = try? run(["rev-parse", "--verify", "-q", "HEAD"], in: repo, action: "commit", launcher: launcher,
+                                 allowFailure: true), out.status == 0 else { return nil }
+        return out.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// With an upstream, `git push`; without one, publishes the branch to origin. Only from a branch.
