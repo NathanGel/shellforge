@@ -30,11 +30,14 @@ public enum PanelTab: Hashable, Sendable {
             // The uuid has no colon, so the path is everything after the first one.
             guard let split = rest.firstIndex(of: ":"),
                   let project = UUID(uuidString: String(rest[..<split])) else { return nil }
-            self = .file(project: project, path: String(rest[rest.index(after: split)...]))
+            let path = String(rest[rest.index(after: split)...])
+            guard !path.isEmpty else { return nil }
+            self = .file(project: project, path: path)
         case "git":
             // The repo id is itself `<kind>:<uuid>`, so the path starts after the second colon.
             let parts = rest.split(separator: ":", maxSplits: 2, omittingEmptySubsequences: false)
-            guard parts.count == 3, !parts[0].isEmpty, UUID(uuidString: String(parts[1])) != nil else { return nil }
+            guard parts.count == 3, parts[0] == "project" || parts[0] == "task",
+                  UUID(uuidString: String(parts[1])) != nil, !parts[2].isEmpty else { return nil }
             self = .diff(repo: "\(parts[0]):\(parts[1])", path: String(parts[2]))
         default:
             return nil

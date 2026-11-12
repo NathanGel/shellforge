@@ -21,6 +21,16 @@ import Testing
         #expect(PanelTab(tagValue: "files:not-a-uuid:x") == nil)
     }
 
+    /// A damaged tag names no owner, so its tab stays reachable under Other Tabs.
+    @Test func malformedValuesAreNil() {
+        let id = UUID().uuidString
+        #expect(PanelTab(tagValue: "ssh:") == nil)
+        #expect(PanelTab(tagValue: "files:\(id):") == nil)
+        #expect(PanelTab(tagValue: "git:project:\(id):") == nil)
+        #expect(PanelTab(tagValue: "git:other:\(id):src/app.ts") == nil)
+        #expect(PanelTab(tagValue: "git:task:not-a-uuid:src/app.ts") == nil)
+    }
+
     @Test func theFocusedPaneNamesThePanelFirst() {
         let a = PanelTab.ssh(alias: "staging").tagValue
         let b = PanelTab.ssh(alias: "db").tagValue
