@@ -46,12 +46,14 @@ public struct GitStatus: Equatable, Sendable {
     static let shortSHALength = 7
 
     /// `git status --porcelain=v2 --branch -z --untracked-files=all`, read. `-z` quotes no path,
-    /// so odd names survive; `LC_ALL=C` keeps git's messages in English.
+    /// so odd names survive; `LC_ALL=C` keeps git's messages in English. `GIT_OPTIONAL_LOCKS=0`
+    /// stops status from rewriting the index, which the Git panel watches: a read must not cause
+    /// the event that reads again.
     public static func read(_ path: String, launcher: CommandLauncher) throws -> GitStatus {
         let args = ["-C", path, "status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all"]
         let out: ChildOutput
         do {
-            out = try launcher.run("git", args, extra: ["LC_ALL": "C"], timeout: gitTimeout)
+            out = try launcher.run("git", args, extra: ["LC_ALL": "C", "GIT_OPTIONAL_LOCKS": "0"], timeout: gitTimeout)
         } catch {
             throw GitFailure(message: error.localizedDescription)
         }

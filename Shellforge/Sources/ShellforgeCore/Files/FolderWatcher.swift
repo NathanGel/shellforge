@@ -6,7 +6,16 @@ public protocol FolderWatching: AnyObject, Sendable {
     /// Calls `onChange`, on a queue of the watcher's own, when something under `path` that can
     /// change what the panel lists changes. It must not call `stop()` itself.
     func watch(_ path: String, onChange: @escaping @Sendable () -> Void)
+    /// The same, with what changed: the relevant paths, relative to `path` ("" for the folder
+    /// itself). An empty list says something changed but not what.
+    func watch(_ path: String, onChanges: @escaping @Sendable ([String]) -> Void)
     func stop()
+}
+
+extension FolderWatching {
+    public func watch(_ path: String, onChanges: @escaping @Sendable ([String]) -> Void) {
+        watch(path) { onChanges([]) }
+    }
 }
 
 /// An FSEvents stream over one folder. The stream coalesces bursts itself (0.3 s) and reports
@@ -17,17 +26,25 @@ public final class FolderWatcher: FolderWatching, @unchecked Sendable {
     private let lock = NSLock()
     private var stream: FSEventStreamRef?
     private var box: Box?
+    private let filter: @Sendable (String, String) -> Bool
 
     private final class Box {
         let root: String
-        let onChange: @Sendable () -> Void
-        init(root: String, onChange: @escaping @Sendable () -> Void) {
+        let filter: @Sendable (String, String) -> Bool
+        let onChanges: @Sendable ([String]) -> Void
+        init(root: String, filter: @escaping @Sendable (String, String) -> Bool, onChanges: @escaping @Sendable ([String]) -> Void) {
             self.root = root
-            self.onChange = onChange
+            self.filter = filter
+            self.onChanges = onChanges
         }
     }
 
-    public init() { queue.setSpecific(key: onQueue, value: ()) }
+    /// `filter` says whether a changed path (as the stream reports it) under the watched folder
+    /// counts: the Files panel's by default, `GitWatchPaths.isRelevant` for the Git panel.
+    public init(filter: @escaping @Sendable (_ path: String, _ root: String) -> Bool = FolderWatcher.isRelevant) {
+        self.filter = filter
+        queue.setSpecific(key: onQueue, value: ())
+    }
 
     deinit { stop() }
 
@@ -53,16 +70,40 @@ public final class FolderWatcher: FolderWatching, @unchecked Sendable {
         return String(cString: pointer)
     }
 
+    /// What a batch of the stream's paths reports: nil when none of them counts, else the ones
+    /// that count, relative to `root` — or none at all when one of them is not under `root`.
+    static func changes(_ paths: [String], root: String, filter: (String, String) -> Bool) -> [String]? {
+        guard !paths.isEmpty else { return [] }
+        let relevant = paths.filter { filter($0, root) }
+        guard !relevant.isEmpty else { return nil }
+        let base = root.hasSuffix("/") ? String(root.dropLast()) : root
+        var relative: [String] = []
+        for path in relevant {
+            if path == base {
+                relative.append("")
+            } else if path.hasPrefix(base + "/") {
+                relative.append(String(path.dropFirst(base.count + 1)))
+            } else {
+                return []
+            }
+        }
+        return relative
+    }
+
     public func watch(_ path: String, onChange: @escaping @Sendable () -> Void) {
+        watch(path) { _ in onChange() }
+    }
+
+    public func watch(_ path: String, onChanges: @escaping @Sendable ([String]) -> Void) {
         stop()
-        let box = Box(root: Self.resolvedRoot(path), onChange: onChange)
+        let box = Box(root: Self.resolvedRoot(path), filter: filter, onChanges: onChanges)
         var context = FSEventStreamContext(version: 0, info: Unmanaged.passUnretained(box).toOpaque(),
                                            retain: nil, release: nil, copyDescription: nil)
         let callback: FSEventStreamCallback = { _, info, _, eventPaths, _, _ in
             guard let info else { return }
             let box = Unmanaged<Box>.fromOpaque(info).takeUnretainedValue()
             let paths = Unmanaged<CFArray>.fromOpaque(eventPaths).takeUnretainedValue() as? [String] ?? []
-            if paths.isEmpty || paths.contains(where: { FolderWatcher.isRelevant($0, root: box.root) }) { box.onChange() }
+            if let changes = FolderWatcher.changes(paths, root: box.root, filter: box.filter) { box.onChanges(changes) }
         }
         let flags = FSEventStreamCreateFlags(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagUseCFTypes)
         guard let stream = FSEventStreamCreate(nil, callback, &context, [path] as CFArray,

@@ -46,28 +46,8 @@ public final class FilesModel: ObservableObject {
     private var loops: [UUID: Task<Void, Never>] = [:]
     private var dirty: Set<UUID> = []
     private var loopTokens: [UUID: Int] = [:]
-    /// Events handed from the watcher's queue to the main actor, so tests can await them. Each
-    /// hop leaves once it has run, so a long session keeps none.
-    private let hops = Hops()
-
-    private final class Hops: @unchecked Sendable {
-        private let lock = NSLock()
-        private var next = 0
-        private var tasks: [Int: Task<Void, Never>] = [:]
-        /// Hops that finished before they were added: `add` then keeps nothing.
-        private var finished: Set<Int> = []
-        /// The id the next hop's task is made with, taken before the task is made.
-        func reserve() -> Int { lock.withLock { next += 1; return next } }
-        func add(_ id: Int, _ task: Task<Void, Never>) {
-            lock.withLock { if finished.remove(id) == nil { tasks[id] = task } }
-        }
-        func finish(_ id: Int) {
-            lock.withLock { if tasks.removeValue(forKey: id) == nil { finished.insert(id) } }
-        }
-        /// The hops still kept.
-        func pending() -> [Task<Void, Never>] { lock.withLock { Array(tasks.values) } }
-        var count: Int { lock.withLock { tasks.count } }
-    }
+    /// Events handed from the watcher's queue to the main actor, so tests can await them.
+    private let hops = EventHops()
 
     /// `list` is for tests that must see where listing runs; it defaults to `ProjectFiles.list`.
     public init(projects: [Project], launcher: CommandLauncher, defaults: UserDefaults,
@@ -116,11 +96,7 @@ public final class FilesModel: ObservableObject {
             watchers[project.id] = watcher
             let id = project.id
             watcher.watch(project.path) { [weak self, hops] in
-                let hop = hops.reserve()
-                hops.add(hop, Task { @MainActor in
-                    self?.fileEvent(project: id)
-                    hops.finish(hop)
-                })
+                hops.hop { self?.fileEvent(project: id) }
             }
             startLoop(project: id)
         }
@@ -201,7 +177,7 @@ public final class FilesModel: ObservableObject {
 
     /// Waits until every event the watchers have reported has been taken in. For tests.
     func eventsDelivered() async {
-        for hop in hops.pending() { await hop.value }
+        await hops.delivered()
     }
 
     /// The events handed to the main actor that have not run yet. For tests.
