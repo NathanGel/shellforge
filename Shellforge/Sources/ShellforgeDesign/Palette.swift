@@ -10,8 +10,25 @@ private let rowHoverAlpha = 0.06
 /// because black on a light grey reads stronger than white on a dark one.
 private let rowHoverLightAlpha = 0.05
 
+/// Today's `rowHoverSolid`: `rowHover` composited over `sidebar`, in whichever appearance it is
+/// drawn. Composited by hand in sRGB, not with `NSColor.blended(withFraction:of:)`: that method
+/// converts through `NSCalibratedRGBColorSpace`, whose gamma distorts a dark base colour.
+private let rowHoverSolidToday = NSColor(name: nil) { appearance in
+    let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+    var base = NSColor.windowBackgroundColor
+    appearance.performAsCurrentDrawingAppearance {
+        base = NSColor.windowBackgroundColor.usingColorSpace(.sRGB) ?? NSColor.windowBackgroundColor
+    }
+    let (wash, alpha): (CGFloat, CGFloat) = dark ? (1, rowHoverAlpha) : (0, rowHoverLightAlpha)
+    return NSColor(srgbRed: base.redComponent * (1 - alpha) + wash * alpha,
+                   green: base.greenComponent * (1 - alpha) + wash * alpha,
+                   blue: base.blueComponent * (1 - alpha) + wash * alpha,
+                   alpha: 1)
+}
+
 /// Semantic native colors resolve in the app's dark appearance and honor increased contrast.
-/// Brand marks keep their vendor colors; terminal-background matching remains opt-in.
+/// Brand marks keep their vendor colors; terminal-background matching remains opt-in. Under a theme
+/// other than Shellforge, every colour token takes the theme's colours (`ThemeRuntime`).
 public enum Palette {
     /// `0xRRGGBB` as a colour. `Brand` reads it too, so a vendor's number is decoded one way.
     fileprivate static func hex(_ value: UInt32) -> Color {
@@ -20,26 +37,66 @@ public enum Palette {
 
     /// A colour with one value in the light appearance and another in the dark, resolved by AppKit
     /// wherever it is drawn.
-    static func adaptive(light: NSColor, dark: NSColor) -> Color {
-        Color(nsColor: NSColor(name: nil) { appearance in
+    static func adaptive(light: NSColor, dark: NSColor) -> NSColor {
+        NSColor(name: nil) { appearance in
             appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
+        }
+    }
+
+    // -- the active theme ---------------------------------------------------------------
+    // Every colour token is `today` under the Shellforge theme — the expression it was before themes
+    // came, unchanged — and under any other theme one of its 14 base colours or a derivation of them.
+    // AppKit asks each time it draws, reading `ThemeRuntime` under its lock; `.themed()` asks for the
+    // draw. One function per family of tokens, so each derivation is written once.
+
+    /// A token that is `today` under the Shellforge theme and `themed` under any other, given the
+    /// theme's base colours and whether the theme is dark. The one place a token reads the theme.
+    private static func token(_ today: NSColor, themed: @escaping @Sendable (ThemeColors, _ dark: Bool) -> NSColor) -> Color {
+        Color(nsColor: NSColor(name: nil) { _ in
+            let theme = ThemeRuntime.current
+            guard let colors = theme.colors else { return today }
+            return themed(colors, theme.appearance == .dark)
         })
+    }
+
+    /// A base colour as `NSColor`, at `alpha`.
+    private static func ns(_ color: SRGB, alpha: Double = 1) -> NSColor {
+        NSColor(srgbRed: color.red, green: color.green, blue: color.blue, alpha: alpha)
+    }
+
+    /// The base family: a token that is one of the theme's base colours, as the theme gives it.
+    private static func base(_ today: NSColor, _ color: KeyPath<ThemeColors, SRGB> & Sendable) -> Color {
+        token(today) { colors, _ in ns(colors[keyPath: color]) }
+    }
+
+    /// The wash family: a base colour at an alpha, for a fill drawn over another colour.
+    private static func wash(_ today: NSColor, _ color: KeyPath<ThemeColors, SRGB> & Sendable, alpha: Double) -> Color {
+        token(today) { colors, _ in ns(colors[keyPath: color], alpha: alpha) }
+    }
+
+    /// The veil family: black at `light` in the light appearance and white at `dark` in the dark —
+    /// a shade or a lift off whatever it lies on. Under a theme, the veil of the theme's appearance.
+    private static func veil(light: Double, dark: Double) -> Color {
+        let shade = NSColor(white: 0, alpha: light), lift = NSColor(white: 1, alpha: dark)
+        return token(adaptive(light: shade, dark: lift)) { _, isDark in isDark ? lift : shade }
     }
 
     /// The window, the sidebar and any control drawn flush on them. Also covers the deleted
     /// `control` (`.controlBackgroundColor`) — the two resolved identically under `.darkAqua`.
-    public static let surface = Color(nsColor: .windowBackgroundColor)
+    public static let surface = base(.windowBackgroundColor, \.background)
     /// The sheet footer that holds the primary action. Lighter than the surface.
-    public static let surfaceRaised = Color(nsColor: .underPageBackgroundColor)
+    public static let surfaceRaised = base(.underPageBackgroundColor, \.raised)
     /// A Settings section's box, as macOS's grouped form fills one: a veil that sets it off the sheet
     /// — darker in light, lighter in dark.
-    public static let groupFill = adaptive(light: NSColor(white: 0, alpha: 0.017), dark: NSColor(white: 1, alpha: 0.014))
+    public static let groupFill = veil(light: 0.017, dark: 0.014)
     /// The edge of a Settings section's box: the native grouped box's one-pixel line.
-    public static let groupEdge = adaptive(light: NSColor(white: 0, alpha: 0.076), dark: NSColor(white: 1, alpha: 0.135))
+    /// Under a theme, the theme's border.
+    public static let groupEdge = base(adaptive(light: NSColor(white: 0, alpha: 0.076), dark: NSColor(white: 1, alpha: 0.135)), \.border)
     /// A text field's ground, as macOS 26's own bezeled fields draw it: white in light; in dark a
     /// veil of white that lifts the field off whatever it sits on. The system text background is a
     /// dark well below the sheet there, which no native field draws.
-    public static let fieldFill = adaptive(light: .white, dark: NSColor(white: 1, alpha: 0.09))
+    /// Under a theme, the theme's raised colour, which it fills its inputs with.
+    public static let fieldFill = base(adaptive(light: .white, dark: NSColor(white: 1, alpha: 0.09)), \.raised)
     /// The fill of anything that hangs over a sheet's content: the completion popup and a
     /// `SearchPicker`'s results. Raised, not `surface`: on the sheet's own colour a popup has only
     /// its hairline to tell it from the field and the text it covers. An alias, because a menu
@@ -47,41 +104,45 @@ public enum Palette {
     public static let menu = surfaceRaised
     /// The one hairline: a control's outline and a separator between rows. Previously
     /// `controlStroke` and `divider`, which were separate names for one value.
-    public static let border = Color(nsColor: .separatorColor)
+    public static let border = base(.separatorColor, \.border)
     /// The background of a secondary (unemphasized) selection — a selected row that is not first
     /// responder. Kept neutral; the accent is reserved for the current step and focus.
-    public static let controlActive = Color(nsColor: .unemphasizedSelectedContentBackgroundColor)
+    /// Under a theme, the theme's hover: neutral, a step short of its selection.
+    public static let controlActive = base(.unemphasizedSelectedContentBackgroundColor, \.hover)
     /// The command preview block in a sheet, kept visually distinct from the surrounding surface:
     /// AppKit's text background resolves too close to the window background in both appearances.
-    public static let codeBackground = adaptive(light: NSColor(srgbRed: 0.949, green: 0.949, blue: 0.957, alpha: 1),
-                                                dark: NSColor(srgbRed: 0x14 / 255.0, green: 0x15 / 255.0, blue: 0x19 / 255.0, alpha: 1))
+    /// Under a theme, the theme's sidebar colour: its own step off the background.
+    public static let codeBackground = base(adaptive(light: NSColor(srgbRed: 0.949, green: 0.949, blue: 0.957, alpha: 1),
+                                                     dark: NSColor(srgbRed: 0x14 / 255.0, green: 0x15 / 255.0, blue: 0x19 / 255.0, alpha: 1)),
+                                            \.sidebar)
 
     /// The default label colour: row titles, field values, button labels and most on-screen text.
     /// Also covers the deleted `textStrong` — both were `.labelColor`.
-    public static let text = Color(nsColor: .labelColor)
+    public static let text = base(.labelColor, \.text)
     /// Secondary text: captions, help copy, timestamps and anything subordinate to the primary
     /// label. Also covers the deleted `label` and `chipDigit` — all three were `.secondaryLabelColor`.
-    public static let muted = Color(nsColor: .secondaryLabelColor)
+    public static let muted = base(.secondaryLabelColor, \.muted)
 
-    /// The system accent colour: primary buttons, focus rings and the active step in a flow.
-    public static let accent = Color(nsColor: .controlAccentColor)
+    /// The accent: primary buttons, focus rings and the active step in a flow. The system accent
+    /// colour under the Shellforge theme, the theme's own under any other.
+    public static let accent = base(.controlAccentColor, \.accent)
     /// The house focus ring (`focusRing`): the accent at 35 % — a hint around a field, not a second
     /// border competing with a segmented track's own.
     public static let focusRing = accent.opacity(0.35)
     /// The active Settings tab and the primary sheet action are one accent family.
     public static let tabActive = accent
     /// A clickable link's text colour, e.g. a URL or cross-reference inside body copy.
-    public static let link = Color(nsColor: .linkColor)
+    public static let link = base(.linkColor, \.link)
     /// The positive/success semantic: a passing check, a connected status, a completed state shown
     /// inline.
-    public static let green = Color(nsColor: .systemGreen)
+    public static let green = base(.systemGreen, \.green)
     /// The warning semantic: a status needing attention without being an outright error.
-    public static let amber = Color(nsColor: .systemOrange)
+    public static let amber = base(.systemOrange, \.amber)
     /// The destructive semantic: an irreversible, data-losing action. SwiftUI's `role: .destructive`
     /// already supplies this colour at every call site that needs it (the three "Remove…" menu items
     /// in `SidebarView.swift`) — this token exists so the design system can *express* that colour,
     /// not so Swift call sites start reaching for it explicitly.
-    public static let destructive = Color(nsColor: .systemRed)
+    public static let destructive = base(.systemRed, \.red)
     /// The pip colour on a badge that needs to draw the eye, e.g. an unread or pending count. The
     /// badge pip and the general amber semantic are the same colour family. Previously written
     /// twice as the identical `Color(nsColor: .systemOrange)` — the same defect this task removes
@@ -104,7 +165,7 @@ public enum Palette {
     /// Ink on the accent: a selected row's title, marks and badges, a primary button's keycaps.
     /// Literal white, not `.labelColor`: the accent is as saturated in the dark appearance as in any
     /// other, and AppKit's own selected-row text is white on it. `Surface.accent.ink` is this.
-    public static let onAccent = Color.white
+    public static let onAccent = base(NSColor(Color.white), \.onAccent)
     /// Subordinate ink on the accent — a selected row's branch, its subtitle, its quiet badges'
     /// labels: `onAccent` at 75 %, where `muted` would be a grey on blue. `Surface.accent.secondaryInk`
     /// is this.
@@ -165,15 +226,15 @@ public enum Palette {
     /// A neutral translucent wash behind an unselected count chip or badge. 8 % of `.primary`, which
     /// carries its own alpha (≈0.847, `.labelColor`'s) — so ≈6.8 % white on screen, the value this
     /// wash has always drawn at, not the 8 % its literal suggests.
-    public static let badge = Color.primary.opacity(0.08)
+    public static let badge = wash(NSColor(Color.primary.opacity(0.08)), \.text, alpha: 0.07)
     /// The same badge wash, brighter, drawn when its row is selected.
-    public static let badgeSelected = Color.white.opacity(0.2)
+    public static let badgeSelected = wash(NSColor(Color.white.opacity(0.2)), \.onAccent, alpha: 0.2)
     /// A badge under the pointer, on any ground but the accent: a white wash in dark, a black one
     /// in light.
-    public static let badgeHovered = adaptive(light: NSColor(white: 0, alpha: 0.08), dark: NSColor(white: 1, alpha: 0.14))
+    public static let badgeHovered = veil(light: 0.08, dark: 0.14)
     /// A badge under the pointer on a selected row: stronger than `badgeSelected`, as
     /// `badgeHovered` is than `badge`.
-    public static let badgeSelectedHovered = Color.white.opacity(0.28)
+    public static let badgeSelectedHovered = wash(NSColor(Color.white.opacity(0.28)), \.onAccent, alpha: 0.28)
     /// An inline notice's ground, by its tone: the error, warning and information colours as faint
     /// washes, so the notice's symbol carries the colour and its text stays readable.
     public static let noticeError = destructive.opacity(0.12)
@@ -183,31 +244,19 @@ public enum Palette {
     public static let noticeInfo = muted.opacity(0.10)
     /// The footer card's ground: a faint wash, black in light and white in dark, that sets the
     /// footer apart from the rows above it without a rule.
-    public static let footerCard = adaptive(light: NSColor(white: 0, alpha: 0.04), dark: NSColor(white: 1, alpha: 0.05))
+    public static let footerCard = veil(light: 0.04, dark: 0.05)
     /// The sidebar's own background; equal to `surface` but named separately so sidebar styling
     /// reads locally.
     public static let sidebar = surface
     /// The wash painted behind a sidebar row while the pointer is over it: literal white in dark,
     /// literal black in light. Not `.primary`, whose own alpha (≈0.847) compounds with an opacity.
-    public static let rowHover = adaptive(light: NSColor(white: 0, alpha: rowHoverLightAlpha), dark: NSColor(white: 1, alpha: rowHoverAlpha))
+    /// Under a theme, the theme's hover colour, which is opaque.
+    public static let rowHover = base(adaptive(light: NSColor(white: 0, alpha: rowHoverLightAlpha), dark: NSColor(white: 1, alpha: rowHoverAlpha)),
+                                      \.hover)
     /// The opaque colour a hovered row's avatar ring is painted: `rowHover` composited over
     /// `sidebar`, in whichever appearance it is drawn. Derived, not hardcoded, so the two can never
-    /// drift.
-    ///
-    /// Composited by hand in sRGB, not with `NSColor.blended(withFraction:of:)`: that method
-    /// converts through `NSCalibratedRGBColorSpace`, whose gamma distorts a dark base colour.
-    public static let rowHoverSolid = Color(nsColor: NSColor(name: nil) { appearance in
-        let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        var base = NSColor.windowBackgroundColor
-        appearance.performAsCurrentDrawingAppearance {
-            base = NSColor.windowBackgroundColor.usingColorSpace(.sRGB) ?? NSColor.windowBackgroundColor
-        }
-        let (wash, alpha): (CGFloat, CGFloat) = dark ? (1, rowHoverAlpha) : (0, rowHoverLightAlpha)
-        return NSColor(srgbRed: base.redComponent * (1 - alpha) + wash * alpha,
-                       green: base.greenComponent * (1 - alpha) + wash * alpha,
-                       blue: base.blueComponent * (1 - alpha) + wash * alpha,
-                       alpha: 1)
-    })
+    /// drift. Under a theme, the theme's hover colour: already opaque, so it composites to itself.
+    public static let rowHoverSolid = base(rowHoverSolidToday, \.hover)
 
     /// A collapsed project's status-count chips (`StatusCountChips`): a fill and a stroke per
     /// status family, each a wash of that family's colour. The three pairs strengthen with urgency —
@@ -225,12 +274,13 @@ public enum Palette {
     /// A done chip's edge.
     public static let statusChipDoneStroke = accent.opacity(0.42)
     /// The system colour for an actively selected row or item, stronger than a hover.
-    public static let selection = Color(nsColor: .selectedContentBackgroundColor)
+    public static let selection = base(.selectedContentBackgroundColor, \.selection)
     /// A faint ring drawn around an item that is idle or inactive, using the lowest-emphasis
     /// label colour.
-    public static let idleRing = Color(nsColor: .tertiaryLabelColor)
+    /// Under a theme, its muted colour at 60 %, as macOS's tertiary label sits behind its secondary.
+    public static let idleRing = wash(.tertiaryLabelColor, \.muted, alpha: 0.6)
     /// The background track behind an active spinner or progress indicator's stroke.
-    public static let spinnerTrack = Color(white: 0.56, opacity: 0.28)
+    public static let spinnerTrack = wash(NSColor(Color(white: 0.56, opacity: 0.28)), \.muted, alpha: 0.28)
     /// The active stroke of a spinner or progress indicator; shares `muted` so it reads as
     /// secondary UI, not an alert.
     public static let spinner = muted

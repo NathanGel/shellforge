@@ -89,9 +89,9 @@ enum TerminalSource {
                                                         (4, .systemBlue), (5, .systemPurple), (6, .systemTeal)]
 }
 
-/// Shellforge's terminal colours: the sidebar's own macOS colours, read under `appearance` each
-/// time they are asked for — light or dark, as the window is — so they follow the accent colour,
-/// Increase Contrast and the appearance.
+/// Shellforge's terminal colours: the active theme's own, or under the Shellforge theme the sidebar's
+/// macOS colours, read under `appearance` each time they are asked for — light or dark, as the window
+/// is — so they follow the accent colour, Increase Contrast and the appearance.
 public enum ShellforgeTerminalPalette {
     public static let minimumContrast = 4.5
     /// How much black the terminal's background mixes into the sidebar's surface: a step darker, so
@@ -99,6 +99,7 @@ public enum ShellforgeTerminalPalette {
     public static let backgroundStep = 0.06
 
     public static func colors(in appearance: NSAppearance? = NSAppearance(named: .darkAqua)) -> [TerminalColorRole: SRGB] {
+        if let terminal = ThemeRuntime.current.terminal { return terminal }
         var colors: [TerminalColorRole: SRGB] = [:]
         let draw = { (work: () -> Void) in
             if let appearance { appearance.performAsCurrentDrawingAppearance(work) } else { work() }
