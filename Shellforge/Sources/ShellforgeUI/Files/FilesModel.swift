@@ -31,11 +31,27 @@ public final class FilesModel: ObservableObject {
     private let makeWatcher: (String) -> FolderWatching
     private let list: @Sendable (String, CommandLauncher) -> ProjectFiles.Listing
     private var watchers: [UUID: FolderWatching] = [:]
+    /// A project's epoch changes when it is added, removed or its folder changes; a listing that
+    /// started in an earlier epoch is dropped, so it cannot land on a section it was not for.
+    private var epochs: [UUID: Int] = [:]
     /// The newest refresh whose listing is showing, per project: one started earlier that finishes
-    /// later is dropped, so the newest listing is what shows and none is lost to an overlap.
+    /// later is dropped, so the newest listing wins and none is lost to an overlap.
     private var applied: [UUID: Int] = [:]
-    private var inflight: [UUID: Task<Void, Never>] = [:]
-    private var nextTask = 0
+    private var counter = 0
+    /// A project's running refresh loop, and whether an event came while it ran (one more
+    /// refresh follows, however many events there were).
+    private var loops: [UUID: Task<Void, Never>] = [:]
+    private var dirty: Set<UUID> = []
+    private var loopTokens: [UUID: Int] = [:]
+    /// Events handed from the watcher's queue to the main actor, so tests can await them.
+    private let hops = Hops()
+
+    private final class Hops: @unchecked Sendable {
+        private let lock = NSLock()
+        private var tasks: [Task<Void, Never>] = []
+        func add(_ task: Task<Void, Never>) { lock.withLock { tasks.append(task) } }
+        func drain() -> [Task<Void, Never>] { lock.withLock { defer { tasks = [] }; return tasks } }
+    }
 
     /// `list` is for tests that must see where listing runs; it defaults to `ProjectFiles.list`.
     public init(projects: [Project], launcher: CommandLauncher, defaults: UserDefaults,
@@ -52,30 +68,40 @@ public final class FilesModel: ObservableObject {
 
     public func update(projects: [Project]) {
         let ids = Set(projects.map(\.id))
-        for id in watchers.keys where !ids.contains(id) {
-            watchers.removeValue(forKey: id)?.stop()
-            applied.removeValue(forKey: id)
-            inflight.removeValue(forKey: id)?.cancel()
-        }
+        for id in Array(watchers.keys) where !ids.contains(id) { forget(id) }
         let existing = Dictionary(sections.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        var added: [UUID] = []
+        var started: [UUID] = []
         sections = projects.map { project in
             if var section = existing[project.id] {
-                section.project = project
-                return section
+                guard section.project.path != project.path else {
+                    section.project = project
+                    return section
+                }
+                forget(project.id)   // its folder moved: another tree, another watcher
             }
-            added.append(project.id)
+            started.append(project.id)
             return FilesSection(project: project, state: .loading)
         }
-        for project in projects where added.contains(project.id) {
+        for project in projects where started.contains(project.id) {
+            counter += 1
+            epochs[project.id] = counter
             let watcher = makeWatcher(project.path)
             watchers[project.id] = watcher
             let id = project.id
-            watcher.watch(project.path) { [weak self] in
-                Task { @MainActor in self?.fileEvent(project: id) }
+            watcher.watch(project.path) { [weak self, hops] in
+                hops.add(Task { @MainActor in self?.fileEvent(project: id) })
             }
-            start(project: id)
+            startLoop(project: id)
         }
+    }
+
+    private func forget(_ id: UUID) {
+        watchers.removeValue(forKey: id)?.stop()
+        epochs[id] = nil
+        applied[id] = nil
+        dirty.remove(id)
+        loops.removeValue(forKey: id)?.cancel()
+        loopTokens[id] = nil
     }
 
     // -- open folders ---------------------------------------------------------------------
@@ -102,15 +128,16 @@ public final class FilesModel: ObservableObject {
 
     /// Lists the project again; when it returns the section shows the newest listing started.
     public func refresh(project: UUID) async {
-        guard let path = sections.first(where: { $0.id == project })?.project.path else { return }
-        nextTask += 1
-        let generation = nextTask
+        guard let epoch = epochs[project], let path = sections.first(where: { $0.id == project })?.project.path else { return }
+        counter += 1
+        let generation = counter
         let openFolders = expanded(project).filter { !$0.isEmpty }
         let list = self.list, launcher = self.launcher
         let state = await BackgroundWork.run { () -> FilesSection.State in
             Self.state(for: list(path, launcher), path: path, openFolders: openFolders)
         }
-        guard generation > applied[project, default: 0], let index = sections.firstIndex(where: { $0.id == project }) else { return }
+        guard !Task.isCancelled, epochs[project] == epoch, generation > applied[project, default: 0],
+              let index = sections.firstIndex(where: { $0.id == project }) else { return }
         applied[project] = generation
         sections[index].state = state
     }
@@ -118,33 +145,50 @@ public final class FilesModel: ObservableObject {
     /// Fills in a folder of a project that is not in a repository, which is listed one level at a
     /// time. Nothing to do for a folder that is already loaded, or in a repository.
     public func loadChildren(project: UUID, folder: String) async {
-        guard let section = sections.first(where: { $0.id == project }), case .tree(let nodes) = section.state,
-              Self.node(at: folder, in: nodes)?.children == nil else { return }
+        guard let epoch = epochs[project], let section = sections.first(where: { $0.id == project }),
+              case .tree(let nodes) = section.state, Self.node(at: folder, in: nodes)?.children == nil else { return }
         let path = section.project.path
         let children = await BackgroundWork.run { ProjectFiles.children(of: folder, in: path) }
-        guard let index = sections.firstIndex(where: { $0.id == project }), case .tree(var current) = sections[index].state,
-              Self.node(at: folder, in: current)?.children == nil else { return }
+        guard !Task.isCancelled, epochs[project] == epoch, let index = sections.firstIndex(where: { $0.id == project }),
+              case .tree(var current) = sections[index].state, Self.node(at: folder, in: current)?.children == nil else { return }
         Self.set(children, at: folder, in: &current)
         sections[index].state = .tree(current)
     }
 
-    /// Waits for the refreshes that file events started (each waits for the one before it, so the
-    /// newest of a project stands for all). The first yield lets an event's hop to the main actor
-    /// run first. For tests.
-    func settled() async {
-        await Task.yield()
-        for task in Array(inflight.values) { await task.value }
+    /// Waits until every event the watchers have reported has been taken in. For tests.
+    func eventsDelivered() async {
+        for hop in hops.drain() { await hop.value }
     }
 
-    private func fileEvent(project: UUID) { start(project: project) }
+    /// Waits until the events reported so far have been taken in and their refreshes are done.
+    /// For tests.
+    func settled() async {
+        await eventsDelivered()
+        for loop in Array(loops.values) { await loop.value }
+    }
 
-    private func start(project: UUID) {
-        let previous = inflight[project]
-        let task = Task { @MainActor [weak self] in
-            await previous?.value
-            await self?.refresh(project: project)
+    private func fileEvent(project: UUID) {
+        guard watchers[project] != nil else { return }   // a late event for a project that is gone
+        if loops[project] != nil { dirty.insert(project) } else { startLoop(project: project) }
+    }
+
+    /// Refreshes, and again once more if events came meanwhile.
+    private func startLoop(project: UUID) {
+        counter += 1
+        let token = counter
+        loopTokens[project] = token
+        loops[project] = Task { @MainActor [weak self] in
+            while let self, !Task.isCancelled {
+                await self.refresh(project: project)
+                guard !Task.isCancelled, self.dirty.remove(project) != nil else { break }
+            }
+            // Only the loop still registered for the project clears it: a project removed and
+            // added again has a loop of its own by now.
+            if let self, self.loopTokens[project] == token {
+                self.loops[project] = nil
+                self.loopTokens[project] = nil
+            }
         }
-        inflight[project] = task
     }
 
     // -- building -------------------------------------------------------------------------

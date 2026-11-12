@@ -10,25 +10,45 @@ private final class FakeWatcher: FolderWatching, @unchecked Sendable {
     private var stopped = false
     init(_ path: String) { self.path = path }
     func watch(_ path: String, onChange: @escaping @Sendable () -> Void) { lock.withLock { handler = onChange } }
-    func stop() { lock.withLock { stopped = true; handler = nil } }
+    /// Keeps its handler, so a test can fire a late event after the stop.
+    func stop() { lock.withLock { stopped = true } }
     var isStopped: Bool { lock.withLock { stopped } }
     func fire() { lock.withLock { handler }?() }
 }
 
-/// Counts listings per path, and answers with what the test says.
+/// Answers listings, counts them per path, and can hold the next one until the test lets it go.
 private final class Lister: @unchecked Sendable {
     private let lock = NSLock()
     private var counts: [String: Int] = [:]
     private var offMain = true
+    private var answer = ["src/app.ts", "README.md"]
+    private var hold: DispatchSemaphore?
+    private let reached = DispatchSemaphore(value: 0)
+
     func list(_ path: String) -> ProjectFiles.Listing {
-        lock.withLock {
+        let (paths, gate): ([String], DispatchSemaphore?) = lock.withLock {
             counts[path, default: 0] += 1
             if Thread.isMainThread { offMain = false }
+            defer { hold = nil }
+            return (answer, hold)
         }
-        return .git(["src/app.ts", "README.md"])
+        if let gate {
+            reached.signal()
+            gate.wait()
+        }
+        return .git(paths)
     }
     func count(_ path: String) -> Int { lock.withLock { counts[path] ?? 0 } }
     var ranOffMain: Bool { lock.withLock { offMain } }
+    func answer(_ paths: [String]) { lock.withLock { answer = paths } }
+    /// The next listing reads its answer, then waits for `release`.
+    func holdNext() -> DispatchSemaphore {
+        let gate = DispatchSemaphore(value: 0)
+        lock.withLock { hold = gate }
+        return gate
+    }
+    /// Returns once a held listing has started.
+    func waitUntilHeld() async { await BackgroundWork.run { self.reached.wait() } }
 }
 
 @MainActor
@@ -126,5 +146,93 @@ final class FilesModelTests: XCTestCase {
         await files.loadChildren(project: project.id, folder: "src")
         guard case .tree(let loaded) = files.sections[0].state else { return XCTFail("no tree") }
         XCTAssertEqual(loaded.first?.children?.map { $0.path }, ["src/app.ts"])
+    }
+
+    func testARemovedProjectDoesNotReappear() async {
+        let lister = Lister()
+        let files = model([demo, acme], lister: lister)
+        await files.settled()
+        let gate = lister.holdNext()
+        let held = Task { await files.refresh(project: demo.id) }
+        await lister.waitUntilHeld()
+        files.update(projects: [acme])
+        gate.signal()
+        await held.value
+        XCTAssertEqual(files.sections.map(\.project.name), ["acme-web"])
+        files.update(projects: [demo, acme])   // added again: its section starts from nothing
+        XCTAssertEqual(files.sections.first?.state, FilesSection.State.loading)
+        await files.settled()
+        XCTAssertEqual(files.sections.first?.state, .tree(FileTree.build(["src/app.ts", "README.md"])))
+    }
+
+    func testAStaleResultDoesNotOverwriteANewerOne() async {
+        let lister = Lister()
+        let files = model([demo], lister: lister)
+        await files.settled()
+        lister.answer(["old.txt"])
+        let gate = lister.holdNext()
+        let first = Task { await files.refresh(project: demo.id) }
+        await lister.waitUntilHeld()
+        lister.answer(["src/app.ts"])
+        await files.refresh(project: demo.id)
+        gate.signal()
+        await first.value
+        XCTAssertEqual(files.sections.first?.state, .tree(FileTree.build(["src/app.ts"])))
+    }
+
+    func testEventsDuringARefreshCostOneMoreRefresh() async {
+        let lister = Lister()
+        var made: [String: FakeWatcher] = [:]
+        let files = model([demo], lister: lister) { made[$0.path] = $0 }
+        await files.settled()
+        let before = lister.count(demo.path)
+        let gate = lister.holdNext()
+        made[demo.path]!.fire()
+        await files.eventsDelivered()
+        await lister.waitUntilHeld()
+        for _ in 0..<3 { made[demo.path]!.fire() }
+        await files.eventsDelivered()
+        gate.signal()
+        await files.settled()
+        XCTAssertEqual(lister.count(demo.path), before + 2)
+    }
+
+    func testALateEventForARemovedProjectIsIgnored() async {
+        let lister = Lister()
+        var made: [String: FakeWatcher] = [:]
+        let files = model([demo, acme], lister: lister) { made[$0.path] = $0 }
+        await files.settled()
+        let before = lister.count(demo.path)
+        files.update(projects: [acme])
+        made[demo.path]!.fire()
+        await files.settled()
+        XCTAssertEqual(lister.count(demo.path), before)
+    }
+
+    func testAMovedFolderRestartsItsWatcherAndReloads() async {
+        let lister = Lister()
+        var made: [String: FakeWatcher] = [:]
+        let files = model([demo], lister: lister) { made[$0.path] = $0 }
+        await files.settled()
+        var moved = demo
+        moved.path = "/work/demo-2"
+        files.update(projects: [moved])
+        XCTAssertTrue(made[demo.path]!.isStopped)
+        await files.settled()
+        XCTAssertNotNil(made[moved.path])
+        XCTAssertEqual(lister.count(moved.path), 1)
+        XCTAssertEqual(files.sections.first?.project.path, "/work/demo-2")
+    }
+
+    func testARefreshKeepsTheOpenFoldersOfAPlainFolderLoaded() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("files-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("src/lib"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = Project(name: "demo", path: root.path)
+        let files = FilesModel(projects: [project], launcher: launcher, defaults: ScratchDefaults.make(), watcher: { FakeWatcher($0) })
+        files.toggle(project: project.id, folder: "src")
+        await files.refresh(project: project.id)
+        guard case .tree(let top) = files.sections[0].state else { return XCTFail("no tree") }
+        XCTAssertEqual(top.first?.children?.map { $0.path }, ["src/lib"])
     }
 }

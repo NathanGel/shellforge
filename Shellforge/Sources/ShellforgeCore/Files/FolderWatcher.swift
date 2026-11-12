@@ -3,7 +3,8 @@ import Foundation
 
 /// Tells when something under a folder changes. A protocol so tests fire the change themselves.
 public protocol FolderWatching: AnyObject, Sendable {
-    /// Calls `onChange`, on a queue of the watcher's own, when anything under `path` changes.
+    /// Calls `onChange`, on a queue of the watcher's own, when something under `path` that can
+    /// change what the panel lists changes. It must not call `stop()` itself.
     func watch(_ path: String, onChange: @escaping @Sendable () -> Void)
     func stop()
 }
@@ -12,43 +13,77 @@ public protocol FolderWatching: AnyObject, Sendable {
 /// individual files, so a save inside a nested folder counts.
 public final class FolderWatcher: FolderWatching, @unchecked Sendable {
     private let queue = DispatchQueue(label: "shellforge.folder-watcher")
+    private let onQueue = DispatchSpecificKey<Void>()
+    private let lock = NSLock()
     private var stream: FSEventStreamRef?
     private var box: Box?
 
     private final class Box {
+        let root: String
         let onChange: @Sendable () -> Void
-        init(_ onChange: @escaping @Sendable () -> Void) { self.onChange = onChange }
+        init(root: String, onChange: @escaping @Sendable () -> Void) {
+            self.root = root
+            self.onChange = onChange
+        }
     }
 
-    public init() {}
+    public init() { queue.setSpecific(key: onQueue, value: ()) }
 
     deinit { stop() }
 
+    /// Whether a change at `path` can change what the panel lists. Git's own folder is noise (its
+    /// objects, logs and lock files change all the time) except the three files that decide what
+    /// is tracked and what is ignored; task worktrees are not listed. `root` is the watched
+    /// folder as the stream reports it (symlinks resolved).
+    public static func isRelevant(_ path: String, root: String) -> Bool {
+        let base = root.hasSuffix("/") ? String(root.dropLast()) : root
+        guard path == base || path.hasPrefix(base + "/") else { return true }
+        let parts = path.dropFirst(base.count).split(separator: "/").map(String.init)
+        if parts.contains(".git") {
+            return parts == [".git", "index"] || parts == [".git", "HEAD"] || parts == [".git", "info", "exclude"]
+        }
+        return parts.first != ".worktrees"
+    }
+
     public func watch(_ path: String, onChange: @escaping @Sendable () -> Void) {
         stop()
-        let box = Box(onChange)
+        let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+        let box = Box(root: resolved, onChange: onChange)
         var context = FSEventStreamContext(version: 0, info: Unmanaged.passUnretained(box).toOpaque(),
                                            retain: nil, release: nil, copyDescription: nil)
-        let callback: FSEventStreamCallback = { _, info, _, _, _, _ in
+        let callback: FSEventStreamCallback = { _, info, _, eventPaths, _, _ in
             guard let info else { return }
-            Unmanaged<Box>.fromOpaque(info).takeUnretainedValue().onChange()
+            let box = Unmanaged<Box>.fromOpaque(info).takeUnretainedValue()
+            let paths = Unmanaged<CFArray>.fromOpaque(eventPaths).takeUnretainedValue() as? [String] ?? []
+            if paths.isEmpty || paths.contains(where: { FolderWatcher.isRelevant($0, root: box.root) }) { box.onChange() }
         }
-        let flags = FSEventStreamCreateFlags(kFSEventStreamCreateFlagFileEvents)
+        let flags = FSEventStreamCreateFlags(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagUseCFTypes)
         guard let stream = FSEventStreamCreate(nil, callback, &context, [path] as CFArray,
-                                               FSEventStreamEventId(kFSEventStreamEventIdSinceNow), 0.3, flags) else { return }
-        self.box = box
-        self.stream = stream
+                                               FSEventStreamEventId(kFSEventStreamEventIdSinceNow), 0.3, flags) else {
+            ErrorLogging.record("files", "Watching \(path) failed: the file event stream could not be created")
+            return
+        }
+        lock.withLock {
+            self.box = box
+            self.stream = stream
+        }
         FSEventStreamSetDispatchQueue(stream, queue)
-        FSEventStreamStart(stream)
+        if !FSEventStreamStart(stream) {
+            ErrorLogging.record("files", "Watching \(path) failed: the file event stream did not start")
+        }
     }
 
     public func stop() {
-        guard let stream else { return }
-        FSEventStreamStop(stream)
-        FSEventStreamInvalidate(stream)
-        FSEventStreamRelease(stream)
-        self.stream = nil
-        queue.sync {}   // a callback already running finishes before the box goes
-        box = nil
+        let taken: FSEventStreamRef? = lock.withLock {
+            defer { stream = nil }
+            return stream
+        }
+        guard let taken else { return }
+        FSEventStreamStop(taken)
+        FSEventStreamInvalidate(taken)
+        FSEventStreamRelease(taken)
+        // A callback already running finishes before its box goes (not from the queue itself).
+        if DispatchQueue.getSpecific(key: onQueue) == nil { queue.sync {} }
+        lock.withLock { box = nil }
     }
 }
