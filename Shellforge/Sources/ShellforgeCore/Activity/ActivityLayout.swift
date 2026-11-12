@@ -2,7 +2,7 @@ import Foundation
 
 /// A panel the sidebar's activity bar can show.
 public enum ActivityPanel: String, CaseIterable, Sendable {
-    case sessions, metrics, files, git
+    case sessions, metrics, files, git, ssh
 
     public var title: String {
         switch self {
@@ -10,6 +10,7 @@ public enum ActivityPanel: String, CaseIterable, Sendable {
         case .metrics: return "Metrics"
         case .files: return "Files"
         case .git: return "Git"
+        case .ssh: return "SSH"
         }
     }
 
@@ -19,6 +20,7 @@ public enum ActivityPanel: String, CaseIterable, Sendable {
         case .metrics: return "gauge.with.dots.needle.33percent"
         case .files: return "folder"
         case .git: return "arrow.triangle.branch"
+        case .ssh: return "server.rack"
         }
     }
 }

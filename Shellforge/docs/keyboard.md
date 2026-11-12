@@ -25,7 +25,7 @@ Each acts on the key window's sidebar — a sheet of it may be key — and is of
 
 A profile given a shortcut in Settings › Profiles › General gets ⌃⌘ and that key in the Profiles
 menu. The View and Tasks menus come before Profiles in the menu bar, so a profile shortcut on N, R,
-T, P, G, A, L, S, E, M, I, [ or ] is shadowed by Shellforge's item: give such a profile another key. A
+T, P, G, A, L, S, E, M, I, H, [ or ] is shadowed by Shellforge's item: give such a profile another key. A
 key mapping of your own (Settings › Keys, or a profile's Keys) runs before any menu item, as in
 iTerm2.
 
@@ -39,6 +39,7 @@ iTerm2.
 | ⌃⌘M | Show Metrics | The same, for the Metrics panel. |
 | ⌃⌘I | Show Files | The same, for the Files panel. I, as F is iTerm2's Full Screen. |
 | — | Show Git | The same, for the Git panel. No key: every ⌃⌘ letter of its name is taken (G is Add Divider, I Show Files, T New Terminal). |
+| ⌃⌘H | Show SSH | The same, for the SSH panel. H, as S is Hide Sidebar's. |
 | — | Tunnels › Start / Stop Tunnel … | No keys; Open Quickly (⇧⌘O) finds them by name. |
 
 ## The sidebar's edge

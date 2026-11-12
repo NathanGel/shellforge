@@ -108,6 +108,54 @@ extension SidebarModel {
         host.openTab(in: project.path, title: alias, command: SSHConfig.paneCommand(alias: alias))
     }
 
+    /// Any host of the config in a tab of its own, titled with its alias: in the project's folder,
+    /// or, with no project (the SSH panel's Other hosts), in the home folder. A host the config does
+    /// not have is said, not run, as `openSSHHost` does.
+    public func connect(alias: String, in projectId: UUID?) async {
+        let project = projectId.flatMap(project)
+        // A project removed meanwhile: its row is gone too, so nothing opens.
+        if projectId != nil, project == nil { return }
+        if sshHosts == nil { _ = await loadSSHHosts() }
+        guard sshHosts?[alias] != nil else {
+            lastError = "\(alias) isn’t in ~/.ssh/config."
+            return
+        }
+        host.openTab(in: project?.path ?? NSHomeDirectory(), title: alias, command: SSHConfig.paneCommand(alias: alias))
+    }
+
+    /// Reads the config, then reads it again whenever anything in its folder changes — and in the
+    /// folder of its target, when the config is a link — off the main actor, for the SSH panel.
+    /// Started the first time the panel shows; calling it again does nothing once it watches. A
+    /// folder that does not exist yet is not watched: the next call tries again.
+    public func watchSSHConfig() {
+        guard sshWatchers.isEmpty else { return }
+        Task { _ = await loadSSHHosts() }
+        // A model told of no config (`.none`) has no folder of the user's to watch.
+        guard sshConfig.file.path != SSHConfigSource.none.file.path else { return }
+        for folder in Self.sshFolders(of: sshConfig.file) {
+            let watcher = makeSSHWatcher()
+            watcher.watch(folder, onChange: { [weak self] in
+                Task { @MainActor in _ = await self?.loadSSHHosts() }
+            })
+            sshWatchers.append(watcher)
+        }
+    }
+
+    /// The folders `watchSSHConfig` watches for `file`: its own and, through a link, its target's,
+    /// each as the disk names it, once; none that does not exist.
+    nonisolated static func sshFolders(of file: URL) -> [String] {
+        func real(_ path: String) -> String? {
+            guard let pointer = realpath(path, nil) else { return nil }
+            defer { free(pointer) }
+            return String(cString: pointer)
+        }
+        let own = real(file.deletingLastPathComponent().path)
+        let target = real(file.path).map { URL(fileURLWithPath: $0).deletingLastPathComponent().path }
+        var folders: [String] = []
+        for folder in [own, target].compactMap({ $0 }) where !folders.contains(folder) { folders.append(folder) }
+        return folders
+    }
+
     public func setSSHHost(_ alias: String?, on projectId: UUID) {
         guard let current = project(projectId), current.sshHost != alias else { return }
         do {

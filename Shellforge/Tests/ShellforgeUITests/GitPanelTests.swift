@@ -73,7 +73,7 @@ private final class InertGitWatcher: FolderWatching, @unchecked Sendable {
     }
 
     @Test func gitIsAPanel() {
-        #expect(ActivityLayout(saved: ["sessions", "metrics", "files"]).order.last == .git)
+        #expect(ActivityLayout(saved: ["sessions", "metrics", "files"]).order.suffix(2) == [.git, .ssh])
         #expect(ActivityPanel.git.title == "Git")
         #expect(ActivityPanel.git.symbol == "arrow.triangle.branch")
     }

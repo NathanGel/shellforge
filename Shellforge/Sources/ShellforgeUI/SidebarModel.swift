@@ -191,6 +191,11 @@ public final class SidebarModel: ObservableObject {
     /// The config's hosts by alias, as last read; nil until a project with tunnels asks for them.
     @Published public internal(set) var sshHosts: [String: SSHHost]?
     var readingSSH = false
+    /// What watches `~/.ssh` for the SSH panel: the folder itself and, when the config is a link,
+    /// its target's. Empty until the panel first shows; they stop when the model goes.
+    var sshWatchers: [FolderWatching] = []
+    /// Makes one of `sshWatchers`; tests hand in their own.
+    var makeSSHWatcher: () -> FolderWatching = { FolderWatcher(filter: { _, _ in true }) }
     /// The `.onLaunch` tunnels asked of the helper now connected; emptied when it goes.
     var launchRequested: Set<String> {
         get { LaunchStarts.shared(for: document).requested }

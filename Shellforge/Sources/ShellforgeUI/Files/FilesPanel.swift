@@ -186,17 +186,32 @@ struct FilesPanel: View {
     }
 }
 
-/// A panel's own title, when it is not pinned above the panel: the Files panel's or the Git panel's.
-struct PanelTitle: View {
+/// A panel's own title, when it is not pinned above the panel: the Files, Git or SSH panel's, with
+/// the panel's buttons, if any, at its end.
+struct PanelTitle<Accessory: View>: View {
     let panel: ActivityPanel
+    let accessory: Accessory
     @Environment(\.interfaceScale) private var scale
 
-    var body: some View {
-        SidebarHeading(panel.title)
-            .frame(height: scale(Size.menuRow))
-            .background(ViewMark(name: SidebarHeader.markName))
-            .padding(.horizontal, SidebarRowLayout.listInset + scale(Space.base))
+    init(panel: ActivityPanel, @ViewBuilder accessory: () -> Accessory) {
+        self.panel = panel
+        self.accessory = accessory()
     }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            SidebarHeading(panel.title)
+            Spacer(minLength: 0)
+            accessory
+        }
+        .frame(height: scale(Size.menuRow))
+        .background(ViewMark(name: SidebarHeader.markName))
+        .padding(.horizontal, SidebarRowLayout.listInset + scale(Space.base))
+    }
+}
+
+extension PanelTitle where Accessory == EmptyView {
+    init(panel: ActivityPanel) { self.init(panel: panel) { EmptyView() } }
 }
 
 /// A project's row in the Files panel: a chevron, its provider mark and its name, as its header in

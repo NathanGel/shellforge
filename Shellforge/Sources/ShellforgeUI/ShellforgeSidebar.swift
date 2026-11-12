@@ -102,7 +102,7 @@ public enum ShellforgeSidebar {
     }
 
     /// Shows `panel` in the sidebar `view` (one `makeView` made): View › Show Sessions, Show Metrics,
-    /// Show Files, Show Git.
+    /// Show Files, Show Git, Show SSH.
     public static func show(_ panel: ActivityPanel, on view: NSView) {
         (view as? SidebarHostingView<ZoomedSidebar>)?.activity?.select(panel)
     }
@@ -484,12 +484,14 @@ struct SidebarView: View {
             case .metrics: panelTitle(.metrics, controls)
             case .files: panelTitle(.files, controls)
             case .git: panelTitle(.git, controls)
+            case .ssh: panelTitle(.ssh, controls) { SSHAddHostButton(action: nil) }
             }
         }
     }
 
-    private func panelTitle(_ panel: ActivityPanel, _ controls: SidebarWindowControls) -> some View {
-        HStack { SidebarHeading(panel.title); Spacer() }
+    private func panelTitle(_ panel: ActivityPanel, _ controls: SidebarWindowControls,
+                            @ViewBuilder accessory: () -> some View = { EmptyView() }) -> some View {
+        HStack { SidebarHeading(panel.title); Spacer(); accessory() }
             .frame(height: scale(Size.menuRow))
             .background(ViewMark(name: SidebarHeader.markName))
             .modifier(HeaderPlacement(windowControls: controls, scale: scale))
@@ -539,15 +541,22 @@ struct SidebarView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 }
             }
+            if activity.layout.selected == .ssh {
+                // Add Host's sheet comes later: until then its button is greyed.
+                SSHPanel(model: model, document: model.document, titled: chrome.windowControls == nil, providers: model.providers,
+                         showTunnels: showTunnels, showSSHHost: showSSHHost)
+            }
         }
     }
 
     private var showsSessions: Bool { activity.layout.selected == .sessions }
 
-    /// The Files or Git panel shown: its model is made now if no window has made it yet.
+    /// The Files or Git panel shown: its model is made now if no window has made it yet. The SSH
+    /// panel shown: this window's model reads `~/.ssh/config` and watches its folder from now on.
     private func takeModel(_ panel: ActivityPanel) {
         if panel == .files, filesModel == nil, let files { filesModel = files.model }
         if panel == .git, gitModel == nil, let git { gitModel = git.model }
+        if panel == .ssh { model.watchSSHConfig() }
     }
 
     /// Today's sidebar: the header (unless pinned above the panel) and the list; the banners

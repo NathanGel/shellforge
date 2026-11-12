@@ -759,7 +759,7 @@ extension iTermShellforgeSidebar {
     }
 }
 
-/// View › Show Sessions, Show Metrics, Show Files and Show Git: each item's tag is its panel's place in `ActivityPanel.allCases`.
+/// View › Show Sessions, Show Metrics, Show Files, Show Git and Show SSH: each item's tag is its panel's place in `ActivityPanel.allCases`.
 @MainActor
 private final class PanelMenuController: NSObject, NSMenuItemValidation {
     private(set) var items: [NSMenuItem] = []
