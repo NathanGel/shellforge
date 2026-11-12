@@ -12,10 +12,10 @@ it and refuses to release a version that has none.
 ### Added
 
 - **Activity bar.** A column of icons down the sidebar's left edge switches its panel: Sessions,
-  the sidebar as it was; Metrics; and Files. Each window shows its own panel; drag the icons to reorder
+  the sidebar as it was; Metrics; Files; and Git. Each window shows its own panel; drag the icons to reorder
   them (VoiceOver offers Move Up and Move Down), and every window keeps the same order after a
   restart. Settings is the gear at its foot.
-  View › Show Sessions (⌃⌘E), Show Metrics (⌃⌘M) and Show Files (⌃⌘I) switch panels from the keyboard.
+  View › Show Sessions (⌃⌘E), Show Metrics (⌃⌘M), Show Files (⌃⌘I) and Show Git (no key) switch panels.
   The panel keeps its width and the sidebar grows by the bar's 44 pt: a width you dragged before
   grows by 44 pt once (up to the 720 pt maximum), and a window now needs 724 pt to show the
   sidebar beside the terminal (it was 680).
@@ -29,6 +29,15 @@ it and refuses to release a version that has none.
   closes the tab. The editor is Settings › Core › Terminal editor, else `$EDITOR`, else `vi`.
   Right-click a file for Open in Terminal Editor, Reveal in Finder and Open in VS Code, or a
   folder for Reveal in Finder, Open in Finder and Open in VS Code. View › Show Files (⌃⌘I) shows the panel.
+- **Git panel.** A fourth panel (the branch) shows each project's repository, and under it each
+  task's worktree with changes: the branch and how far it is ahead of and behind its upstream
+  (`main ↑2 ↓1`), a commit message field, and the Merge Changes, Staged Changes and Changes
+  lists. Stage, unstage or discard a file (an untracked file goes to the Trash), Stage All or
+  Unstage All, and commit with ⌘↩: with nothing staged, Commit takes every change, new files
+  included. Pull (fast-forward only), Push, or Publish Branch for a branch with no upstream.
+  Switch Branch… on a project picks from a searchable list and asks what New Task asks for a
+  Project folder task. Click a file to see its diff in a new tab. The panel reads nothing until it
+  is first shown, then follows each repository as it changes. View › Show Git shows it.
 
 ### Changed
 
@@ -45,6 +54,9 @@ it and refuses to release a version that has none.
 - **Banners show above every panel.** An error, work in progress such as "Adding demo…", a
   fallback PATH, a helper problem or the feedback note is pinned at the top of the sidebar,
   whichever panel shows, and so is Rearrange mode's Cancel and Done.
+- **Sidebar questions use iTermWarning.** Removing a task, importing worktrees, switching a
+  branch and the sidebar's other questions are iTerm2's own alerts now, so they can be answered
+  from iTerm2 Buddy on your phone as well as at the Mac.
 
 ## 0.10.0 — 2026-11-10
 

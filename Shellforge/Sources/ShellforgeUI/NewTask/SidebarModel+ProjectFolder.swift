@@ -21,13 +21,18 @@ extension SidebarModel {
         }
     }
 
+    /// A task with open tabs working in the project's own folder: switching the folder's branch
+    /// changes its files under it. New Task and the Git panel's Switch Branch ask about it.
+    func projectFolderBusyTask(_ projectId: UUID) -> String? {
+        guard let node = tree.projects.first(where: { $0.id == projectId }) else { return nil }
+        return node.tasks.first(where: {
+            !$0.tabs.isEmpty && ProjectFolderTasks.isProjectFolder($0.task, in: node.project)
+        })?.task.title
+    }
+
     private func switchProjectFolder(draft: TaskDraft, branch: String, project: Project, taken: [String]) async throws -> TaskDraft {
         let flow = BranchSwitchFlow(prompter: prompter, launcher: launcher)
-        let busy: @MainActor () -> String? = { [self] in
-            tree.projects.first(where: { $0.id == project.id })?.tasks.first(where: {
-                !$0.tabs.isEmpty && ProjectFolderTasks.isProjectFolder($0.task, in: project)
-            })?.task.title
-        }
+        let busy: @MainActor () -> String? = { [self] in projectFolderBusyTask(project.id) }
         let result = try await flow.switchProject(project, to: branch, busyTask: busy,
                                                   stashLabel: "“\(draft.title)”", offerOtherWorktree: true)
         switch result {

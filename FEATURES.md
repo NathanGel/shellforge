@@ -15,6 +15,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 - [Terminals](#terminals)
 - [Metrics](#metrics)
 - [Files](#files)
+- [Git](#git)
 - [Dock badge](#dock-badge)
 - [Backpack Mode](#backpack-mode)
 - [Tunnels](#tunnels)
@@ -68,9 +69,10 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 - **Where it is.** A narrow column of plain line icons down the sidebar's left edge, VS Code's way: the full height of the sidebar, below the window buttons' row when they are in the sidebar. The panel's header, the banners and the metrics strip sit in the column beside it. Each icon shows one panel beside it:
   - Sessions (the stack of cards): projects, tasks, terminals and tabs, as the sidebar has always shown them;
   - Metrics (the gauge): see [Metrics](#metrics);
-  - Files (the folder): see [Files](#files).
+  - Files (the folder): see [Files](#files);
+  - Git (the branch): see [Git](#git).
 - **Switching.** Click an icon. The selected one is drawn brighter, with an accent stripe along the bar's left edge. Each window shows its own panel; Sessions keeps its scroll position and selection while another panel shows, and the Tasks menu's commands work whatever the panel.
-- **From the keyboard.** View › Show Sessions (⌃⌘E), Show Metrics (⌃⌘M) and Show Files (⌃⌘I) show that panel in the key window's sidebar, opening the sidebar if it is hidden. Back on Sessions, the keyboard returns to its list if it was there.
+- **From the keyboard.** View › Show Sessions (⌃⌘E), Show Metrics (⌃⌘M), Show Files (⌃⌘I) and Show Git (no key) show that panel in the key window's sidebar, opening the sidebar if it is hidden. Back on Sessions, the keyboard returns to its list if it was there.
 - **Panel order.** Drag an icon up or down the bar to reorder the panels: it follows the pointer, the others make room, and it lands where you let go. A click that doesn't move only selects, and a drag the system cancels drops nothing. Every window's bar follows the same order, and it is kept after a restart. VoiceOver offers Move Up and Move Down on each icon instead.
 - **Settings** is the gear at the bottom of the bar.
 - **Rearrange mode** keeps its Done / Cancel bar at the top whichever panel shows.
@@ -271,6 +273,25 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
 - **Right-click** a file for Open in Terminal Editor, Reveal in Finder and, when it is installed, Open in VS Code; a folder or a project for Reveal in Finder, Open in Finder and, when it is installed, Open in VS Code.
 - **From the keyboard.** View › Show Files (⌃⌘I).
 
+## Git
+
+- **Sections.** The Git panel has one section per project, in the order Sessions shows them, and under each project a section for each of its tasks whose worktree has changes. Click a section's row to fold or unfold it.
+  - The branch line shows the branch and how far it is ahead of and behind its upstream, such as `main ↑2 ↓1`; or “No commits yet”, “Detached at abc1234”, “Not a git repository” or “Folder not found”. A spinner shows while git works, and a problem is shown under the line, in red, until the next action.
+  - Changes fall in three lists: Merge Changes (conflicts, marked `!`), Staged Changes and Changes (untracked files included, marked `U`). Each row shows the status letter, the file's name and its folder. Task worktrees, under `.worktrees/`, are never listed.
+- **Diffs in a tab.** Click a file to open its diff in a new tab in the repository, titled “Diff: app.ts”, running `git diff -- src/app.ts` (`--staged` for a staged file). The tab stays at the shell after the pager.
+- **File actions.** Hover a row for its buttons, or right-click it:
+  - Changes: Stage, Discard Changes, View Diff, Open in Terminal Editor;
+  - Staged Changes: Unstage, View Diff, Open in Terminal Editor;
+  - Merge Changes: Stage (marks the conflict resolved), View Diff, Open in Terminal Editor. A conflict is never discarded.
+  - A deleted file has no Open in Terminal Editor.
+  - Stage All and Unstage All are on the Changes and Staged Changes headers.
+- **Discard asks first.** A tracked file goes back to its last staged or committed state. An untracked file, or one only marked to be added, is moved to the Trash, and the question says so.
+- **Smart commit.** Type a message and click Commit or press ⌘↩. With something staged, only that is committed; with nothing staged, every change is, new files included (the field says so). Commit is off while the message is blank or git is working.
+- **Push, Pull and Publish Branch.** Push and Pull for a branch with an upstream; Publish Branch for one without, which pushes it to `origin` and sets its upstream. Pull only fast-forwards: when the branch and its upstream have both moved, nothing changes and the panel says to pull in a terminal to merge or rebase. None of the three is offered on a branch with no commits or a detached head. Git never asks for a password here: a remote that needs one says it couldn't be reached.
+- **Switch Branch…** On a project's branch line, a searchable list of its local branches, then remote ones, with the current branch marked. Picking one asks what New Task asks for a Project folder task: a branch that doesn't exist yet, another task with open tabs in the folder (Switch Anyway), clashing changes (Stash and Switch). A branch checked out in another worktree is reported. A task's worktree keeps its branch, so its section has no Switch Branch.
+- **Up to date.** Each repository is watched, so a save, a commit or a fetch elsewhere shows up without a refresh. Git runs one action at a time per repository. Nothing is read or watched until the panel is first shown in any window; every window then shows the same repositories.
+- **From the keyboard.** View › Show Git. It has no key: ⌃⌘G is Add Divider, ⌃⌘I Show Files and ⌃⌘T New Terminal.
+
 ## Dock badge
 
 - The Dock icon counts the task and terminal rows waiting on you, the same rows Focus View shows. Each row counts once, however many windows show it. There is no badge at zero.
@@ -365,7 +386,8 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
 | ⌃⌘⌫ | Remove Task |
 | ⌃⌘A / ⌃⌘L | Focus View / List View |
 | ⌃⌘S | Hide / Show Sidebar |
-| ⌃⌘E / ⌃⌘M / ⌃⌘I | Show Sessions / Show Metrics / Show Files |
+| ⌃⌘E / ⌃⌘M / ⌃⌘I | Show Sessions / Show Metrics / Show Files (Show Git has no key) |
+| ⌘↩ | Commit, in the Git panel's message field |
 | ⌘B | Backpack Mode |
 | ⌘+ / ⌘− / ⌘0 | Sidebar text bigger / smaller / normal, after a click in the sidebar |
 
@@ -384,6 +406,7 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
   - in Rearrange mode, every row: Move Up / Move Down (while possible), one step within its own list, and a project's Fold / Unfold;
   - activity bar icons: Move Up / Move Down (while possible), to reorder the panels;
   - the Files panel's projects and folders: Fold / Unfold. Its rows read their name and whether each is a file, a folder or a project, and a folder whether it is expanded.
+  - the Git panel's sections: Fold / Unfold; its files: View Diff, Open in Terminal Editor, and Stage, Unstage or Discard Changes where offered; its list headers: Stage All or Unstage All. A file reads its name, its status and its folder, such as “app.ts, modified, src”.
 - **Labels:** tunnel rows read their state, the Metrics panel's Mac row reads its readings, and the metrics strip reads all of its readings, both windows of each vendor ("Claude Code: 5-hour limit 42 % used, weekly limit 84 % used"), and opens the panel.
 
 ## The helper (shellforged)

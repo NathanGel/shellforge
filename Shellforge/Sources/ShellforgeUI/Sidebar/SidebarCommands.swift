@@ -180,12 +180,14 @@ public enum SidebarCommandMenu {
 
     /// View › Show Sessions (⌃⌘E), Show Metrics (⌃⌘M) and Show Files (⌃⌘I): more ⌃⌘ letters
     /// iTerm2 and macOS leave free — M for Metrics; E, the first letter of Sessions still free (S is
-    /// Hide Sidebar's); and I, the first of Files still free (F is iTerm2's Full Screen). Keyed by
-    /// panel, not by place in the bar, as the bar's order is the person's own.
+    /// Hide Sidebar's); and I, the first of Files still free (F is iTerm2's Full Screen). Show Git
+    /// has no key: G is Add Divider's, I Show Files' and T New Terminal's. Keyed by panel, not by
+    /// place in the bar, as the bar's order is the person's own.
     public static let panels: [PanelItem] = [
         PanelItem(panel: .sessions, key: "e", modifiers: keys),
         PanelItem(panel: .metrics, key: "m", modifiers: keys),
         PanelItem(panel: .files, key: "i", modifiers: keys),
+        PanelItem(panel: .git, key: "", modifiers: []),
     ]
 }
 

@@ -1,0 +1,167 @@
+import AppKit
+import Foundation
+import ShellforgeDesign
+import SwiftUI
+import Testing
+@testable import ShellforgeCore
+@testable import ShellforgeUI
+@testable import ShellforgeTestSupport
+
+private final class InertGitWatcher: FolderWatching, @unchecked Sendable {
+    func watch(_ path: String, onChange: @escaping @Sendable () -> Void) {}
+    func stop() {}
+}
+
+/// The Git panel: a section per repository, its branch line, what it offers to do, and a change
+/// opened as a diff in a terminal tab.
+@MainActor @Suite struct GitPanelTests {
+    private let launcher = CommandLauncher(resolve: { ResolvedEnvironment(variables: ["PATH": "/usr/bin"], source: .loginShell("/bin/zsh")) })
+    private let demo = Project(name: "demo", path: "/demo")
+
+    private func status(_ head: GitStatus.Head, upstream: String? = nil, staged: [GitChange] = [],
+                        unstaged: [GitChange] = []) -> GitStatus {
+        var status = GitStatus()
+        status.head = head
+        status.upstream = upstream
+        status.staged = staged
+        status.unstaged = unstaged
+        return status
+    }
+
+    private func section(_ id: GitRepoID, _ status: GitStatus, tasks: [GitSection] = []) -> GitSection {
+        GitSection(id: id, title: "demo", path: "/demo", state: .status(status), busy: false, problem: nil, tasks: tasks)
+    }
+
+    private func actions(_ host: FakeTerminalHost) -> GitPanelActions {
+        GitPanelActions(host: host, defaults: ScratchDefaults.make(), environment: { ["EDITOR": "vim"] },
+                        launcher: launcher, prompter: { NullPrompter() }, busyTask: { _ in nil }, kind: { _ in .file })
+    }
+
+    private func descendants(of view: NSView) -> [NSView] { view.subviews + view.subviews.flatMap(descendants) }
+
+    private func marks(in host: NSView) -> Set<String> {
+        host.layoutSubtreeIfNeeded()
+        return Set(descendants(of: host).compactMap { $0.identifier?.rawValue })
+    }
+
+    private func gitModel(_ made: (() -> Void)? = nil) -> GitModel {
+        made?()
+        return GitModel(projects: [], tasks: [], launcher: launcher, watcher: { _ in InertGitWatcher() }, trash: { _ in })
+    }
+
+    private func sidebarView(git: GitHolder) -> NSView {
+        let folder = TestScratch.root.appendingPathComponent("shellforge-git-\(UUID().uuidString)")
+        let document = WorkspaceDocument(store: WorkspaceStore(folder: folder))
+        let sidebar = SidebarModel(host: FakeTerminalHost(), document: document, launcher: launcher, jiraSettings: { nil })
+        let hooks = AgentHooksModel(integrations: HookIntegrations(home: TestScratch.root.appendingPathComponent("git-home-\(UUID().uuidString)"),
+                                                                   resources: .bundled(resourceURL: nil)), names: [:])
+        return ShellforgeSidebar.makeView(model: sidebar, chooseFolder: { nil }, hooks: hooks,
+                                          machine: MachineMonitor(sensor: InertMachineSensor(), power: InertPower()),
+                                          backpack: BackpackController(ports: .inert, settings: BackpackSettings(defaults: nil), toast: { _ in }),
+                                          zoom: SidebarZoom(settings: SidebarLayoutSettings(defaults: ScratchDefaults.make())),
+                                          terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()), terminalEditorDefaults: ScratchDefaults.make(),
+                                          feedback: FeedbackPrompt(defaults: ScratchDefaults.make(), channel: .dev),
+                                          git: git)
+    }
+
+    private func window(_ view: NSView) -> NSWindow {
+        view.frame = NSRect(x: 0, y: 0, width: Size.sidebarWidth, height: 600)
+        let window = NSWindow(contentRect: view.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = view
+        return window
+    }
+
+    @Test func gitIsAPanel() {
+        #expect(ActivityLayout(saved: ["sessions", "metrics", "files"]).order.last == .git)
+        #expect(ActivityPanel.git.title == "Git")
+        #expect(ActivityPanel.git.symbol == "arrow.triangle.branch")
+    }
+
+    /// The app's one Git model is made when the panel first shows: before, no repository is read.
+    @Test func nothingIsReadBeforeThePanelShows() {
+        final class Count { var made = 0 }
+        let count = Count()
+        let holder = GitHolder { self.gitModel { count.made += 1 } }
+        let view = sidebarView(git: holder)
+        let window = window(view)
+        defer { window.close() }
+        #expect(!marks(in: view).contains(GitPanel.markName))
+        #expect(count.made == 0 && holder.made == nil, "made before the panel showed")
+        ShellforgeSidebar.show(.git, on: view)
+        #expect(marks(in: view).contains(GitPanel.markName))
+        #expect(count.made == 1)
+    }
+
+    @Test func aBranchWithoutUpstreamOffersPublish() {
+        #expect(GitPanel.remoteActions(status(.branch("feature/login-page"))) == [.publish])
+        #expect(GitPanel.remoteActions(status(.branch("main"), upstream: "origin/main")) == [.pull, .push])
+        #expect(GitPanel.RemoteAction.publish.title == "Publish Branch")
+    }
+
+    @Test func anUnbornBranchOffersNoPush() {
+        #expect(GitPanel.remoteActions(status(.unborn("main"))).isEmpty)
+        #expect(GitPanel.remoteActions(status(.detached(sha: "abc1234"))).isEmpty)
+        #expect(GitPanel.branchLine(status(.unborn("main"))) == "No commits yet")
+        #expect(GitPanel.branchLine(status(.detached(sha: "abc1234"))) == "Detached at abc1234")
+        var ahead = status(.branch("main"), upstream: "origin/main")
+        ahead.ahead = 2
+        ahead.behind = 1
+        #expect(GitPanel.branchLine(ahead) == "main ↑2 ↓1")
+    }
+
+    @Test func clickingAChangeOpensItsDiff() throws {
+        let host = FakeTerminalHost()
+        let change = GitChange(path: "src/app.ts", letter: .modified)
+        let section = section(.project(demo.id), status(.branch("main"), unstaged: [change]))
+        _ = try #require(GitPanel.rows([section], isOpen: { _ in true }).first { $0.id == GitPanel.changeID(section.id, .changes, change) })
+        actions(host).viewDiff(change, list: .changes, in: section)
+        #expect(host.openedPlain.map { "\($0.directory)|\($0.title)|\($0.command)" } == ["/demo|Diff: app.ts|git diff -- src/app.ts"])
+    }
+
+    /// A file both staged and changed again has a row in each list, each with its own id.
+    @Test func aFileInBothListsHasTwoRows() {
+        let staged = GitChange(path: "src/app.ts", letter: .modified)
+        let section = section(.project(demo.id), status(.branch("main"), staged: [staged], unstaged: [staged]))
+        let ids = GitPanel.rows([section], isOpen: { _ in true }).map(\.id)
+        #expect(Set(ids).count == ids.count)
+        #expect(ids.contains(GitPanel.changeID(section.id, .staged, staged)) && ids.contains(GitPanel.changeID(section.id, .changes, staged)))
+    }
+
+    @Test func theCommitPlaceholderSaysWhatItCommits() {
+        let change = GitChange(path: "README.md", letter: .modified)
+        #expect(GitPanel.commitPlaceholder(status(.branch("main"), unstaged: [change])) == "Message (commits all changes when none are staged)")
+        #expect(GitPanel.commitPlaceholder(status(.branch("main"), staged: [change])) == "Message")
+        #expect(!GitPanel.canCommit(message: "  ", busy: false))
+        #expect(!GitPanel.canCommit(message: "Add the login page", busy: true))
+        #expect(GitPanel.canCommit(message: "Add the login page", busy: false))
+    }
+
+    @Test func taskSectionsHaveNoSwitchBranch() {
+        let task = section(.task(UUID()), status(.branch("feature/login-page"), unstaged: [GitChange(path: "README.md", letter: .modified)]))
+        let project = section(.project(demo.id), status(.branch("main")), tasks: [task])
+        #expect(GitPanel.offersSwitchBranch(project))
+        #expect(!GitPanel.offersSwitchBranch(task))
+        let rows = GitPanel.rows([project], isOpen: { _ in true })
+        #expect(rows.contains { $0.id == GitPanel.titleID(task.id) }, "the task’s section is under its project")
+    }
+
+    /// Discard is offered only for the Changes list, never for a conflict or a staged change.
+    @Test func discardIsOfferedOnlyForChanges() {
+        let modified = GitChange(path: "src/app.ts", letter: .modified)
+        #expect(GitPanel.offersDiscard(modified, list: .changes))
+        #expect(!GitPanel.offersDiscard(modified, list: .staged))
+        #expect(!GitPanel.offersDiscard(GitChange(path: "src/app.ts", letter: .conflicted), list: .merge))
+    }
+
+    @Test func showGitSelectsThePanel() throws {
+        let view = sidebarView(git: GitHolder { self.gitModel() })
+        let window = window(view)
+        defer { window.close() }
+        let item = try #require(SidebarCommandMenu.panels.first { $0.panel == .git })
+        #expect(item.title == "Show Git" && item.key == "", "every ⌃⌘ letter of Git is taken")
+        ShellforgeSidebar.show(item.panel, on: view)
+        #expect(ShellforgeSidebar.shownPanel(of: view) == .git)
+        #expect(marks(in: view).contains(GitPanel.markName))
+    }
+}

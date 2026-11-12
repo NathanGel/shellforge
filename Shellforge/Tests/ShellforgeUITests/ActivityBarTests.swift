@@ -42,10 +42,10 @@ import Testing
         let source = ActivityOrderSource(defaults: defaults)
         let first = ActivityModel(source: source), second = ActivityModel(source: source)
         first.move(.metrics, before: .sessions)
-        #expect(first.layout.order == [.metrics, .sessions, .files])
-        #expect(second.layout.order == [.metrics, .sessions, .files])
-        #expect(ActivityOrderStore.load(defaults) == ["metrics", "sessions", "files"])
-        #expect(ActivityModel(defaults: defaults).layout.order == [.metrics, .sessions, .files], "a new window reads the saved order")
+        #expect(first.layout.order == [.metrics, .sessions, .files, .git])
+        #expect(second.layout.order == [.metrics, .sessions, .files, .git])
+        #expect(ActivityOrderStore.load(defaults) == ["metrics", "sessions", "files", "git"])
+        #expect(ActivityModel(defaults: defaults).layout.order == [.metrics, .sessions, .files, .git], "a new window reads the saved order")
     }
 
     @Test func movingKeepsTheSelection() {
@@ -61,12 +61,12 @@ import Testing
         let model = ActivityModel(defaults: defaults)
         model.move(fromOffsets: IndexSet(integer: 0), toOffset: 0)
         model.move(fromOffsets: IndexSet(integer: 0), toOffset: 1)
-        #expect(model.layout.order == [.sessions, .metrics, .files])
+        #expect(model.layout.order == [.sessions, .metrics, .files, .git])
         #expect(ActivityOrderStore.load(defaults) == nil, "nothing moved, so nothing is saved")
         model.move(fromOffsets: IndexSet(integer: 0), toOffset: 2)
-        #expect(model.layout.order == [.metrics, .sessions, .files])
+        #expect(model.layout.order == [.metrics, .sessions, .files, .git])
         model.move(fromOffsets: IndexSet(integer: 1), toOffset: 0)
-        #expect(model.layout.order == [.sessions, .metrics, .files])
+        #expect(model.layout.order == [.sessions, .metrics, .files, .git])
     }
 
     /// A drag's drop, as `move(fromOffsets:toOffset:)` takes it: past half a cell the icon trades
@@ -116,9 +116,9 @@ import Testing
         let model = ActivityModel(source: ActivityOrderSource(defaults: nil))
         let count = model.layout.order.count
         model.move(fromOffsets: IndexSet(integer: 0), toOffset: try #require(ActivityBar.stepOffset(from: 0, up: false, count: count)))
-        #expect(model.layout.order == [.metrics, .sessions, .files])
+        #expect(model.layout.order == [.metrics, .sessions, .files, .git])
         model.move(fromOffsets: IndexSet(integer: 1), toOffset: try #require(ActivityBar.stepOffset(from: 1, up: true, count: count)))
-        #expect(model.layout.order == [.sessions, .metrics, .files])
+        #expect(model.layout.order == [.sessions, .metrics, .files, .git])
     }
 
     /// The drop, handed to the model: the dragged panel lands where it was released.
@@ -127,7 +127,7 @@ import Testing
         let cell = ActivityBar.width(.standard)
         let destination = try #require(ActivityBar.dropOffset(from: 0, translation: cell, cell: cell, count: model.layout.order.count))
         model.move(fromOffsets: IndexSet(integer: 0), toOffset: destination)
-        #expect(model.layout.order == [.metrics, .sessions, .files])
+        #expect(model.layout.order == [.metrics, .sessions, .files, .git])
     }
 
     /// The whole sidebar, hosted in a window, with this window's activity bar `activity`.
@@ -339,17 +339,20 @@ import Testing
         defer { window.close() }
         let items = SidebarCommandMenu.panels
         #expect(items.map(\.panel) == ActivityPanel.allCases)
-        #expect(items.map(\.title) == ["Show Sessions", "Show Metrics", "Show Files"])
+        #expect(items.map(\.title) == ["Show Sessions", "Show Metrics", "Show Files", "Show Git"])
         for item in items.reversed() {
             ShellforgeSidebar.show(item.panel, on: view)
             #expect(activity.layout.selected == item.panel)
             #expect(ShellforgeSidebar.shownPanel(of: view) == item.panel)
         }
         let taken = (SidebarCommandMenu.items.filter { $0.command != nil } + [SidebarCommandMenu.toggleSidebar]).map(\.key)
-        let keys = items.map(\.key)
+        // Show Git has no key: every ⌃⌘ letter of its name is taken.
+        let keyed = items.filter { !$0.key.isEmpty }
+        let keys = keyed.map(\.key)
         #expect(Set(keys).count == keys.count && Set(keys).isDisjoint(with: taken), "a key used twice")
         #expect(Set(keys).isDisjoint(with: SidebarCommandMenu.systemReserved.union(["f"])), "macOS’s or iTerm2’s")
-        #expect(items.allSatisfy { $0.modifiers == [.control, .command] })
+        #expect(keyed.allSatisfy { $0.modifiers == [.control, .command] })
+        #expect(items.filter { $0.key.isEmpty }.map(\.panel) == [.git])
     }
 
     /// An error raised while Metrics shows — a ⌃⌘ command that failed, say — is seen there: the

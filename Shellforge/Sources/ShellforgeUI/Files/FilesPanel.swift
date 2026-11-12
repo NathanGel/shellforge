@@ -186,12 +186,13 @@ struct FilesPanel: View {
     }
 }
 
-/// The panel's own title, when it is not pinned above the panel.
+/// A panel's own title, when it is not pinned above the panel: the Files panel's, or another's.
 struct FilesPanelTitle: View {
+    var panel: ActivityPanel = .files
     @Environment(\.interfaceScale) private var scale
 
     var body: some View {
-        SidebarHeading(ActivityPanel.files.title)
+        SidebarHeading(panel.title)
             .frame(height: scale(Size.menuRow))
             .background(ViewMark(name: SidebarHeader.markName))
             .padding(.horizontal, SidebarRowLayout.listInset + scale(Space.base))

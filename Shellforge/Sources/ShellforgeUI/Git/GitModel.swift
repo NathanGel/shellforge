@@ -98,6 +98,7 @@ public final class GitModel: ObservableObject {
     /// Queued refreshes another read made needless: they do nothing when their turn comes.
     private var absorbed: Set<Int> = []
     private let hops = EventHops()
+    private var following: AnyCancellable?
     /// Told each time an operation is queued. For tests.
     var enqueued: ((GitRepoID) -> Void)?
 
@@ -121,6 +122,14 @@ public final class GitModel: ObservableObject {
     }
 
     // -- repositories ---------------------------------------------------------------------
+
+    /// Follows the workspace's projects and tasks: the publisher hands over the current ones at
+    /// once, then each change.
+    public func follow(_ workspace: some Publisher<Workspace, Never>) {
+        following = workspace.map { ($0.projects, $0.tasks) }.removeDuplicates(by: ==).sink { [weak self] projects, tasks in
+            MainActor.assumeIsolated { self?.update(projects: projects, tasks: tasks) }
+        }
+    }
 
     public func update(projects: [Project], tasks: [TaskItem]) {
         let projectIds = Set(projects.map(\.id))

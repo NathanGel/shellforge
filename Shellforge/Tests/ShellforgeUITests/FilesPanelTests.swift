@@ -58,7 +58,7 @@ private final class CountingLister: @unchecked Sendable {
     }
 
     @Test func filesIsAPanel() {
-        #expect(ActivityLayout(saved: ["sessions", "metrics"]).order.last == .files)
+        #expect(ActivityLayout(saved: ["sessions", "metrics"]).order == [.sessions, .metrics, .files, .git])
     }
 
     @Test func onlyOpenFoldersAreDrawn() async {

@@ -38,6 +38,7 @@ iTerm2.
 | ⌃⌘E | Show Sessions | The key window's sidebar shows its Sessions panel, opening the sidebar if it is hidden. E, as S is Hide Sidebar's. |
 | ⌃⌘M | Show Metrics | The same, for the Metrics panel. |
 | ⌃⌘I | Show Files | The same, for the Files panel. I, as F is iTerm2's Full Screen. |
+| — | Show Git | The same, for the Git panel. No key: every ⌃⌘ letter of its name is taken (G is Add Divider, I Show Files, T New Terminal). |
 | — | Tunnels › Start / Stop Tunnel … | No keys; Open Quickly (⇧⌘O) finds them by name. |
 
 ## The sidebar's edge
@@ -47,6 +48,10 @@ Its right edge drags it to a width, from its minimum (404 pt, the 44 pt activity
 sidebar showing can't be dragged narrower than 724 pt; one made narrower another way has its
 sidebar step aside until the window is wider. Each window keeps its own width; the last one
 dragged is where new windows start.
+
+## Git panel
+
+⌘↩ in a section's commit message field presses that section's Commit.
 
 ## Sheets
 

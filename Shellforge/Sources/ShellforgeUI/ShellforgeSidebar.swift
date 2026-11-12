@@ -26,12 +26,13 @@ public enum ShellforgeSidebar {
     /// `agentsChanged` is told each time Settings › Agents adds, changes or removes one.
     /// `activityOrder` is the app's one activity bar order, which every window's bar follows; each
     /// sidebar keeps its own selected panel. `files` holds the app's one Files panel model, made
-    /// the first time the panel shows in any window; nil leaves the panel empty.
+    /// the first time the panel shows in any window; nil leaves the panel empty. `git` is the same
+    /// for the Git panel.
     public static func makeView(model: SidebarModel, chooseFolder: @escaping @MainActor () -> String?, hooks: AgentHooksModel,
                                 machine: MachineMonitor, backpack: BackpackController, zoom: SidebarZoom,
                                 terminalMatch: TerminalMatchSettings, terminalEditorDefaults: UserDefaults, feedback: FeedbackPrompt,
                                 activityOrder: ActivityOrderSource = ActivityOrderSource(defaults: nil), files: FilesHolder? = nil,
-                                panelCornerRadius: CGFloat? = nil,
+                                git: GitHolder? = nil, panelCornerRadius: CGFloat? = nil,
                                 agentTools: AgentTools = .none, agentsChanged: @escaping @MainActor () -> Void = {},
                                 showBackpack: @escaping @MainActor (@escaping @MainActor () -> Void) -> Void = { _ in },
                                 showFeedback: @escaping @MainActor (@escaping @MainActor () -> Void) -> Void = { _ in },
@@ -45,7 +46,7 @@ public enum ShellforgeSidebar {
         let activity = ActivityModel(source: activityOrder)
         let sidebar = SidebarView(model: model, activity: activity, chooseFolder: chooseFolder,
                                   hooks: hooks, machine: machine, backpack: backpack, terminalMatch: terminalMatch, terminalEditorDefaults: terminalEditorDefaults, files: files,
-                                  feedback: feedback, chrome: chrome, showBackpack: { [weak presenter] present in
+                                  git: git, feedback: feedback, chrome: chrome, showBackpack: { [weak presenter] present in
             guard let presenter else { return }
             presenter.present = present
             showBackpack { [weak presenter] in presenter?.present?() }
@@ -101,7 +102,7 @@ public enum ShellforgeSidebar {
     }
 
     /// Shows `panel` in the sidebar `view` (one `makeView` made): View › Show Sessions, Show Metrics,
-    /// Show Files.
+    /// Show Files, Show Git.
     public static func show(_ panel: ActivityPanel, on view: NSView) {
         (view as? SidebarHostingView<ZoomedSidebar>)?.activity?.select(panel)
     }
@@ -387,6 +388,8 @@ struct SidebarView: View {
     let terminalEditorDefaults: UserDefaults
     /// The app's one Files panel model, made when the panel first shows in any window.
     var files: FilesHolder? = nil
+    /// The app's one Git panel model, made when the panel first shows in any window.
+    var git: GitHolder? = nil
     let feedback: FeedbackPrompt
     @ObservedObject var chrome: SidebarChrome
     let showBackpack: @MainActor (@escaping @MainActor () -> Void) -> Void
@@ -400,6 +403,8 @@ struct SidebarView: View {
     /// The Files panel's model, taken from `files` once the panel is selected: never made while
     /// the view is drawn.
     @State private var filesModel: FilesModel?
+    /// The Git panel's model, taken from `git` once the panel is selected, as Files' is.
+    @State private var gitModel: GitModel?
     @Environment(\.interfaceScale) private var scale
 
     var body: some View {
@@ -427,9 +432,9 @@ struct SidebarView: View {
         // The View menu's ⌘B opens the sheet on the key window's sidebar: this one says how.
         .onAppear {
             showBackpack(presentBackpack); showFeedback(presentFeedback)
-            takeFiles(activity.layout.selected)
+            takeModel(activity.layout.selected)
         }
-        .onChange(of: activity.layout.selected) { panel in takeFiles(panel) }
+        .onChange(of: activity.layout.selected) { panel in takeModel(panel) }
         // The Tasks menu's keys that need a sheet: shown as the "+" or the row's menu would.
         .onReceive(model.sheetRequests) { request in
             switch request {
@@ -478,6 +483,7 @@ struct SidebarView: View {
             case .sessions: header(controls)
             case .metrics: panelTitle(.metrics, controls)
             case .files: panelTitle(.files, controls)
+            case .git: panelTitle(.git, controls)
             }
         }
     }
@@ -521,15 +527,27 @@ struct SidebarView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 }
             }
+            if activity.layout.selected == .git {
+                if let gitModel {
+                    GitPanel(model: gitModel, titled: chrome.windowControls == nil, providers: model.providers,
+                             actions: GitPanelActions(host: model.host, defaults: terminalEditorDefaults,
+                                                      environment: { [launcher = model.launcher] in launcher.environment.variables },
+                                                      launcher: model.launcher, prompter: { [model] in model.prompter },
+                                                      busyTask: { [model] project in model.projectFolderBusyTask(project) }))
+                } else {
+                    VStack(spacing: 0) { if chrome.windowControls == nil { FilesPanelTitle(panel: .git) } }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                }
+            }
         }
     }
 
     private var showsSessions: Bool { activity.layout.selected == .sessions }
 
-    /// The Files panel shown: its model is made now if no window has made it yet.
-    private func takeFiles(_ panel: ActivityPanel) {
-        guard panel == .files, filesModel == nil, let files else { return }
-        filesModel = files.model
+    /// The Files or Git panel shown: its model is made now if no window has made it yet.
+    private func takeModel(_ panel: ActivityPanel) {
+        if panel == .files, filesModel == nil, let files { filesModel = files.model }
+        if panel == .git, gitModel == nil, let git { gitModel = git.model }
     }
 
     /// Today's sidebar: the header (unless pinned above the panel) and the list; the banners

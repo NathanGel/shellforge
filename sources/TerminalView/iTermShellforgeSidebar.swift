@@ -114,6 +114,11 @@ final class iTermShellforgeSidebar: NSObject {
     /// then nothing is listed or watched. Each window opens files in its own tabs.
     private static let files = FilesHolder { makeFiles() }
 
+    /// The Git panel's model: one for the app, so every window draws the same repositories from one
+    /// set of watchers. Made the first time the panel shows in any window; until then no repository
+    /// is read or watched. Each window opens diffs in its own tabs and asks its own questions.
+    private static let git = GitHolder { makeGit() }
+
     /// What the app bundle gives the agents: `shellforge-status`, `shellforge-run` and the ready-made agents.
     static let agentTools = AgentTools.bundled(resourceURL: Bundle.main.resourceURL, bundlePath: Bundle.main.bundlePath,
                                                dataFolder: dataFolder)
@@ -159,7 +164,7 @@ final class iTermShellforgeSidebar: NSObject {
         let view = ShellforgeSidebar.makeView(model: model, chooseFolder: FolderChooser.choose, hooks: hooks, machine: machine,
                                           backpack: backpack, zoom: zoom, terminalMatch: iTermShellforgeTerminalMatch.settings,
                                           terminalEditorDefaults: iTermUserDefaults.userDefaults(),
-                                          feedback: feedback, activityOrder: activityOrder, files: files,
+                                          feedback: feedback, activityOrder: activityOrder, files: files, git: git,
                                           panelCornerRadius: floats ? panelCornerRadius : nil,
                                           agentTools: agentTools, agentsChanged: { agentsChanged() },
                                           showBackpack: { [weak windowController] present in
@@ -181,6 +186,16 @@ final class iTermShellforgeSidebar: NSObject {
         // The publisher hands over the current projects at once, then each change.
         files.follow(document.$workspace.map(\.projects))
         return files
+    }
+
+    /// The app's Git panel model: the workspace's projects and their tasks' worktrees, followed as
+    /// they change. Its watchers pass on only the changes that can move what git reports.
+    private static func makeGit() -> GitModel {
+        let git = GitModel(projects: [], tasks: [], launcher: launcher,
+                           watcher: { _ in FolderWatcher(filter: { GitWatchPaths.isRelevant($0, root: $1) }) })
+        // The publisher hands over the current workspace at once, then each change.
+        git.follow(document.$workspace)
+        return git
     }
 
     /// The default profile changed to run the login shell in `directory`.
@@ -728,7 +743,7 @@ extension iTermShellforgeSidebar {
 
     private static let panelsController = PanelMenuController()
 
-    /// View › Show Sessions, Show Metrics and Show Files, for the key window's sidebar.
+    /// View › Show Sessions, Show Metrics, Show Files and Show Git, for the key window's sidebar.
     @objc static func panelMenuItems() -> [NSMenuItem] { panelsController.items }
 
     /// The key window's sidebar view, as `makeView` made it.
@@ -744,7 +759,7 @@ extension iTermShellforgeSidebar {
     }
 }
 
-/// View › Show Sessions, Show Metrics and Show Files: each item's tag is its panel's place in `ActivityPanel.allCases`.
+/// View › Show Sessions, Show Metrics, Show Files and Show Git: each item's tag is its panel's place in `ActivityPanel.allCases`.
 @MainActor
 private final class PanelMenuController: NSObject, NSMenuItemValidation {
     private(set) var items: [NSMenuItem] = []
