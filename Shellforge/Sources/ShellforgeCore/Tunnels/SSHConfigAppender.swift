@@ -36,13 +36,24 @@ public enum SSHConfigAppendError: Error, Equatable, LocalizedError {
     case refused(String)
     /// The old config could not be copied aside, so nothing was written.
     case backupFailed(String)
+    /// Nothing was added; the config is as it was.
     case writeFailed(String)
+    /// A write failed part-way and could not be undone: the config may end in half a line.
+    case damaged
+    /// The config grew or shrank between its backup and the append, so nothing was added.
+    case changedWhileAdding
+    /// The config is a symlink to nothing.
+    case brokenLink
 
     public var errorDescription: String? {
         switch self {
         case .refused(let problem): return problem
         case .backupFailed(let reason): return "Your SSH config couldn’t be backed up, so nothing was added. \(reason)"
         case .writeFailed(let reason): return "The host couldn’t be added to your SSH config. \(reason)"
+        case .damaged:
+            return "The host couldn’t be added to your SSH config, and it may be damaged. Your previous config is in \(SSHConfigAppender.backupName)."
+        case .changedWhileAdding: return "Your SSH config changed while adding the host. Try again."
+        case .brokenLink: return "~/.ssh/config is a link to a file that doesn’t exist. Fix the link, then add the host."
         }
     }
 }
@@ -51,6 +62,10 @@ public enum SSHConfigAppendError: Error, Equatable, LocalizedError {
 /// byte for byte to `config.shellforge-backup` beside it first, then opened for appending only, so
 /// its old bytes stay an exact prefix and its mode is untouched. Through a symlink, the link's
 /// target grows and the link stays. No backup, no write.
+///
+/// Another program can change the config between the check and the append. A change to its size
+/// after the backup is caught and refused; one before it (say, the same alias added elsewhere a
+/// moment earlier) is not, and ssh then uses the first of the two blocks.
 public enum SSHConfigAppender {
     static let backupName = "config.shellforge-backup"
 
@@ -59,16 +74,21 @@ public enum SSHConfigAppender {
     public static func problem(with host: NewSSHHost, existing: [SSHHost]) -> String? {
         let host = host.trimmed
         if host.alias.isEmpty { return "Give the host a name." }
-        if host.fields.contains(where: { $0.contains(where: { $0.isNewline || $0 == "\"" }) }) {
-            return "Fields can’t contain line breaks or double quotes."
+        if host.fields.contains(where: { $0.contains(where: { $0.isNewline || $0 == "\t" || $0 == "\"" }) }) {
+            return "Fields can’t contain tabs, line breaks or double quotes."
         }
         if host.alias.contains(where: { "*?!".contains($0) }) || !SSHConfig.isTypable(host.alias) {
             return "A host name can’t contain spaces, *, ?, ! or start with -."
         }
-        // ssh matches a destination against `Host` patterns without regard to case.
+        // OpenSSH matches `Host` patterns case-sensitively, but two hosts differing only in case are
+        // easy to confuse, so Shellforge refuses the twin.
         let alias = host.alias.lowercased()
         if existing.contains(where: { $0.alias.lowercased() == alias }) { return "“\(host.alias)” is already in your SSH config." }
         if host.hostName.isEmpty { return "Give the host’s address." }
+        // Each is one ssh_config argument: a space makes the line, and so every host, invalid.
+        if [host.hostName, host.user, host.port].contains(where: { $0.contains(where: \.isWhitespace) }) {
+            return "The address, user and port can’t contain spaces."
+        }
         if !host.port.isEmpty {
             guard host.port.allSatisfy(\.isASCII), host.port.allSatisfy(\.isNumber),
                   let port = Int(host.port), (1...65535).contains(port) else { return "The port is a number from 1 to 65535." }
@@ -87,10 +107,25 @@ public enum SSHConfigAppender {
         return "Host \(host.alias)\n" + lines.joined()
     }
 
+    /// The steps a test replaces to force a failure the file system won't give on demand.
+    struct Seams {
+        /// Writes all of the data to the descriptor, or throws.
+        var write: (Int32, Data) throws -> Void = SSHConfigAppender.writeAll
+        /// `ftruncate`.
+        var truncate: (Int32, off_t) -> Int32 = { ftruncate($0, $1) }
+        /// Runs after the backup, before the config is opened for appending.
+        var afterBackup: () -> Void = {}
+    }
+
     /// Appends `host` to `source.file`, after reading the hosts again and refusing one with a
     /// problem. A missing `~/.ssh` is made `0700` and a missing config `0600`, holding the block.
     @discardableResult
     public static func append(_ host: NewSSHHost, to source: SSHConfigSource) throws -> AppendResult {
+        try append(host, to: source, seams: Seams())
+    }
+
+    @discardableResult
+    static func append(_ host: NewSSHHost, to source: SSHConfigSource, seams: Seams) throws -> AppendResult {
         if let problem = problem(with: host, existing: SSHConfig.hosts(in: source.file, home: source.home)) {
             throw SSHConfigAppendError.refused(problem)
         }
@@ -98,7 +133,10 @@ public enum SSHConfigAppender {
         let folder = source.file.deletingLastPathComponent()
         let target = source.file.resolvingSymlinksInPath()
         guard FileManager.default.fileExists(atPath: target.path) else {
-            try create(source.file, in: folder, holding: block)
+            if (try? FileManager.default.destinationOfSymbolicLink(atPath: source.file.path)) != nil {
+                throw SSHConfigAppendError.brokenLink
+            }
+            try create(source.file, in: folder, holding: block, seams: seams)
             return AppendResult(backup: nil, created: true)
         }
 
@@ -106,32 +144,91 @@ public enum SSHConfigAppender {
         let old: Data
         do {
             old = try Data(contentsOf: target)
-            try old.write(to: backup, options: .atomic)
-            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: backup.path)
+            try writeBackup(old, to: backup)
             guard try Data(contentsOf: backup) == old else { throw CocoaError(.fileWriteUnknown) }
         } catch {
             throw SSHConfigAppendError.backupFailed(error.localizedDescription)
         }
+        seams.afterBackup()
 
-        let separator = old.isEmpty || old.last == UInt8(ascii: "\n") ? "\n" : "\n\n"
         let descriptor = open(target.path, O_WRONLY | O_APPEND | O_CLOEXEC)
         guard descriptor >= 0 else { throw lastPOSIXError }
-        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
-        do {
-            try handle.write(contentsOf: Data((separator + block).utf8))
-            try handle.close()
-        } catch {
-            throw SSHConfigAppendError.writeFailed(error.localizedDescription)
+        var info = stat()
+        guard fstat(descriptor, &info) == 0 else {
+            let error = lastPOSIXError
+            close(descriptor)
+            throw error
         }
+        let size = info.st_size
+        guard size == off_t(old.count) else {
+            close(descriptor)
+            throw SSHConfigAppendError.changedWhileAdding
+        }
+        let separator = old.isEmpty || old.last == UInt8(ascii: "\n") ? "\n" : "\n\n"
+        do {
+            try seams.write(descriptor, Data((separator + block).utf8))
+        } catch {
+            // Cut the file back to exactly its old bytes, so no half line is left behind.
+            let undone = seams.truncate(descriptor, size) == 0
+            close(descriptor)
+            throw undone ? SSHConfigAppendError.writeFailed(error.localizedDescription) : SSHConfigAppendError.damaged
+        }
+        closeAfterWriting(descriptor, target)
         return AppendResult(backup: backup, created: false)
     }
 
-    /// The failure `open` just reported.
-    private static var lastPOSIXError: SSHConfigAppendError { .writeFailed(String(cString: strerror(errno))) }
+    /// `old` at `backup`, made `0600` from the start in a file beside it and renamed over any older
+    /// backup.
+    private static func writeBackup(_ old: Data, to backup: URL) throws {
+        let temporary = backup.deletingLastPathComponent().appendingPathComponent(".\(backupName).\(UUID().uuidString)")
+        let descriptor = open(temporary.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        guard descriptor >= 0 else { throw posixError }
+        do {
+            fchmod(descriptor, 0o600)
+            try writeAll(descriptor, old)
+            guard fsync(descriptor) == 0 else { throw posixError }
+        } catch {
+            close(descriptor)
+            unlink(temporary.path)
+            throw error
+        }
+        guard close(descriptor) == 0, rename(temporary.path, backup.path) == 0 else {
+            let error = posixError
+            unlink(temporary.path)
+            throw error
+        }
+    }
+
+    /// The failure a system call just reported.
+    private static var posixError: POSIXError { POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+
+    private static var lastPOSIXError: SSHConfigAppendError { .writeFailed(posixError.localizedDescription) }
+
+    /// Writes every byte of `data`, retrying short writes and interrupted calls.
+    static func writeAll(_ descriptor: Int32, _ data: Data) throws {
+        try data.withUnsafeBytes { (buffer: UnsafeRawBufferPointer) in
+            guard let base = buffer.baseAddress else { return }
+            var offset = 0
+            while offset < buffer.count {
+                let written = Darwin.write(descriptor, base + offset, buffer.count - offset)
+                if written < 0 {
+                    if errno == EINTR { continue }
+                    throw posixError
+                }
+                offset += written
+            }
+        }
+    }
+
+    /// Closes a file every byte was written to. A failure here doesn't undo the write — the host
+    /// was added — so it is logged, not reported.
+    private static func closeAfterWriting(_ descriptor: Int32, _ file: URL) {
+        if close(descriptor) != 0 { ErrorLogging.record("ssh", "Closing \(file.path) after adding a host failed: \(posixError)") }
+    }
 
     /// A new config holding only `block`: the folder made `0700` if it is missing, the file `0600`,
     /// and never over a file — or a link — already there.
-    private static func create(_ file: URL, in folder: URL, holding block: String) throws {
+    private static func create(_ file: URL, in folder: URL, holding block: String, seams: Seams) throws {
         do {
             if !FileManager.default.fileExists(atPath: folder.path) {
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
@@ -141,13 +238,15 @@ public enum SSHConfigAppender {
         }
         let descriptor = open(file.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
         guard descriptor >= 0 else { throw lastPOSIXError }
-        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        fchmod(descriptor, 0o600)
         do {
-            fchmod(descriptor, 0o600)
-            try handle.write(contentsOf: Data(block.utf8))
-            try handle.close()
+            try seams.write(descriptor, Data(block.utf8))
         } catch {
+            // The file is new and Shellforge's own: a half-written one is removed.
+            close(descriptor)
+            unlink(file.path)
             throw SSHConfigAppendError.writeFailed(error.localizedDescription)
         }
+        closeAfterWriting(descriptor, file)
     }
 }

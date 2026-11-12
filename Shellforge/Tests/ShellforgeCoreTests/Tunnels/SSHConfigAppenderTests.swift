@@ -85,14 +85,22 @@ import Testing
         #expect(SSHConfigAppender.problem(with: host(hostName: " "), existing: []) == "Give the host’s address.")
     }
 
-    @Test func aLineBreakOrDoubleQuoteIsAProblem() {
-        for bad in [host(user: "deploy\nHost evil"), host(identityFile: "~/.ssh/\"key\""), host(hostName: "a\rb"), host(alias: "sta\nging")] {
-            #expect(SSHConfigAppender.problem(with: bad, existing: []) == "Fields can’t contain line breaks or double quotes.")
+    @Test func aTabLineBreakOrDoubleQuoteIsAProblem() {
+        for bad in [host(user: "deploy\nHost evil"), host(identityFile: "~/.ssh/\"key\""), host(hostName: "a\rb"), host(alias: "sta\nging"),
+                    host(identityFile: "~/keys/a\tb"), host(alias: "sta\tging"), host(user: "de\tploy")] {
+            #expect(SSHConfigAppender.problem(with: bad, existing: []) == "Fields can’t contain tabs, line breaks or double quotes.")
         }
     }
 
+    @Test func aSpaceInTheAddressUserOrPortIsAProblem() {
+        for bad in [host(hostName: "staging example.com"), host(user: "de ploy"), host(port: "2 2")] {
+            #expect(SSHConfigAppender.problem(with: bad, existing: []) == "The address, user and port can’t contain spaces.")
+        }
+        #expect(SSHConfigAppender.problem(with: host(identityFile: "~/My Keys/id_ed25519"), existing: []) == nil)
+    }
+
     @Test func aBadPortIsAProblem() {
-        for port in ["0", "65536", "22a", "-1", "+22", "2 2"] {
+        for port in ["0", "65536", "22a", "-1", "+22"] {
             #expect(SSHConfigAppender.problem(with: host(port: port), existing: []) == "The port is a number from 1 to 65535.", "\(port)")
         }
         #expect(SSHConfigAppender.problem(with: staging, existing: []) == nil)
@@ -181,5 +189,107 @@ import Testing
         #expect(cache.hosts(in: config, home: home).map(\.alias) == ["build-box"])
         try SSHConfigAppender.append(staging, to: source)
         #expect(cache.hosts(in: config, home: home).map(\.alias) == ["build-box", "staging"])
+    }
+
+    // MARK: Failures leave the config as it was
+
+    private func errorText(_ body: () throws -> Void) -> String? {
+        do { try body(); return nil } catch { return error.localizedDescription }
+    }
+
+    @Test func aFailedBackupAppendsNothing() throws {
+        let old = "Host build-box\n    HostName build.example.com\n"
+        try write(old)
+        try FileManager.default.createDirectory(at: backup, withIntermediateDirectories: true)
+        #expect {
+            try SSHConfigAppender.append(staging, to: source)
+        } throws: { error in
+            if case .backupFailed = error as? SSHConfigAppendError { return true }
+            return false
+        }
+        #expect(try Data(contentsOf: config) == Data(old.utf8))
+    }
+
+    /// A write that gets part of the way and fails, as a full disk would.
+    private func shortWrite(_ descriptor: Int32, _ data: Data) throws {
+        try SSHConfigAppender.writeAll(descriptor, data.prefix(7))
+        throw POSIXError(.ENOSPC)
+    }
+
+    @Test func aFailedWriteIsCutBackToTheOldBytes() throws {
+        let old = "Host build-box\n    HostName build.example.com\n"
+        try write(old)
+        var seams = SSHConfigAppender.Seams()
+        seams.write = shortWrite
+        #expect {
+            try SSHConfigAppender.append(staging, to: source, seams: seams)
+        } throws: { error in
+            if case .writeFailed = error as? SSHConfigAppendError { return true }
+            return false
+        }
+        #expect(try Data(contentsOf: config) == Data(old.utf8))
+    }
+
+    @Test func aWriteThatCannotBeUndoneNamesTheBackup() throws {
+        let old = "Host build-box\n    HostName build.example.com\n"
+        try write(old)
+        var seams = SSHConfigAppender.Seams()
+        seams.write = shortWrite
+        seams.truncate = { _, _ in -1 }
+        #expect(errorText { try SSHConfigAppender.append(staging, to: source, seams: seams) }
+            == "The host couldn’t be added to your SSH config, and it may be damaged. Your previous config is in config.shellforge-backup.")
+        #expect(try Data(contentsOf: backup) == Data(old.utf8))
+    }
+
+    @Test func aConfigChangedAfterTheBackupIsLeftAlone() throws {
+        let old = "Host build-box\n    HostName build.example.com\n"
+        let changed = old + "Host db-tunnel\n"
+        try write(old)
+        let config = config
+        var seams = SSHConfigAppender.Seams()
+        seams.afterBackup = { try? Data(changed.utf8).write(to: config) }
+        #expect(throws: SSHConfigAppendError.changedWhileAdding) { try SSHConfigAppender.append(staging, to: source, seams: seams) }
+        #expect(SSHConfigAppendError.changedWhileAdding.localizedDescription == "Your SSH config changed while adding the host. Try again.")
+        #expect(try Data(contentsOf: config) == Data(changed.utf8))
+    }
+
+    @Test func aBrokenLinkIsRefused() throws {
+        try FileManager.default.createDirectory(at: ssh, withIntermediateDirectories: true)
+        let missing = home.appendingPathComponent("dotfiles/ssh_config")
+        try FileManager.default.createSymbolicLink(at: config, withDestinationURL: missing)
+        #expect(errorText { try SSHConfigAppender.append(staging, to: source) }
+            == "~/.ssh/config is a link to a file that doesn’t exist. Fix the link, then add the host.")
+        #expect(try FileManager.default.destinationOfSymbolicLink(atPath: config.path) == missing.path)
+        #expect(!FileManager.default.fileExists(atPath: missing.path))
+    }
+
+    // MARK: More shapes of config
+
+    @Test func aRelativeSymlinkIsAppendedThroughTheLink() throws {
+        let target = home.appendingPathComponent("dotfiles/ssh_config")
+        let old = "Host build-box\n    HostName build.example.com\n"
+        try write(old, to: target)
+        try FileManager.default.createDirectory(at: ssh, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(atPath: config.path, withDestinationPath: "../dotfiles/ssh_config")
+        try SSHConfigAppender.append(staging, to: source)
+        #expect(try FileManager.default.destinationOfSymbolicLink(atPath: config.path) == "../dotfiles/ssh_config")
+        #expect(try String(contentsOf: target, encoding: .utf8) == old + "\n" + SSHConfigAppender.block(for: staging))
+        #expect(try Data(contentsOf: backup) == Data(old.utf8))
+    }
+
+    @Test func anEmptyConfigGetsOneNewlineBeforeTheBlock() throws {
+        try write("")
+        let result = try SSHConfigAppender.append(staging, to: source)
+        #expect(result == AppendResult(backup: backup, created: false))
+        #expect(try String(contentsOf: config, encoding: .utf8) == "\n" + SSHConfigAppender.block(for: staging))
+    }
+
+    @Test func theBackupIsPrivate() throws {
+        try write("Host build-box\n")
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: config.path)
+        try SSHConfigAppender.append(staging, to: source)
+        #expect(try mode(backup) == 0o600)
+        let leftovers = try FileManager.default.contentsOfDirectory(atPath: ssh.path).filter { $0.hasPrefix(".config.shellforge-backup") }
+        #expect(leftovers.isEmpty)
     }
 }
