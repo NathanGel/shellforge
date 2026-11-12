@@ -1,5 +1,5 @@
 // Ported from AiTerm (app/Sources/AiTerm/Prompter.swift), GPLv3, Laurens D'Hondt.
-import AppKit
+import Foundation
 
 /// One modal question: a message, the detail under it, its buttons and an optional checkbox — with,
 /// under it, an optional second one that only counts while the first is ticked. A value, so a test can read what was asked and answer it without a window.
@@ -48,8 +48,8 @@ public struct AlertAnswer: Equatable, Sendable {
     }
 }
 
-/// Where the sidebar's modal questions go. `ModalPrompter` shows them; tests answer them from a
-/// script.
+/// Where the sidebar's modal questions go. The app's `WarningPrompter` shows them; tests answer them
+/// from a script.
 ///
 /// A question is an `await`. While it is up, anything else the app does can run — a tab closing,
 /// another Remove — and the caller re-checks after it. The alert itself comes up on a later turn of
@@ -65,83 +65,4 @@ public protocol Prompter: AnyObject {
 @MainActor
 final class NullPrompter: Prompter {
     func ask(_ prompt: AlertPrompt) async -> AlertAnswer { AlertAnswer(button: prompt.escapeButton ?? 1) }
-}
-
-@MainActor
-public final class ModalPrompter: Prompter {
-    public init() {}
-
-    /// ⎋ as `NSButton.keyEquivalent` spells it.
-    static let escapeKey = "\u{1b}"
-
-    /// The alert `prompt` describes, not yet shown. NSAlert gives the first button ↩ and a button
-    /// titled Cancel ⎋ by itself; any other safe button is handed ⎋ here. A safe button that is also
-    /// the default keeps ↩ — a button holds one key — and `ask` answers ⎋ for it instead.
-    static func alert(for prompt: AlertPrompt) -> NSAlert {
-        let alert = NSAlert()
-        alert.messageText = prompt.message
-        alert.informativeText = prompt.detail
-        for title in prompt.buttons { alert.addButton(withTitle: title) }
-        alert.buttons.first?.hasDestructiveAction = prompt.defaultDeletes
-        if let escape = prompt.escapeButton, escape > 0, alert.buttons.indices.contains(escape) {
-            alert.buttons[escape].keyEquivalent = escapeKey
-        }
-        alert.accessoryView = prompt.checkbox.map { title in
-            prompt.subCheckbox.map { CheckboxPair(title, sub: $0) } ?? NSButton(checkboxWithTitle: title, target: nil, action: nil)
-        }
-        return alert
-    }
-
-    /// On the next turn of the main run loop rather than under the caller.
-    public func ask(_ prompt: AlertPrompt) async -> AlertAnswer {
-        await withCheckedContinuation { answered in
-            RunLoop.main.perform { MainActor.assumeIsolated { answered.resume(returning: Self.askBlocking(prompt)) } }
-        }
-    }
-
-    private static func askBlocking(_ prompt: AlertPrompt) -> AlertAnswer {
-        let alert = alert(for: prompt)
-        // ⎋ for a safe default, which is holding ↩: pressed through the button, as a click would be.
-        let monitor = prompt.escapeButton == 0 ? NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            guard event.window === alert.window, event.charactersIgnoringModifiers == escapeKey,
-                  event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty else { return event }
-            alert.buttons.first?.performClick(nil)
-            return nil
-        } : nil
-        defer { if let monitor { NSEvent.removeMonitor(monitor) } }
-        let response = alert.runModal()
-        let pair = alert.accessoryView as? CheckboxPair
-        return AlertAnswer(button: response.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue,
-                           checked: (pair?.main ?? alert.accessoryView as? NSButton)?.state == .on,
-                           subChecked: pair?.sub.state == .on)
-    }
-}
-
-/// Two checkboxes, the second indented under the first and enabled only while it is ticked;
-/// unticking the first unticks the second. Laid out by frame.
-final class CheckboxPair: NSView {
-    let main: NSButton
-    let sub: NSButton
-
-    init(_ title: String, sub subTitle: String) {
-        main = NSButton(checkboxWithTitle: title, target: nil, action: nil)
-        sub = NSButton(checkboxWithTitle: subTitle, target: nil, action: nil)
-        main.sizeToFit(); sub.sizeToFit()
-        let indent: CGFloat = 20, gap: CGFloat = 6
-        let height = main.frame.height + gap + sub.frame.height
-        super.init(frame: NSRect(x: 0, y: 0, width: max(main.frame.width, indent + sub.frame.width), height: height))
-        main.setFrameOrigin(NSPoint(x: 0, y: sub.frame.height + gap))
-        sub.setFrameOrigin(NSPoint(x: indent, y: 0))
-        sub.isEnabled = false
-        main.target = self
-        main.action = #selector(mainToggled)
-        addSubview(main); addSubview(sub)
-    }
-
-    required init?(coder: NSCoder) { nil }
-
-    @objc private func mainToggled() {
-        sub.isEnabled = main.state == .on
-        if main.state != .on { sub.state = .off }
-    }
 }

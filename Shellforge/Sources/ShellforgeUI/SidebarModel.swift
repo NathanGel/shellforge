@@ -135,7 +135,7 @@ public final class SidebarModel: ObservableObject {
     /// Each task row's removal: running, or why the last one stopped — in every window, from the
     /// board they share.
     public var removals: [UUID: RowRemoval] { removalBoard.removals }
-    /// Where Remove asks its questions; the app hands in `ModalPrompter`, tests a script.
+    /// Where Remove asks its questions; the app hands in its `WarningPrompter`, tests a script.
     public var prompter: Prompter = NullPrompter()
     /// Keyboard commands that need one of the sidebar's sheets (SidebarCommands.swift).
     public let sheetRequests = PassthroughSubject<SidebarSheetRequest, Never>()

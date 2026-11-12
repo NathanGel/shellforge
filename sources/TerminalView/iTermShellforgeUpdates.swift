@@ -13,7 +13,7 @@ import ShellforgeUI
 @MainActor
 final class iTermShellforgeUpdates: NSObject {
     /// One for the app, made on first use: the running bundle's version, feed and build channel.
-    private static let controller = UpdateController.live(prompter: ModalPrompter())
+    private static let controller = UpdateController.live(prompter: WarningPrompter())
 
     /// The menu item's action. The check runs to its last alert on its own.
     @objc static func checkForUpdates() {

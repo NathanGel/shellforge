@@ -25,7 +25,7 @@ final class iTermShellforgeSidebar: NSObject {
         let model = AgentHooksModel(integrations: HookIntegrations(support: support, resources: .bundled(resourceURL: Bundle.main.resourceURL)),
                                     names: Dictionary(uniqueKeysWithValues: AgentPresets.all.map { ($0.id, $0.name) }))
         // A dev build asks before installing over the installed app's hooks.
-        model.prompter = ModalPrompter()
+        model.prompter = WarningPrompter()
         return model
     }()
 
@@ -149,7 +149,7 @@ final class iTermShellforgeSidebar: NSObject {
                                  agents: loaded.agents, catalogue: { try catalogue.models(for: $0) }, sshConfig: .user,
                                  readyMade: loaded.readyMade, secrets: Keychain.shared, tools: agentTools)
         if let problem = loaded.problem { model.lastError = problem }
-        model.prompter = ModalPrompter()
+        model.prompter = WarningPrompter()
         windows.add(model, for: windowController)
         model.onEnvironmentReloaded = { environmentChanged() }
         sidebars.add(model)
