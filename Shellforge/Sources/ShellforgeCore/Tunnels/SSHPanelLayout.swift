@@ -61,7 +61,11 @@ public enum SSHPanelLayout {
         }
         if let hosts {
             let others = Set(hosts.map(\.alias)).subtracting(named)
-                .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+                // Case-insensitively, then by the exact name, so `Staging` and `staging` keep one order.
+                .sorted {
+                    let order = $0.localizedCaseInsensitiveCompare($1)
+                    return order == .orderedSame ? $0 < $1 : order == .orderedAscending
+                }
             if !others.isEmpty {
                 sections.append(SSHPanelSection(kind: .other, title: "Other hosts", entries: others.map {
                     SSHPanelEntry(alias: $0, isProjectHost: false, isTunnel: false, inConfig: true)

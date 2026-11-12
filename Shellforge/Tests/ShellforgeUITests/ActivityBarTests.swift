@@ -331,7 +331,7 @@ import Testing
         #expect(window.firstResponder !== list)
     }
 
-    /// View › Show Sessions, Show Metrics and Show Files: each item names its panel, its key is a free ⌃⌘ one,
+    /// View › Show Sessions, Metrics, Files, Git and SSH: each item names its panel, its key is a free ⌃⌘ one,
     /// and showing it on a sidebar selects that panel.
     @Test func theViewMenusPanelCommandsSelectThePanel() throws {
         let (sidebar, _) = try sidebarModel()

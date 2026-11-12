@@ -124,7 +124,8 @@ private final class IdleSSHWatcher: FolderWatching, @unchecked Sendable {
 
     /// The folder can't take the backup: nothing is added, the reason is the problem line, and the
     /// sheet stays open (`add` is false).
-    @Test func aWriteFailureIsShown() async throws {
+    @Test(.disabled(if: getuid() == 0, "root writes through 0500"))
+    func aWriteFailureIsShown() async throws {
         let (sidebar, _) = try sidebar()
         try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: sshFolder.path)
         defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: sshFolder.path) }
@@ -138,6 +139,16 @@ private final class IdleSSHWatcher: FolderWatching, @unchecked Sendable {
         #expect(model.canAdd, "tried again once the folder is fixed")
         model.draft.user = "ops"
         #expect(model.problem == nil, "an edit clears the failure")
+    }
+
+    /// Choose… starts in the config's own folder, and writes a key in the home folder with `~`.
+    @Test func chooseStartsInTheConfigFolderAndAbbreviatesHome() throws {
+        let (sidebar, _) = try sidebar()
+        #expect(AddHostModel(sidebar: sidebar).identityFolder == sshFolder)
+        let home = URL(fileURLWithPath: NSHomeDirectory())
+        #expect(AddHostModel.identityPath(home.appendingPathComponent(".ssh/id_ed25519")) == "~/.ssh/id_ed25519")
+        #expect(AddHostModel.identityPath(URL(fileURLWithPath: "/Volumes/Keys/id_ed25519")) == "/Volumes/Keys/id_ed25519",
+                "a key outside the home folder stays absolute")
     }
 
     /// No `~/.ssh` yet: Add Host makes it, says so, and the panel starts watching it.

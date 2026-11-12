@@ -264,9 +264,10 @@ extension SidebarModel {
 
     /// Reads the config again, off the main actor, for the Tunnels sheet; kept for the rows.
     public func loadSSHHosts() async -> [SSHHost] {
+        let generation = beginSSHRead()
         let source = sshConfig
         let hosts = await BackgroundWork.run { source.read() }
-        take(hosts)
+        take(hosts, generation: generation)
         return hosts
     }
 
@@ -277,15 +278,27 @@ extension SidebarModel {
     func refreshSSHHosts(_ projects: [Project]) {
         guard !readingSSH, projects.contains(where: { !$0.tunnels.isEmpty || $0.sshHost != nil }) else { return }
         readingSSH = true
+        let generation = beginSSHRead()
         let source = sshConfig
         Task {
             let hosts = await BackgroundWork.run { source.read() }
             readingSSH = false
-            take(hosts)
+            take(hosts, generation: generation)
         }
     }
 
-    private func take(_ hosts: [SSHHost]) {
+    /// Numbers a config read about to start; `take` keeps a read only when none started after it
+    /// has been kept already.
+    func beginSSHRead() -> Int {
+        sshReadsStarted += 1
+        return sshReadsStarted
+    }
+
+    /// The hosts a read numbered `generation` found. A read that finishes after a newer one was
+    /// kept is dropped: it may have started before an append the newer one saw.
+    func take(_ hosts: [SSHHost], generation: Int) {
+        guard generation > sshReadApplied else { return }
+        sshReadApplied = generation
         let byAlias = Dictionary(hosts.map { ($0.alias, $0) }, uniquingKeysWith: { first, _ in first })
         if byAlias != sshHosts { sshHosts = byAlias }
         autoStartOnLaunch()

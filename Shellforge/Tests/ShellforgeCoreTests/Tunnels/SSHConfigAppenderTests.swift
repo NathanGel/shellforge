@@ -87,9 +87,9 @@ import Testing
     }
 
     @Test func aBadAddressIsAProblem() {
-        for hostName in ["#web", "staging example.com", "a\tb", "a\rb", "o'brien.example.com", "a\"b", "a\\b", "staging.example.com\u{A0}x"] {
+        for hostName in ["-oProxyCommand=x", "-staging.example.com", "#web", "staging example.com", "a\tb", "a\rb", "o'brien.example.com", "a\"b", "a\\b", "staging.example.com\u{A0}x"] {
             #expect(SSHConfigAppender.problem(with: host(hostName: hostName), existing: [])
-                == "The address can use letters, digits, dots, dashes and colons.", "\(hostName)")
+                == "The address can use letters, digits, dots, dashes, underscores, colons and %.", "\(hostName)")
         }
         for hostName in ["10.0.0.5", "fe80::1%en0", "staging_2.example.com"] {
             #expect(SSHConfigAppender.problem(with: host(hostName: hostName), existing: []) == nil, "\(hostName)")
@@ -97,7 +97,7 @@ import Testing
     }
 
     @Test func aBadUserIsAProblem() {
-        for user in ["o'brien", "de ploy", "de\tploy", "deploy\nHost evil", "#deploy", "de\\ploy", "\"deploy\""] {
+        for user in ["-oProxyCommand=x", "-deploy", "o'brien", "de ploy", "de\tploy", "deploy\nHost evil", "#deploy", "de\\ploy", "\"deploy\""] {
             #expect(SSHConfigAppender.problem(with: host(user: user), existing: [])
                 == "The user name can use letters, digits, dots, dashes, underscores and @.", "\(user)")
         }
@@ -105,11 +105,14 @@ import Testing
     }
 
     @Test func aBadIdentityFileIsAProblem() {
-        for path in ["~/My Keys/k\\", "~/.ssh/\"key\"", "~/keys/it's", "~/keys/#1", "~/keys/a\tb", "~/keys/a\nb", "~/keys/a\u{2028}b"] {
+        for path in ["~/My Keys/k\\", "~/.ssh/\"key\"", "~/keys/it's", "~/keys/#1", "~/keys/a\tb", "~/keys/a\nb", "~/keys/a\u{2028}b",
+                     "${HOME}/.ssh/id_ed25519", "~/keys/${KEY}"] {
             #expect(SSHConfigAppender.problem(with: host(identityFile: path), existing: [])
-                == "The identity file’s path can’t contain quotes, backslashes, # or line breaks.", "\(path)")
+                == "The identity file’s path can’t contain quotes, backslashes, #, ${ or line breaks.", "\(path)")
         }
-        #expect(SSHConfigAppender.problem(with: host(identityFile: "~/My Keys/id_ed25519"), existing: []) == nil)
+        for path in ["~/My Keys/id_ed25519", "~/keys/key%q", "~/keys/$demo"] {
+            #expect(SSHConfigAppender.problem(with: host(identityFile: path), existing: []) == nil, "\(path)")
+        }
     }
 
     @Test func aBadPortIsAProblem() {
@@ -124,7 +127,34 @@ import Testing
         #expect(SSHConfigAppender.block(for: host(hostName: "fe80::1%en0")).contains("    HostName fe80::1%%en0\n"))
     }
 
+    @Test func aPercentInTheIdentityFileIsWrittenDoubled() {
+        #expect(SSHConfigAppender.block(for: host(identityFile: "~/keys/key%q")).contains("    IdentityFile ~/keys/key%%q\n"))
+        #expect(SSHConfigAppender.block(for: host(identityFile: "~/My Keys/a%d")).contains("    IdentityFile \"~/My Keys/a%%d\"\n"))
+    }
+
     // MARK: Appending
+
+    /// Two appends of one alias at once, as from two windows: one at a time, so the second finds
+    /// the first's block and is refused, and the alias is in the config once.
+    @Test func twoAppendsOfOneAliasAddItOnce() throws {
+        try write("Host build-box\n    HostName build.example.com\n")
+        let outcomes = Locked<[Result<AppendResult, SSHConfigAppendError>]>([])
+        let source = self.source, staging = self.staging
+        DispatchQueue.concurrentPerform(iterations: 2) { _ in
+            let outcome: Result<AppendResult, SSHConfigAppendError>
+            do { outcome = .success(try SSHConfigAppender.append(staging, to: source)) } catch let error as SSHConfigAppendError {
+                outcome = .failure(error)
+            } catch {
+                outcome = .failure(.writeFailed("\(error)"))
+            }
+            outcomes.withLock { $0.append(outcome) }
+        }
+        let all = outcomes.withLock { $0 }
+        #expect(all.filter { if case .success = $0 { return true } else { return false } }.count == 1)
+        #expect(all.contains { $0 == .failure(.refused("“staging” is already in your SSH config.")) })
+        let text = try String(contentsOf: config, encoding: .utf8)
+        #expect(text.components(separatedBy: "Host staging\n").count == 2)
+    }
 
     @Test func theOldBytesStayAPrefix() throws {
         let old = """
@@ -375,6 +405,21 @@ import Testing
         return settings
     }
 
+    /// `text` with ssh's `%` tokens expanded, for a text holding only `%%`: nil when it holds any
+    /// other token, which ssh would expand to something else or refuse.
+    private static func expandingPercents(_ text: String) -> String? {
+        var result = "", index = text.startIndex
+        while index < text.endIndex {
+            let character = text[index]
+            index = text.index(after: index)
+            guard character == "%" else { result.append(character); continue }
+            guard index < text.endIndex, text[index] == "%" else { return nil }
+            result.append("%")
+            index = text.index(after: index)
+        }
+        return result
+    }
+
     @Test(.enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/ssh")))
     func everyAcceptedHostIsReadableBySSH() throws {
         try write("Host *\n    ServerAliveInterval 30\nHost build-box\n    HostName build.example.com\n")
@@ -383,6 +428,8 @@ import Testing
             NewSSHHost(alias: "db-tunnel", hostName: "fe80::1%en0", user: "deploy@example.com", port: "", identityFile: "~/My Keys/id_ed25519"),
             NewSSHHost(alias: "build_box.2", hostName: "10.0.0.5", user: "ci.bot_1-a", port: "65535", identityFile: "~/keys/build box"),
             NewSSHHost(alias: "Demo-Web", hostName: "acme-web.example.com"),
+            NewSSHHost(alias: "pct-key", hostName: "pct.example.com", identityFile: "~/keys/key%q"),
+            NewSSHHost(alias: "pct-spaced", hostName: "pct.example.com", identityFile: "~/My Keys/a%d%%b"),
         ]
         for sample in samples {
             #expect(SSHConfigAppender.problem(with: sample, existing: SSHConfig.hosts(in: config, home: home)) == nil)
@@ -393,7 +440,12 @@ import Testing
             #expect(settings["hostname"] == sample.hostName, "\(sample.alias)")
             #expect(settings["port"] == (sample.port.isEmpty ? "22" : sample.port), "\(sample.alias)")
             if !sample.user.isEmpty { #expect(settings["user"] == sample.user, "\(sample.alias)") }
-            if !sample.identityFile.isEmpty { #expect(settings["identityfile"] == sample.identityFile, "\(sample.alias)") }
+            // `ssh -G` prints IdentityFile before expanding its `%` tokens, which happens at connect
+            // time; expanded as ssh does, every `%` written is `%%` and reads back as the path typed.
+            if !sample.identityFile.isEmpty {
+                let written = try #require(settings["identityfile"], "\(sample.alias)")
+                #expect(Self.expandingPercents(written) == sample.identityFile, "\(sample.alias)")
+            }
         }
     }
 }

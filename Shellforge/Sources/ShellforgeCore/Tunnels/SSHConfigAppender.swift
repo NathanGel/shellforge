@@ -14,7 +14,7 @@ public struct NewSSHHost: Equatable, Sendable {
     }
 
     /// The same host with every field trimmed.
-    var trimmed: NewSSHHost {
+    public var trimmed: NewSSHHost {
         let trim: (String) -> String = { $0.trimmingCharacters(in: .whitespaces) }
         return NewSSHHost(alias: trim(alias), hostName: trim(hostName), user: trim(user), port: trim(port), identityFile: trim(identityFile))
     }
@@ -61,11 +61,12 @@ public enum SSHConfigAppendError: Error, Equatable, LocalizedError {
 /// its old bytes stay an exact prefix and its mode is untouched. Through a symlink, the link's
 /// target grows and the link stays. No backup, no write.
 ///
-/// Another program can change the config between the check and the append. A change to its size
-/// after the backup is caught and refused; one before it (say, the same alias added elsewhere a
-/// moment earlier) is not, and ssh then uses the first of the two blocks. Nor is a new config
-/// renamed over the path after it was opened: the block then goes to the replaced file, and the
-/// append still reports success.
+/// Appends in this process run one at a time, so two windows adding the same alias at once add it
+/// once. Another program can still change the config between the check and the append. A change
+/// to its size after the backup is caught and refused; one before it (say, the same alias added
+/// elsewhere a moment earlier) is not, and ssh then uses the first of the two blocks. Nor is a new
+/// config renamed over the path after it was opened: the block then goes to the replaced file, and
+/// the append still reports success.
 public enum SSHConfigAppender {
     static let backupName = "config.shellforge-backup"
 
@@ -85,15 +86,20 @@ public enum SSHConfigAppender {
         if existing.contains(where: { $0.alias.lowercased() == alias }) { return "“\(host.alias)” is already in your SSH config." }
         if host.hostName.isEmpty { return "Give the host’s address." }
         // `:` and `%` for an IPv6 address and its zone.
-        if !only(host.hostName, ".-_:%") { return "The address can use letters, digits, dots, dashes and colons." }
-        if !only(host.user, "._-@") { return "The user name can use letters, digits, dots, dashes, underscores and @." }
+        // A leading `-` could read as an option where a `ProxyCommand` expands `%h` or `%r`.
+        if !only(host.hostName, ".-_:%") || host.hostName.hasPrefix("-") {
+            return "The address can use letters, digits, dots, dashes, underscores, colons and %."
+        }
+        if !only(host.user, "._-@") || host.user.hasPrefix("-") { return "The user name can use letters, digits, dots, dashes, underscores and @." }
         if !host.port.isEmpty {
             guard only(host.port, ""), host.port.allSatisfy(\.isNumber),
                   let port = Int(host.port), (1...65535).contains(port) else { return "The port is a number from 1 to 65535." }
         }
         let unsafeInPath = CharacterSet.controlCharacters.union(CharacterSet(charactersIn: "'\"\\#"))
-        if host.identityFile.contains(where: \.isNewline) || host.identityFile.unicodeScalars.contains(where: unsafeInPath.contains) {
-            return "The identity file’s path can’t contain quotes, backslashes, # or line breaks."
+        // ssh expands `${NAME}` in IdentityFile from the environment; `%` is written `%%` instead.
+        if host.identityFile.contains(where: \.isNewline) || host.identityFile.unicodeScalars.contains(where: unsafeInPath.contains)
+            || host.identityFile.contains("${") {
+            return "The identity file’s path can’t contain quotes, backslashes, #, ${ or line breaks."
         }
         return nil
     }
@@ -107,11 +113,13 @@ public enum SSHConfigAppender {
     }
 
     /// The block for `host`, four-space indented, each line ending in a newline. An IdentityFile
-    /// with a space is quoted; a `%` in HostName — an IPv6 zone — is written `%%`, which ssh reads as
-    /// a plain `%` rather than the start of a token.
+    /// with a space is quoted. A `%` in HostName — an IPv6 zone — or in IdentityFile is written
+    /// `%%`, which ssh reads as a plain `%` rather than the start of a token, so the path is used
+    /// as typed.
     public static func block(for host: NewSSHHost) -> String {
         let host = host.trimmed
-        let identity = host.identityFile.contains(" ") ? "\"\(host.identityFile)\"" : host.identityFile
+        let identityFile = host.identityFile.replacingOccurrences(of: "%", with: "%%")
+        let identity = identityFile.contains(" ") ? "\"\(identityFile)\"" : identityFile
         let hostName = host.hostName.replacingOccurrences(of: "%", with: "%%")
         let lines = [("HostName", hostName), ("User", host.user), ("Port", host.port), ("IdentityFile", identity)]
             .filter { !$0.1.isEmpty }
@@ -136,8 +144,14 @@ public enum SSHConfigAppender {
         try append(host, to: source, seams: Seams())
     }
 
+    /// Held for a whole append: one at a time in this process, so the check against the file and
+    /// the write that follows it are not interleaved with another window's.
+    private static let lock = NSLock()
+
     @discardableResult
     static func append(_ host: NewSSHHost, to source: SSHConfigSource, seams: Seams) throws -> AppendResult {
+        lock.lock()
+        defer { lock.unlock() }
         if let problem = problem(with: host, existing: SSHConfig.hosts(in: source.file, home: source.home)) {
             throw SSHConfigAppendError.refused(problem)
         }

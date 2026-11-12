@@ -39,6 +39,38 @@ import Testing
         #expect(s.last?.entries.map(\.alias) == ["alpha", "build-box", "Zeta"])
     }
 
+    @Test func aliasesDifferingOnlyInCaseKeepOneOrder() {
+        let expected = ["alpha", "Staging", "staging"]
+        for order in [["staging", "Staging", "alpha"], ["Staging", "alpha", "staging"], ["alpha", "staging", "Staging"]] {
+            let s = SSHPanelLayout.sections(projects: [], hosts: order.map { SSHHost(alias: $0, forwards: []) })
+            #expect(s.last?.entries.map(\.alias) == expected, "\(order)")
+        }
+    }
+
+    @Test func aHostTwoProjectsNameIsUnderBoth() {
+        let a = project("demo", host: "staging"), b = project("acme-web", tunnels: ["staging"])
+        let s = SSHPanelLayout.sections(projects: [a, b], hosts: hosts("staging", "build-box"))
+        #expect(s.map(\.title) == ["demo", "acme-web", "Other hosts"])
+        #expect(s[0].entries.map(\.alias) == ["staging"])
+        #expect(s[1].entries.map(\.alias) == ["staging"])
+        #expect(s[2].entries.map(\.alias) == ["build-box"])
+    }
+
+    @Test func aTunnelListedTwiceIsOneRow() {
+        let p = project("demo", tunnels: ["db-tunnel", "db-tunnel"])
+        let s = SSHPanelLayout.sections(projects: [p], hosts: hosts("db-tunnel"))
+        #expect(s.count == 1)
+        #expect(s[0].entries == [SSHPanelEntry(alias: "db-tunnel", isProjectHost: false, isTunnel: true, inConfig: true)])
+    }
+
+    @Test func aliasesMatchCaseSensitively() {
+        let p = project("demo", host: "Staging")
+        let s = SSHPanelLayout.sections(projects: [p], hosts: hosts("staging"))
+        #expect(s[0].entries == [SSHPanelEntry(alias: "Staging", isProjectHost: true, isTunnel: false, inConfig: false)])
+        #expect(s.last?.kind == .other)
+        #expect(s.last?.entries.map(\.alias) == ["staging"])
+    }
+
     @Test func aNamedHostMissingFromTheConfigIsMarked() {
         let p = project("demo", host: "staging", tunnels: ["db-tunnel"])
         let s = SSHPanelLayout.sections(projects: [p], hosts: hosts("db-tunnel"))

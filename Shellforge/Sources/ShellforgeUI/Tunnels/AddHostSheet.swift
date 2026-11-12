@@ -32,15 +32,31 @@ final class AddHostModel: ObservableObject {
     /// Where Choose… opens: the config's own folder, `~/.ssh`.
     var identityFolder: URL { sidebar.sshConfig.file.deletingLastPathComponent() }
 
-    /// What the problem line says: the last failure, else what is wrong with the host as typed.
-    var problem: String? { failure ?? typedProblem }
+    /// What the sheet shows for the host as typed: checked once per render.
+    struct Status: Equatable {
+        /// What the problem line says: the last failure, else what is wrong with the host as typed.
+        var problem: String?
+        /// Add is offered once the host as typed can be added. A failure alone doesn't grey it: the
+        /// person may fix its cause (a folder's permissions) and try again.
+        var canAdd: Bool
+    }
 
-    /// Add is offered once the host as typed can be added. A failure alone doesn't grey it: the
-    /// person may fix its cause (a folder's permissions) and try again.
-    var canAdd: Bool { typedProblem == nil && !adding }
+    var status: Status {
+        let typed = typedProblem
+        return Status(problem: failure ?? typed, canAdd: typed == nil && !adding)
+    }
+
+    var problem: String? { status.problem }
+
+    var canAdd: Bool { status.canAdd }
 
     private var typedProblem: String? {
         SSHConfigAppender.problem(with: draft, existing: sidebar.sshHosts.map { Array($0.values) } ?? [])
+    }
+
+    /// A chosen key file as the IdentityFile line has it: `~` for the home folder, else absolute.
+    nonisolated static func identityPath(_ url: URL) -> String {
+        (url.path as NSString).abbreviatingWithTildeInPath
     }
 
     /// Reads the config again, off the main actor, so the problem line checks against it as it is.
@@ -70,7 +86,7 @@ final class AddHostModel: ObservableObject {
             failure = error.errorDescription
             return false
         }
-        let alias = host.alias.trimmingCharacters(in: .whitespaces)
+        let alias = host.trimmed.alias
         if let project { await makeHost(alias, of: project) }
         _ = await sidebar.loadSSHHosts()
         sidebar.watchSSHConfig()
@@ -113,7 +129,8 @@ struct AddHostSheet: View {
     }
 
     var body: some View {
-        SheetLayout(title: Self.title, height: nil, locked: model.adding) {
+        let status = model.status
+        return SheetLayout(title: Self.title, height: nil, locked: model.adding) {
             SheetSubtitle(Self.subtitle)
         } content: {
             VStack(alignment: .leading, spacing: Space.block) {
@@ -138,11 +155,11 @@ struct AddHostSheet: View {
                     .labelsHidden()
                     .pickerStyle(.menu)
                 }
-                if let problem = model.problem { HelpText(problem, tone: .warning) }
+                if let problem = status.problem { HelpText(problem, tone: .warning) }
                 HelpText(Self.footnote)
             }
         } footer: {
-            SheetFooter(primary: "Add", canCancel: !model.adding, canSubmit: model.canAdd,
+            SheetFooter(primary: "Add", canCancel: !model.adding, canSubmit: status.canAdd,
                         cancel: { Task { @MainActor in dismiss() } }, submit: submit)
         }
         .task { await model.load() }
@@ -164,6 +181,6 @@ struct AddHostSheet: View {
         panel.directoryURL = model.identityFolder
         panel.prompt = "Choose"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        model.draft.identityFile = (url.path as NSString).abbreviatingWithTildeInPath
+        model.draft.identityFile = AddHostModel.identityPath(url)
     }
 }

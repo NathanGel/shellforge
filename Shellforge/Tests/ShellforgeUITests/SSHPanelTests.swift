@@ -12,13 +12,12 @@ private final class FakeSSHWatcher: FolderWatching, @unchecked Sendable {
     private let lock = NSLock()
     private var change: (@Sendable () -> Void)?
     private(set) var path: String?
-    private(set) var stopped = false
 
     func watch(_ path: String, onChange: @escaping @Sendable () -> Void) {
         lock.withLock { self.path = path; change = onChange }
     }
 
-    func stop() { lock.withLock { stopped = true } }
+    func stop() {}
 
     func fire() { lock.withLock { change }?() }
 }
@@ -198,6 +197,25 @@ private final class FakeSSHWatcher: FolderWatching, @unchecked Sendable {
         try #require(watchers.made.first).fire()
         #expect(await eventually { SSHPanel.sections(model).first?.entries.first?.inConfig == false })
         #expect(model.sshHosts?["staging"] == nil)
+    }
+
+    /// Two reads of the config overlap and the older finishes last: the newer one's hosts stay.
+    @Test func anOlderReadFinishingLastIsDropped() throws {
+        let (model, _, _, _) = try model()
+        let older = model.beginSSHRead(), newer = model.beginSSHRead()
+        model.take([SSHHost(alias: "staging", forwards: []), SSHHost(alias: "build-box", forwards: [])], generation: newer)
+        model.take([SSHHost(alias: "staging", forwards: [])], generation: older)
+        #expect(model.sshHosts.map { Set($0.keys) } == ["staging", "build-box"])
+    }
+
+    /// Reads that finish in the order they started are each kept.
+    @Test func readsFinishingInOrderAreEachKept() throws {
+        let (model, _, _, _) = try model()
+        let first = model.beginSSHRead(), second = model.beginSSHRead()
+        model.take([SSHHost(alias: "staging", forwards: [])], generation: first)
+        #expect(model.sshHosts.map { Set($0.keys) } == ["staging"])
+        model.take([SSHHost(alias: "build-box", forwards: [])], generation: second)
+        #expect(model.sshHosts.map { Set($0.keys) } == ["build-box"])
     }
 
     @Test func showSSHSelectsThePanel() throws {
