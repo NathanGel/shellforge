@@ -641,7 +641,7 @@ static BOOL iTermWarningViewHasSelectableText(NSView *view) {
         }
     }];
     [_warningActions enumerateObjectsUsingBlock:^(iTermWarningAction *action, NSUInteger idx, BOOL *stop) {
-        if (buttons[idx].keyEquivalent.length) {
+        if (buttons[idx].keyEquivalent.length || action.noAutomaticKeyEquivalent) {
             return;
         }
         [action.label enumerateComposedCharacters:^(NSRange range, unichar simple, NSString *complexString, BOOL *stopLetters) {
@@ -873,11 +873,12 @@ static BOOL iTermWarningViewHasSelectableText(NSView *view) {
         descriptorInput.isSecret = input.isSecret;
         return descriptorInput;
     }];
-    // Remote inputs stand for everything in the accessory that matters to the answer, so with them
-    // there is nothing more to see on the Mac.
-    const BOOL hasUndescribedAccessory = _accessory != nil && inputs.count == 0;
     // The warning's own box, or failing that a checkbox in the accessory that stands in for one.
     NSButton *remoteCheckbox = alert.showsSuppressionButton ? nil : _remoteCheckbox;
+    // Remote inputs stand for everything in the accessory that matters to the answer, so with them
+    // there is nothing more to see on the Mac. Neither is there when the accessory is the remote
+    // checkbox itself, which the phone shows.
+    const BOOL hasUndescribedAccessory = _accessory != nil && inputs.count == 0 && _accessory != remoteCheckbox;
     NSString *suppressionLabel = alert.showsSuppressionButton ? alert.suppressionButton.title : remoteCheckbox.title;
     iTermModalAlertDescriptor *descriptor =
         [[iTermModalAlertDescriptor alloc] initWithHeading:alert.messageText

@@ -196,11 +196,16 @@ private final class InertGitWatcher: FolderWatching, @unchecked Sendable {
         await model.settled()
         #expect(acted.actions.isEmpty, "a blank message committed")
 
+        // The key starts the commit in a task of its own: wait until it is queued, then for it.
+        let (queued, queuedContinuation) = AsyncStream<GitRepoID>.makeStream()
+        model.enqueued = { queuedContinuation.yield($0) }
         model.setCommitMessage("Add the login page", for: .project(demo.id))
         host.layoutSubtreeIfNeeded()
         #expect(window.performKeyEquivalent(with: try commandReturn(in: window)))
+        var queue = queued.makeAsyncIterator()
+        #expect(await queue.next() == .project(demo.id))
         await model.settled()
-        #expect(acted.actions == [.commit])
+        #expect(acted.actions == [.commit(expectsStaged: false)])
     }
 
     @Test func theCommitFieldGrowsToFiveLines() {

@@ -31,13 +31,22 @@ public enum ProjectFolderSwitch {
         return .missing
     }
 
-    /// Switches the folder to `branch`, made from the current commit when `create`. With `stash`, the
+    /// Switches the folder to `branch`, made from the current commit when `create`. With `track`
+    /// (`<remote>/<branch>`), and not `create`, a local `branch` is made tracking that remote
+    /// branch: git won't guess which one when several remotes have the name. With `stash`, the
     /// folder's changes are stashed under that message first, untracked files included, so the
     /// switch can go through; should it still fail, they are put back.
-    public static func perform(_ branch: String, in project: Project, create: Bool, stash: String?,
-                               launcher: CommandLauncher) throws -> Outcome {
+    public static func perform(_ branch: String, in project: Project, create: Bool, track: String? = nil,
+                               stash: String?, launcher: CommandLauncher) throws -> Outcome {
         let repo = GitRepository(project.path, launcher: launcher)
-        let switchArgs = create ? ["switch", "-q", "-c", branch] : ["switch", "-q", branch]
+        let switchArgs: [String]
+        if create {
+            switchArgs = ["switch", "-q", "-c", branch]
+        } else if let track, try !hasLocal(branch, in: repo) {
+            switchArgs = ["switch", "-q", "-c", branch, "--track", track]
+        } else {
+            switchArgs = ["switch", "-q", branch]
+        }
         var stashed = false
         if let stash, try !repo.run(["status", "--porcelain"]).isEmpty {
             try repo.run(["stash", "push", "--include-untracked", "-m", stash])
@@ -51,10 +60,25 @@ public enum ProjectFolderSwitch {
                 _ = try? repo.run(["stash", "pop", "-q"])
                 throw error
             }
-            // git refused: changes in the way, or a reason of its own.
+            // git refused: changes in the way, or a reason of its own. A name on several remotes
+            // is git's own reason, which stashing would not get past.
+            if !create, try isOnSeveralRemotesOnly(branch, in: repo) { throw error }
             if try !repo.run(["status", "--porcelain"]).isEmpty { return .blockedByChanges }
             throw error
         }
+    }
+
+    private static func hasLocal(_ branch: String, in repo: GitRepository) throws -> Bool {
+        try repo.ask(["rev-parse", "--verify", "--quiet", "refs/heads/\(branch)"], none: [1]) != nil
+    }
+
+    /// No local `branch`, and more than one remote has one: a plain `git switch` won't pick.
+    private static func isOnSeveralRemotesOnly(_ branch: String, in repo: GitRepository) throws -> Bool {
+        guard try !hasLocal(branch, in: repo) else { return false }
+        let remotes = try repo.run(["remote"]).split(separator: "\n").map(String.init)
+        return try remotes.filter {
+            try repo.ask(["rev-parse", "--verify", "--quiet", "refs/remotes/\($0)/\(branch)"], none: [1]) != nil
+        }.count > 1
     }
 
     /// The stash's message, with `label` saying what came next: “Fix login”, quotes included, or

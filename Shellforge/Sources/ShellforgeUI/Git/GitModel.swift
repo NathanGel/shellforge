@@ -44,7 +44,9 @@ public enum GitAction: Equatable, Sendable {
     /// An unstaged change, thrown away.
     case discard(GitChange)
     /// Commits with the repository's message draft, which is cleared once the commit is made.
-    case commit
+    /// `expectsStaged`: the panel showed staged files, so only they are to be committed. Should
+    /// none be staged by the time it runs, nothing is committed.
+    case commit(expectsStaged: Bool)
     case push
     case pull
 }
@@ -74,8 +76,9 @@ public final class GitModel: ObservableObject {
         var readProblem: String?
         /// A task's base branch, which commits on a branch with no upstream are counted against.
         var baseBranch: String?
-        /// A task's commits on a branch with no upstream that its base branch lacks.
-        var localCommits = 0
+        /// A task's commits on a branch with no upstream that its base branch lacks; nil when they
+        /// can't be counted (no base branch, or one that is gone).
+        var localCommits: Int? = 0
     }
 
     /// What a read found. A nil state keeps what is shown.
@@ -83,7 +86,7 @@ public final class GitModel: ObservableObject {
         var state: GitSection.State?
         var problem: String?
         var worktreeName: String?
-        var localCommits = 0
+        var localCommits: Int? = 0
     }
 
     private let launcher: CommandLauncher
@@ -147,8 +150,11 @@ public final class GitModel: ObservableObject {
     }
 
     public func update(projects: [Project], tasks: [TaskItem]) {
-        let projectIds = Set(projects.map(\.id))
-        let kept = tasks.filter { projectIds.contains($0.projectId) }
+        // A Project folder task works in its project's own folder: it shares the project's section
+        // and queue rather than being a second repository there. The paths are compared as
+        // stored, which is how a Project folder task stores its project's.
+        let projectPaths = Dictionary(projects.map { ($0.id, $0.path) }, uniquingKeysWith: { first, _ in first })
+        let kept = tasks.filter { task in projectPaths[task.projectId].map { task.worktreePath != $0 } ?? false }
         var wanted: [GitRepoID: Repo] = [:]
         for project in projects {
             wanted[.project(project.id)] = Repo(title: project.name, path: project.path, projectId: project.id)
@@ -248,12 +254,14 @@ public final class GitModel: ObservableObject {
     }
 
     /// A task's section shows while there is something to do or see in it: changes, commits not
-    /// pushed (ahead of its upstream, or with none, commits its base branch lacks), or a problem.
+    /// pushed (ahead of its upstream, or with none, commits its base branch lacks, or commits that
+    /// can't be counted, which may be unpublished work), or a problem.
     private static func isShown(_ repo: Repo) -> Bool {
         if repo.actionProblem != nil || repo.readProblem != nil { return true }
         guard case .status(let status) = repo.state else { return false }
         if status.hasChanges { return true }
-        return status.upstream == nil ? repo.localCommits > 0 : status.ahead > 0
+        guard status.upstream == nil else { return status.ahead > 0 }
+        return repo.localCommits.map { $0 > 0 } ?? true
     }
 
     // -- the queue ------------------------------------------------------------------------
@@ -339,8 +347,8 @@ public final class GitModel: ObservableObject {
         do {
             let status = try read(path, launcher)
             var loaded = Loaded(state: .status(status), worktreeName: name)
-            if isTask, status.upstream == nil, case .branch = status.head, let base {
-                loaded.localCommits = commits(in: path, notOn: base, launcher: launcher)
+            if isTask, status.upstream == nil, case .branch = status.head {
+                loaded.localCommits = commits(in: path, notOn: base ?? "", launcher: launcher)
             }
             return loaded
         } catch let failure as GitFailure {
@@ -355,13 +363,13 @@ public final class GitModel: ObservableObject {
     private nonisolated static let countTimeout: TimeInterval = 30
 
     /// `git rev-list --count <base>..HEAD`: commits a branch with no upstream has that its base
-    /// lacks. 0 when it can't be counted (a base that is gone, say).
-    private nonisolated static func commits(in path: String, notOn base: String, launcher: CommandLauncher) -> Int {
+    /// lacks. Nil when they can't be counted: no base branch, or one that is gone.
+    private nonisolated static func commits(in path: String, notOn base: String, launcher: CommandLauncher) -> Int? {
         guard !base.isEmpty, !base.hasPrefix("-"),
               let out = try? launcher.run("git", ["-C", path, "rev-list", "--count", "\(base)..HEAD"],
                                           extra: ["LC_ALL": "C", "GIT_OPTIONAL_LOCKS": "0"], timeout: Self.countTimeout),
-              !out.timedOut, out.status == 0 else { return 0 }
-        return Int(out.stdout.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+              !out.timedOut, out.status == 0 else { return nil }
+        return Int(out.stdout.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     /// A worktree's folder in the main repository's `.git/worktrees/`, from its `.git` file
@@ -399,7 +407,7 @@ public final class GitModel: ObservableObject {
             }
         }, done: { [weak self] problem in
             // A message typed while the commit ran is kept.
-            guard let self, action == .commit, problem == nil, self.commitMessage(id) == message, !message.isEmpty else { return }
+            guard let self, case .commit = action, problem == nil, self.commitMessage(id) == message, !message.isEmpty else { return }
             self.drafts[id]?.text = ""
         })
     }
@@ -427,6 +435,14 @@ public final class GitModel: ObservableObject {
         (error as? GitFailure)?.message ?? "git: \(error.localizedDescription)"
     }
 
+    /// A failed switch's problem. Its `GitFailure` holds git's raw stderr, not plain words: the
+    /// last line that says something, hints left out, as New Task's footer shows it.
+    private nonisolated static func switchProblem(_ error: Error) -> String {
+        guard let failure = error as? GitFailure else { return problem(error) }
+        let lines = failure.message.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
+        return lines.last { !$0.isEmpty && !$0.hasPrefix("hint:") } ?? failure.description
+    }
+
     /// What `act` does outside tests. Discard and unstage work from the repository as it is now:
     /// discard takes only an unstaged change, and unstaging a rename takes its old path too.
     nonisolated static func run(_ action: GitAction, in repo: String, message: String, launcher: CommandLauncher,
@@ -435,9 +451,9 @@ public final class GitModel: ObservableObject {
         case .stage(let paths):
             try GitActions.stage(paths, in: repo, launcher: launcher)
         case .stageAll:
-            try GitActions.stageAll(in: repo, launcher: launcher)
+            try GitActions.stageAll(in: repo, status: try GitStatus.read(repo, launcher: launcher), launcher: launcher)
         case .unstageAll:
-            try GitActions.unstageAll(in: repo, launcher: launcher)
+            try GitActions.unstageAll(in: repo, status: try GitStatus.read(repo, launcher: launcher), launcher: launcher)
         case .unstage(let paths):
             let staged = try GitStatus.read(repo, launcher: launcher).staged.filter { paths.contains($0.path) }
             var all = paths
@@ -450,8 +466,13 @@ public final class GitModel: ObservableObject {
             // The change is no longer the one the person agreed to throw away: nothing is done.
             guard GitActions.discardTrashes(current) == GitActions.discardTrashes(change) else { return }
             try GitActions.discard(current, in: repo, launcher: launcher, trash: trash)
-        case .commit:
+        case .commit(let expectsStaged):
             let status = try GitStatus.read(repo, launcher: launcher)
+            // Unstaged elsewhere since the panel was drawn: committing everything is not what
+            // the person saw.
+            if expectsStaged, status.staged.isEmpty {
+                throw GitFailure(message: "The staged files changed. Check them and commit again.")
+            }
             try GitActions.commit(message: message, in: repo, status: status, launcher: launcher)
         case .push:
             let status = try GitStatus.read(repo, launcher: launcher)
@@ -480,26 +501,26 @@ public final class GitModel: ObservableObject {
     /// just before the flow asks about it. A
     /// Cancel is no problem; any other failure is the section's problem until the next action.
     /// A task's worktree is not switched.
-    public func switchBranch(_ repo: GitRepoID, to branch: String, flow: BranchSwitchFlow,
+    public func switchBranch(_ repo: GitRepoID, to branch: String, track: String? = nil, flow: BranchSwitchFlow,
                              busyTask: @escaping @MainActor () -> String?) async {
         guard case .project = repo, let epoch = epochs[repo] else { return }
         await enqueue(repo) { [weak self] in
-            await self?.runSwitch(repo, to: branch, flow: flow, busyTask: busyTask, epoch: epoch)
+            await self?.runSwitch(repo, to: branch, track: track, flow: flow, busyTask: busyTask, epoch: epoch)
         }.value
     }
 
-    private func runSwitch(_ id: GitRepoID, to branch: String, flow: BranchSwitchFlow,
+    private func runSwitch(_ id: GitRepoID, to branch: String, track: String?, flow: BranchSwitchFlow,
                            busyTask: @MainActor () -> String?, epoch: Int) async {
         await busy(id, epoch: epoch) { repo in
             let project = Project(id: repo.projectId, name: repo.title, path: repo.path)
             do {
-                _ = try await flow.switchProject(project, to: branch, busyTask: busyTask,
+                _ = try await flow.switchProject(project, to: branch, track: track, busyTask: busyTask,
                                                  stashLabel: "switching to “\(branch)”", offerOtherWorktree: false)
                 return nil
             } catch is CreationDeclined {
                 return nil
             } catch {
-                return Self.problem(error)
+                return Self.switchProblem(error)
             }
         }
     }

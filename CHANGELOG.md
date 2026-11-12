@@ -34,7 +34,8 @@ it and refuses to release a version that has none.
   (`main ↑2 ↓1`), a commit message field of up to five lines, and the Merge Changes, Staged Changes and Changes
   lists. Stage, unstage or discard a file (an untracked file goes to the Trash), Stage All or
   Unstage All, and commit with ⌘↩: with nothing staged, Commit takes every change, new files
-  included. Pull (fast-forward only), Push, or Publish Branch for a branch with no upstream.
+  included, and it waits until merge conflicts are resolved. Pull (fast-forward only), Push, or
+  Publish Branch for a branch with no upstream.
   Switch Branch… on a project picks from a searchable list, remote branches included (picking
   `origin/feature/login-page` gives a local branch tracking it), and asks what New Task asks for a
   Project folder task. Click a file to see its diff in a new tab. The panel reads nothing until it

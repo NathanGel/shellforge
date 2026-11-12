@@ -106,13 +106,14 @@ final class ShellforgeWarningPrompterTest: XCTestCase {
         let (shown, ticked) = try await ask(prompt, pressing: 0, ticking: true)
         XCTAssertEqual(shown.suppressionLabel, "Also delete the worktrees", "the phone shows the checkbox")
         XCTAssertFalse(shown.suppressionDefault)
+        XCTAssertFalse(shown.hasAccessory, "the lone checkbox is the accessory, and the phone shows it")
         XCTAssertEqual(ticked, AlertAnswer(button: 0, checked: true))
 
         let (_, unticked) = try await ask(prompt, pressing: 0, ticking: false)
         XCTAssertEqual(unticked, AlertAnswer(button: 0, checked: false))
 
-        // The sub-checkbox has no place on the phone: it stays unticked, and the phone is told more
-        // is shown on the Mac.
+        // The sub-checkbox has no place on the phone: it counts as it stands on the Mac (unticked
+        // here), and the phone is told more is shown on the Mac.
         let pair = AlertPrompt(message: "Remove task?", buttons: ["Remove", "Cancel"],
                                checkbox: "Also delete the worktree", subCheckbox: "Also delete branch")
         let (pairShown, pairAnswer) = try await ask(pair, pressing: 0, ticking: true)
@@ -172,6 +173,10 @@ final class ShellforgeWarningPrompterTest: XCTestCase {
 
         let keep = AlertPrompt(message: "Uncommitted changes in src/app.ts",
                                buttons: ["Keep Task", "Delete Changes and Remove"], escape: 0)
+        // No ⌘-letter for any button: ⌘D, Split Vertically, must not press Delete.
+        XCTAssertEqual(built(keep).buttons.map(\.keyEquivalent), [WarningPrompter.returnKey, ""])
+        let branch = AlertPrompt(message: "Delete branch feature/login-page?", buttons: ["Keep Branch", "Delete Branch"], escape: 0)
+        XCTAssertEqual(built(branch).buttons.map(\.keyEquivalent), [WarningPrompter.returnKey, ""])
         let keepAlert = built(keep, laidOut: true)
         XCTAssertEqual(keepAlert.buttons.first?.keyEquivalent, WarningPrompter.returnKey, "a safe default keeps ↩")
         XCTAssertNotEqual(keepAlert.buttons.last?.keyEquivalent, WarningPrompter.escapeKey)
@@ -183,5 +188,18 @@ final class ShellforgeWarningPrompterTest: XCTestCase {
                                                      charactersIgnoringModifiers: WarningPrompter.escapeKey,
                                                      isARepeat: false, keyCode: 53))
         XCTAssertNil(WarningPrompter.defaultButton(answeringEscape: shifted, in: keepAlert.window, for: keep))
+    }
+
+    /// Only a default that deletes is red: not Remove on a project, which deletes nothing, and not
+    /// the second button of Keep Task.
+    @MainActor
+    func testOnlyADefaultThatDeletesIsRed() {
+        let project = AlertPrompt(message: "Remove project demo?", buttons: ["Remove", "Cancel"])
+        let keep = AlertPrompt(message: "Uncommitted changes in src/app.ts",
+                               buttons: ["Keep Task", "Delete Changes and Remove"], escape: 0)
+        for prompt in [project, keep] {
+            let alert = WarningPrompter.question(for: prompt).warning.makeAlertForRemoteAnswer()
+            XCTAssertEqual(alert.buttons.map(\.hasDestructiveAction), [false, false], prompt.message)
+        }
     }
 }

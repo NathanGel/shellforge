@@ -11,9 +11,10 @@ import ShellforgeUI
 
 /// Asks an `AlertPrompt` as an app-modal `iTermWarning`: the message is its bold heading, the detail
 /// the text under it, and the buttons come in the prompt's order, the first the default — red when
-/// `defaultDeletes`. ⎋ answers `escapeButton`. The checkbox, and the sub-checkbox under it, are the
-/// accessory view; the phone can set the checkbox, not the sub-checkbox, which it leaves unticked.
-/// Never silenced: each is asked every time.
+/// `defaultDeletes`. ⎋ answers `escapeButton`. No button has a ⌘-letter shortcut, as with a plain
+/// NSAlert: a reflex ⌘D must not press Delete Branch. The checkbox, and the sub-checkbox under it,
+/// are the accessory view; the phone can set the checkbox, not the sub-checkbox, which counts as
+/// it stands on the Mac. Never silenced: each is asked every time.
 ///
 /// Every button is offered remotely: each one acts only in Shellforge.
 @MainActor
@@ -34,12 +35,13 @@ final class WarningPrompter: Prompter {
 
         /// The answer `selection` (what `runModal` reported) gives to `prompt`. A warning that
         /// ended without a button — aborted — answers the safe choice, with nothing ticked, as
-        /// `NullPrompter` does.
+        /// `NullPrompter` does. With no safe choice, an index past the buttons: no button, never
+        /// `confirmed`.
         func answer(_ selection: iTermWarningSelection, to prompt: AlertPrompt) -> AlertAnswer {
             let index = selection.rawValue
             guard prompt.buttons.indices.contains(index) else {
                 DLog("Warning for \(prompt.message) ended with \(selection.rawValue); answering the safe choice")
-                return AlertAnswer(button: prompt.escapeButton ?? 1)
+                return AlertAnswer(button: prompt.escapeButton ?? prompt.buttons.count)
             }
             return AlertAnswer(button: index, checked: checkbox?.state == .on, subChecked: subCheckbox?.state == .on)
         }
@@ -49,11 +51,15 @@ final class WarningPrompter: Prompter {
     /// by itself; any other safe button is handed ⎋ here. A safe button that is also the default
     /// keeps ↩ — a button holds one key — and `ask` answers ⎋ for it instead.
     static func question(for prompt: AlertPrompt) -> Question {
+        it_assert(prompt.escapeButton != nil, "Every question needs a safe choice: \(prompt.message)")
         let warning = iTermWarning()
         warning.heading = prompt.message
         warning.title = prompt.detail
         warning.warningType = .kiTermWarningTypePersistent
         let actions = prompt.buttons.map { iTermWarningAction(label: $0, block: nil) }
+        for action in actions {
+            action.noAutomaticKeyEquivalent = true
+        }
         actions.first?.destructive = prompt.defaultDeletes
         if let escape = prompt.escapeButton, actions.indices.contains(escape) {
             // The safe choice, for the phone as for ⎋ here.

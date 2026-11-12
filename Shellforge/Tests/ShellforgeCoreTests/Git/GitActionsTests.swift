@@ -94,11 +94,64 @@ final class GitActionsTests: XCTestCase {
     func testStageAllAndUnstageAllTakeEverything() throws {
         let repo = try bracketRepo()
         try write("new.md", in: repo)
-        try GitActions.stageAll(in: repo.path, launcher: repo.launcher)
+        try GitActions.stageAll(in: repo.path, status: try status(repo), launcher: repo.launcher)
         XCTAssertEqual(Set(try status(repo).staged.map(\.path)), [bracket, "app/i/page.tsx", "new.md"])
         XCTAssertTrue(try status(repo).unstaged.isEmpty)
-        try GitActions.unstageAll(in: repo.path, launcher: repo.launcher)
+        try GitActions.unstageAll(in: repo.path, status: try status(repo), launcher: repo.launcher)
         XCTAssertTrue(try status(repo).staged.isEmpty)
+    }
+
+    /// A merge of `feature/login-page` into main that stops on a conflict in `src/app.ts`. With
+    /// `bringing`, the branch also adds that file, which the merge stages cleanly.
+    private func conflictedMerge(bringing added: String? = nil) throws -> GitRepoFixture {
+        let repo = try GitRepoFixture()
+        try tracked(repo, "src/app.ts")
+        try repo.git("switch", "-q", "-c", "feature/login-page")
+        try write("src/app.ts", "theirs\n", in: repo)
+        if let added { try write(added, in: repo) }
+        try repo.git(["add", "-A"], in: repo.path)
+        try repo.git("commit", "-q", "-m", "theirs")
+        try repo.git("switch", "-q", "main")
+        try write("src/app.ts", "ours\n", in: repo)
+        try repo.git("commit", "-q", "-a", "-m", "ours")
+        _ = try repo.launcher.run("git", ["-C", repo.path, "merge", "-q", "feature/login-page"])
+        XCTAssertEqual(try status(repo).conflicted.map(\.path), ["src/app.ts"])
+        return repo
+    }
+
+    func testACommitWithConflictsCommitsNothing() throws {
+        let repo = try conflictedMerge()
+        let head = try repo.git("rev-parse", "HEAD")
+        XCTAssertTrue(try status(repo).staged.isEmpty)
+        let message = failure { try GitActions.commit(message: "merge", in: repo.path, status: try status(repo), launcher: repo.launcher) }
+        XCTAssertEqual(message, "Resolve the merge conflicts before committing.")
+        XCTAssertEqual(try repo.git("rev-parse", "HEAD"), head)
+        XCTAssertEqual(try status(repo).conflicted.map(\.path), ["src/app.ts"], "the conflict is still a conflict")
+    }
+
+    func testStageAllLeavesConflictsAlone() throws {
+        let repo = try conflictedMerge()
+        try write("README.md", in: repo)
+        try write("h[1].txt", in: repo)
+        try write("sp ace.txt", in: repo)
+        try write("h1.txt", in: repo)
+        try repo.git("add", "h1.txt")
+        try GitActions.stageAll(in: repo.path, status: try status(repo), launcher: repo.launcher)
+        let s = try status(repo)
+        XCTAssertEqual(s.conflicted.map(\.path), ["src/app.ts"], "the conflict is not marked resolved")
+        XCTAssertEqual(Set(s.staged.map(\.path)), ["README.md", "h[1].txt", "sp ace.txt", "h1.txt"])
+        XCTAssertTrue(s.unstaged.isEmpty)
+    }
+
+    func testUnstageAllLeavesConflictsAlone() throws {
+        let repo = try conflictedMerge(bringing: "src/login.ts")
+        XCTAssertEqual(try status(repo).staged.map(\.path), ["src/login.ts"])
+        try GitActions.unstageAll(in: repo.path, status: try status(repo), launcher: repo.launcher)
+        let s = try status(repo)
+        XCTAssertEqual(s.conflicted.map(\.path), ["src/app.ts"], "the conflict is kept")
+        XCTAssertTrue(s.staged.isEmpty)
+        XCTAssertEqual(s.unstaged.map(\.path), ["src/login.ts"])
+        XCTAssertEqual(s.unstaged.first?.letter, .untracked)
     }
 
     func testUnstagingPutsItBack() throws {

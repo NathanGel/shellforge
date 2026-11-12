@@ -23,10 +23,13 @@ public struct BranchSwitchFlow {
     }
 
     /// `busyTask` gives the title of a task working in the folder, asked about before anything
-    /// changes; it is read just before that question, after any earlier one was answered. `stashLabel` follows “Shellforge: before” in the stash’s message. With
-    /// `offerOtherWorktree`, a branch checked out in another worktree offers that worktree;
-    /// without, it is only reported.
-    public func switchProject(_ project: Project, to branch: String, busyTask: @MainActor () -> String?, stashLabel: String,
+    /// changes; it is read just before that question, after any earlier one was answered.
+    /// `stashLabel` follows “Shellforge: before” in the stash’s message. With `offerOtherWorktree`,
+    /// a branch checked out in another worktree offers that worktree; without, it is only
+    /// reported. `track` is the remote branch picked (`<remote>/<branch>`), which a new local
+    /// branch then tracks.
+    public func switchProject(_ project: Project, to branch: String, track: String? = nil,
+                              busyTask: @MainActor () -> String?, stashLabel: String,
                               offerOtherWorktree: Bool) async throws -> BranchSwitchResult {
         let launcher = self.launcher
         let obstacle = try await BackgroundWork.run { try ProjectFolderSwitch.check(branch, in: project, launcher: launcher) }
@@ -56,7 +59,7 @@ public struct BranchSwitchFlow {
                                           buttons: ["Switch Anyway", "Cancel"]))
         }
         let first = try await BackgroundWork.run {
-            try ProjectFolderSwitch.perform(branch, in: project, create: create, stash: nil, launcher: launcher)
+            try ProjectFolderSwitch.perform(branch, in: project, create: create, track: track, stash: nil, launcher: launcher)
         }
         if first == .blockedByChanges {
             let message = ProjectFolderSwitch.stashMessage(before: stashLabel)
@@ -65,7 +68,8 @@ public struct BranchSwitchFlow {
                                           buttons: ["Stash and Switch", "Cancel"]))
             // With the changes stashed, git switches or throws its own reason, the changes put back.
             _ = try await BackgroundWork.run {
-                try ProjectFolderSwitch.perform(branch, in: project, create: create, stash: message, launcher: launcher)
+                try ProjectFolderSwitch.perform(branch, in: project, create: create, track: track, stash: message,
+                                                launcher: launcher)
             }
         }
         return .switched

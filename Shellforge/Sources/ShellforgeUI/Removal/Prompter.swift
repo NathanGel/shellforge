@@ -61,8 +61,9 @@ public protocol Prompter: AnyObject {
 }
 
 /// Answers every question with its safe choice: a sidebar the app has not handed a prompter yet
-/// changes nothing it would have asked about.
+/// changes nothing it would have asked about. With no safe choice, an index past the buttons: no
+/// button, never `confirmed`.
 @MainActor
 final class NullPrompter: Prompter {
-    func ask(_ prompt: AlertPrompt) async -> AlertAnswer { AlertAnswer(button: prompt.escapeButton ?? 1) }
+    func ask(_ prompt: AlertPrompt) async -> AlertAnswer { AlertAnswer(button: prompt.escapeButton ?? prompt.buttons.count) }
 }

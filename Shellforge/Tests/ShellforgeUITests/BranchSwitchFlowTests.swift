@@ -115,6 +115,55 @@ private final class FakeTrash: @unchecked Sendable {
         #expect(status(s.model)?.head == .branch("feature/login-page"))
     }
 
+    /// `feature/login-page` on origin and on upstream, none here, and a file not yet in git.
+    private func onTwoRemotes(_ s: Setup) throws {
+        let root = (s.repo.path as NSString).deletingLastPathComponent
+        for remote in ["origin", "upstream"] {
+            try git(s.repo, "init", "-q", "--bare", "-b", "main", "\(root)/\(remote).git")
+            try git(s.repo, "remote", "add", remote, "\(root)/\(remote).git")
+        }
+        try git(s.repo, "switch", "-q", "-c", "feature/login-page")
+        try write("login\n", to: "src/login.ts", in: s.repo)
+        try git(s.repo, "add", "src/login.ts")
+        try git(s.repo, "commit", "-q", "-m", "login")
+        try git(s.repo, "push", "-q", "origin", "feature/login-page")
+        try git(s.repo, "push", "-q", "upstream", "feature/login-page")
+        try git(s.repo, "switch", "-q", "main")
+        try git(s.repo, "branch", "-q", "-D", "feature/login-page")
+        try write("notes\n", to: "notes.md", in: s.repo)
+    }
+
+    @Test func aBranchOnTwoRemotesSwitchesToTheOnePicked() async throws {
+        let s = try await setup()
+        try onTwoRemotes(s)
+        let prompter = ScriptedPrompter([])
+        let flow = BranchSwitchFlow(prompter: prompter, launcher: s.repo.launcher)
+        await s.model.switchBranch(.project(s.project.id), to: "feature/login-page", track: "upstream/feature/login-page",
+                                   flow: flow, busyTask: { nil })
+        #expect(prompter.asked.isEmpty, "no stash was asked for")
+        #expect(try git(s.repo, "symbolic-ref", "--short", "HEAD") == "feature/login-page")
+        #expect(try git(s.repo, "rev-parse", "--abbrev-ref", "feature/login-page@{upstream}") == "upstream/feature/login-page")
+        #expect(try git(s.repo, "stash", "list").isEmpty)
+        #expect(FileManager.default.fileExists(atPath: s.repo.path + "/notes.md"))
+        #expect(s.model.sections.first?.problem == nil)
+    }
+
+    /// Without a remote picked, as New Task asks, git's refusal is the failure: no stash is offered,
+    /// since stashing would not get past it.
+    @Test func aBranchOnTwoRemotesWithNonePickedIsNotOfferedAStash() async throws {
+        let s = try await setup()
+        try onTwoRemotes(s)
+        let prompter = ScriptedPrompter([AlertAnswer(button: 0)])
+        let flow = BranchSwitchFlow(prompter: prompter, launcher: s.repo.launcher)
+        await #expect(throws: GitFailure.self) {
+            try await flow.switchProject(s.project, to: "feature/login-page", busyTask: { nil },
+                                         stashLabel: "“Login page”", offerOtherWorktree: true)
+        }
+        #expect(prompter.asked.isEmpty)
+        #expect(try git(s.repo, "symbolic-ref", "--short", "HEAD") == "main")
+        #expect(try git(s.repo, "stash", "list").isEmpty)
+    }
+
     @Test func anotherTaskWorkingThereAsksFirst() async throws {
         let s = try await setup()
         try git(s.repo, "branch", "feature/login-page")

@@ -38,6 +38,9 @@ typedef void(^iTermWarningActionBlock)(iTermWarningSelection);
 
 @property (nonatomic, strong) NSString * _Nullable keyEquivalent;
 @property (nonatomic) BOOL destructive;
+// Set to keep this action's button from being given an automatic Cmd-<letter> key equivalent.
+// Defaults to NO, which gives every button without a key equivalent one.
+@property (nonatomic) BOOL noAutomaticKeyEquivalent;
 
 + (instancetype)warningActionWithLabel:(NSString *)label
                                  block:(iTermWarningActionBlock _Nullable)block;

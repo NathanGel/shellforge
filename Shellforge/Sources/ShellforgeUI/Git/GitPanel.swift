@@ -70,12 +70,14 @@ struct GitPanelActions {
         await model.perform(.discard(change), in: section.id)
     }
 
-    /// Switches a project's folder, asking what New Task asks for a Project folder task.
-    func switchBranch(_ section: GitSection, to branch: String, model: GitModel) async {
+    /// Switches a project's folder, asking what New Task asks for a Project folder task. A remote
+    /// branch gives a local one of its name tracking the remote picked.
+    func switchBranch(_ section: GitSection, to branch: GitBranch, model: GitModel) async {
         guard case .project(let project) = section.id else { return }
         let flow = BranchSwitchFlow(prompter: prompter(), launcher: launcher)
         let busyTask = self.busyTask
-        await model.switchBranch(section.id, to: branch, flow: flow, busyTask: { busyTask(project) })
+        await model.switchBranch(section.id, to: branch.name, track: branch.remote.map { "\($0)/\(branch.name)" },
+                                 flow: flow, busyTask: { busyTask(project) })
     }
 }
 
@@ -207,8 +209,9 @@ struct GitPanel: View {
         return status.upstream == nil ? [.publish] : [.pull, .push]
     }
 
+    /// While files are conflicted nothing is committed, so the smart commit isn't offered.
     static func commitPlaceholder(_ status: GitStatus) -> String {
-        status.staged.isEmpty ? "Message (commits all changes when none are staged)" : "Message"
+        status.staged.isEmpty && status.conflicted.isEmpty ? "Message (commits all changes when none are staged)" : "Message"
     }
 
     static func canCommit(message: String, busy: Bool) -> Bool {
@@ -401,8 +404,7 @@ private struct GitBranchLine: View {
                     .popover(isPresented: $choosing, arrowEdge: .bottom) {
                         GitBranchList(repo: section.path, current: Self.current(status), launcher: actions.launcher) { branch in
                             choosing = false
-                            // A remote branch switches to the local one of its name, which git makes tracking it.
-                            Task { await actions.switchBranch(section, to: branch.name, model: model) }
+                            Task { await actions.switchBranch(section, to: branch, model: model) }
                         }
                     }
             }
@@ -510,17 +512,19 @@ private struct GitCommitBox: View {
     static let commitTitle = "Commit"
 
     private var canCommit: Bool { GitPanel.canCommit(message: draft.text, busy: section.busy) }
+    /// What the panel shows goes with the commit: staged files shown are the only ones it takes.
+    private var commit: GitAction { .commit(expectsStaged: !status.staged.isEmpty) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: scale(Space.snug)) {
             CommitMessageField(placeholder: GitPanel.commitPlaceholder(status), text: $draft.text, focused: $focused,
                                font: Typography.body.scaled(by: scale).nsFont,
                                // While Commit is off, ⌘↩ is still the field's: it does nothing.
-                               commit: { if canCommit { perform(.commit) } })
+                               commit: { if canCommit { perform(commit) } })
                 .overlay(alignment: .topLeading) { placeholder }
                 .fieldBox(focused: focused)
             HStack(spacing: scale(Space.snug)) {
-                Button(Self.commitTitle) { perform(.commit) }
+                Button(Self.commitTitle) { perform(commit) }
                     .buttonStyle(.borderedProminent)
                     .disabled(!canCommit)
                 Spacer(minLength: scale(Space.tight))
@@ -537,9 +541,10 @@ private struct GitCommitBox: View {
     /// first line starts (its inset and its container's padding of 5).
     @ViewBuilder private var placeholder: some View {
         if draft.text.isEmpty {
-            Text(GitPanel.commitPlaceholder(status)).font(Typography.body)
+            Text(GitPanel.commitPlaceholder(status)).font(Typography.body.scaled(by: scale))
                 .foregroundStyle(Color(nsColor: .placeholderTextColor))
                 .lineLimit(1)
+                // Not scaled: the text view's inset and padding aren't either.
                 .padding(.leading, CommitMessageField.inset.width + 5)
                 .padding(.top, CommitMessageField.inset.height)
                 .allowsHitTesting(false)

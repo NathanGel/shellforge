@@ -31,16 +31,33 @@ public enum GitActions {
         try run(["add", "-A", "--"] + paths.map(literal), in: repo, action: "stage", launcher: launcher)
     }
 
-    /// Stages every change, task worktrees left out, with no path list on the command line.
-    public static func stageAll(in repo: String, launcher: CommandLauncher) throws {
-        try run(["add", "-A", "--", ".", ":(exclude).worktrees"], in: repo, action: "stage", launcher: launcher)
+    /// Stages every change, task worktrees left out, with no path list on the command line. While
+    /// files are conflicted it stages exactly `status`'s unstaged changes instead: staging a
+    /// conflict marks it resolved, and no exclusion keeps git from doing that when `.` is given.
+    public static func stageAll(in repo: String, status: GitStatus, launcher: CommandLauncher) throws {
+        guard !status.conflicted.isEmpty else {
+            try run(["add", "-A", "--", ".", ":(exclude).worktrees"], in: repo, action: "stage", launcher: launcher)
+            return
+        }
+        try run(["add", "-A"], pathspecs: bothPaths(of: status.unstaged), in: repo, action: "stage", launcher: launcher)
     }
 
-    /// Unstages everything; on an unborn branch the index entries are dropped instead.
-    public static func unstageAll(in repo: String, launcher: CommandLauncher) throws {
+    /// Unstages everything; on an unborn branch the index entries are dropped instead. While files
+    /// are conflicted it unstages exactly `status`'s staged changes: `.` would throw the conflicts
+    /// away and leave their markers as plain changes.
+    public static func unstageAll(in repo: String, status: GitStatus, launcher: CommandLauncher) throws {
         let unborn = try isUnborn(repo, action: "unstage", launcher: launcher)
-        let args = unborn ? ["rm", "--cached", "-r", "-q", "-f", "--", "."] : ["restore", "--staged", "--", "."]
-        try run(args, in: repo, action: "unstage", launcher: launcher)
+        let args = unborn ? ["rm", "--cached", "-r", "-q", "-f"] : ["restore", "--staged"]
+        guard !status.conflicted.isEmpty else {
+            try run(args + ["--", "."], in: repo, action: "unstage", launcher: launcher)
+            return
+        }
+        try run(args, pathspecs: bothPaths(of: status.staged), in: repo, action: "unstage", launcher: launcher)
+    }
+
+    /// Each change's path, and a rename's or copy's original path too.
+    private static func bothPaths(of changes: [GitChange]) -> [String] {
+        changes.flatMap { [$0.originalPath, $0.path].compactMap { $0 } }
     }
 
     private static func isUnborn(_ repo: String, action: String, launcher: CommandLauncher) throws -> Bool {
@@ -102,6 +119,10 @@ public enum GitActions {
     public static func commit(message: String, in repo: String, status: GitStatus, launcher: CommandLauncher) throws {
         guard !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw GitFailure(message: "Write a commit message first.")
+        }
+        // Committing everything would mark each conflict resolved, markers and all.
+        guard status.conflicted.isEmpty else {
+            throw GitFailure(message: "Resolve the merge conflicts before committing.")
         }
         let addedEverything = status.staged.isEmpty
         let headBefore = addedEverything ? head(of: repo, launcher: launcher) : nil
@@ -202,6 +223,24 @@ public enum GitActions {
         if has("index.lock") { return "Another git is running in this repository. Try again when it’s done." }
         if has("nothing to commit") { return "Nothing to commit." }
         return "git: \(first)"
+    }
+
+    /// `args` with `paths` as literal pathspecs, read from a NUL-separated file so a long list
+    /// stays off the command line. The file is deleted after. No paths runs nothing: git would
+    /// take an empty list as every file.
+    private static func run(_ args: [String], pathspecs paths: [String], in repo: String, action: String,
+                            launcher: CommandLauncher) throws {
+        guard !paths.isEmpty else { return }
+        let file = FileManager.default.temporaryDirectory
+            .appendingPathComponent("shellforge-pathspecs-\(UUID().uuidString)")
+        do {
+            try Data(paths.map { literal($0) + "\0" }.joined().utf8).write(to: file)
+        } catch {
+            logFailure(args, "pathspec file: \(error.localizedDescription)")
+            throw GitFailure(message: "Couldn’t write the list of files for git.")
+        }
+        defer { try? FileManager.default.removeItem(at: file) }
+        try run(args + ["--pathspec-from-file=\(file.path)", "--pathspec-file-nul"], in: repo, action: action, launcher: launcher)
     }
 
     @discardableResult

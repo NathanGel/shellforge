@@ -258,6 +258,56 @@ final class GitModelTests: XCTestCase {
         XCTAssertEqual(status(git.sections[0].tasks.first)?.hasChanges, false)
     }
 
+    /// A Review task without a merge request has no base branch: its commits can't be counted, so
+    /// it stays listed rather than hide work that isn't published.
+    func testATaskWithoutABaseBranchShowsAfterACommit() async throws {
+        let scratch = try Scratch()
+        let demo = try scratch.project("demo")
+        var task = try scratch.task("Login page", slug: "feature-login-page", branch: "feature/login-page", of: demo)
+        task.baseBranch = ""
+        try scratch.write("src/app.ts", in: task.worktreePath)
+        try scratch.git(["add", "src/app.ts"], in: task.worktreePath)
+        let git = model(scratch, [demo], tasks: [task])
+        await git.settled()
+        try scratch.git(["commit", "-q", "-m", "login"], in: task.worktreePath)
+        await git.refresh(.task(task.id))
+        XCTAssertEqual(git.sections[0].tasks.map(\.title), ["Login page"])
+        XCTAssertEqual(status(git.sections[0].tasks.first)?.hasChanges, false)
+    }
+
+    /// A Project folder task works in its project's folder: no second section, watcher or queue.
+    func testAProjectFolderTaskIsNotASecondSection() async throws {
+        let scratch = try Scratch()
+        let demo = try scratch.project("demo")
+        let task = TaskItem(projectId: demo.id, title: "Login page", branch: "main", worktreePath: demo.path, baseBranch: "main")
+        try scratch.write("src/app.ts", in: demo.path)
+        var watched: [String] = []
+        let git = model(scratch, [demo], tasks: [task], watchers: { watched.append($0.path) })
+        await git.settled()
+        XCTAssertEqual(watched, [demo.path])
+        XCTAssertEqual(git.sections.map(\.title), ["demo"])
+        XCTAssertTrue(git.sections[0].tasks.isEmpty)
+        XCTAssertEqual(status(git.sections[0])?.unstaged.map(\.path), ["src/app.ts"])
+    }
+
+    /// The panel showed staged files, and they were unstaged elsewhere before Commit ran: nothing is
+    /// committed, rather than every change.
+    func testACommitOfStagedFilesCommitsNothingOnceNoneAreStaged() async throws {
+        let scratch = try Scratch()
+        let demo = try scratch.project("demo")
+        try scratch.write("src/app.ts", in: demo.path)
+        let git = model(scratch, [demo])
+        await git.settled()
+        let id = GitRepoID.project(demo.id)
+        let head = try scratch.git(["rev-parse", "HEAD"], in: demo.path)
+        git.setCommitMessage("Add the login page", for: id)
+        await git.perform(.commit(expectsStaged: true), in: id)
+        XCTAssertEqual(git.sections.first?.problem, "The staged files changed. Check them and commit again.")
+        XCTAssertEqual(try scratch.git(["rev-parse", "HEAD"], in: demo.path), head)
+        XCTAssertEqual(git.commitMessage(id), "Add the login page", "the message is kept")
+        XCTAssertEqual(status(git.sections.first)?.unstaged.map(\.path), ["src/app.ts"])
+    }
+
     /// A clean task whose action failed stays listed, so its problem is seen.
     func testATaskWithAProblemIsListed() async throws {
         let scratch = try Scratch()
@@ -356,7 +406,7 @@ final class GitModelTests: XCTestCase {
         let id = GitRepoID.project(demo.id)
         git.setCommitMessage("Add the login page", for: id)
         XCTAssertEqual(git.commitMessage(id), "Add the login page")
-        await git.perform(.commit, in: id)
+        await git.perform(.commit(expectsStaged: false), in: id)
         XCTAssertEqual(git.commitMessage(id), "")
         XCTAssertNil(git.sections.first?.problem)
         XCTAssertEqual(status(git.sections.first)?.hasChanges, false)

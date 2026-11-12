@@ -4,7 +4,7 @@ import Foundation
 public struct GitFailure: Error, CustomStringConvertible, Equatable, LocalizedError {
     public var command: String
     public var message: String
-    public var errorDescription: String? { message }
+    public var errorDescription: String? { message.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     public init(command: String = "git", message: String) {
         self.command = command
