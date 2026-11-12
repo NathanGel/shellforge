@@ -162,7 +162,7 @@ private struct DemoSidebar {
         defer { if model.isRearranging { model.cancelRearrange() } }
         let view = SidebarView(model: model, activity: activity, chooseFolder: { nil }, hooks: hooks, machine: machine,
                                backpack: BackpackController(ports: .inert, settings: BackpackSettings(defaults: nil), toast: { _ in }),
-                               terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()),
+                               terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()), terminalEditorDefaults: ScratchDefaults.make(),
                                feedback: FeedbackPrompt(defaults: ScratchDefaults.make(), channel: .dev), chrome: SidebarChrome(),
                                showBackpack: { _ in }, showFeedback: { _ in }, hideSidebar: {}, agentTools: .none, agentsChanged: {})
             .interfaceScale(.standard)

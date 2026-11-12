@@ -36,4 +36,34 @@ final class FolderWatcherTests: XCTestCase {
         XCTAssertTrue(FolderWatcher.isRelevant("/elsewhere/file.txt", root: root))
         XCTAssertFalse(FolderWatcher.isRelevant(root + "/.git/HEAD2", root: root + "/"))
     }
+
+    /// A folder under the temporary directory (`/var/folders/...`), which the stream reports
+    /// under `/private/var/folders/...`.
+    private func temporaryFolder() throws -> URL {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("watcher-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder.appendingPathComponent(".git/objects"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: folder.appendingPathComponent("src"), withIntermediateDirectories: true)
+        return folder
+    }
+
+    func testTheRootIsWhereTheStreamReportsIt() throws {
+        let folder = try temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let root = FolderWatcher.resolvedRoot(folder.path)
+        XCTAssertTrue(root.hasPrefix("/private/"), root)
+        XCTAssertFalse(FolderWatcher.isRelevant(root + "/.git/objects/x", root: root), "git noise counted under /private")
+        XCTAssertTrue(FolderWatcher.isRelevant(root + "/src/app.ts", root: root))
+    }
+
+    func testAFileChangeIsReported() throws {
+        let folder = try temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let changed = expectation(description: "a change under src")
+        changed.assertForOverFulfill = false
+        let watcher = FolderWatcher()
+        watcher.watch(folder.path) { changed.fulfill() }
+        defer { watcher.stop() }
+        try "x".write(to: folder.appendingPathComponent("src/app.ts"), atomically: true, encoding: .utf8)
+        wait(for: [changed], timeout: 30)
+    }
 }

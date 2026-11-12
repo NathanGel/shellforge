@@ -17,7 +17,7 @@ import ShellforgeDesign
                                                                                                 resources: .bundled(resourceURL: nil)), names: [:]),
                                           machine: MachineMonitor(sensor: InertMachineSensor(), power: InertPower()),
                                           backpack: BackpackController(ports: .inert, settings: BackpackSettings(defaults: nil), toast: { _ in }),
-                                          zoom: SidebarZoom(settings: SidebarLayoutSettings(defaults: ScratchDefaults.make())), terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()), feedback: FeedbackPrompt(defaults: ScratchDefaults.make(), channel: .dev))
+                                          zoom: SidebarZoom(settings: SidebarLayoutSettings(defaults: ScratchDefaults.make())), terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()), terminalEditorDefaults: ScratchDefaults.make(), feedback: FeedbackPrompt(defaults: ScratchDefaults.make(), channel: .dev))
     }
 
     private func window() -> NSWindow {

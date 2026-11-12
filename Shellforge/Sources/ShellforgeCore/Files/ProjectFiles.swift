@@ -8,7 +8,8 @@ public enum ProjectFiles {
     public enum Listing: Equatable, Sendable {
         /// Every path git lists, relative to the project; `FileTree.build` makes the tree. A
         /// submodule, or an untracked nested repository, ends in "/": a folder with nothing in it.
-        case git([String])
+        /// `submodules` names the submodules among them, without the "/".
+        case git([String], submodules: Set<String> = [])
         /// Not a repository: the folder's top level, its folders not yet loaded.
         case folder([FileNode])
         case missing
@@ -28,7 +29,8 @@ public enum ProjectFiles {
             return .missing
         }
         do {
-            return .git(try gitPaths(projectPath, launcher: launcher))
+            let listed = try gitPaths(projectPath, launcher: launcher)
+            return .git(listed.paths, submodules: listed.submodules)
         } catch GitListingProblem.failed(let reason) {
             return .unreadable(reason)
         } catch {
@@ -50,6 +52,8 @@ public enum ProjectFiles {
     // -- git -----------------------------------------------------------------------------
 
     private enum GitListingProblem: Error {
+        /// Not a repository, or git could not be launched at all (no Command Line Tools): either
+        /// way the folder is listed as it is.
         case notARepository
         case failed(String)
     }
@@ -58,30 +62,36 @@ public enum ProjectFiles {
     /// task worktrees. `-z` separates paths with NUL and quotes none, so names with spaces or
     /// newlines survive. (git's output is read as UTF-8: a name that is not, rare on APFS, comes
     /// back with replacement characters.)
-    private static func gitPaths(_ projectPath: String, launcher: CommandLauncher) throws -> [String] {
+    private static func gitPaths(_ projectPath: String, launcher: CommandLauncher) throws -> (paths: [String], submodules: Set<String>) {
         // `--stage`: "<mode> <sha> <stage>\t<path>", so a submodule can be told by its mode. A
         // conflicted path is listed once per stage.
         let deleted = Set(try git(["ls-files", "--deleted"], in: projectPath, launcher: launcher))
         var seen = Set<String>()
+        var submodules = Set<String>()
         let cached = try git(["ls-files", "--cached", "--stage"], in: projectPath, launcher: launcher).compactMap { entry -> String? in
             guard let tab = entry.firstIndex(of: "\t") else { return nil }
             let path = String(entry[entry.index(after: tab)...])
             guard !deleted.contains(path), seen.insert(path).inserted else { return nil }
-            return entry.hasPrefix(submoduleMode + " ") ? path + "/" : path
+            guard entry.hasPrefix(submoduleMode + " ") else { return path }
+            submodules.insert(path)
+            return path + "/"
         }
         let others = try git(["ls-files", "--others", "--exclude-standard"], in: projectPath, launcher: launcher)
         let prefix = worktrees + "/"
-        return (cached + others).filter { $0 != worktrees && !$0.hasPrefix(prefix) }
+        let paths = (cached + others).filter { $0 != worktrees && !$0.hasPrefix(prefix) }
+        return (paths, submodules.filter { $0 != worktrees && !$0.hasPrefix(prefix) })
     }
 
     /// `git -C projectPath args -z`, its NUL-separated entries. git speaks English (`LC_ALL=C`)
-    /// so "not a git repository" can be told from every other refusal, which is never hidden.
+    /// so "not a git repository" can be told from every other refusal, which is never hidden. A
+    /// git that cannot be launched at all lists the folder as it is: without git there is no
+    /// repository to show.
     private static func git(_ args: [String], in projectPath: String, launcher: CommandLauncher) throws -> [String] {
         let out: ChildOutput
         do {
             out = try launcher.run("git", ["-C", projectPath] + args + ["-z"], extra: ["LC_ALL": "C"], timeout: gitTimeout)
         } catch {
-            throw GitListingProblem.failed("git: " + firstLine(String(describing: error)))
+            throw GitListingProblem.notARepository
         }
         if out.timedOut { throw GitListingProblem.failed("git timed out") }
         guard out.status == 0 else {

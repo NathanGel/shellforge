@@ -29,4 +29,11 @@ import Testing
     @Test func vsCodeItemsAreAbsentWithoutIt() {
         #expect(OpenIn.items(folder: "/api", vsCodeInstalled: false).map(\.title) == ["Open in Finder"])
     }
+
+    /// A file of the Files panel opens in VS Code as a file, not a folder.
+    @Test func aFileOpensInVSCodeAsAFile() {
+        #expect(OpenIn.vsCodeItem(file: "/demo/src/app.ts", vsCodeInstalled: true)
+            == OpenIn.Item(title: "Open in VS Code", app: .vsCode, folder: "/demo/src/app.ts", isDirectory: false))
+        #expect(OpenIn.vsCodeItem(file: "/demo/src/app.ts", vsCodeInstalled: false) == nil)
+    }
 }

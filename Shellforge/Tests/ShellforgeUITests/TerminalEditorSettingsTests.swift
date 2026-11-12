@@ -23,6 +23,12 @@ final class TerminalEditorSettingsTests: XCTestCase {
         XCTAssertNil(store.object(forKey: EditorCommand.settingKey))
     }
 
+    func testAWhitespaceDraftSaysWhatEmptyMeans() {
+        let settings = make(ScratchDefaults.make())
+        XCTAssertEqual(TerminalEditorCard.status(draft: " \n ", settings: settings), settings.emptyStatus)
+        XCTAssertEqual(TerminalEditorCard.status(draft: "nvim", settings: settings), "Your command")
+    }
+
     func testThePlaceholderFollowsTheLoad() async {
         let settings = make(ScratchDefaults.make(), editor: "nvim")
         XCTAssertEqual(settings.placeholder, "vi")

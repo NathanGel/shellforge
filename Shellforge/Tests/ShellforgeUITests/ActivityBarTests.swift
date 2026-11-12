@@ -131,7 +131,8 @@ import Testing
     }
 
     /// The whole sidebar, hosted in a window, with this window's activity bar `activity`.
-    private func hosted(_ sidebar: SidebarModel, activity: ActivityModel, controls: SidebarWindowControls?) -> (NSHostingView<AnyView>, NSWindow) {
+    private func hosted(_ sidebar: SidebarModel, activity: ActivityModel, controls: SidebarWindowControls?,
+                        files: FilesHolder? = nil) -> (NSHostingView<AnyView>, NSWindow) {
         let hooks = AgentHooksModel(integrations: HookIntegrations(home: TestScratch.root.appendingPathComponent("activity-home-\(UUID().uuidString)"),
                                                                    resources: .bundled(resourceURL: nil)), names: [:])
         let chrome = SidebarChrome()
@@ -139,8 +140,8 @@ import Testing
         let view = SidebarView(model: sidebar, activity: activity, chooseFolder: { nil }, hooks: hooks,
                                machine: MachineMonitor(sensor: InertMachineSensor(), power: InertPower()),
                                backpack: BackpackController(ports: .inert, settings: BackpackSettings(defaults: nil), toast: { _ in }),
-                               terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()),
-                               feedback: FeedbackPrompt(defaults: ScratchDefaults.make(), channel: .dev), chrome: chrome,
+                               terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()), terminalEditorDefaults: ScratchDefaults.make(),
+                               files: files, feedback: FeedbackPrompt(defaults: ScratchDefaults.make(), channel: .dev), chrome: chrome,
                                showBackpack: { _ in }, showFeedback: { _ in }, hideSidebar: {}, agentTools: .none, agentsChanged: {})
         let host = NSHostingView(rootView: AnyView(view))
         host.frame = NSRect(x: 0, y: 0, width: Size.sidebarWidth, height: 600)
@@ -193,6 +194,37 @@ import Testing
         #expect(sidebar.rearrange == draft, "the draft changed on the way back to Sessions")
     }
 
+    /// The app has one Files model: nothing is listed or watched until the panel first shows in
+    /// some window, and another window's panel draws the same model.
+    @Test func windowsShareOneFilesModelMadeWhenFirstShown() throws {
+        final class Count { var made = 0 }
+        let count = Count()
+        let launcher = CommandLauncher(resolve: { ResolvedEnvironment(variables: ["PATH": "/usr/bin"], source: .loginShell("/bin/zsh")) })
+        let holder = FilesHolder {
+            count.made += 1
+            return FilesModel(projects: [], launcher: launcher, defaults: ScratchDefaults.make(), watcher: { _ in FolderWatcher() })
+        }
+        let (firstSidebar, _) = try sidebarModel()
+        let (secondSidebar, _) = try sidebarModel()
+        let first = ActivityModel(source: ActivityOrderSource(defaults: nil))
+        let second = ActivityModel(source: ActivityOrderSource(defaults: nil))
+        let (firstHost, firstWindow) = hosted(firstSidebar, activity: first, controls: nil, files: holder)
+        let (secondHost, secondWindow) = hosted(secondSidebar, activity: second, controls: nil, files: holder)
+        defer { firstWindow.close(); secondWindow.close() }
+        let drawsFiles = { (host: NSView) -> Bool in
+            host.layoutSubtreeIfNeeded()
+            return self.descendants(of: host).contains { $0.identifier?.rawValue == FilesPanel.markName }
+        }
+        #expect(!drawsFiles(firstHost) && !drawsFiles(secondHost))
+        #expect(count.made == 0 && holder.made == nil, "made before the panel showed")
+        first.select(.files)
+        #expect(drawsFiles(firstHost))
+        #expect(count.made == 1)
+        second.select(.files)
+        #expect(drawsFiles(secondHost))
+        #expect(count.made == 1, "a second window made a model of its own")
+    }
+
     /// The Sessions panel stays mounted behind another panel, so its scroll position, rows and focus
     /// survive: the same list, hidden while Metrics shows and drawn again after.
     @Test func sessionsStaysMountedButHiddenBehindMetrics() throws {
@@ -218,7 +250,7 @@ import Testing
                                               machine: MachineMonitor(sensor: InertMachineSensor(), power: InertPower()),
                                               backpack: BackpackController(ports: .inert, settings: BackpackSettings(defaults: nil), toast: { _ in }),
                                               zoom: SidebarZoom(settings: SidebarLayoutSettings(defaults: ScratchDefaults.make())),
-                                              terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()),
+                                              terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()), terminalEditorDefaults: ScratchDefaults.make(),
                                               feedback: FeedbackPrompt(defaults: ScratchDefaults.make(), channel: .dev))
         view.frame = NSRect(x: 0, y: 0, width: Size.sidebarWidth, height: 600)
         let window = NSWindow(contentRect: view.frame, styleMask: [.borderless], backing: .buffered, defer: false)

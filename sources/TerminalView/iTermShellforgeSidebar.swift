@@ -109,6 +109,11 @@ final class iTermShellforgeSidebar: NSObject {
     /// them; saved on this Mac only (a `NoSync` default). Each window keeps its own selected panel.
     static let activityOrder = ActivityOrderSource(defaults: iTermUserDefaults.userDefaults())
 
+    /// The Files panel's model: one for the app, so every window draws the same trees and open
+    /// folders from one set of watchers. Made the first time the panel shows in any window; until
+    /// then nothing is listed or watched. Each window opens files in its own tabs.
+    private static let files = FilesHolder { makeFiles() }
+
     /// What the app bundle gives the agents: `shellforge-status`, `shellforge-run` and the ready-made agents.
     static let agentTools = AgentTools.bundled(resourceURL: Bundle.main.resourceURL, bundlePath: Bundle.main.bundlePath,
                                                dataFolder: dataFolder)
@@ -154,7 +159,7 @@ final class iTermShellforgeSidebar: NSObject {
         let view = ShellforgeSidebar.makeView(model: model, chooseFolder: FolderChooser.choose, hooks: hooks, machine: machine,
                                           backpack: backpack, zoom: zoom, terminalMatch: iTermShellforgeTerminalMatch.settings,
                                           terminalEditorDefaults: iTermUserDefaults.userDefaults(),
-                                          feedback: feedback, activityOrder: activityOrder, files: FilesHolder { makeFiles() },
+                                          feedback: feedback, activityOrder: activityOrder, files: files,
                                           panelCornerRadius: floats ? panelCornerRadius : nil,
                                           agentTools: agentTools, agentsChanged: { agentsChanged() },
                                           showBackpack: { [weak windowController] present in
@@ -168,7 +173,7 @@ final class iTermShellforgeSidebar: NSObject {
         return view
     }
 
-    /// A window's Files panel model: the workspace's projects, followed as they are added, removed
+    /// The app's Files panel model: the workspace's projects, followed as they are added, removed
     /// or reordered; its open folders saved on this Mac, in the app's own suite.
     private static func makeFiles() -> FilesModel {
         let files = FilesModel(projects: [], launcher: launcher, defaults: iTermUserDefaults.userDefaults(),

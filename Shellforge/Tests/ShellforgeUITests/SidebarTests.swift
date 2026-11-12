@@ -18,11 +18,11 @@ import ShellforgeDesign
     }
 
     @Test func theHostViewIsAsWideAsTheSidebar() throws {
-        #expect(ShellforgeSidebar.makeView(model: try sidebarModel(), chooseFolder: { nil }, hooks: hooks(), machine: MachineMonitor(sensor: InertMachineSensor(), power: InertPower()), backpack: BackpackController(ports: .inert, settings: BackpackSettings(defaults: nil), toast: { _ in }), zoom: SidebarZoom(settings: SidebarLayoutSettings(defaults: ScratchDefaults.make())), terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()), feedback: FeedbackPrompt(defaults: ScratchDefaults.make(), channel: .dev)).frame.width == ShellforgeSidebar.width)
+        #expect(ShellforgeSidebar.makeView(model: try sidebarModel(), chooseFolder: { nil }, hooks: hooks(), machine: MachineMonitor(sensor: InertMachineSensor(), power: InertPower()), backpack: BackpackController(ports: .inert, settings: BackpackSettings(defaults: nil), toast: { _ in }), zoom: SidebarZoom(settings: SidebarLayoutSettings(defaults: ScratchDefaults.make())), terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()), terminalEditorDefaults: ScratchDefaults.make(), feedback: FeedbackPrompt(defaults: ScratchDefaults.make(), channel: .dev)).frame.width == ShellforgeSidebar.width)
     }
 
     @Test func theSidebarStretchesWithTheWindowsHeightOnly() throws {
-        #expect(ShellforgeSidebar.makeView(model: try sidebarModel(), chooseFolder: { nil }, hooks: hooks(), machine: MachineMonitor(sensor: InertMachineSensor(), power: InertPower()), backpack: BackpackController(ports: .inert, settings: BackpackSettings(defaults: nil), toast: { _ in }), zoom: SidebarZoom(settings: SidebarLayoutSettings(defaults: ScratchDefaults.make())), terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()), feedback: FeedbackPrompt(defaults: ScratchDefaults.make(), channel: .dev)).autoresizingMask == [.height, .minYMargin, .maxYMargin])
+        #expect(ShellforgeSidebar.makeView(model: try sidebarModel(), chooseFolder: { nil }, hooks: hooks(), machine: MachineMonitor(sensor: InertMachineSensor(), power: InertPower()), backpack: BackpackController(ports: .inert, settings: BackpackSettings(defaults: nil), toast: { _ in }), zoom: SidebarZoom(settings: SidebarLayoutSettings(defaults: ScratchDefaults.make())), terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()), terminalEditorDefaults: ScratchDefaults.make(), feedback: FeedbackPrompt(defaults: ScratchDefaults.make(), channel: .dev)).autoresizingMask == [.height, .minYMargin, .maxYMargin])
     }
 
     @Test func theSidebarIsAiTermsWidth() throws {
@@ -32,7 +32,7 @@ import ShellforgeDesign
     /// Inside a light window the sidebar draws a light ground: its host takes the window's
     /// appearance.
     @Test func theSidebarDrawsLightInALightWindow() throws {
-        let host = ShellforgeSidebar.makeView(model: try sidebarModel(), chooseFolder: { nil }, hooks: hooks(), machine: MachineMonitor(sensor: InertMachineSensor(), power: InertPower()), backpack: BackpackController(ports: .inert, settings: BackpackSettings(defaults: nil), toast: { _ in }), zoom: SidebarZoom(settings: SidebarLayoutSettings(defaults: ScratchDefaults.make())), terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()), feedback: FeedbackPrompt(defaults: ScratchDefaults.make(), channel: .dev))
+        let host = ShellforgeSidebar.makeView(model: try sidebarModel(), chooseFolder: { nil }, hooks: hooks(), machine: MachineMonitor(sensor: InertMachineSensor(), power: InertPower()), backpack: BackpackController(ports: .inert, settings: BackpackSettings(defaults: nil), toast: { _ in }), zoom: SidebarZoom(settings: SidebarLayoutSettings(defaults: ScratchDefaults.make())), terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()), terminalEditorDefaults: ScratchDefaults.make(), feedback: FeedbackPrompt(defaults: ScratchDefaults.make(), channel: .dev))
         host.frame.size.height = 400
         let window = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
         window.appearance = NSAppearance(named: .aqua)

@@ -17,18 +17,19 @@ public enum ShellforgeSidebar {
     /// `backpack` is the app's one Backpack Mode; `showBackpack` hands back how this sidebar opens
     /// its sheet, for the View menu's ⌘B. `hideSidebar` is the header's Hide Sidebar button: ⌃⌘S.
     /// `zoom` is the app's one text size, which every window's sidebar draws at; its sheets, in
-    /// panels of their own, stay at `.standard`. `terminalEditorDefaults` is where the terminal editor is saved (the app's own suite). `terminalMatch` is the app's one Settings › Core ›
+    /// panels of their own, stay at `.standard`. `terminalEditorDefaults` is where the terminal
+    /// editor is saved: the app's own suite. `terminalMatch` is the app's one Settings › Core ›
     /// Terminal switch. `feedback` is the app's one feedback prompt, and `showFeedback` hands back how
     /// this sidebar opens the feedback form, for the Help menu. `panelCornerRadius`, when given, draws
     /// the sidebar as a floating panel with those corners (macOS 26); nil draws the classic sidebar.
     /// `agentTools` is what the app bundle gives the agents, for Settings › Agents, and
     /// `agentsChanged` is told each time Settings › Agents adds, changes or removes one.
     /// `activityOrder` is the app's one activity bar order, which every window's bar follows; each
-    /// sidebar keeps its own selected panel. `files` makes this window's Files panel model, the
-    /// first time the panel shows; nil leaves the panel empty.
+    /// sidebar keeps its own selected panel. `files` holds the app's one Files panel model, made
+    /// the first time the panel shows in any window; nil leaves the panel empty.
     public static func makeView(model: SidebarModel, chooseFolder: @escaping @MainActor () -> String?, hooks: AgentHooksModel,
                                 machine: MachineMonitor, backpack: BackpackController, zoom: SidebarZoom,
-                                terminalMatch: TerminalMatchSettings, terminalEditorDefaults: UserDefaults = .standard, feedback: FeedbackPrompt,
+                                terminalMatch: TerminalMatchSettings, terminalEditorDefaults: UserDefaults, feedback: FeedbackPrompt,
                                 activityOrder: ActivityOrderSource = ActivityOrderSource(defaults: nil), files: FilesHolder? = nil,
                                 panelCornerRadius: CGFloat? = nil,
                                 agentTools: AgentTools = .none, agentsChanged: @escaping @MainActor () -> Void = {},
@@ -382,8 +383,9 @@ struct SidebarView: View {
     let machine: MachineMonitor
     let backpack: BackpackController
     let terminalMatch: TerminalMatchSettings
-    var terminalEditorDefaults: UserDefaults = .standard
-    /// This window's Files panel model, made when the panel first shows.
+    /// Where the terminal editor is saved: the app's own suite.
+    let terminalEditorDefaults: UserDefaults
+    /// The app's one Files panel model, made when the panel first shows in any window.
     var files: FilesHolder? = nil
     let feedback: FeedbackPrompt
     @ObservedObject var chrome: SidebarChrome
@@ -395,6 +397,9 @@ struct SidebarView: View {
     /// The window the sidebar is drawn in, which the Agent hooks panel hangs from.
     @State private var anchor = WindowAnchor()
     @State private var sheet = PanelSlot()
+    /// The Files panel's model, taken from `files` once the panel is selected: never made while
+    /// the view is drawn.
+    @State private var filesModel: FilesModel?
     @Environment(\.interfaceScale) private var scale
 
     var body: some View {
@@ -420,7 +425,11 @@ struct SidebarView: View {
         .tint(Palette.accent)
         .background(WindowReader(anchor: anchor))
         // The View menu's ⌘B opens the sheet on the key window's sidebar: this one says how.
-        .onAppear { showBackpack(presentBackpack); showFeedback(presentFeedback) }
+        .onAppear {
+            showBackpack(presentBackpack); showFeedback(presentFeedback)
+            takeFiles(activity.layout.selected)
+        }
+        .onChange(of: activity.layout.selected) { panel in takeFiles(panel) }
         // The Tasks menu's keys that need a sheet: shown as the "+" or the row's menu would.
         .onReceive(model.sheetRequests) { request in
             switch request {
@@ -502,12 +511,12 @@ struct SidebarView: View {
                                                        openMacSettings: showMacSettings))
             }
             if activity.layout.selected == .files {
-                if let files {
-                    FilesPanel(model: files.model, titled: chrome.windowControls == nil, providers: model.providers,
+                if let filesModel {
+                    FilesPanel(model: filesModel, titled: chrome.windowControls == nil, providers: model.providers,
                                opener: FileOpener(host: model.host, defaults: terminalEditorDefaults,
                                                   environment: { [launcher = model.launcher] in launcher.environment.variables }))
                 } else {
-                    // A sidebar made without a Files model: the panel's title over nothing.
+                    // A sidebar made without a Files model, or before it is taken: the panel's title over nothing.
                     VStack(spacing: 0) { if chrome.windowControls == nil { FilesPanelTitle() } }
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 }
@@ -516,6 +525,12 @@ struct SidebarView: View {
     }
 
     private var showsSessions: Bool { activity.layout.selected == .sessions }
+
+    /// The Files panel shown: its model is made now if no window has made it yet.
+    private func takeFiles(_ panel: ActivityPanel) {
+        guard panel == .files, filesModel == nil, let files else { return }
+        filesModel = files.model
+    }
 
     /// Today's sidebar: the header (unless pinned above the panel) and the list; the banners
     /// over it are pinned above every panel, the footer that was under it is the Metrics panel now,

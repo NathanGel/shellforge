@@ -124,6 +124,21 @@ private final class CountingLister: @unchecked Sendable {
         #expect(FilesPanel.missingText == "Folder not found")
     }
 
+    /// An open folder with nothing listed in it says what it is, rather than look like it is loading.
+    @Test func anOpenFolderWithNothingInItSaysWhatItIs() async {
+        let model = files(CountingLister(.git(["lib/sub/", "vendor/", "README.md"], submodules: ["lib/sub"])))
+        await model.refresh(project: demo.id)
+        for folder in ["lib", "lib/sub", "vendor"] { model.toggle(project: demo.id, folder: folder) }
+        let rows = FilesPanel.rows(model.sections, isOpen: model.isOpen)
+        #expect(rows.contains(.note(project: demo.id, folder: "lib/sub", text: "Submodule", depth: 2)))
+        #expect(rows.contains(.note(project: demo.id, folder: "vendor", text: "Repository", depth: 1)))
+        let empty = [FilesSection(project: demo, state: .tree([FileNode(name: "src", path: "src", isFolder: true, children: [])]))]
+        #expect(FilesPanel.rows(empty, isOpen: { _, _ in true }).last == .note(project: demo.id, folder: "src", text: "Empty folder", depth: 1))
+        model.toggle(project: demo.id, folder: "vendor")
+        #expect(!FilesPanel.rows(model.sections, isOpen: model.isOpen).contains { $0.id == "note:\(demo.id.uuidString):vendor" },
+                "a closed folder says nothing")
+    }
+
     /// The sections follow the workspace's projects, in its order.
     @Test func sectionsFollowTheWorkspace() async {
         let acme = Project(name: "acme-web", path: "/acme-web")
@@ -149,7 +164,7 @@ private final class CountingLister: @unchecked Sendable {
                                               machine: MachineMonitor(sensor: InertMachineSensor(), power: InertPower()),
                                               backpack: BackpackController(ports: .inert, settings: BackpackSettings(defaults: nil), toast: { _ in }),
                                               zoom: SidebarZoom(settings: SidebarLayoutSettings(defaults: ScratchDefaults.make())),
-                                              terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()),
+                                              terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()), terminalEditorDefaults: ScratchDefaults.make(),
                                               feedback: FeedbackPrompt(defaults: ScratchDefaults.make(), channel: .dev),
                                               files: FilesHolder { self.files(lister) })
         view.frame = NSRect(x: 0, y: 0, width: Size.sidebarWidth, height: 600)

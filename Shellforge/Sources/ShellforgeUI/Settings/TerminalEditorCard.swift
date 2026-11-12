@@ -8,7 +8,7 @@ struct TerminalEditorCard: View {
     @Binding var draft: String
 
     var body: some View {
-        SettingsCard(title: "Terminal editor", status: SettingsStatus(.idle, draft.isEmpty ? settings.emptyStatus : "Your command")) {
+        SettingsCard(title: "Terminal editor", status: SettingsStatus(.idle, Self.status(draft: draft, settings: settings))) {
             SymbolMark(symbol: "terminal", size: Size.control, style: .paper)
         } chips: {
             EmptyView()
@@ -24,5 +24,10 @@ struct TerminalEditorCard: View {
             }
         }
         .task { await settings.load() }
+    }
+
+    /// The card's status: a draft of only spaces saves as empty, so it says what empty means.
+    static func status(draft: String, settings: TerminalEditorSettings) -> String {
+        draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? settings.emptyStatus : "Your command"
     }
 }

@@ -261,11 +261,11 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
 ## Files
 
 - **What it lists.** The Files panel has one section per project, in the order Sessions shows them. Click a project's row to fold or unfold its section; folders fold the same way, and the open ones are remembered on this Mac.
-  - In a git repository: what git sees, the tracked files still on disk and the untracked ones git doesn't ignore. Ignored files, such as `node_modules` or build output, are hidden. A submodule is a folder with nothing listed in it.
-  - In a folder that isn't a repository: the folder itself, one level at a time as you open folders, without dot files.
+  - In a git repository: what git sees, the tracked files still on disk and the untracked ones git doesn't ignore. Ignored files, such as `node_modules` or build output, are hidden. A submodule is a folder with nothing listed in it; opened, it says “Submodule” (an untracked repository inside the project says “Repository”).
+  - In a folder that isn't a repository: the folder itself, one level at a time as you open folders, without dot files. An open folder with nothing in it says “Empty folder”. Without git (no Command Line Tools), every project is listed this way.
   - Task worktrees, under `.worktrees/`, are never listed.
   - A project whose folder is gone says “Folder not found”; one git can't read says why.
-- **Up to date.** Each project's folder is watched, so a file added, renamed or deleted shows up without a refresh. Nothing is listed or watched until the panel is first shown in a window.
+- **Up to date.** Each project's folder is watched, so a file added, renamed or deleted shows up without a refresh. Nothing is listed or watched until the panel is first shown in any window; every window then shows the same lists and open folders.
 - **Opening a file.** Click it: a new tab opens in the project's folder, titled with the file's name, running your terminal editor on it, such as `vim src/app.ts`. Quitting the editor closes the tab. A file deleted since the list was drawn opens nothing, and the list is read again.
 - **Which editor.** Settings › Core › Terminal editor, a command such as `nvim` or `micro`. Left empty, it is `$EDITOR` from your login shell, else `vi`.
 - **Right-click** a file for Open in Terminal Editor, Reveal in Finder and, when it is installed, Open in VS Code; a folder or a project for Reveal in Finder, Open in Finder and, when it is installed, Open in VS Code.

@@ -45,10 +45,17 @@ public final class FolderWatcher: FolderWatching, @unchecked Sendable {
         return parts.first != ".worktrees"
     }
 
+    /// `path` as the stream reports paths under it: realpath's answer. Foundation's resolving
+    /// drops `/private` (`/tmp/x` stays `/tmp/x`) while the stream says `/private/tmp/x/...`.
+    static func resolvedRoot(_ path: String) -> String {
+        guard let pointer = realpath(path, nil) else { return path }
+        defer { free(pointer) }
+        return String(cString: pointer)
+    }
+
     public func watch(_ path: String, onChange: @escaping @Sendable () -> Void) {
         stop()
-        let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
-        let box = Box(root: resolved, onChange: onChange)
+        let box = Box(root: Self.resolvedRoot(path), onChange: onChange)
         var context = FSEventStreamContext(version: 0, info: Unmanaged.passUnretained(box).toOpaque(),
                                            retain: nil, release: nil, copyDescription: nil)
         let callback: FSEventStreamCallback = { _, info, _, eventPaths, _, _ in

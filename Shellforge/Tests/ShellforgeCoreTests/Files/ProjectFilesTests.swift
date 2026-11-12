@@ -19,7 +19,7 @@ import Testing
     }
 
     private func paths(_ listing: ProjectFiles.Listing) -> [String]? {
-        guard case .git(let paths) = listing else { return nil }
+        guard case .git(let paths, _) = listing else { return nil }
         return paths.sorted()
     }
 
@@ -93,7 +93,20 @@ import Testing
         let head = try repo.git("rev-parse", "HEAD")
         try repo.git("update-index", "--add", "--cacheinfo", "160000,\(head),lib/sub")
         try FileManager.default.createDirectory(atPath: repo.path + "/lib/sub", withIntermediateDirectories: true)
-        #expect(paths(ProjectFiles.list(repo.path, launcher: repo.launcher)) == ["lib/sub/"])
+        let listing = ProjectFiles.list(repo.path, launcher: repo.launcher)
+        #expect(paths(listing) == ["lib/sub/"])
+        guard case .git(_, let submodules) = listing else { return }
+        #expect(submodules == ["lib/sub"], "the listing marks it as a submodule")
+    }
+
+    /// Without git (no Command Line Tools) there is no repository to show: the folder is listed.
+    @Test func aGitThatCannotBeLaunchedListsThePlainFolder() throws {
+        let folder = try plainFolder()
+        try write("README.md", in: folder)
+        let noTools = try plainFolder()
+        let launcher = CommandLauncher(resolve: { ResolvedEnvironment(variables: ["PATH": noTools], source: .loginShell("/bin/zsh")) })
+        #expect(ProjectFiles.list(folder, launcher: launcher)
+            == .folder([FileNode(name: "README.md", path: "README.md", isFolder: false, children: nil)]))
     }
 
     @Test func aBrokenRepositoryIsUnreadableNotAPlainFolder() throws {

@@ -8,13 +8,23 @@ public struct FileNode: Equatable, Sendable, Identifiable {
     public var isFolder: Bool
     /// Nil for a file, and for a folder listed lazily that has not been loaded yet.
     public var children: [FileNode]?
+    /// A repository of its own inside the project, whose files git does not list here; nil for
+    /// every other entry.
+    public var nested: Nested?
     public var id: String { path }
 
-    public init(name: String, path: String, isFolder: Bool, children: [FileNode]?) {
+    public enum Nested: Equatable, Sendable {
+        case submodule
+        /// An untracked repository.
+        case repository
+    }
+
+    public init(name: String, path: String, isFolder: Bool, children: [FileNode]?, nested: Nested? = nil) {
         self.name = name
         self.path = path
         self.isFolder = isFolder
         self.children = children
+        self.nested = nested
     }
 }
 
@@ -22,8 +32,9 @@ public struct FileNode: Equatable, Sendable, Identifiable {
 public enum FileTree {
     /// Folders before files, each group in Finder's order (`folder2` before `folder10`). The
     /// folders on the way to a path are made from it; a path ending in "/" is a folder with
-    /// nothing listed in it (git's untracked nested repository). Safe to call from any thread.
-    public static func build(_ paths: [String]) -> [FileNode] {
+    /// nothing listed in it: one of `submodules`, else git's untracked nested repository, and
+    /// marked as such. Safe to call from any thread.
+    public static func build(_ paths: [String], submodules: Set<String> = []) -> [FileNode] {
         let root = Folder()
         for path in paths {
             let isFolder = path.hasSuffix("/")
@@ -31,9 +42,9 @@ public enum FileTree {
             guard let last = parts.last else { continue }
             var folder = root
             for part in parts.dropLast() { folder = folder.folder(String(part)) }
-            if isFolder { _ = folder.folder(String(last)) } else { folder.files.insert(String(last)) }
+            if isFolder { folder.folder(String(last)).isRepository = true } else { folder.files.insert(String(last)) }
         }
-        return root.nodes(prefix: "")
+        return root.nodes(prefix: "", submodules: submodules)
     }
 
     /// Folders first, then files, each sorted as Finder sorts names.
@@ -49,6 +60,8 @@ public enum FileTree {
     private final class Folder {
         var folders: [String: Folder] = [:]
         var files: Set<String> = []
+        /// Listed with a trailing "/": a repository of its own.
+        var isRepository = false
 
         func folder(_ name: String) -> Folder {
             if let existing = folders[name] { return existing }
@@ -57,10 +70,12 @@ public enum FileTree {
             return made
         }
 
-        func nodes(prefix: String) -> [FileNode] {
+        func nodes(prefix: String, submodules: Set<String>) -> [FileNode] {
             let folderNodes = folders.map { name, folder in
                 let path = prefix + name
-                return FileNode(name: name, path: path, isFolder: true, children: folder.nodes(prefix: path + "/"))
+                let nested: FileNode.Nested? = folder.isRepository ? (submodules.contains(path) ? .submodule : .repository) : nil
+                return FileNode(name: name, path: path, isFolder: true, children: folder.nodes(prefix: path + "/", submodules: submodules),
+                                nested: nested)
             }
             let fileNodes = files.subtracting(folders.keys).map {
                 FileNode(name: $0, path: prefix + $0, isFolder: false, children: nil)

@@ -4,15 +4,17 @@ import ShellforgeCore
 import ShellforgeDesign
 import SwiftUI
 
-/// The two things a row can hand a folder to. VS Code is looked up once by bundle id, so its badge
-/// and menu items can simply be absent when it is not installed.
+/// The two things a row can hand a folder to, and VS Code a file. VS Code is looked up once by
+/// bundle id, so its badge and menu items can simply be absent when it is not installed.
 public enum OpenIn {
     public enum App: Equatable, Sendable { case finder, vsCode }
 
     public struct Item: Equatable, Sendable {
         public let title: String
         public let app: App
+        /// What is handed over: a folder, or a file when `isDirectory` is false.
         public let folder: String
+        public var isDirectory = true
     }
 
     /// The rows that hand a folder over.
@@ -36,6 +38,12 @@ public enum OpenIn {
             + (vsCodeInstalled ? [Item(title: "Open in VS Code", app: .vsCode, folder: folder)] : [])
     }
 
+    /// A file's Open in VS Code; none when VS Code is not installed.
+    public static func vsCodeItem(file: String, vsCodeInstalled: Bool) -> Item? {
+        guard vsCodeInstalled, !file.isEmpty else { return nil }
+        return Item(title: "Open in VS Code", app: .vsCode, folder: file, isDirectory: false)
+    }
+
     static let vsCodeBundleId = "com.microsoft.VSCode"
     /// Looked up once, as AiTerm does: an install while Shellforge runs shows at the next launch.
     static let vsCode: URL? = NSWorkspace.shared.urlForApplication(withBundleIdentifier: vsCodeBundleId)
@@ -43,7 +51,7 @@ public enum OpenIn {
 
     @MainActor
     static func open(_ item: Item) {
-        let url = URL(fileURLWithPath: item.folder, isDirectory: true)
+        let url = URL(fileURLWithPath: item.folder, isDirectory: item.isDirectory)
         switch item.app {
         case .finder: NSWorkspace.shared.open(url)
         case .vsCode:

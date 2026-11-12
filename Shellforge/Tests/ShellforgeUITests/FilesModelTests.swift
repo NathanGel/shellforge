@@ -1,3 +1,4 @@
+import Combine
 import XCTest
 @testable import ShellforgeCore
 import ShellforgeTestSupport
@@ -17,6 +18,7 @@ private final class FakeWatcher: FolderWatching, @unchecked Sendable {
 }
 
 /// Answers listings, counts them per path, and can hold the next one until the test lets it go.
+/// `readsDisk` lists the real folder instead of answering.
 private final class Lister: @unchecked Sendable {
     private let lock = NSLock()
     private var counts: [String: Int] = [:]
@@ -24,19 +26,23 @@ private final class Lister: @unchecked Sendable {
     private var answer = ["src/app.ts", "README.md"]
     private var hold: DispatchSemaphore?
     private let reached = DispatchSemaphore(value: 0)
+    private let readsDisk: Bool
 
-    func list(_ path: String) -> ProjectFiles.Listing {
+    init(readsDisk: Bool = false) { self.readsDisk = readsDisk }
+
+    func list(_ path: String, _ launcher: CommandLauncher) -> ProjectFiles.Listing {
         let (paths, gate): ([String], DispatchSemaphore?) = lock.withLock {
             counts[path, default: 0] += 1
             if Thread.isMainThread { offMain = false }
             defer { hold = nil }
             return (answer, hold)
         }
+        let listing = readsDisk ? ProjectFiles.list(path, launcher: launcher) : .git(paths)
         if let gate {
             reached.signal()
             gate.wait()
         }
-        return .git(paths)
+        return listing
     }
     func count(_ path: String) -> Int { lock.withLock { counts[path] ?? 0 } }
     var ranOffMain: Bool { lock.withLock { offMain } }
@@ -61,7 +67,7 @@ final class FilesModelTests: XCTestCase {
                        watchers: @escaping (FakeWatcher) -> Void = { _ in }) -> FilesModel {
         FilesModel(projects: projects, launcher: launcher, defaults: defaults,
                    watcher: { let w = FakeWatcher($0); watchers(w); return w },
-                   list: { path, _ in lister.list(path) })
+                   list: { path, launcher in lister.list(path, launcher) })
     }
 
     func testAChangeRefreshesThatProjectOnly() async {
@@ -234,5 +240,82 @@ final class FilesModelTests: XCTestCase {
         await files.refresh(project: project.id)
         guard case .tree(let top) = files.sections[0].state else { return XCTFail("no tree") }
         XCTAssertEqual(top.first?.children?.map { $0.path }, ["src/lib"])
+    }
+
+    func testHandedEventsAreNotKept() async {
+        var made: [String: FakeWatcher] = [:]
+        let files = model([demo]) { made[$0.path] = $0 }
+        for _ in 0..<100 { made[demo.path]!.fire() }
+        await files.settled()
+        XCTAssertEqual(files.pendingHops, 0)
+    }
+
+    /// A plain folder with `a/b/c.txt`.
+    private func nestedFolder() throws -> URL {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("files-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("a/b"), withIntermediateDirectories: true)
+        try "x".write(to: root.appendingPathComponent("a/b/c.txt"), atomically: true, encoding: .utf8)
+        return root
+    }
+
+    private func children(of folder: String, in files: FilesModel) -> [String]? {
+        guard case .tree(let nodes) = files.sections[0].state else { return nil }
+        var level = nodes
+        var found: FileNode?
+        for part in folder.split(separator: "/") {
+            found = level.first { $0.name == part }
+            level = found?.children ?? []
+        }
+        return found?.children?.map(\.path)
+    }
+
+    func testReopeningAParentLoadsItsOpenChildren() async throws {
+        let root = try nestedFolder()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = Project(name: "demo", path: root.path)
+        let files = model([project], lister: Lister(readsDisk: true))
+        await files.settled()
+        files.toggle(project: project.id, folder: "a")
+        files.toggle(project: project.id, folder: "a/b")
+        await files.refresh(project: project.id)
+        XCTAssertEqual(children(of: "a/b", in: files), ["a/b/c.txt"])
+        files.toggle(project: project.id, folder: "a")   // closed
+        try "y".write(to: root.appendingPathComponent("a/d.txt"), atomically: true, encoding: .utf8)
+        await files.refresh(project: project.id)
+        XCTAssertNil(children(of: "a", in: files), "a closed folder is not read")
+        files.toggle(project: project.id, folder: "a")   // open again
+        await files.loadChildren(project: project.id, folder: "a")
+        XCTAssertEqual(children(of: "a/b", in: files), ["a/b/c.txt"], "the open child was left empty")
+    }
+
+    func testAFolderOpenedDuringARefreshStaysLoaded() async throws {
+        let root = try nestedFolder()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = Project(name: "demo", path: root.path)
+        let lister = Lister(readsDisk: true)
+        let files = model([project], lister: lister)
+        await files.settled()
+        // The listing changes, so the late one is applied.
+        try "x".write(to: root.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+        let gate = lister.holdNext()
+        let held = Task { await files.refresh(project: project.id) }
+        await lister.waitUntilHeld()   // listed before `a` was opened
+        files.toggle(project: project.id, folder: "a")
+        await files.loadChildren(project: project.id, folder: "a")
+        XCTAssertEqual(children(of: "a", in: files), ["a/b"])
+        gate.signal()
+        await held.value
+        await files.settled()
+        XCTAssertEqual(children(of: "a", in: files), ["a/b"], "the late listing left the open folder empty")
+    }
+
+    func testARefreshThatChangesNothingPublishesNothing() async {
+        let files = model([demo])
+        await files.settled()
+        var published = 0
+        let watching = files.$sections.dropFirst().sink { _ in published += 1 }
+        await files.refresh(project: demo.id)
+        watching.cancel()
+        XCTAssertEqual(published, 0)
     }
 }

@@ -18,7 +18,7 @@ public struct FilesSection: Equatable, Identifiable {
 
 /// The Files panel's trees, one per workspace project. Each project's folder is watched; a change
 /// there lists that project again, off the main actor. Which folders are open is remembered per
-/// project, on this Mac.
+/// project, on this Mac. The app has one, which every window's panel draws.
 @MainActor
 public final class FilesModel: ObservableObject {
     @Published public private(set) var sections: [FilesSection] = []
@@ -29,6 +29,8 @@ public final class FilesModel: ObservableObject {
 
     private let launcher: CommandLauncher
     private let defaults: UserDefaults
+    /// `expandedKey`'s value, read once: the app has one model, so nothing else writes it.
+    private var stored: [String: [String]]
     private let makeWatcher: (String) -> FolderWatching
     private let list: @Sendable (String, CommandLauncher) -> ProjectFiles.Listing
     private var watchers: [UUID: FolderWatching] = [:]
@@ -44,14 +46,27 @@ public final class FilesModel: ObservableObject {
     private var loops: [UUID: Task<Void, Never>] = [:]
     private var dirty: Set<UUID> = []
     private var loopTokens: [UUID: Int] = [:]
-    /// Events handed from the watcher's queue to the main actor, so tests can await them.
+    /// Events handed from the watcher's queue to the main actor, so tests can await them. Each
+    /// hop leaves once it has run, so a long session keeps none.
     private let hops = Hops()
 
     private final class Hops: @unchecked Sendable {
         private let lock = NSLock()
-        private var tasks: [Task<Void, Never>] = []
-        func add(_ task: Task<Void, Never>) { lock.withLock { tasks.append(task) } }
-        func drain() -> [Task<Void, Never>] { lock.withLock { defer { tasks = [] }; return tasks } }
+        private var next = 0
+        private var tasks: [Int: Task<Void, Never>] = [:]
+        /// Hops that finished before they were added: `add` then keeps nothing.
+        private var finished: Set<Int> = []
+        /// The id the next hop's task is made with, taken before the task is made.
+        func reserve() -> Int { lock.withLock { next += 1; return next } }
+        func add(_ id: Int, _ task: Task<Void, Never>) {
+            lock.withLock { if finished.remove(id) == nil { tasks[id] = task } }
+        }
+        func finish(_ id: Int) {
+            lock.withLock { if tasks.removeValue(forKey: id) == nil { finished.insert(id) } }
+        }
+        /// The hops still kept.
+        func pending() -> [Task<Void, Never>] { lock.withLock { Array(tasks.values) } }
+        var count: Int { lock.withLock { tasks.count } }
     }
 
     /// `list` is for tests that must see where listing runs; it defaults to `ProjectFiles.list`.
@@ -60,6 +75,7 @@ public final class FilesModel: ObservableObject {
                 list: @escaping @Sendable (String, CommandLauncher) -> ProjectFiles.Listing = { ProjectFiles.list($0, launcher: $1) }) {
         self.launcher = launcher
         self.defaults = defaults
+        self.stored = defaults.dictionary(forKey: Self.expandedKey) as? [String: [String]] ?? [:]
         self.makeWatcher = watcher
         self.list = list
         update(projects: projects)
@@ -100,7 +116,11 @@ public final class FilesModel: ObservableObject {
             watchers[project.id] = watcher
             let id = project.id
             watcher.watch(project.path) { [weak self, hops] in
-                hops.add(Task { @MainActor in self?.fileEvent(project: id) })
+                let hop = hops.reserve()
+                hops.add(hop, Task { @MainActor in
+                    self?.fileEvent(project: id)
+                    hops.finish(hop)
+                })
             }
             startLoop(project: id)
         }
@@ -123,43 +143,53 @@ public final class FilesModel: ObservableObject {
     }
 
     public func toggle(project: UUID, folder: String) {
-        var all = defaults.dictionary(forKey: Self.expandedKey) as? [String: [String]] ?? [:]
-        var paths = all[project.uuidString] ?? []
+        var paths = stored[project.uuidString] ?? []
         if let index = paths.firstIndex(of: folder) { paths.remove(at: index) } else { paths.append(folder) }
-        all[project.uuidString] = paths.isEmpty ? nil : paths
-        defaults.set(all, forKey: Self.expandedKey)
         objectWillChange.send()
+        stored[project.uuidString] = paths.isEmpty ? nil : paths
+        defaults.set(stored, forKey: Self.expandedKey)
     }
 
-    private func expanded(_ project: UUID) -> [String] {
-        (defaults.dictionary(forKey: Self.expandedKey) as? [String: [String]])?[project.uuidString] ?? []
-    }
+    private func expanded(_ project: UUID) -> [String] { stored[project.uuidString] ?? [] }
 
     // -- listing --------------------------------------------------------------------------
 
-    /// Lists the project again; when it returns the section shows the newest listing started.
+    /// Lists the project again; when it returns the section shows the newest listing started. A
+    /// listing that changes nothing is not published, so no window draws the panel again for it.
     public func refresh(project: UUID) async {
-        guard let epoch = epochs[project], let path = sections.first(where: { $0.id == project })?.project.path else { return }
+        guard let epoch = epochs[project], let section = sections.first(where: { $0.id == project }) else { return }
+        let path = section.project.path, shown = section.state
         counter += 1
         let generation = counter
         let openFolders = expanded(project).filter { !$0.isEmpty }
         let list = self.list, launcher = self.launcher
-        let state = await BackgroundWork.run { () -> FilesSection.State in
-            Self.state(for: list(path, launcher), path: path, openFolders: openFolders)
+        let state = await BackgroundWork.run { () -> FilesSection.State? in
+            let state = Self.state(for: list(path, launcher), path: path, openFolders: openFolders)
+            return state == shown ? nil : state
         }
         guard !Task.isCancelled, epochs[project] == epoch, generation > applied[project, default: 0],
               let index = sections.firstIndex(where: { $0.id == project }) else { return }
         applied[project] = generation
-        sections[index].state = state
+        if let state { sections[index].state = state }
+        // A folder opened while this listing ran was not read with it, and may have lost what its
+        // own load put in: one more refresh reads it.
+        if expanded(project).contains(where: { !$0.isEmpty && !openFolders.contains($0) }) { refreshSoon(project: project) }
     }
 
     /// Fills in a folder of a project that is not in a repository, which is listed one level at a
-    /// time. Nothing to do for a folder that is already loaded, or in a repository.
+    /// time, and its subfolders still stored open. Nothing to do for a folder that is already
+    /// loaded, or in a repository.
     public func loadChildren(project: UUID, folder: String) async {
         guard let epoch = epochs[project], let section = sections.first(where: { $0.id == project }),
               case .tree(let nodes) = section.state, Self.node(at: folder, in: nodes)?.children == nil else { return }
         let path = section.project.path
-        let children = await BackgroundWork.run { ProjectFiles.children(of: folder, in: path) }
+        let openFolders = expanded(project)
+        let children = await BackgroundWork.run { () -> [FileNode] in
+            var tree = nodes
+            Self.set(ProjectFiles.children(of: folder, in: path), at: folder, in: &tree)
+            Self.fill(&tree, openFolders: openFolders, under: folder, path: path)
+            return Self.node(at: folder, in: tree)?.children ?? []
+        }
         guard !Task.isCancelled, epochs[project] == epoch, let index = sections.firstIndex(where: { $0.id == project }),
               case .tree(var current) = sections[index].state, Self.node(at: folder, in: current)?.children == nil else { return }
         Self.set(children, at: folder, in: &current)
@@ -168,8 +198,11 @@ public final class FilesModel: ObservableObject {
 
     /// Waits until every event the watchers have reported has been taken in. For tests.
     func eventsDelivered() async {
-        for hop in hops.drain() { await hop.value }
+        for hop in hops.pending() { await hop.value }
     }
+
+    /// The events handed to the main actor that have not run yet. For tests.
+    var pendingHops: Int { hops.count }
 
     /// Waits until the events reported so far have been taken in and their refreshes are done.
     /// For tests.
@@ -180,6 +213,11 @@ public final class FilesModel: ObservableObject {
 
     private func fileEvent(project: UUID) {
         guard watchers[project] != nil else { return }   // a late event for a project that is gone
+        refreshSoon(project: project)
+    }
+
+    /// One more refresh after the running one, or one now.
+    private func refreshSoon(project: UUID) {
         if loops[project] != nil { dirty.insert(project) } else { startLoop(project: project) }
     }
 
@@ -206,19 +244,31 @@ public final class FilesModel: ObservableObject {
 
     private nonisolated static func state(for listing: ProjectFiles.Listing, path: String, openFolders: [String]) -> FilesSection.State {
         switch listing {
-        case .git(let paths):
-            return .tree(FileTree.build(paths))
+        case .git(let paths, let submodules):
+            return .tree(FileTree.build(paths, submodules: submodules))
         case .folder(var nodes):
-            // A refresh must not close what was open: open folders are read again, shallowest first.
-            for folder in openFolders.sorted(by: { $0.split(separator: "/").count < $1.split(separator: "/").count }) {
-                guard node(at: folder, in: nodes)?.isFolder == true else { continue }
-                set(ProjectFiles.children(of: folder, in: path), at: folder, in: &nodes)
-            }
+            // A refresh must not close what was open.
+            fill(&nodes, openFolders: openFolders, under: nil, path: path)
             return .tree(nodes)
         case .missing:
             return .missing
         case .unreadable(let reason):
             return .unreadable(reason)
+        }
+    }
+
+    /// Reads the open folders of a folder that is not in a repository, shallowest first: every
+    /// one when `folder` is nil, else those inside `folder`. One whose parent is not loaded stays
+    /// unloaded, and is read when its parent is opened.
+    nonisolated static func fill(_ nodes: inout [FileNode], openFolders: [String], under folder: String?, path: String) {
+        let inside = openFolders.filter { open in
+            guard !open.isEmpty else { return false }
+            guard let folder else { return true }
+            return open.hasPrefix(folder + "/")
+        }
+        for open in inside.sorted(by: { $0.split(separator: "/").count < $1.split(separator: "/").count }) {
+            guard node(at: open, in: nodes)?.isFolder == true else { continue }
+            set(ProjectFiles.children(of: open, in: path), at: open, in: &nodes)
         }
     }
 

@@ -12,7 +12,7 @@ it and refuses to release a version that has none.
 ### Added
 
 - **Activity bar.** A column of icons down the sidebar's left edge switches its panel: Sessions,
-  the sidebar as it was, and Metrics. Each window shows its own panel; drag the icons to reorder
+  the sidebar as it was; Metrics; and Files. Each window shows its own panel; drag the icons to reorder
   them (VoiceOver offers Move Up and Move Down), and every window keeps the same order after a
   restart. Settings is the gear at its foot.
   View › Show Sessions (⌃⌘E), Show Metrics (⌃⌘M) and Show Files (⌃⌘I) switch panels from the keyboard.

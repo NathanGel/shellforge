@@ -82,12 +82,15 @@ struct FilesPanel: View {
         /// What the section says in place of its tree: loading, its folder gone, why it can't be read.
         case message(project: UUID, text: String, warns: Bool)
         case node(Project, FileNode, depth: Int, open: Bool)
+        /// Under an open folder with nothing listed in it, at its children's depth: what it is.
+        case note(project: UUID, folder: String, text: String, depth: Int)
 
         var id: String {
             switch self {
             case .project(let project, _): FilesPanel.rowMark(project: project.id, path: "")
             case .message(let project, _, _): "message:" + project.uuidString
             case .node(let project, let node, _, _): FilesPanel.rowMark(project: project.id, path: node.path)
+            case .note(let project, let folder, _, _): "note:\(project.uuidString):\(folder)"
             }
         }
     }
@@ -95,6 +98,9 @@ struct FilesPanel: View {
     static let loadingText = "Loading…"
     static let missingText = "Folder not found"
     static let emptyText = "No files"
+    static let emptyFolderText = "Empty folder"
+    static let submoduleText = "Submodule"
+    static let repositoryText = "Repository"
 
     /// The rows drawn: a closed section or folder contributes no rows below its own.
     static func rows(_ sections: [FilesSection], isOpen: (UUID, String) -> Bool) -> [Row] {
@@ -119,6 +125,15 @@ struct FilesPanel: View {
             let open = node.isFolder && isOpen(project.id, node.path)
             let row = Row.node(project, node, depth: depth, open: open)
             guard open, let children = node.children else { return [row] }
+            if children.isEmpty {
+                // Not a folder still loading: say what it is.
+                let text = switch node.nested {
+                case .submodule: submoduleText
+                case .repository: repositoryText
+                case nil: emptyFolderText
+                }
+                return [row, .note(project: project.id, folder: node.path, text: text, depth: depth + 1)]
+            }
             return [row] + treeRows(children, project: project, depth: depth + 1, isOpen: isOpen)
         }
     }
@@ -153,6 +168,11 @@ struct FilesPanel: View {
             FileRow(project: project, node: node, depth: depth, open: open,
                     activate: { activate(node, in: project) },
                     openInEditor: { openFile(node, in: project) })
+                .background(ViewMark(name: row.id))
+        case .note(_, _, let text, let depth):
+            RowCaption(text)
+                .frame(maxWidth: .infinity, minHeight: scale(Size.menuRow), alignment: .leading)
+                .padding(.leading, FileRow.leadingInset(depth: depth, scale) + SidebarRowLayout.chevronWidth(scale) + scale(Space.base))
                 .background(ViewMark(name: row.id))
         }
     }
@@ -239,6 +259,11 @@ private struct FileRow: View {
 
     private var path: String { URL(fileURLWithPath: project.path).appendingPathComponent(node.path).path }
 
+    /// Where a row at `depth` starts: its chevron's column.
+    static func leadingInset(depth: Int, _ scale: InterfaceScale) -> CGFloat {
+        scale(Space.base) + scale(Space.block) * CGFloat(depth + 1)
+    }
+
     var body: some View {
         HStack(spacing: scale(Space.base)) {
             HeaderChevron(collapsed: !open).frame(width: SidebarRowLayout.chevronWidth(scale))
@@ -249,7 +274,7 @@ private struct FileRow: View {
             Spacer(minLength: scale(Space.tight))
         }
         .frame(height: scale(Size.menuRow))
-        .padding(.leading, scale(Space.base) + scale(Space.block) * CGFloat(depth + 1))
+        .padding(.leading, Self.leadingInset(depth: depth, scale))
         .padding(.trailing, SidebarRowLayout.trailingInset(scale))
         .modifier(RowPill(selected: false))
         .contentShape(Rectangle())
@@ -267,20 +292,15 @@ private struct FileRow: View {
         } else {
             Button(Self.openTitle, action: openInEditor)
             Button(Self.revealTitle) { Self.reveal(path) }
-            if OpenIn.vsCodeInstalled {
+            if let item = OpenIn.vsCodeItem(file: path, vsCodeInstalled: OpenIn.vsCodeInstalled) {
                 Divider()
-                Button("Open in VS Code") { Self.openInVSCode(path) }
+                Button(item.title) { OpenIn.open(item) }
             }
         }
     }
 
     @MainActor static func reveal(_ path: String) {
         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
-    }
-
-    @MainActor private static func openInVSCode(_ path: String) {
-        guard let app = OpenIn.vsCode else { return }
-        NSWorkspace.shared.open([URL(fileURLWithPath: path)], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
     }
 }
 
@@ -308,15 +328,18 @@ private struct FileRowAccessibility: ViewModifier {
     }
 }
 
-/// The Files panel's model, made the first time the panel is shown in its window: until then no
-/// project is listed or watched for it.
+/// The app's one Files panel model, made the first time the panel is shown in any window: until
+/// then no project is listed or watched. Every window's panel draws it; each opens files in its
+/// own window.
 @MainActor
 public final class FilesHolder {
     private let make: @MainActor () -> FilesModel
-    private var made: FilesModel?
+    /// The model, once made; nil until then. Reading it makes nothing.
+    private(set) var made: FilesModel?
 
     public init(_ make: @escaping @MainActor () -> FilesModel) { self.make = make }
 
+    /// The model, made now if it has not been.
     var model: FilesModel {
         if let made { return made }
         let model = make()

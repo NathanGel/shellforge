@@ -23,8 +23,17 @@ import Testing
     @Test func aTrailingSlashIsAnEmptyFolder() {
         // git lists an untracked nested repository as `vendor/lib/`.
         #expect(FileTree.build(["vendor/lib/"]) == [FileNode(name: "vendor", path: "vendor", isFolder: true, children: [
-            FileNode(name: "lib", path: "vendor/lib", isFolder: true, children: []),
+            FileNode(name: "lib", path: "vendor/lib", isFolder: true, children: [], nested: .repository),
         ])])
+    }
+
+    @Test func aSubmoduleIsMarked() {
+        #expect(FileTree.build(["lib/sub/", "README.md"], submodules: ["lib/sub"]) == [
+            FileNode(name: "lib", path: "lib", isFolder: true, children: [
+                FileNode(name: "sub", path: "lib/sub", isFolder: true, children: [], nested: .submodule),
+            ]),
+            FileNode(name: "README.md", path: "README.md", isFolder: false, children: nil),
+        ])
     }
 
     @Test func aLargeListingBuildsQuickly() {
