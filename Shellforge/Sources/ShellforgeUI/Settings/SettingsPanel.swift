@@ -13,6 +13,7 @@ struct SettingsPanel: View {
     @ObservedObject var backpack: BackpackController
     let integrations: IntegrationSettingsModel
     var environment: EnvironmentModel?
+    var terminalEditor: TerminalEditorSettings?
     let terminalMatch: TerminalMatchSettings
     @ObservedObject var feedback: FeedbackPrompt
     @ObservedObject var agentDefaults: AgentDefaultsSettingsModel
@@ -22,6 +23,7 @@ struct SettingsPanel: View {
     /// This sheet's own switch, from what is saved when it opens.
     @State private var matchDraft = false
     @State private var feedbackDraft = true
+    @State private var editorDraft = ""
     /// The agent form open in the panel, if one is.
     @State private var agentForm: AgentFormModel?
 
@@ -40,7 +42,7 @@ struct SettingsPanel: View {
         .task { integrations.testConfigured() }
         .task { await backpack.refreshSetup() }
         .task { await agentDefaults.load() }
-        .onAppear { matchDraft = terminalMatch.isOn; feedbackDraft = feedback.isEnabled }
+        .onAppear { matchDraft = terminalMatch.isOn; feedbackDraft = feedback.isEnabled; editorDraft = terminalEditor?.saved ?? "" }
         // An agent added, changed or removed here shows in the defaults list at once.
         .onReceive(agents.$rows.dropFirst()) { rows in
             agentDefaults.update(agents: rows.filter(\.installed).map(\.agent))
@@ -60,6 +62,7 @@ struct SettingsPanel: View {
                     TerminalMatchCard(isOn: $matchDraft)
                     SettingsRowDivider()
                     FeedbackPromptCard(isOn: $feedbackDraft)
+                    if let terminalEditor { SettingsRowDivider(); TerminalEditorCard(placeholder: terminalEditor.placeholder, draft: $editorDraft) }
                 }
                 SettingsSection("Agents") {
                     AgentsCard(model: agents, open: { agentForm = $0 })
@@ -93,6 +96,7 @@ struct SettingsPanel: View {
         guard failure == nil else { return }
         terminalMatch.save(matchDraft)
         feedback.save(feedbackDraft)
+        terminalEditor?.save(editorDraft)
         agentDefaults.save()
         Task { @MainActor in close() }
     }

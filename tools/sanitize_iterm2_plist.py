@@ -52,6 +52,7 @@ TOP-LEVEL keys
                                            remote host always allowed to use it2)
   Coprocess MRU, NoSyncCoprocessCommandsToIgnoreErrorOutput,
     FileDropCoprocess, UrlHandlerCommand   user shell commands
+  ShellforgeTerminalEditor ............... Shellforge's editor command (may hold arguments or paths)
   NoSyncKnownHosts ....................... user@host:port list
   NoSyncWorkgroupGitBaseRecents .......... git base/ref recents
   NoSyncRecentArchives ................... archive file paths
@@ -193,6 +194,7 @@ CONTENT_KEYS = {
     "NoSyncCoprocessCommandsToIgnoreErrorOutput": REDACT_V,
     "FileDropCoprocess": REDACT_V,
     "UrlHandlerCommand": REDACT_V,
+    "ShellforgeTerminalEditor": REDACT_V,
     "AlternateSSHIntegrationScript": REDACT_V,
     "SshSchemePath": REDACT_V,
     # text sent to the terminal / key-binding & action parameters

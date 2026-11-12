@@ -649,7 +649,7 @@ struct SidebarView: View {
                                     prompter: model.prompter, tools: agentTools, store: model.$sessions.eraseToAnyPublisher(),
                                     changed: agentsChanged)
         sheet.present(over: anchor.window) { dismiss in
-            SettingsPanel(backpack: backpack, integrations: integrations, environment: environment, terminalMatch: terminalMatch, feedback: feedback,
+            SettingsPanel(backpack: backpack, integrations: integrations, environment: environment, terminalEditor: model.terminalEditorSettings(), terminalMatch: terminalMatch, feedback: feedback,
                           agentDefaults: agentDefaults, agents: agents, close: dismiss)
         }
     }
