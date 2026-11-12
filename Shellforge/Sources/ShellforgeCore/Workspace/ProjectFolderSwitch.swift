@@ -5,7 +5,7 @@ import Foundation
 public enum ProjectFolderSwitch {
     /// What stands in the way of the switch, found before anything changes.
     public enum Obstacle: Equatable, Sendable {
-        /// No local branch of that name, and none on origin for git to start one from.
+        /// No local branch of that name, and none on a remote for git to start one from.
         case missing
         /// Another worktree has it checked out, and git keeps a branch to one worktree.
         case elsewhere(path: String)
@@ -23,9 +23,12 @@ public enum ProjectFolderSwitch {
         if let other = try repo.worktrees().first(where: { $0.branch == branch && ExistingWorktrees.resolved($0.path) != here }) {
             return .elsewhere(path: other.path)
         }
-        let local = try repo.ask(["rev-parse", "--verify", "--quiet", "refs/heads/\(branch)"], none: [1])
-        let remote = try repo.ask(["rev-parse", "--verify", "--quiet", "refs/remotes/origin/\(branch)"], none: [1])
-        return local == nil && remote == nil ? .missing : nil
+        if try repo.ask(["rev-parse", "--verify", "--quiet", "refs/heads/\(branch)"], none: [1]) != nil { return nil }
+        // On any remote, git's `switch` makes the local branch tracking it.
+        for remote in try repo.run(["remote"]).split(separator: "\n").map(String.init) {
+            if try repo.ask(["rev-parse", "--verify", "--quiet", "refs/remotes/\(remote)/\(branch)"], none: [1]) != nil { return nil }
+        }
+        return .missing
     }
 
     /// Switches the folder to `branch`, made from the current commit when `create`. With `stash`, the

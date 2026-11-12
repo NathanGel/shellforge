@@ -1,3 +1,4 @@
+import Combine
 import XCTest
 @testable import ShellforgeCore
 import ShellforgeTestSupport
@@ -226,6 +227,81 @@ final class GitModelTests: XCTestCase {
         await git.settled()
         XCTAssertEqual(git.sections.map(\.title), ["demo"])
         XCTAssertTrue(git.sections[0].tasks.isEmpty)
+    }
+
+    /// A clean task whose branch is ahead of its upstream is listed: it has commits to push.
+    func testATaskAheadOfItsUpstreamIsListed() async throws {
+        let scratch = try Scratch()
+        let demo = try scratch.project("demo")
+        let origin = "\(scratch.root)/origin.git"
+        try scratch.git(["init", "-q", "--bare", "-b", "main", origin], in: scratch.root)
+        try scratch.git(["remote", "add", "origin", origin], in: demo.path)
+        let task = try scratch.task("Login page", slug: "feature-login-page", branch: "feature/login-page", of: demo)
+        try scratch.git(["push", "-q", "-u", "origin", "feature/login-page"], in: task.worktreePath)
+        let git = model(scratch, [demo], tasks: [task])
+        await git.settled()
+        XCTAssertTrue(git.sections[0].tasks.isEmpty, "pushed and clean")
+        try scratch.git(["commit", "-q", "--allow-empty", "-m", "login"], in: task.worktreePath)
+        await git.refresh(.task(task.id))
+        XCTAssertEqual(git.sections[0].tasks.map(\.title), ["Login page"])
+    }
+
+    /// A clean task with no upstream is listed while it has commits its base branch lacks.
+    func testATaskWithUnpublishedCommitsIsListed() async throws {
+        let scratch = try Scratch()
+        let demo = try scratch.project("demo")
+        let task = try scratch.task("Login page", slug: "feature-login-page", branch: "feature/login-page", of: demo)
+        try scratch.git(["commit", "-q", "--allow-empty", "-m", "login"], in: task.worktreePath)
+        let git = model(scratch, [demo], tasks: [task])
+        await git.settled()
+        XCTAssertEqual(git.sections[0].tasks.map(\.title), ["Login page"])
+        XCTAssertEqual(status(git.sections[0].tasks.first)?.hasChanges, false)
+    }
+
+    /// A clean task whose action failed stays listed, so its problem is seen.
+    func testATaskWithAProblemIsListed() async throws {
+        let scratch = try Scratch()
+        let demo = try scratch.project("demo")
+        let task = try scratch.task("Login page", slug: "feature-login-page", branch: "feature/login-page", of: demo)
+        let git = model(scratch, [demo], tasks: [task])
+        await git.settled()
+        XCTAssertTrue(git.sections[0].tasks.isEmpty)
+        await git.perform(.push, in: .task(task.id))
+        XCTAssertEqual(git.sections[0].tasks.map(\.title), ["Login page"], "a push with no origin failed out of sight")
+        XCTAssertNotNil(git.sections[0].tasks.first?.problem)
+    }
+
+    /// Typing a message changes its draft, not the model's sections.
+    func testTypingAMessageDoesNotRepublishTheSections() async throws {
+        let scratch = try Scratch()
+        let demo = try scratch.project("demo")
+        let git = model(scratch, [demo])
+        await git.settled()
+        let id = GitRepoID.project(demo.id)
+        var changes = 0
+        let watch = git.objectWillChange.sink { changes += 1 }
+        var drafted = 0
+        let draftWatch = git.draft(id).objectWillChange.sink { drafted += 1 }
+        git.setCommitMessage("Add the login page", for: id)
+        XCTAssertEqual(changes, 0)
+        XCTAssertEqual(drafted, 1)
+        XCTAssertEqual(git.draft(id).text, "Add the login page")
+        _ = (watch, draftWatch)
+    }
+
+    /// The workspace's projects and tasks reach the model as the host wires it: `follow`.
+    func testTheModelFollowsTheWorkspace() async throws {
+        let scratch = try Scratch()
+        let demo = try scratch.project("demo")
+        let document = WorkspaceDocument(store: WorkspaceStore(folder: URL(fileURLWithPath: "\(scratch.root)/data")))
+        let git = model(scratch, [])
+        git.follow(document.$workspace)
+        XCTAssertTrue(git.sections.isEmpty)
+        try document.update { $0.projects.append(demo) }
+        await git.settled()
+        XCTAssertEqual(git.sections.map(\.title), ["demo"])
+        try document.update { $0.projects.removeAll() }
+        XCTAssertTrue(git.sections.isEmpty)
     }
 
     func testActionsOnOneRepositoryRunOneAtATime() async throws {

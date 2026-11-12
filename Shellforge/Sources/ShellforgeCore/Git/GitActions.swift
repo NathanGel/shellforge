@@ -1,5 +1,20 @@
 import Foundation
 
+/// A branch Switch Branch… offers: a local one, or one only on a remote, shown as
+/// `<remote>/<name>`, which switching to makes a local `<name>` tracking it.
+public struct GitBranch: Equatable, Hashable, Sendable {
+    public var title: String
+    /// The local branch the folder ends on.
+    public var name: String
+    public var remote: String?
+
+    public init(title: String, name: String, remote: String?) {
+        self.title = title
+        self.name = name
+        self.remote = remote
+    }
+}
+
 /// What the Git panel does to a repository. Every function blocks: callers run them off the main
 /// actor. A failure throws `GitFailure` in plain words; git's own stderr goes to the error log.
 public enum GitActions {
@@ -7,18 +22,38 @@ public enum GitActions {
     static let remoteTimeout: TimeInterval = 60
     static let commitTimeout: TimeInterval = 120
 
+    /// A file's path as a pathspec git takes literally: `app/[id]/page.tsx` is that file, never a
+    /// glob that also matches `app/i/page.tsx`.
+    public static func literal(_ path: String) -> String { ":(literal)" + path }
+
     public static func stage(_ paths: [String], in repo: String, launcher: CommandLauncher) throws {
         guard !paths.isEmpty else { return }
-        try run(["add", "-A", "--"] + paths, in: repo, action: "stage", launcher: launcher)
+        try run(["add", "-A", "--"] + paths.map(literal), in: repo, action: "stage", launcher: launcher)
+    }
+
+    /// Stages every change, task worktrees left out, with no path list on the command line.
+    public static func stageAll(in repo: String, launcher: CommandLauncher) throws {
+        try run(["add", "-A", "--", ".", ":(exclude).worktrees"], in: repo, action: "stage", launcher: launcher)
+    }
+
+    /// Unstages everything; on an unborn branch the index entries are dropped instead.
+    public static func unstageAll(in repo: String, launcher: CommandLauncher) throws {
+        let unborn = try isUnborn(repo, action: "unstage", launcher: launcher)
+        let args = unborn ? ["rm", "--cached", "-r", "-q", "-f", "--", "."] : ["restore", "--staged", "--", "."]
+        try run(args, in: repo, action: "unstage", launcher: launcher)
+    }
+
+    private static func isUnborn(_ repo: String, action: String, launcher: CommandLauncher) throws -> Bool {
+        try run(["rev-parse", "--verify", "-q", "HEAD"], in: repo, action: action, launcher: launcher, allowFailure: true).status != 0
     }
 
     /// `git restore --staged`, which needs a commit to restore from; on an unborn branch the index
     /// entries are dropped instead.
     public static func unstage(_ paths: [String], in repo: String, launcher: CommandLauncher) throws {
         guard !paths.isEmpty else { return }
-        let unborn = try run(["rev-parse", "--verify", "-q", "HEAD"], in: repo, action: "unstage", launcher: launcher, allowFailure: true).status != 0
+        let unborn = try isUnborn(repo, action: "unstage", launcher: launcher)
         let args = unborn ? ["rm", "--cached", "-r", "-q", "-f", "--"] : ["restore", "--staged", "--"]
-        try run(args + paths, in: repo, action: "unstage", launcher: launcher)
+        try run(args + paths.map(literal), in: repo, action: "unstage", launcher: launcher)
     }
 
     /// Unstages `change`; a rename takes both its paths, so the old path's deletion goes too.
@@ -44,7 +79,7 @@ public enum GitActions {
             throw GitFailure(message: "Resolve this file’s conflict instead of discarding it.")
         }
         if isIntentToAdd(change) {
-            try run(["rm", "--cached", "-q", "--", change.path], in: repo, action: "discard", launcher: launcher)
+            try run(["rm", "--cached", "-q", "--", literal(change.path)], in: repo, action: "discard", launcher: launcher)
         }
         if discardTrashes(change) {
             let url = URL(fileURLWithPath: repo).appendingPathComponent(change.path)
@@ -55,11 +90,11 @@ public enum GitActions {
                 throw GitFailure(message: "Couldn’t move \(change.path) to the Trash.")
             }
             if change.letter == .renamed, let original = change.originalPath {
-                try run(["restore", "--worktree", "--", original], in: repo, action: "discard", launcher: launcher)
+                try run(["restore", "--worktree", "--", literal(original)], in: repo, action: "discard", launcher: launcher)
             }
             return
         }
-        try run(["restore", "--worktree", "--", change.path], in: repo, action: "discard", launcher: launcher)
+        try run(["restore", "--worktree", "--", literal(change.path)], in: repo, action: "discard", launcher: launcher)
     }
 
     /// Commits what is staged; with nothing staged, everything (untracked files included, task
@@ -112,7 +147,7 @@ public enum GitActions {
     }
 
     /// Local branches, then remote ones; `origin/HEAD` and remote copies of a local name are left out.
-    public static func branches(in repo: String, launcher: CommandLauncher) throws -> [String] {
+    public static func branches(in repo: String, launcher: CommandLauncher) throws -> [GitBranch] {
         let out = try run(["for-each-ref", "--format=%(refname:short)", "refs/heads", "refs/remotes"],
                           in: repo, action: "branches", launcher: launcher)
         let all = out.stdout.split(separator: "\n").map(String.init)
@@ -124,19 +159,28 @@ public enum GitActions {
         }
         // `origin/HEAD` shortens to plain `origin`: not a branch.
         let locals = all.filter { remote($0) == nil && !remotes.contains($0) }
-        let localSet = Set(locals)
-        let remoteOnly = all.filter { name in
-            guard let short = remote(name) else { return false }
-            return short != "HEAD" && !localSet.contains(short)
+        var listed = Set(locals)
+        var remoteOnly: [GitBranch] = []
+        for name in all {
+            // One entry per local name: a branch on two remotes is listed once, from the first.
+            guard let short = remote(name), short != "HEAD", listed.insert(short).inserted else { continue }
+            remoteOnly.append(GitBranch(title: name, name: short, remote: String(name.prefix(name.count - short.count - 1))))
         }
-        return locals + remoteOnly
+        return locals.map { GitBranch(title: $0, name: $0, remote: nil) } + remoteOnly
     }
 
-    /// The command line that shows `change` in a terminal.
+    /// The command line that shows `change` in a terminal. Paths are literal pathspecs; a staged
+    /// rename names both its paths, so it shows as a rename.
     public static func diffLine(for change: GitChange, staged: Bool) -> String {
-        let path = AgentCommand.shellWord(change.path)
-        if change.letter == .untracked { return "git diff --no-index -- /dev/null \(path)" }
-        return "git diff\(staged ? " --staged" : "") -- \(path)"
+        if change.letter == .untracked {
+            // `--no-index` compares two files, not pathspecs.
+            return "git diff --no-index -- /dev/null \(AgentCommand.shellWord(change.path))"
+        }
+        let word = { AgentCommand.shellWord(literal($0)) }
+        if staged, change.letter == .renamed, let original = change.originalPath {
+            return "git diff --staged -M -- \(word(original)) \(word(change.path))"
+        }
+        return "git diff\(staged ? " --staged" : "") -- \(word(change.path))"
     }
 
     /// A refusal of `action`, from git's stderr (read under `LC_ALL=C`), in words a person can act on.

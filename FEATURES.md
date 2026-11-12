@@ -275,20 +275,21 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
 
 ## Git
 
-- **Sections.** The Git panel has one section per project, in the order Sessions shows them, and under each project a section for each of its tasks whose worktree has changes. Click a section's row to fold or unfold it.
+- **Sections.** The Git panel has one section per project, in the order Sessions shows them, and under each project a section for each of its tasks with something to do: changes, commits ahead of its upstream, commits its base branch lacks on a branch not yet published, or a problem. Click a section's row to fold or unfold it; folding is kept per window until the app quits.
   - The branch line shows the branch and how far it is ahead of and behind its upstream, such as `main ↑2 ↓1`; or “No commits yet”, “Detached at abc1234”, “Not a git repository” or “Folder not found”. A spinner shows while git works, and a problem is shown under the line, in red, until the next action.
   - Changes fall in three lists: Merge Changes (conflicts, marked `!`), Staged Changes and Changes (untracked files included, marked `U`). Each row shows the status letter, the file's name and its folder. Task worktrees, under `.worktrees/`, are never listed.
-- **Diffs in a tab.** Click a file to open its diff in a new tab in the repository, titled “Diff: app.ts”, running `git diff -- src/app.ts` (`--staged` for a staged file). The tab stays at the shell after the pager.
+- **Diffs in a tab.** Click a file, or its View Diff button, to open its diff in a new tab in the repository, titled “Diff: app.ts”, running `git diff -- ':(literal)src/app.ts'` (`--staged` for a staged file, with both paths for a staged rename). The tab stays at the shell after the pager.
+- **Paths are taken literally.** Every file the panel hands git is a literal path, so acting on `app/[id]/page.tsx` never touches `app/i/page.tsx`.
 - **File actions.** Hover a row for its buttons, or right-click it:
   - Changes: Stage, Discard Changes, View Diff, Open in Terminal Editor;
   - Staged Changes: Unstage, View Diff, Open in Terminal Editor;
   - Merge Changes: Stage (marks the conflict resolved), View Diff, Open in Terminal Editor. A conflict is never discarded.
   - A deleted file has no Open in Terminal Editor.
-  - Stage All and Unstage All are on the Changes and Staged Changes headers.
+  - Stage All and Unstage All are on the Changes and Staged Changes headers. Stage All stages every change in the repository (task worktrees left out), conflicts included; Unstage All unstages everything.
 - **Discard asks first.** A tracked file goes back to its last staged or committed state. An untracked file, or one only marked to be added, is moved to the Trash, and the question says so.
-- **Smart commit.** Type a message and click Commit or press ⌘↩. With something staged, only that is committed; with nothing staged, every change is, new files included (the field says so). Commit is off while the message is blank or git is working.
+- **Smart commit.** Type a message and click Commit or press ⌘↩ in the field. The message can run to several lines (↩ adds one; the field grows to five, then scrolls); the first line is the subject. ⌘↩ belongs to the field while you type in it, so it never does anything else there, even while Commit is off. With something staged, only that is committed; with nothing staged, every change is, new files included (the field says so). Commit is off while the message is blank or git is working.
 - **Push, Pull and Publish Branch.** Push and Pull for a branch with an upstream; Publish Branch for one without, which pushes it to `origin` and sets its upstream. Pull only fast-forwards: when the branch and its upstream have both moved, nothing changes and the panel says to pull in a terminal to merge or rebase. None of the three is offered on a branch with no commits or a detached head. Git never asks for a password here: a remote that needs one says it couldn't be reached.
-- **Switch Branch…** On a project's branch line, a searchable list of its local branches, then remote ones, with the current branch marked. Picking one asks what New Task asks for a Project folder task: a branch that doesn't exist yet, another task with open tabs in the folder (Switch Anyway), clashing changes (Stash and Switch). A branch checked out in another worktree is reported. A task's worktree keeps its branch, so its section has no Switch Branch.
+- **Switch Branch…** On a project's branch line, a searchable list of its local branches, then those only on a remote, shown as `origin/feature/login-page`, with the current branch marked. Picking a remote one switches to a local `feature/login-page` that tracks it, whatever the remote is called. Picking one asks what New Task asks for a Project folder task: a branch that doesn't exist yet, another task with open tabs in the folder (Switch Anyway), clashing changes (Stash and Switch). A branch checked out in another worktree is reported. A task's worktree keeps its branch, so its section has no Switch Branch.
 - **Up to date.** Each repository is watched, so a save, a commit or a fetch elsewhere shows up without a refresh. Git runs one action at a time per repository. Nothing is read or watched until the panel is first shown in any window; every window then shows the same repositories.
 - **From the keyboard.** View › Show Git. It has no key: ⌃⌘G is Add Divider, ⌃⌘I Show Files and ⌃⌘T New Terminal.
 
@@ -387,7 +388,7 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
 | ⌃⌘A / ⌃⌘L | Focus View / List View |
 | ⌃⌘S | Hide / Show Sidebar |
 | ⌃⌘E / ⌃⌘M / ⌃⌘I | Show Sessions / Show Metrics / Show Files (Show Git has no key) |
-| ⌘↩ | Commit, in the Git panel's message field |
+| ⌘↩ | Commit, in the Git panel's message field (↩ adds a line) |
 | ⌘B | Backpack Mode |
 | ⌘+ / ⌘− / ⌘0 | Sidebar text bigger / smaller / normal, after a click in the sidebar |
 

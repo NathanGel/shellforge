@@ -28,10 +28,19 @@ public struct GitSection: Identifiable, Equatable {
     }
 }
 
+/// A repository's commit message as it is typed.
+@MainActor
+public final class CommitDraft: ObservableObject {
+    @Published public var text = ""
+}
+
 /// What the panel asks of a repository.
 public enum GitAction: Equatable, Sendable {
     case stage([String])
     case unstage([String])
+    /// Every change, task worktrees left out; no path list on the command line.
+    case stageAll
+    case unstageAll
     /// An unstaged change, thrown away.
     case discard(GitChange)
     /// Commits with the repository's message draft, which is cleared once the commit is made.
@@ -63,6 +72,10 @@ public final class GitModel: ObservableObject {
         var busy = false
         var actionProblem: String?
         var readProblem: String?
+        /// A task's base branch, which commits on a branch with no upstream are counted against.
+        var baseBranch: String?
+        /// A task's commits on a branch with no upstream that its base branch lacks.
+        var localCommits = 0
     }
 
     /// What a read found. A nil state keeps what is shown.
@@ -70,6 +83,7 @@ public final class GitModel: ObservableObject {
         var state: GitSection.State?
         var problem: String?
         var worktreeName: String?
+        var localCommits = 0
     }
 
     private let launcher: CommandLauncher
@@ -82,8 +96,9 @@ public final class GitModel: ObservableObject {
     /// A task's folder in the main repository's `.git/worktrees/`, where its index lives.
     private var worktreeNames: [UUID: String] = [:]
     private var watchers: [GitRepoID: FolderWatching] = [:]
-    /// Commit message drafts, in memory only.
-    private var drafts: [GitRepoID: String] = [:]
+    /// Commit message drafts, in memory only. Each is its own object, so typing redraws its field
+    /// and not the panel.
+    private var drafts: [GitRepoID: CommitDraft] = [:]
     /// A repository's epoch changes when it is added, removed or its folder changes; work queued
     /// or started in an earlier epoch is dropped, so it cannot land on a section it was not for.
     private var epochs: [GitRepoID: Int] = [:]
@@ -139,7 +154,8 @@ public final class GitModel: ObservableObject {
             wanted[.project(project.id)] = Repo(title: project.name, path: project.path, projectId: project.id)
         }
         for task in kept {
-            wanted[.task(task.id)] = Repo(title: task.title, path: task.worktreePath, projectId: task.projectId)
+            wanted[.task(task.id)] = Repo(title: task.title, path: task.worktreePath, projectId: task.projectId,
+                                          baseBranch: task.baseBranch)
         }
         for id in Array(repos.keys) where wanted[id] == nil { forget(id) }
         projectOrder = projects.map(\.id)
@@ -149,6 +165,7 @@ public final class GitModel: ObservableObject {
                 if existing.path == repo.path {
                     existing.title = repo.title
                     existing.projectId = repo.projectId
+                    existing.baseBranch = repo.baseBranch
                     repos[id] = existing
                     continue
                 }
@@ -189,7 +206,7 @@ public final class GitModel: ObservableObject {
         repos[id] = nil
         epochs[id] = nil
         applied[id] = nil
-        drafts[id] = nil
+        drafts.removeValue(forKey: id)?.text = ""
         if let pending = pendingRefresh.removeValue(forKey: id) { absorbed.insert(pending.token) }
         if case .task(let task) = id { worktreeNames[task] = nil }
     }
@@ -227,8 +244,16 @@ public final class GitModel: ObservableObject {
     }
 
     private func isListed(_ task: UUID) -> Bool {
-        guard case .status(let status) = repos[.task(task)]?.state else { return false }
-        return status.hasChanges
+        repos[.task(task)].map(Self.isShown) ?? false
+    }
+
+    /// A task's section shows while there is something to do or see in it: changes, commits not
+    /// pushed (ahead of its upstream, or with none, commits its base branch lacks), or a problem.
+    private static func isShown(_ repo: Repo) -> Bool {
+        if repo.actionProblem != nil || repo.readProblem != nil { return true }
+        guard case .status(let status) = repo.state else { return false }
+        if status.hasChanges { return true }
+        return status.upstream == nil ? repo.localCommits > 0 : status.ahead > 0
     }
 
     // -- the queue ------------------------------------------------------------------------
@@ -288,35 +313,55 @@ public final class GitModel: ObservableObject {
         // A refresh queued behind this read would read the same: it is dropped.
         if let pending = pendingRefresh.removeValue(forKey: id) { absorbed.insert(pending.token) }
         let generation = next()
-        let path = repo.path, read = self.read, launcher = self.launcher
+        let path = repo.path, read = self.read, launcher = self.launcher, base = repo.baseBranch
         let isTask: Bool
         if case .task = id { isTask = true } else { isTask = false }
-        let loaded = await BackgroundWork.run { Self.load(path, isTask: isTask, read: read, launcher: launcher) }
+        let loaded = await BackgroundWork.run { Self.load(path, isTask: isTask, base: base, read: read, launcher: launcher) }
         guard epochs[id] == epoch, generation > applied[id, default: 0], repos[id] != nil else { return }
         applied[id] = generation
         if let state = loaded.state {
             repos[id]?.state = state
             repos[id]?.readProblem = nil
+            repos[id]?.localCommits = loaded.localCommits
         }
         if let problem = loaded.problem { repos[id]?.readProblem = problem }
         if let name = loaded.worktreeName, case .task(let task) = id { worktreeNames[task] = name }
         publish()
     }
 
-    private nonisolated static func load(_ path: String, isTask: Bool, read: Read, launcher: CommandLauncher) -> Loaded {
+    private nonisolated static func load(_ path: String, isTask: Bool, base: String?, read: Read,
+                                         launcher: CommandLauncher) -> Loaded {
         var isFolder: ObjCBool = false
         guard FileManager.default.fileExists(atPath: path, isDirectory: &isFolder), isFolder.boolValue else {
             return Loaded(state: .missing)
         }
         let name = isTask ? worktreeName(of: path) : nil
         do {
-            return Loaded(state: .status(try read(path, launcher)), worktreeName: name)
+            let status = try read(path, launcher)
+            var loaded = Loaded(state: .status(status), worktreeName: name)
+            if isTask, status.upstream == nil, case .branch = status.head, let base {
+                loaded.localCommits = commits(in: path, notOn: base, launcher: launcher)
+            }
+            return loaded
         } catch let failure as GitFailure {
             if failure.message.contains("not a git repository") { return Loaded(state: .notARepository, worktreeName: name) }
             return Loaded(problem: failure.message, worktreeName: name)
         } catch {
             return Loaded(problem: "git: \(error.localizedDescription)", worktreeName: name)
         }
+    }
+
+    /// A local git call's limit, as `GitStatus.read` has.
+    private nonisolated static let countTimeout: TimeInterval = 30
+
+    /// `git rev-list --count <base>..HEAD`: commits a branch with no upstream has that its base
+    /// lacks. 0 when it can't be counted (a base that is gone, say).
+    private nonisolated static func commits(in path: String, notOn base: String, launcher: CommandLauncher) -> Int {
+        guard !base.isEmpty, !base.hasPrefix("-"),
+              let out = try? launcher.run("git", ["-C", path, "rev-list", "--count", "\(base)..HEAD"],
+                                          extra: ["LC_ALL": "C", "GIT_OPTIONAL_LOCKS": "0"], timeout: Self.countTimeout),
+              !out.timedOut, out.status == 0 else { return 0 }
+        return Int(out.stdout.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
     }
 
     /// A worktree's folder in the main repository's `.git/worktrees/`, from its `.git` file
@@ -340,7 +385,7 @@ public final class GitModel: ObservableObject {
     }
 
     private func run(_ action: GitAction, in id: GitRepoID, epoch: Int) async {
-        let message = drafts[id] ?? ""
+        let message = commitMessage(id)
         let act = self.act, launcher = self.launcher
         await busy(id, epoch: epoch, work: { repo in
             let path = repo.path
@@ -354,9 +399,8 @@ public final class GitModel: ObservableObject {
             }
         }, done: { [weak self] problem in
             // A message typed while the commit ran is kept.
-            guard let self, action == .commit, problem == nil, self.drafts[id] == message, !message.isEmpty else { return }
-            self.objectWillChange.send()
-            self.drafts[id] = nil
+            guard let self, action == .commit, problem == nil, self.commitMessage(id) == message, !message.isEmpty else { return }
+            self.drafts[id]?.text = ""
         })
     }
 
@@ -390,6 +434,10 @@ public final class GitModel: ObservableObject {
         switch action {
         case .stage(let paths):
             try GitActions.stage(paths, in: repo, launcher: launcher)
+        case .stageAll:
+            try GitActions.stageAll(in: repo, launcher: launcher)
+        case .unstageAll:
+            try GitActions.unstageAll(in: repo, launcher: launcher)
         case .unstage(let paths):
             let staged = try GitStatus.read(repo, launcher: launcher).staged.filter { paths.contains($0.path) }
             var all = paths
@@ -458,12 +506,20 @@ public final class GitModel: ObservableObject {
 
     // -- commit messages ------------------------------------------------------------------
 
-    public func commitMessage(_ repo: GitRepoID) -> String { drafts[repo] ?? "" }
+    public func commitMessage(_ repo: GitRepoID) -> String { drafts[repo]?.text ?? "" }
 
     public func setCommitMessage(_ text: String, for repo: GitRepoID) {
         guard repos[repo] != nil, commitMessage(repo) != text else { return }
-        objectWillChange.send()
-        drafts[repo] = text.isEmpty ? nil : text
+        draft(repo).text = text
+    }
+
+    /// The repository's draft, which its commit field observes. Typing changes it and not
+    /// `sections`, so only that field redraws.
+    public func draft(_ repo: GitRepoID) -> CommitDraft {
+        if let draft = drafts[repo] { return draft }
+        let draft = CommitDraft()
+        drafts[repo] = draft
+        return draft
     }
 
     // -- tests ----------------------------------------------------------------------------
@@ -485,8 +541,7 @@ public final class GitModel: ObservableObject {
         let built = projectOrder.compactMap { project -> GitSection? in
             guard let repo = repos[.project(project)] else { return nil }
             let tasks = taskOrder.compactMap { task -> GitSection? in
-                guard let repo = repos[.task(task)], repo.projectId == project,
-                      case .status(let status) = repo.state, status.hasChanges else { return nil }
+                guard let repo = repos[.task(task)], repo.projectId == project, Self.isShown(repo) else { return nil }
                 return section(.task(task), repo, tasks: [])
             }
             return section(.project(project), repo, tasks: tasks)

@@ -51,6 +51,56 @@ final class GitActionsTests: XCTestCase {
         XCTAssertEqual(s.unstaged.map(\.path), ["README.md"])
     }
 
+    /// `app/[id]/page.tsx` beside `app/i/page.tsx`: as a glob, the first would match both.
+    private func bracketRepo() throws -> GitRepoFixture {
+        let repo = try GitRepoFixture()
+        try tracked(repo, "app/[id]/page.tsx", "app/i/page.tsx")
+        try write("app/[id]/page.tsx", "changed\n", in: repo)
+        try write("app/i/page.tsx", "changed\n", in: repo)
+        return repo
+    }
+
+    private let bracket = "app/[id]/page.tsx"
+
+    func testStagingABracketPathStagesOnlyThatFile() throws {
+        let repo = try bracketRepo()
+        try GitActions.stage([bracket], in: repo.path, launcher: repo.launcher)
+        XCTAssertEqual(try status(repo).staged.map(\.path), [bracket])
+    }
+
+    func testUnstagingABracketPathUnstagesOnlyThatFile() throws {
+        let repo = try bracketRepo()
+        try GitActions.stage([bracket, "app/i/page.tsx"], in: repo.path, launcher: repo.launcher)
+        try GitActions.unstage([bracket], in: repo.path, launcher: repo.launcher)
+        XCTAssertEqual(try status(repo).staged.map(\.path), ["app/i/page.tsx"])
+    }
+
+    func testDiscardingABracketPathDiscardsOnlyThatFile() throws {
+        let repo = try bracketRepo()
+        let change = try XCTUnwrap(try status(repo).unstaged.first { $0.path == bracket })
+        try GitActions.discard(change, in: repo.path, launcher: repo.launcher)
+        XCTAssertEqual(try status(repo).unstaged.map(\.path), ["app/i/page.tsx"])
+        XCTAssertEqual(try String(contentsOfFile: "\(repo.path)/app/i/page.tsx", encoding: .utf8), "changed\n")
+    }
+
+    func testTheDiffOfABracketPathShowsThatFile() throws {
+        let repo = try bracketRepo()
+        let line = GitActions.diffLine(for: GitChange(path: bracket, letter: .modified), staged: false)
+        let out = try repo.launcher.run("/bin/sh", ["-c", "cd \(AgentCommand.shellWord(repo.path)) && \(line) | cat"])
+        XCTAssertTrue(out.stdout.contains(bracket), out.stdout)
+        XCTAssertFalse(out.stdout.contains("app/i/page.tsx"), out.stdout)
+    }
+
+    func testStageAllAndUnstageAllTakeEverything() throws {
+        let repo = try bracketRepo()
+        try write("new.md", in: repo)
+        try GitActions.stageAll(in: repo.path, launcher: repo.launcher)
+        XCTAssertEqual(Set(try status(repo).staged.map(\.path)), [bracket, "app/i/page.tsx", "new.md"])
+        XCTAssertTrue(try status(repo).unstaged.isEmpty)
+        try GitActions.unstageAll(in: repo.path, launcher: repo.launcher)
+        XCTAssertTrue(try status(repo).staged.isEmpty)
+    }
+
     func testUnstagingPutsItBack() throws {
         let repo = try GitRepoFixture()
         try tracked(repo, "src/app.ts")
@@ -348,15 +398,18 @@ final class GitActionsTests: XCTestCase {
         try repo.git("checkout", "-q", "main")
         try repo.git("branch", "-q", "-D", "ABC-123")
         try repo.git(["remote", "set-head", "origin", "main"], in: repo.path)
-        let names = try GitActions.branches(in: repo.path, launcher: repo.launcher)
-        XCTAssertEqual(names, ["feature/login-page", "main", "origin/ABC-123"])
+        let branches = try GitActions.branches(in: repo.path, launcher: repo.launcher)
+        XCTAssertEqual(branches.map(\.title), ["feature/login-page", "main", "origin/ABC-123"])
+        XCTAssertEqual(branches.last, GitBranch(title: "origin/ABC-123", name: "ABC-123", remote: "origin"))
     }
 
     func testDiffLinesQuoteOddNames() {
         XCTAssertEqual(GitActions.diffLine(for: GitChange(path: "src/app.ts", letter: .modified), staged: false),
-                       "git diff -- src/app.ts")
+                       "git diff -- ':(literal)src/app.ts'")
         XCTAssertEqual(GitActions.diffLine(for: GitChange(path: "my file's $x.md", letter: .modified), staged: true),
-                       "git diff --staged -- 'my file'\\''s $x.md'")
+                       "git diff --staged -- ':(literal)my file'\\''s $x.md'")
+        XCTAssertEqual(GitActions.diffLine(for: GitChange(path: "src/main.ts", originalPath: "src/app.ts", letter: .renamed), staged: true),
+                       "git diff --staged -M -- ':(literal)src/app.ts' ':(literal)src/main.ts'")
         XCTAssertEqual(GitActions.diffLine(for: GitChange(path: "new file.md", letter: .untracked), staged: false),
                        "git diff --no-index -- /dev/null 'new file.md'")
     }

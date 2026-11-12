@@ -231,7 +231,7 @@ struct GitPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if titled { FilesPanelTitle(panel: .git) }
+            if titled { PanelTitle(panel: .git) }
             List {
                 ForEach(Self.rows(model.sections, isOpen: { !folded.contains($0) })) { row in
                     rowView(row).listRowSeparator(.hidden)
@@ -267,7 +267,9 @@ struct GitPanel: View {
             }
         case .commit(let status):
             GitIndented(depth: depth) {
-                GitCommitBox(section: section, status: status, model: model)
+                GitCommitBox(section: section, status: status, draft: model.draft(section.id), perform: { action in
+                    Task { await model.perform(action, in: section.id) }
+                })
             }
         case .list(let list, let changes):
             GitIndented(depth: depth) {
@@ -399,7 +401,8 @@ private struct GitBranchLine: View {
                     .popover(isPresented: $choosing, arrowEdge: .bottom) {
                         GitBranchList(repo: section.path, current: Self.current(status), launcher: actions.launcher) { branch in
                             choosing = false
-                            Task { await actions.switchBranch(section, to: branch, model: model) }
+                            // A remote branch switches to the local one of its name, which git makes tracking it.
+                            Task { await actions.switchBranch(section, to: branch.name, model: model) }
                         }
                     }
             }
@@ -413,13 +416,14 @@ private struct GitBranchLine: View {
 }
 
 /// Switch Branch…'s list: the repository's branches, read off the main actor, filtered as you
-/// type; the current one is marked. Return picks the first match.
+/// type; local ones, then those only on a remote as `<remote>/<name>`. The current one is marked.
+/// Return picks the first match.
 private struct GitBranchList: View {
     let repo: String
     let current: String?
     let launcher: CommandLauncher
-    let pick: (String) -> Void
-    @State private var branches: [String]?
+    let pick: (GitBranch) -> Void
+    @State private var branches: [GitBranch]?
     @State private var problem: String?
     @State private var query = ""
     @State private var focused = true
@@ -429,11 +433,13 @@ private struct GitBranchList: View {
     private static let width: CGFloat = 280
     private static let listHeight: CGFloat = 220
 
-    private var matches: [String] {
+    private var matches: [GitBranch] {
         let all = branches ?? []
         let wanted = query.trimmingCharacters(in: .whitespaces)
-        return wanted.isEmpty ? all : all.filter { $0.localizedCaseInsensitiveContains(wanted) }
+        return wanted.isEmpty ? all : all.filter { $0.title.localizedCaseInsensitiveContains(wanted) }
     }
+
+    private func isCurrent(_ branch: GitBranch) -> Bool { branch.remote == nil && branch.name == current }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.base) {
@@ -457,18 +463,18 @@ private struct GitBranchList: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(matches, id: \.self) { branch in
-                        Button { if branch != current { pick(branch) } } label: {
+                        Button { if !isCurrent(branch) { pick(branch) } } label: {
                             HStack(spacing: Space.snug) {
                                 Image(systemName: Self.checkSymbol).font(Typography.micro)
-                                    .opacity(branch == current ? 1 : 0)
-                                Text(branch).font(Typography.monoCode).lineLimit(1).truncationMode(.middle)
+                                    .opacity(isCurrent(branch) ? 1 : 0)
+                                Text(branch.title).font(Typography.monoCode).lineLimit(1).truncationMode(.middle)
                                 Spacer(minLength: 0)
                             }
                             .frame(height: Size.menuRow)
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel(branch == current ? "\(branch), current branch" : branch)
+                        .accessibilityLabel(isCurrent(branch) ? "\(branch.title), current branch" : branch.title)
                     }
                 }
             }
@@ -477,7 +483,7 @@ private struct GitBranchList: View {
 
     private func command(_ selector: Selector) -> Bool {
         guard selector == #selector(NSResponder.insertNewline(_:)) else { return false }
-        if let first = matches.first(where: { $0 != current }) { pick(first) }
+        if let first = matches.first(where: { !isCurrent($0) }) { pick(first) }
         return true
     }
 
@@ -492,34 +498,31 @@ private struct GitBranchList: View {
 }
 
 /// The commit message and the section's buttons: Commit (⌘↩ in the field), then Pull and Push, or
-/// Publish Branch.
+/// Publish Branch. It observes its repository's draft alone, so typing redraws only this box.
 private struct GitCommitBox: View {
     let section: GitSection
     let status: GitStatus
-    @ObservedObject var model: GitModel
+    @ObservedObject var draft: CommitDraft
+    let perform: (GitAction) -> Void
     @State private var focused = false
     @Environment(\.interfaceScale) private var scale
 
     static let commitTitle = "Commit"
 
-    private var message: Binding<String> {
-        let (model, id) = (self.model, section.id)
-        return Binding(get: { model.commitMessage(id) }, set: { model.setCommitMessage($0, for: id) })
-    }
-
-    private var canCommit: Bool { GitPanel.canCommit(message: model.commitMessage(section.id), busy: section.busy) }
+    private var canCommit: Bool { GitPanel.canCommit(message: draft.text, busy: section.busy) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: scale(Space.snug)) {
-            SearchField(placeholder: GitPanel.commitPlaceholder(status), text: message, focused: $focused, onCommand: { _ in false })
-                .fieldChrome(focused: focused)
-                .accessibilityLabel("Commit message")
+            CommitMessageField(placeholder: GitPanel.commitPlaceholder(status), text: $draft.text, focused: $focused,
+                               font: Typography.body.scaled(by: scale).nsFont,
+                               // While Commit is off, ⌘↩ is still the field's: it does nothing.
+                               commit: { if canCommit { perform(.commit) } })
+                .overlay(alignment: .topLeading) { placeholder }
+                .fieldBox(focused: focused)
             HStack(spacing: scale(Space.snug)) {
                 Button(Self.commitTitle) { perform(.commit) }
                     .buttonStyle(.borderedProminent)
                     .disabled(!canCommit)
-                    // Only the field being typed in commits: each section has a Commit button.
-                    .keyboardShortcut(focused ? KeyboardShortcut(.return, modifiers: .command) : nil)
                 Spacer(minLength: scale(Space.tight))
                 ForEach(GitPanel.remoteActions(status), id: \.title) { remote in
                     Button(remote.title) { perform(remote.action) }.disabled(section.busy)
@@ -530,9 +533,18 @@ private struct GitCommitBox: View {
         .padding(.vertical, scale(Space.tight))
     }
 
-    private func perform(_ action: GitAction) {
-        let (model, id) = (self.model, section.id)
-        Task { await model.perform(action, in: id) }
+    /// The text view has no placeholder of its own: drawn over it while it is empty, where its
+    /// first line starts (its inset and its container's padding of 5).
+    @ViewBuilder private var placeholder: some View {
+        if draft.text.isEmpty {
+            Text(GitPanel.commitPlaceholder(status)).font(Typography.body)
+                .foregroundStyle(Color(nsColor: .placeholderTextColor))
+                .lineLimit(1)
+                .padding(.leading, CommitMessageField.inset.width + 5)
+                .padding(.top, CommitMessageField.inset.height)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
     }
 }
 
@@ -549,10 +561,9 @@ private struct GitListHeader: View {
     static let unstageAll = "Unstage All"
 
     private var bulk: (title: String, symbol: String, action: GitAction)? {
-        let paths = changes.map(\.path)
         switch list {
-        case .changes: return (Self.stageAll, GitChangeRow.stageSymbol, .stage(paths))
-        case .staged: return (Self.unstageAll, GitChangeRow.unstageSymbol, .unstage(paths))
+        case .changes: return (Self.stageAll, GitChangeRow.stageSymbol, .stageAll)
+        case .staged: return (Self.unstageAll, GitChangeRow.unstageSymbol, .unstageAll)
         case .merge: return nil
         }
     }
@@ -616,6 +627,7 @@ private struct GitChangeRow: View {
     static let unstageSymbol = "minus"
     static let discardSymbol = "arrow.uturn.backward"
     static let openSymbol = "doc.text"
+    static let diffSymbol = "plus.forwardslash.minus"
     private static let letterWidth: CGFloat = 12
 
     private var name: String { (change.path as NSString).lastPathComponent }
@@ -673,6 +685,7 @@ private struct GitChangeRow: View {
     }
 
     @ViewBuilder private var buttons: some View {
+        GitIconButton(title: Self.viewDiffTitle, symbol: Self.diffSymbol, action: commands.viewDiff)
         if let open = commands.openInEditor { GitIconButton(title: Self.openTitle, symbol: Self.openSymbol, action: open) }
         if let discard = commands.discard {
             GitIconButton(title: Self.discardTitle, symbol: Self.discardSymbol, action: discard).disabled(busy)

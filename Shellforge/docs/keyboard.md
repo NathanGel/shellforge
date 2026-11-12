@@ -51,7 +51,8 @@ dragged is where new windows start.
 
 ## Git panel
 
-⌘↩ in a section's commit message field presses that section's Commit.
+⌘↩ in a section's commit message field commits that section; ↩ adds a line. The field keeps ⌘↩
+while it has the keyboard, so it never reaches the main menu, even while Commit is off.
 
 ## Sheets
 

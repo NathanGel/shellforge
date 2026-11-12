@@ -523,7 +523,7 @@ struct SidebarView: View {
                                                   environment: { [launcher = model.launcher] in launcher.environment.variables }))
                 } else {
                     // A sidebar made without a Files model, or before it is taken: the panel's title over nothing.
-                    VStack(spacing: 0) { if chrome.windowControls == nil { FilesPanelTitle() } }
+                    VStack(spacing: 0) { if chrome.windowControls == nil { PanelTitle(panel: .files) } }
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 }
             }
@@ -535,7 +535,7 @@ struct SidebarView: View {
                                                       launcher: model.launcher, prompter: { [model] in model.prompter },
                                                       busyTask: { [model] project in model.projectFolderBusyTask(project) }))
                 } else {
-                    VStack(spacing: 0) { if chrome.windowControls == nil { FilesPanelTitle(panel: .git) } }
+                    VStack(spacing: 0) { if chrome.windowControls == nil { PanelTitle(panel: .git) } }
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 }
             }

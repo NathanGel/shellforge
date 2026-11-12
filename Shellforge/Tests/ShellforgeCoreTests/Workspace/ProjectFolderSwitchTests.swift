@@ -36,6 +36,32 @@ import Testing
         #expect(ExistingWorktrees.resolved(path) == ExistingWorktrees.resolved(other))
     }
 
+    /// `feature/login-page` only on the remote `remote`: pushed there, then deleted here.
+    private func remoteOnlyBranch(_ repo: GitRepoFixture, remote: String) throws {
+        let bare = repo.path + "-\(remote).git"
+        try repo.git(["init", "-q", "--bare", "-b", "main", bare], in: repo.path)
+        try repo.git("remote", "add", remote, bare)
+        try branch(repo, "feature/login-page", file: "login")
+        try repo.git("push", "-q", remote, "feature/login-page")
+        try repo.git("branch", "-q", "-D", "feature/login-page")
+    }
+
+    /// Switch Branch… lists a remote-only branch as `<remote>/<name>`; switching to it ends on the
+    /// local `<name>`, tracking the remote's, whatever the remote is called.
+    @Test(arguments: ["origin", "upstream"])
+    func aRemoteBranchSwitchesToALocalOneTrackingIt(remote: String) throws {
+        let repo = try GitRepoFixture()
+        try remoteOnlyBranch(repo, remote: remote)
+        let listed = try #require(try GitActions.branches(in: repo.path, launcher: repo.launcher).first { $0.remote != nil })
+        #expect(listed == GitBranch(title: "\(remote)/feature/login-page", name: "feature/login-page", remote: remote))
+        #expect(try ProjectFolderSwitch.check(listed.name, in: repo.project, launcher: repo.launcher) == nil, "not missing")
+        #expect(try ProjectFolderSwitch.perform(listed.name, in: repo.project, create: false, stash: nil, launcher: repo.launcher) == .switched)
+        #expect(try current(repo) == "feature/login-page")
+        #expect(try repo.git("rev-parse", "--abbrev-ref", "feature/login-page@{upstream}") == "\(remote)/feature/login-page")
+        #expect(try GitActions.branches(in: repo.path, launcher: repo.launcher).map(\.title) == ["feature/login-page", "main"],
+                "a remote branch with a local one is listed once")
+    }
+
     // -- perform -------------------------------------------------------------------------
 
     @Test func switchesToAnExistingBranch() throws {

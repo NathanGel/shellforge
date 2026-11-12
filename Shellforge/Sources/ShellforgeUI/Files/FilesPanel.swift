@@ -140,7 +140,7 @@ struct FilesPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if titled { FilesPanelTitle() }
+            if titled { PanelTitle(panel: .files) }
             List {
                 ForEach(Self.rows(model.sections, isOpen: model.isOpen)) { row in
                     rowView(row).listRowSeparator(.hidden)
@@ -186,9 +186,9 @@ struct FilesPanel: View {
     }
 }
 
-/// A panel's own title, when it is not pinned above the panel: the Files panel's, or another's.
-struct FilesPanelTitle: View {
-    var panel: ActivityPanel = .files
+/// A panel's own title, when it is not pinned above the panel: the Files panel's or the Git panel's.
+struct PanelTitle: View {
+    let panel: ActivityPanel
     @Environment(\.interfaceScale) private var scale
 
     var body: some View {

@@ -30,12 +30,13 @@ it and refuses to release a version that has none.
   Right-click a file for Open in Terminal Editor, Reveal in Finder and Open in VS Code, or a
   folder for Reveal in Finder, Open in Finder and Open in VS Code. View › Show Files (⌃⌘I) shows the panel.
 - **Git panel.** A fourth panel (the branch) shows each project's repository, and under it each
-  task's worktree with changes: the branch and how far it is ahead of and behind its upstream
-  (`main ↑2 ↓1`), a commit message field, and the Merge Changes, Staged Changes and Changes
+  task's worktree with something to commit or push: the branch and how far it is ahead of and behind its upstream
+  (`main ↑2 ↓1`), a commit message field of up to five lines, and the Merge Changes, Staged Changes and Changes
   lists. Stage, unstage or discard a file (an untracked file goes to the Trash), Stage All or
   Unstage All, and commit with ⌘↩: with nothing staged, Commit takes every change, new files
   included. Pull (fast-forward only), Push, or Publish Branch for a branch with no upstream.
-  Switch Branch… on a project picks from a searchable list and asks what New Task asks for a
+  Switch Branch… on a project picks from a searchable list, remote branches included (picking
+  `origin/feature/login-page` gives a local branch tracking it), and asks what New Task asks for a
   Project folder task. Click a file to see its diff in a new tab. The panel reads nothing until it
   is first shown, then follows each repository as it changes. View › Show Git shows it.
 

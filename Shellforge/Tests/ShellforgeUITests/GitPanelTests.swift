@@ -116,7 +116,7 @@ private final class InertGitWatcher: FolderWatching, @unchecked Sendable {
         let section = section(.project(demo.id), status(.branch("main"), unstaged: [change]))
         _ = try #require(GitPanel.rows([section], isOpen: { _ in true }).first { $0.id == GitPanel.changeID(section.id, .changes, change) })
         actions(host).viewDiff(change, list: .changes, in: section)
-        #expect(host.openedPlain.map { "\($0.directory)|\($0.title)|\($0.command)" } == ["/demo|Diff: app.ts|git diff -- src/app.ts"])
+        #expect(host.openedPlain.map { "\($0.directory)|\($0.title)|\($0.command)" } == ["/demo|Diff: app.ts|git diff -- ':(literal)src/app.ts'"])
     }
 
     /// A file both staged and changed again has a row in each list, each with its own id.
@@ -152,6 +152,62 @@ private final class InertGitWatcher: FolderWatching, @unchecked Sendable {
         #expect(GitPanel.offersDiscard(modified, list: .changes))
         #expect(!GitPanel.offersDiscard(modified, list: .staged))
         #expect(!GitPanel.offersDiscard(GitChange(path: "src/app.ts", letter: .conflicted), list: .merge))
+    }
+
+    /// The actions a model was asked to run, in order.
+    private final class Acted: @unchecked Sendable {
+        private let lock = NSLock()
+        private var log: [GitAction] = []
+        func record(_ action: GitAction) { lock.withLock { log.append(action) } }
+        var actions: [GitAction] { lock.withLock { log } }
+    }
+
+    private func commandReturn(in window: NSWindow) throws -> NSEvent {
+        try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0,
+                                      windowNumber: window.windowNumber, context: nil, characters: "\r",
+                                      charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36))
+    }
+
+    /// ⌘↩ in the commit field commits that repository's message, whatever else holds ⌘↩; with the
+    /// message blank, the field still takes the key and nothing is committed.
+    @Test func commandReturnInTheFieldCommits() async throws {
+        let acted = Acted()
+        var clean = GitStatus()
+        clean.head = .branch("main")
+        clean.unstaged = [GitChange(path: "src/app.ts", letter: .modified)]
+        let ready = clean
+        // A folder that is there: the read is faked, but a missing folder is not read at all.
+        let folder = TestScratch.root.appendingPathComponent("shellforge-gitpanel-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        let demo = Project(name: "demo", path: folder)
+        let model = GitModel(projects: [demo], tasks: [], launcher: launcher, watcher: { _ in InertGitWatcher() },
+                             read: { _, _ in ready }, act: { action, _, _, _ in acted.record(action) })
+        await model.settled()
+        let panel = GitPanel(model: model, titled: true, actions: actions(FakeTerminalHost()))
+        let host = NSHostingView(rootView: panel)
+        let window = window(host)
+        defer { window.close() }
+        host.layoutSubtreeIfNeeded()
+        let field = try #require(descendants(of: host).compactMap { $0 as? CommitTextView }.first)
+        #expect(field.accessibilityLabel() == "Commit message")
+        #expect(window.makeFirstResponder(field))
+
+        #expect(window.performKeyEquivalent(with: try commandReturn(in: window)), "⌘↩ fell through to the menu")
+        await model.settled()
+        #expect(acted.actions.isEmpty, "a blank message committed")
+
+        model.setCommitMessage("Add the login page", for: .project(demo.id))
+        host.layoutSubtreeIfNeeded()
+        #expect(window.performKeyEquivalent(with: try commandReturn(in: window)))
+        await model.settled()
+        #expect(acted.actions == [.commit])
+    }
+
+    @Test func theCommitFieldGrowsToFiveLines() {
+        let font = Typography.body.nsFont
+        #expect(CommitMessageField.lines("", font: font, width: 300) == 1)
+        #expect(CommitMessageField.lines("Add the login page\n\nWith a form", font: font, width: 300) == 3)
+        #expect(CommitMessageField.lines(String(repeating: "line\n", count: 9), font: font, width: 300) == 5)
     }
 
     @Test func showGitSelectsThePanel() throws {
