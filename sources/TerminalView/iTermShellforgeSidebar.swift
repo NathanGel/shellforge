@@ -382,17 +382,21 @@ final class iTermShellforgeHost: TerminalHost {
         return false
     }
 
-    /// A pane split off a task's or a terminal's (⌘D) carries no tag: it takes its tab's, so the
-    /// tab stays the task's whichever pane closes first.
+    /// A pane split off a task's, a terminal's or a panel's tab (⌘D) carries no tag: it takes its
+    /// tab's, so the tab stays the task's, or the panel's, whichever pane closes first.
     func joinPanes() {
         for tab in windowController?.tabs() ?? [] {
-            let sessions: [PTYSession] = tab.sessions()
-            for name in [ShellforgeTags.task, ShellforgeTags.project, ShellforgeTags.terminal] {
-                let tags = sessions.map { $0.genericScope.value(forVariableName: name) as? String }
-                guard let tag = TaskTabs.joining(tags) else { continue }
-                for (session, existing) in zip(sessions, tags) where existing == nil {
-                    session.genericScope.setValue(tag, forVariableNamed: name)
-                }
+            Self.join(tab.sessions())
+        }
+    }
+
+    /// One tab's panes: each untagged one takes the tag its tabmates carry, name by name.
+    static func join(_ sessions: [PTYSession]) {
+        for name in [ShellforgeTags.task, ShellforgeTags.project, ShellforgeTags.terminal, ShellforgeTags.panel] {
+            let tags = sessions.map { $0.genericScope.value(forVariableName: name) as? String }
+            guard let tag = TaskTabs.joining(tags) else { continue }
+            for (session, existing) in zip(sessions, tags) where existing == nil {
+                session.genericScope.setValue(tag, forVariableNamed: name)
             }
         }
     }

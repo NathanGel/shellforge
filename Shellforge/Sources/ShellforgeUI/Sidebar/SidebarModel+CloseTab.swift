@@ -41,7 +41,7 @@ extension SidebarModel {
 
     /// The window's tab now, for a row drawn at the last refresh.
     private func liveTab(_ row: String) -> TabSnapshot? {
-        let drawn = tree.projects.flatMap { $0.tasks.flatMap(\.tabs) + $0.terminals.flatMap(\.tabs) } + tree.otherTabs
+        let drawn = tree.projects.flatMap { $0.tasks.flatMap(\.tabs) + $0.terminals.flatMap(\.tabs) } + tree.otherTabs + tree.panelTabs
         let tabId = drawn.first { $0.id == row }?.tabId
         return host.tabs.first { $0.id == row } ?? tabId.flatMap { id in host.tabs.first { $0.tabId == id } }
     }

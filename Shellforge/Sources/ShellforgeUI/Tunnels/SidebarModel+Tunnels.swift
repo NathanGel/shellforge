@@ -108,7 +108,8 @@ extension SidebarModel {
         host.openTab(in: project.path, title: alias, command: SSHConfig.paneCommand(alias: alias))
     }
 
-    /// Any host of the config in a tab of its own, titled with its alias: in the project's folder,
+    /// The SSH panel's Open in Terminal: any host of the config in a tab of its own, titled with its
+    /// alias and tagged as the host's, so the panel lists it under the host: in the project's folder,
     /// or, with no project (the SSH panel's Other hosts), in the home folder. The config is read
     /// again first, so a host just added or removed elsewhere is answered as it is now; a host the
     /// config does not have is said, not run, as `openSSHHost` does.
@@ -121,7 +122,8 @@ extension SidebarModel {
             lastError = "\(alias) isn’t in ~/.ssh/config."
             return
         }
-        host.openTab(in: project?.path ?? NSHomeDirectory(), title: alias, command: SSHConfig.paneCommand(alias: alias))
+        host.openTab(in: project?.path ?? NSHomeDirectory(), title: alias, command: SSHConfig.paneCommand(alias: alias),
+                     panel: .ssh(alias: alias))
     }
 
     /// Reads the config, then reads it again whenever anything in its folder changes — and in the

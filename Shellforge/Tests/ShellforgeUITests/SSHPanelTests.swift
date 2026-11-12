@@ -34,8 +34,8 @@ private final class FakeSSHWatcher: FolderWatching, @unchecked Sendable {
     }
 }
 
-/// The SSH panel: each project's hosts and tunnels, the config's other hosts, Connect in a tab of
-/// its own, and `~/.ssh` (here a scratch folder) watched once the panel shows.
+/// The SSH panel: each project's hosts and tunnels, the config's other hosts, Open in Terminal in
+/// a tab of its own, its open sessions under each host, and `~/.ssh` (here a scratch folder) watched once the panel shows.
 @MainActor @Suite struct SSHPanelTests {
     private let folder = TestScratch.root.appendingPathComponent("shellforge-sshpanel-\(UUID().uuidString)")
     private let launcher = CommandLauncher(resolve: { ResolvedEnvironment(variables: ["PATH": "/usr/bin"], source: .loginShell("/bin/zsh")) })
@@ -49,14 +49,15 @@ private final class FakeSSHWatcher: FolderWatching, @unchecked Sendable {
     }
 
     /// Project `demo` at `/demo`, naming `sshHost`, over a scratch config holding `config`.
-    private func model(sshHost: String? = nil, config: String = twoHosts) throws -> (SidebarModel, FakeTerminalHost, UUID, SSHWatchers) {
+    private func model(sshHost: String? = nil, tunnels: [TunnelDefinition] = [], config: String = twoHosts, feed: FakeFeed? = nil,
+                       host: FakeTerminalHost = FakeTerminalHost()) throws -> (SidebarModel, FakeTerminalHost, UUID, SSHWatchers) {
         try writeConfig(config)
         let document = WorkspaceDocument(store: WorkspaceStore(folder: folder.appendingPathComponent("workspace")))
         var project = Project(name: "demo", path: "/demo")
         project.sshHost = sshHost
+        project.tunnels = tunnels
         try document.update { $0.projects.append(project) }
-        let host = FakeTerminalHost()
-        let model = SidebarModel(host: host, document: document, launcher: launcher, jiraSettings: { nil },
+        let model = SidebarModel(host: host, document: document, launcher: launcher, feed: feed, catalogue: { _ in [] }, jiraSettings: { nil },
                                  sshConfig: SSHConfigSource(file: configFile, home: folder))
         let watchers = SSHWatchers()
         watchers.install(on: model)
@@ -153,13 +154,13 @@ private final class FakeSSHWatcher: FolderWatching, @unchecked Sendable {
         _ = await model.loadSSHHosts()
         let entry = try #require(SSHPanel.sections(model).first?.entries.first)
         #expect(entry.alias == "staging" && !entry.inConfig)
-        #expect(!SSHPanel.accessibilityActions(entry, tunnel: nil).contains(SSHPanel.connectTitle))
+        #expect(!SSHPanel.accessibilityActions(entry, tunnel: nil).contains(SSHPanel.openInTerminalTitle))
         #expect(SSHPanel.missingText == "Not in ~/.ssh/config")
         await model.connect(alias: "staging", in: project)
         #expect(host.openedPlain.isEmpty)
         #expect(model.lastError == "staging isn’t in ~/.ssh/config.")
         let present = SSHPanelEntry(alias: "build-box", isProjectHost: false, isTunnel: false, inConfig: true)
-        #expect(SSHPanel.accessibilityActions(present, tunnel: nil) == [SSHPanel.connectTitle])
+        #expect(SSHPanel.accessibilityActions(present, tunnel: nil) == [SSHPanel.openInTerminalTitle])
         #expect(SSHPanel.accessibilityLabel(present, tunnel: nil) == "build-box, host")
     }
 
@@ -168,9 +169,9 @@ private final class FakeSSHWatcher: FolderWatching, @unchecked Sendable {
         let entry = SSHPanelEntry(alias: "db-tunnel", isProjectHost: false, isTunnel: true, inConfig: true)
         var tunnel = TunnelRowItem(projectId: UUID(), alias: "db-tunnel", forwards: [], state: .up, error: nil, missing: false)
         #expect(SSHPanel.accessibilityLabel(entry, tunnel: tunnel) == "db-tunnel, up")
-        #expect(SSHPanel.accessibilityActions(entry, tunnel: tunnel) == [SSHPanel.connectTitle, SSHPanel.stopTitle])
+        #expect(SSHPanel.accessibilityActions(entry, tunnel: tunnel) == [SSHPanel.stopTitle, SSHPanel.openInTerminalTitle])
         tunnel.state = .stopped
-        #expect(SSHPanel.accessibilityActions(entry, tunnel: tunnel) == [SSHPanel.connectTitle, SSHPanel.startTitle])
+        #expect(SSHPanel.accessibilityActions(entry, tunnel: tunnel) == [SSHPanel.startTitle, SSHPanel.openInTerminalTitle])
     }
 
     @Test func anEmptyConfigOffersAddHost() async throws {
@@ -228,5 +229,106 @@ private final class FakeSSHWatcher: FolderWatching, @unchecked Sendable {
         ShellforgeSidebar.show(item.panel, on: view)
         #expect(ShellforgeSidebar.shownPanel(of: view) == .ssh)
         #expect(marks(in: view).contains(SSHPanel.markName))
+    }
+
+    private static let tunnelConfig = "Host staging\n  HostName staging.example.com\nHost db-tunnel\n  HostName bastion.example.com\n  LocalForward 5432 db.internal:5432\n"
+
+    /// A tunnel host is one row: its Start, then Open in Terminal — no second row for the tunnel.
+    @Test func aTunnelHostHasOneRowWithStartStop() async throws {
+        let (model, _, project, _) = try model(tunnels: [TunnelDefinition(alias: "db-tunnel")], config: Self.tunnelConfig)
+        _ = await model.loadSSHHosts()
+        let entry = try #require(SSHPanel.sections(model).first?.entries.first { $0.alias == "db-tunnel" })
+        var tunnel = try #require(model.tunnelRows(of: project).first)
+        #expect(SSHPanel.buttons(entry, tunnel: tunnel) == [.start, .openInTerminal])
+        tunnel.state = .up
+        #expect(SSHPanel.buttons(entry, tunnel: tunnel) == [.stop, .openInTerminal])
+        #expect(SSHPanel.openInTerminalTitle == "Open in Terminal")
+        #expect(SSHPanel.openInTerminalHelp("db-tunnel") == "Open in Terminal: ssh db-tunnel in a new tab")
+        let (view, window) = made(model)
+        defer { window.close() }
+        ShellforgeSidebar.show(.ssh, on: view)
+        let section = try #require(SSHPanel.sections(model).first).id
+        let rows = marks(in: view).filter { $0.hasPrefix("SSHRow:\(section):") }
+        #expect(rows == [SSHPanel.rowMark(section: section, alias: "db-tunnel")], "one row, the host’s")
+    }
+
+    @Test func aPlainHostHasOnlyOpenInTerminal() async throws {
+        let (model, _, _, _) = try model(sshHost: "staging")
+        _ = await model.loadSSHHosts()
+        let entry = try #require(SSHPanel.sections(model).first?.entries.first)
+        #expect(entry.alias == "staging" && !entry.isTunnel)
+        #expect(SSHPanel.buttons(entry, tunnel: nil) == [.openInTerminal])
+        #expect(SSHPanel.accessibilityActions(entry, tunnel: nil) == ["Open in Terminal"])
+    }
+
+    /// Start asks the helper for the tunnel and opens no tab.
+    @Test func startingATunnelOpensNoTab() async throws {
+        let feed = FakeFeed()
+        let (model, host, _, _) = try model(tunnels: [TunnelDefinition(alias: "db-tunnel")], config: Self.tunnelConfig, feed: feed)
+        _ = await model.loadSSHHosts()
+        model.startTunnel("db-tunnel")
+        #expect(feed.tunnelCalls == ["start db-tunnel"])
+        #expect(host.openedPlain.isEmpty && host.tabs.isEmpty)
+    }
+
+    /// Showing the panel, with its hosts read, opens, starts and connects nothing: only a button does.
+    @Test func clickingTheRowOpensNothing() async throws {
+        let feed = FakeFeed()
+        let (model, host, _, _) = try model(sshHost: "staging", tunnels: [TunnelDefinition(alias: "db-tunnel")], config: Self.tunnelConfig,
+                                            feed: feed)
+        let (view, window) = made(model)
+        defer { window.close() }
+        ShellforgeSidebar.show(.ssh, on: view)
+        #expect(await eventually { model.sshHosts?["db-tunnel"] != nil })
+        #expect(marks(in: view).contains { $0.hasPrefix("SSHRow:") })
+        #expect(host.openedPlain.isEmpty && host.opened.isEmpty && host.tabs.isEmpty)
+        #expect(!feed.tunnelCalls.contains("start db-tunnel"))
+    }
+
+    @Test func openInTerminalTagsTheTab() async throws {
+        let (model, host, project, _) = try model(sshHost: "staging")
+        await model.connect(alias: "staging", in: project)
+        let opened = try #require(host.openedPlain.last)
+        #expect(opened.panel == .ssh(alias: "staging"))
+        #expect(model.panelTabs(for: .ssh(alias: "staging")).map(\.title) == ["staging"])
+        #expect(model.tree.otherTabs.isEmpty, "not under Sessions’ Other Tabs")
+    }
+
+    /// A host's tabs list under its row; a line's click selects its tab and its × closes it as
+    /// Sessions' close does.
+    @Test func openSessionsListUnderTheirHost() async throws {
+        let (model, host, project, _) = try model(sshHost: "staging")
+        await model.connect(alias: "staging", in: project)
+        await model.connect(alias: "staging", in: project)
+        host.openTab(in: "/demo", title: "zsh", command: "zsh")
+        let tabs = SSHPanel.sessions(model, alias: "staging")
+        #expect(tabs.count == 2)
+        let (view, window) = made(model)
+        defer { window.close() }
+        ShellforgeSidebar.show(.ssh, on: view)
+        let section = try #require(SSHPanel.sections(model).first).id
+        let shown = marks(in: view)
+        for tab in tabs { #expect(shown.contains(SSHPanel.sessionMark(section: section, alias: "staging", tab: tab.id))) }
+        #expect(!shown.contains { $0.hasPrefix("SSHSession:") && $0.hasSuffix(":s3") }, "an untagged tab is not listed")
+        model.select(tab: tabs[0].id)
+        #expect(host.selectedTabId == tabs[0].id)
+        model.closeTab(tabs[1].id)
+        #expect(host.closed == [tabs[1].id])
+        #expect(SSHPanel.sessions(model, alias: "staging").map(\.id) == [tabs[0].id])
+    }
+
+    /// Each window's panel lists that window's tabs only.
+    @Test func aPanelListsOnlyItsWindowsTabs() async throws {
+        let (first, firstHost, project, _) = try model(sshHost: "staging")
+        let otherHost = FakeTerminalHost()
+        let (second, _, _, _) = try model(sshHost: "staging", host: otherHost)
+        await second.connect(alias: "staging", in: second.document.workspace.projects.first?.id)
+        firstHost.tabsElsewhere = otherHost.tabs
+        firstHost.onChange?()
+        #expect(SSHPanel.sessions(first, alias: "staging").isEmpty)
+        #expect(SSHPanel.sessions(second, alias: "staging").count == 1)
+        await first.connect(alias: "staging", in: project)
+        #expect(SSHPanel.sessions(first, alias: "staging").count == 1)
+        #expect(SSHPanel.sessions(second, alias: "staging").count == 1)
     }
 }

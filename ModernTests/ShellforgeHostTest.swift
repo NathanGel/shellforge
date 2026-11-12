@@ -143,4 +143,19 @@ final class ShellforgeHostTest: XCTestCase {
         let user = saved["user"] as? [AnyHashable: Any]
         XCTAssertEqual((user?["shellforge_panel"] ?? saved[ShellforgeTags.panel]) as? String, "ssh:staging", "\(saved)")
     }
+
+    /// A pane split off a panel's tab takes the panel's tag, so the tab stays the host's when the
+    /// pane it was opened in closes first; a pane with a tag of its own keeps it.
+    @MainActor func testASplitPaneKeepsItsPanelTabsOwner() throws {
+        let original = try XCTUnwrap(PTYSession(synthetic: true))
+        let split = try XCTUnwrap(PTYSession(synthetic: true))
+        iTermShellforgeHost.tag(original, panel: .ssh(alias: "staging"))
+        iTermShellforgeHost.join([original, split])
+        XCTAssertEqual(split.genericScope.value(forVariableName: ShellforgeTags.panel) as? String, "ssh:staging")
+        XCTAssertEqual(iTermShellforgeHost.panel(ofPanes: [split]), .ssh(alias: "staging"), "the original pane closed")
+        let other = try XCTUnwrap(PTYSession(synthetic: true))
+        iTermShellforgeHost.tag(other, panel: .ssh(alias: "db-tunnel"))
+        iTermShellforgeHost.join([original, other])
+        XCTAssertEqual(iTermShellforgeHost.panel(ofPanes: [other]), .ssh(alias: "db-tunnel"))
+    }
 }
