@@ -20,7 +20,24 @@ final class GitWatchPathsTests: XCTestCase {
         for name in ["index", "HEAD", "ORIG_HEAD", "MERGE_HEAD"] { XCTAssertTrue(relevant("/.git/" + name), name) }
         XCTAssertFalse(relevant("/.git/FETCH_HEAD"))
         XCTAssertFalse(relevant("/.git/config"))
-        XCTAssertFalse(relevant("/.git"))
+    }
+
+    func testAFolderToRescanAndReftableCount() {
+        XCTAssertTrue(relevant("/.git"))
+        XCTAssertTrue(relevant("/.git/refs"))
+        XCTAssertTrue(relevant("/.git/reftable/tables.list"))
+        XCTAssertTrue(relevant("/.git/reftable"))
+        XCTAssertFalse(relevant("/.git/reftable/tables.list.lock"))
+    }
+
+    func testRefsAndHeadAreSharedByEveryWorktree() {
+        for path in [".git", ".git/refs", ".git/refs/remotes/origin/feature/login-page", ".git/packed-refs", ".git/HEAD",
+                     ".git/reftable/tables.list"] {
+            XCTAssertTrue(GitWatchPaths.isShared(path), path)
+        }
+        for path in [".git/index", ".git/worktrees/feature-login-page/HEAD", "src/app.ts", ".git/MERGE_HEAD"] {
+            XCTAssertFalse(GitWatchPaths.isShared(path), path)
+        }
     }
 
     func testATaskWorktreesIndexAndHeadCount() {

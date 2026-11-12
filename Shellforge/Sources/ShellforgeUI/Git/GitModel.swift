@@ -149,13 +149,25 @@ public final class GitModel: ObservableObject {
         counter += 1
         epochs[id] = counter
         repos[id] = repo
-        if case .task(let task) = id { worktreeNames[task] = (repo.path as NSString).lastPathComponent }
+        if case .task(let task) = id { resolveWorktreeName(task, path: repo.path, epoch: counter) }
         let watcher = makeWatcher(repo.path)
         watchers[id] = watcher
-        watcher.watch(repo.path) { [weak self, hops] changes in
+        watcher.watch(repo.path, onChanges: { [weak self, hops] changes in
             hops.hop { self?.changed(id, changes) }
-        }
+        })
         refreshSoon(id)
+    }
+
+    /// Finds the task's folder in `.git/worktrees/` before anything else is queued for it, so the
+    /// project's watcher routes its index changes from the start.
+    private func resolveWorktreeName(_ task: UUID, path: String, epoch: Int) {
+        worktreeNames[task] = (path as NSString).lastPathComponent
+        let id = GitRepoID.task(task)
+        enqueue(id) { [weak self] in
+            let name = await BackgroundWork.run { Self.worktreeName(of: path) }
+            guard let self, self.epochs[id] == epoch else { return }
+            self.worktreeNames[task] = name
+        }
     }
 
     private func forget(_ id: GitRepoID) {
@@ -171,7 +183,9 @@ public final class GitModel: ObservableObject {
     // -- events ---------------------------------------------------------------------------
 
     /// A project's watcher also sees its tasks' index and HEAD, under `.git/worktrees/<name>/`:
-    /// those refresh the task. Not knowing what changed refreshes the project and its tasks.
+    /// those refresh the task. Refs and HEAD are shared by every worktree, so a change there
+    /// (a fetch, a push) refreshes the project and its listed tasks, whose ahead and behind may
+    /// have moved. Not knowing what changed refreshes the project and all its tasks.
     private func changed(_ id: GitRepoID, _ changes: [String]) {
         guard watchers[id] != nil else { return }   // a late event for a repository that is gone
         guard case .project(let project) = id else {
@@ -191,10 +205,16 @@ public final class GitModel: ObservableObject {
                 tasksChanged.formUnion(tasks.filter { worktreeNames[$0] == name })
             } else {
                 projectChanged = true
+                if GitWatchPaths.isShared(change) { tasksChanged.formUnion(tasks.filter(isListed)) }
             }
         }
         if projectChanged { refreshSoon(id) }
         for task in tasks where tasksChanged.contains(task) { refreshSoon(.task(task)) }
+    }
+
+    private func isListed(_ task: UUID) -> Bool {
+        guard case .status(let status) = repos[.task(task)]?.state else { return false }
+        return status.hasChanges
     }
 
     // -- the queue ------------------------------------------------------------------------
@@ -324,7 +344,6 @@ public final class GitModel: ObservableObject {
             }
         }
         guard epochs[id] == epoch, repos[id] != nil else { return }
-        repos[id]?.busy = false
         repos[id]?.actionProblem = problem
         // A message typed while the commit ran is kept.
         if action == .commit, problem == nil, drafts[id] == message, !message.isEmpty {
@@ -332,7 +351,11 @@ public final class GitModel: ObservableObject {
             drafts[id] = nil
         }
         publish()
+        // Busy until the read after the action shows its outcome.
         await load(id, epoch: epoch)
+        guard epochs[id] == epoch, repos[id] != nil else { return }
+        repos[id]?.busy = false
+        publish()
     }
 
     /// What `act` does outside tests. Discard and unstage work from the repository as it is now:

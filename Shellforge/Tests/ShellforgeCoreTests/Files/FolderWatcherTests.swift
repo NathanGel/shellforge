@@ -61,7 +61,7 @@ final class FolderWatcherTests: XCTestCase {
         let changed = expectation(description: "a change under src")
         changed.assertForOverFulfill = false
         let watcher = FolderWatcher()
-        watcher.watch(folder.path) { changed.fulfill() }
+        watcher.watch(folder.path, onChange: { changed.fulfill() })
         defer { watcher.stop() }
         try "x".write(to: folder.appendingPathComponent("src/app.ts"), atomically: true, encoding: .utf8)
         wait(for: [changed], timeout: 30)

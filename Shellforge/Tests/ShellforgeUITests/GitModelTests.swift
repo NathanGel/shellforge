@@ -9,7 +9,7 @@ private final class FakeWatcher: FolderWatching, @unchecked Sendable {
     private var handler: (@Sendable ([String]) -> Void)?
     private var stopped = false
     init(_ path: String) { self.path = path }
-    func watch(_ path: String, onChange: @escaping @Sendable () -> Void) { watch(path) { _ in onChange() } }
+    func watch(_ path: String, onChange: @escaping @Sendable () -> Void) { watch(path, onChanges: { _ in onChange() }) }
     func watch(_ path: String, onChanges: @escaping @Sendable ([String]) -> Void) { lock.withLock { handler = onChanges } }
     /// Keeps its handler, so a test can fire a late event after the stop.
     func stop() { lock.withLock { stopped = true } }
@@ -173,6 +173,46 @@ final class GitModelTests: XCTestCase {
         made[demo.path]!.fire([".git/worktrees/feature-login-page/index"])
         await git.settled()
         XCTAssertEqual(reader.count(demo.path), projectReads)
+        XCTAssertEqual(status(git.sections[0].tasks.first)?.staged.map(\.path), ["src/app.ts"])
+    }
+
+    func testAMovedUpstreamRefreshesTheTasksAheadAndBehind() async throws {
+        let scratch = try Scratch()
+        let demo = try scratch.project("demo")
+        let origin = "\(scratch.root)/origin.git"
+        try scratch.git(["init", "-q", "--bare", "-b", "main", origin], in: scratch.root)
+        try scratch.git(["remote", "add", "origin", origin], in: demo.path)
+        let task = try scratch.task("Login page", slug: "feature-login-page", branch: "feature/login-page", of: demo)
+        try scratch.git(["push", "-q", "-u", "origin", "feature/login-page"], in: task.worktreePath)
+        try scratch.write("src/app.ts", in: task.worktreePath)
+        var made: [String: FakeWatcher] = [:]
+        let git = model(scratch, [demo], tasks: [task], watchers: { made[$0.path] = $0 })
+        await git.settled()
+        XCTAssertEqual(status(git.sections[0].tasks.first)?.behind, 0)
+
+        // A fetch moves the upstream: one more commit on it, as the project's refs record it.
+        let tip = try scratch.git(["commit-tree", "feature/login-page^{tree}", "-p", "feature/login-page", "-m", "remote"], in: demo.path)
+        try scratch.git(["update-ref", "refs/remotes/origin/feature/login-page", tip], in: demo.path)
+        made[demo.path]!.fire([".git/refs/remotes/origin/feature/login-page"])
+        await git.settled()
+        XCTAssertEqual(status(git.sections[0].tasks.first)?.behind, 1)
+    }
+
+    func testATaskWhoseWorktreeNameClashesIsFoundByItsGitFile() async throws {
+        let scratch = try Scratch()
+        let demo = try scratch.project("demo")
+        // Another worktree with the same folder name takes `feature-login-page` in .git/worktrees/.
+        try scratch.git(["worktree", "add", "-q", "-b", "feature/other", "\(scratch.root)/elsewhere/feature-login-page"], in: demo.path)
+        let task = try scratch.task("Login page", slug: "feature-login-page", branch: "feature/login-page", of: demo)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(demo.path)/.git/worktrees/feature-login-page1"))
+        try scratch.write("src/app.ts", in: task.worktreePath)
+        var made: [String: FakeWatcher] = [:]
+        let git = model(scratch, [demo], tasks: [task], watchers: { made[$0.path] = $0 })
+        await git.settled()
+        XCTAssertEqual(status(git.sections[0].tasks.first)?.staged, [])
+        try scratch.git(["add", "src/app.ts"], in: task.worktreePath)
+        made[demo.path]!.fire([".git/worktrees/feature-login-page1/index"])
+        await git.settled()
         XCTAssertEqual(status(git.sections[0].tasks.first)?.staged.map(\.path), ["src/app.ts"])
     }
 

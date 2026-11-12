@@ -95,9 +95,9 @@ public final class FilesModel: ObservableObject {
             let watcher = makeWatcher(project.path)
             watchers[project.id] = watcher
             let id = project.id
-            watcher.watch(project.path) { [weak self, hops] in
+            watcher.watch(project.path, onChange: { [weak self, hops] in
                 hops.hop { self?.fileEvent(project: id) }
-            }
+            })
             startLoop(project: id)
         }
     }

@@ -14,7 +14,7 @@ public protocol FolderWatching: AnyObject, Sendable {
 
 extension FolderWatching {
     public func watch(_ path: String, onChanges: @escaping @Sendable ([String]) -> Void) {
-        watch(path) { onChanges([]) }
+        watch(path, onChange: { onChanges([]) })
     }
 }
 
@@ -91,7 +91,7 @@ public final class FolderWatcher: FolderWatching, @unchecked Sendable {
     }
 
     public func watch(_ path: String, onChange: @escaping @Sendable () -> Void) {
-        watch(path) { _ in onChange() }
+        watch(path, onChanges: { _ in onChange() })
     }
 
     public func watch(_ path: String, onChanges: @escaping @Sendable ([String]) -> Void) {
