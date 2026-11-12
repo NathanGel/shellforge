@@ -273,8 +273,18 @@ final class iTermShellforgeHost: TerminalHost {
             })
             let terminal = TabSnapshot.terminal(ofPanes: panes.map { $0.genericScope.value(forVariableName: ShellforgeTags.terminal) as? String })
             return TabSnapshot(id: session.guid, tabId: Int(tab.uniqueId), title: session.name, taskId: tags.task, projectId: tags.project,
-                               terminalId: terminal, paneCount: panes.count)
+                               terminalId: terminal, paneCount: panes.count, panel: Self.panel(ofPanes: panes))
         }
+    }
+
+    /// Tags a session with the panel that opened it; iTerm2 restores the tag with the session.
+    static func tag(_ session: PTYSession, panel: PanelTab) {
+        session.genericScope.setValue(panel.tagValue, forVariableNamed: ShellforgeTags.panel)
+    }
+
+    /// A tab's panel, from its panes' tags with the focused pane first.
+    static func panel(ofPanes panes: [PTYSession]) -> PanelTab? {
+        TabSnapshot.panel(ofPanes: panes.map { $0.genericScope.value(forVariableName: ShellforgeTags.panel) as? String })
     }
 
     var selectedTabId: String? { windowController?.currentTab()?.activeSession?.guid }
@@ -409,8 +419,9 @@ final class iTermShellforgeHost: TerminalHost {
         })
     }
 
-    /// A tab of no task — a tunnel answered in a tab — running `command` in `directory`.
-    func openTab(in directory: String, title: String, command: String) {
+    /// A tab of no task — a tunnel answered in a tab, or one a panel opened, tagged with `panel` —
+    /// running `command` in `directory`.
+    func openTab(in directory: String, title: String, command: String, panel: PanelTab?) {
         guard let windowController, let base = ProfileModel.sharedInstance()?.defaultBookmark() else { return }
         var profile = iTermShellforgeSidebar.taskTabProfile(base: base, directory: directory,
                                                             initialText: TabCommand.initialText(command))
@@ -418,7 +429,9 @@ final class iTermShellforgeHost: TerminalHost {
         iTermSessionLauncher.launchBookmark(profile, in: windowController, style: .tab, withURL: nil,
                                             hotkeyWindowType: .none, makeKey: true, canActivate: true,
                                             respectTabbingMode: false, index: nil, command: nil,
-                                            makeSession: nil, didMakeSession: nil, completion: { [weak self] _, _ in
+                                            makeSession: nil, didMakeSession: { session in
+            if let panel { Self.tag(session, panel: panel) }
+        }, completion: { [weak self] _, _ in
             MainActor.assumeIsolated { self?.onChange?() }
         })
     }

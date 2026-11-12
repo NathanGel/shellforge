@@ -70,10 +70,15 @@ import Testing
     }
 
     /// The tabs of no task opened: a tunnel answered in a tab.
-    var openedPlain: [(directory: String, title: String, command: String)] = []
+    var openedPlain: [(directory: String, title: String, command: String, panel: PanelTab?)] = []
 
-    func openTab(in directory: String, title: String, command: String) {
-        openedPlain.append((directory, title, command))
+    func openTab(in directory: String, title: String, command: String, panel: PanelTab?) {
+        openedPlain.append((directory, title, command, panel))
+        nextTab += 1
+        let tab = TabSnapshot(id: "s\(nextTab)", tabId: nextTab, title: title, taskId: nil, projectId: nil, panel: panel)
+        tabs.append(tab)
+        selectedTabId = tab.id
+        onChange?()
     }
 
     /// The terminal tabs opened, and the terminals whose tabs were asked to close.

@@ -28,7 +28,8 @@ public protocol TerminalHost: AnyObject {
     /// Opens a tab of no task and no project in `directory`, running the login shell, and selects it.
     func openPlainTab(in directory: String)
     /// Opens a tab of no task in `directory`, typing `command` into its shell, and selects it.
-    func openTab(in directory: String, title: String, command: String)
+    /// `panel` tags it with the panel that opened it (`ShellforgeTags.panel`), nil for none.
+    func openTab(in directory: String, title: String, command: String, panel: PanelTab?)
     /// Opens a terminal row's tab: a plain shell in `directory`, tagged with the terminal and its
     /// project, and selects it.
     func openTab(in directory: String, terminalId: UUID, projectId: UUID, title: String)
@@ -49,6 +50,11 @@ extension TerminalHost {
     func openTab(in directory: String, taskId: UUID, projectId: UUID, title: String, command: String?, environment: [String: String]) {
         openTab(in: directory, taskId: taskId, projectId: projectId, title: title, command: command, environment: environment, beside: nil,
                 launch: nil)
+    }
+
+    /// A tab of no task and no panel: a tunnel answered in a tab.
+    func openTab(in directory: String, title: String, command: String) {
+        openTab(in: directory, title: title, command: command, panel: nil)
     }
 }
 
@@ -189,7 +195,10 @@ public final class SidebarModel: ObservableObject {
     // -- tunnels (SidebarModel+Tunnels.swift) --
     let sshConfig: SSHConfigSource
     /// The config's hosts by alias, as last read; nil until a project with tunnels asks for them.
-    @Published public internal(set) var sshHosts: [String: SSHHost]?
+    /// A change rebuilds the tree: an ssh tab whose host left the config lists under Other Tabs.
+    @Published public internal(set) var sshHosts: [String: SSHHost]? {
+        didSet { rebuildTree(document.workspace) }
+    }
     var readingSSH = false
     /// Config reads started, and the newest one whose hosts were kept (`beginSSHRead`).
     var sshReadsStarted = 0
@@ -560,12 +569,42 @@ public final class SidebarModel: ObservableObject {
         host.select(tab: id)
     }
 
+    /// This window's tabs a panel opened for `owner`, in tab order.
+    public func panelTabs(for owner: PanelTab) -> [TabSnapshot] {
+        tree.panelTabs.filter { $0.panel == owner }
+    }
+
+    private func rebuildTree(_ workspace: Workspace) {
+        let built = SidebarTree.build(workspace, tabs: host.tabs, isOwned: { self.owns($0, in: workspace) })
+        // Assigned only when it differs: `@Published` announces every assignment.
+        if built != tree { tree = built }
+    }
+
+    /// Whether a panel tab's owner exists: an ssh tab's host in the config (or the config not read
+    /// yet), a file tab's project, a diff tab's repository's project or task.
+    func owns(_ panel: PanelTab, in workspace: Workspace) -> Bool {
+        switch panel {
+        case .ssh(let alias):
+            return sshHosts.map { $0[alias] != nil } ?? true
+        case .file(let project, _):
+            return workspace.projects.contains { $0.id == project }
+        case .diff(let repo, _):
+            // `project:<uuid>` or `task:<uuid>`, as `PanelTab` parsed it.
+            let parts = repo.split(separator: ":", maxSplits: 1)
+            guard parts.count == 2, let id = UUID(uuidString: String(parts[1])) else { return false }
+            switch parts[0] {
+            case "project": return workspace.projects.contains { $0.id == id }
+            case "task": return workspace.tasks.contains { $0.id == id }
+            default: return false
+            }
+        }
+    }
+
     private func refresh(_ workspace: Workspace? = nil) {
         // Assigned only when it differs: `@Published` announces every assignment, and every
         // announcement redraws the whole sidebar.
         let current = workspace ?? document.workspace
-        let built = SidebarTree.build(current, tabs: host.tabs)
-        if built != tree { tree = built }
+        rebuildTree(current)
         if host.selectedTabId != drawnTabId { drawnTabId = host.selectedTabId }
         if current.dividers != drawnDividers { drawnDividers = current.dividers }
         refreshSSHHosts(tree.projects.map(\.project))

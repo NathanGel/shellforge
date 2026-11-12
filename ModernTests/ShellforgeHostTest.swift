@@ -6,6 +6,7 @@
 //  profile says about its command or directory.
 //
 
+import ShellforgeCore
 import XCTest
 @testable import iTerm2SharedARC
 
@@ -115,5 +116,31 @@ final class ShellforgeHostTest: XCTestCase {
         let delegate = try XCTUnwrap(NSApp.delegate as? NSMenuItemValidation)
         XCTAssertTrue(delegate.validateMenuItem(try XCTUnwrap(check.first)), "enabled while no check runs")
         XCTAssertFalse(iTermShellforgeUpdates.isBusy())
+    }
+
+    /// A panel's tab carries its tag in a user variable, as `openTab(in:title:command:panel:)`'s
+    /// `didMakeSession` sets it, and `tabs` reads it back from any of its panes, the focused first.
+    @MainActor func testAPanelTabIsTaggedAndRead() throws {
+        let tagged = try XCTUnwrap(PTYSession(synthetic: true))
+        let split = try XCTUnwrap(PTYSession(synthetic: true))
+        let file = PanelTab.file(project: UUID(), path: "src/app.ts")
+        iTermShellforgeHost.tag(tagged, panel: file)
+        XCTAssertEqual(tagged.genericScope.value(forVariableName: ShellforgeTags.panel) as? String, file.tagValue)
+        XCTAssertEqual(iTermShellforgeHost.panel(ofPanes: [tagged]), file)
+        XCTAssertEqual(iTermShellforgeHost.panel(ofPanes: [split, tagged]), file, "a split focused beside it keeps the tag")
+        XCTAssertNil(iTermShellforgeHost.panel(ofPanes: [split]))
+        iTermShellforgeHost.tag(split, panel: .ssh(alias: "staging"))
+        XCTAssertEqual(iTermShellforgeHost.panel(ofPanes: [split, tagged]), .ssh(alias: "staging"), "the focused pane first")
+    }
+
+    /// The tag is saved with the session's arrangement, among the user variables iTerm2 restores
+    /// at relaunch as it restores a task's tag. Restoring a session needs a whole window, which a
+    /// unit test cannot drive; only the saving half is checked here.
+    @MainActor func testAPanelTagIsSavedWithTheArrangement() throws {
+        let session = try XCTUnwrap(PTYSession(synthetic: true))
+        iTermShellforgeHost.tag(session, panel: .ssh(alias: "staging"))
+        let saved = session.encodableArrangementVariables()
+        let user = saved["user"] as? [AnyHashable: Any]
+        XCTAssertEqual((user?["shellforge_panel"] ?? saved[ShellforgeTags.panel]) as? String, "ssh:staging", "\(saved)")
     }
 }
