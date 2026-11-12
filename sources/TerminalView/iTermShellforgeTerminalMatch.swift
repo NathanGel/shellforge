@@ -2,7 +2,7 @@
 //  iTermShellforgeTerminalMatch.swift
 //  Shellforge
 //
-//  Settings › Core › Terminal's match, for iTerm2's own code: Shellforge's colours laid over the
+//  Settings › Core › Theme's Match Terminal, for iTerm2's own code: Shellforge's colours laid over the
 //  profile a session loads its colours from, and iTerm2's Minimal theme, while it is on. Neither
 //  the profiles nor the theme setting are ever written.
 //
@@ -26,6 +26,9 @@ final class iTermShellforgeTerminalMatch: NSObject {
                                                using: recolourIfOn)
         NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
                                                           object: nil, queue: .main, using: recolourIfOn)
+        // The theme is laid over the terminal while matched: a new theme recolours it at once. It is
+        // posted on the main thread, so no queue.
+        NotificationCenter.default.addObserver(forName: ThemeRuntime.didChange, object: nil, queue: nil, using: recolourIfOn)
         // Under the Minimal theme iTerm2 pins each session view's appearance to its background, so a
         // session may never see the app's appearance change: the match watches the app itself.
         // Only a change between light and dark counts, and it only reloads the sessions: the full
@@ -97,8 +100,6 @@ final class iTermShellforgeTerminalMatch: NSObject {
         NSColor(srgbRed: color.red, green: color.green, blue: color.blue, alpha: 1)
     }
 
-    /// Every open session reloads its colours from its own profile, through the hook, and its Minimal
-    /// appearance; then iTerm2 redraws its windows as it does when its theme setting changes.
     /// Every open session reloads its colours from its own profile, through the hook, and its
     /// Minimal appearance, which follows its background.
     private static func reloadSessions() {

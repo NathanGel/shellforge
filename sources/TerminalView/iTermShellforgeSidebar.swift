@@ -162,7 +162,7 @@ final class iTermShellforgeSidebar: NSObject {
         feedback.refresh()
         watchClicks()
         let view = ShellforgeSidebar.makeView(model: model, chooseFolder: FolderChooser.choose, hooks: hooks, machine: machine,
-                                          backpack: backpack, zoom: zoom, terminalMatch: iTermShellforgeTerminalMatch.settings,
+                                          backpack: backpack, zoom: zoom, terminalMatch: iTermShellforgeTerminalMatch.settings, theme: iTermShellforgeThemes.settings,
                                           terminalEditorDefaults: iTermUserDefaults.userDefaults(),
                                           feedback: feedback, activityOrder: activityOrder, files: files, git: git,
                                           panelCornerRadius: floats ? panelCornerRadius : nil,

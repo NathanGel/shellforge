@@ -1,4 +1,5 @@
 import AppKit
+import ShellforgeDesign
 import SwiftUI
 
 /// A sheet in a panel of its own, on its parent window, in that window's appearance.
@@ -9,7 +10,8 @@ public enum ShellforgePanel {
     public static func present(_ view: some View, over parent: NSWindow?) -> NSPanel {
         let panel = NSPanel(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
         panel.isReleasedWhenClosed = false
-        let host = NSHostingView(rootView: view)
+        // Its own root, so its own `.themed()`: a theme change while it is up redraws it too.
+        let host = NSHostingView(rootView: view.themed())
         panel.contentView = host
         panel.setContentSize(host.fittingSize)
         if let parent { parent.beginSheet(panel) } else { panel.center(); panel.makeKeyAndOrderFront(nil) }

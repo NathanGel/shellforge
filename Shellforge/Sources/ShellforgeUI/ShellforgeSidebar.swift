@@ -19,7 +19,7 @@ public enum ShellforgeSidebar {
     /// `zoom` is the app's one text size, which every window's sidebar draws at; its sheets, in
     /// panels of their own, stay at `.standard`. `terminalEditorDefaults` is where the terminal
     /// editor is saved: the app's own suite. `terminalMatch` is the app's one Settings › Core ›
-    /// Terminal switch. `feedback` is the app's one feedback prompt, and `showFeedback` hands back how
+    /// Terminal switch, and `theme` its one Theme choice. `feedback` is the app's one feedback prompt, and `showFeedback` hands back how
     /// this sidebar opens the feedback form, for the Help menu. `panelCornerRadius`, when given, draws
     /// the sidebar as a floating panel with those corners (macOS 26); nil draws the classic sidebar.
     /// `agentTools` is what the app bundle gives the agents, for Settings › Agents, and
@@ -30,7 +30,7 @@ public enum ShellforgeSidebar {
     /// for the Git panel.
     public static func makeView(model: SidebarModel, chooseFolder: @escaping @MainActor () -> String?, hooks: AgentHooksModel,
                                 machine: MachineMonitor, backpack: BackpackController, zoom: SidebarZoom,
-                                terminalMatch: TerminalMatchSettings, terminalEditorDefaults: UserDefaults, feedback: FeedbackPrompt,
+                                terminalMatch: TerminalMatchSettings, theme: ThemeSettings, terminalEditorDefaults: UserDefaults, feedback: FeedbackPrompt,
                                 activityOrder: ActivityOrderSource = ActivityOrderSource(defaults: nil), files: FilesHolder? = nil,
                                 git: GitHolder? = nil, panelCornerRadius: CGFloat? = nil,
                                 agentTools: AgentTools = .none, agentsChanged: @escaping @MainActor () -> Void = {},
@@ -45,7 +45,7 @@ public enum ShellforgeSidebar {
         let feedbackPresenter = SheetPresenter()
         let activity = ActivityModel(source: activityOrder)
         let sidebar = SidebarView(model: model, activity: activity, chooseFolder: chooseFolder,
-                                  hooks: hooks, machine: machine, backpack: backpack, terminalMatch: terminalMatch, terminalEditorDefaults: terminalEditorDefaults, files: files,
+                                  hooks: hooks, machine: machine, backpack: backpack, terminalMatch: terminalMatch, theme: theme, terminalEditorDefaults: terminalEditorDefaults, files: files,
                                   git: git, feedback: feedback, chrome: chrome, showBackpack: { [weak presenter] present in
             guard let presenter else { return }
             presenter.present = present
@@ -186,7 +186,8 @@ struct ZoomedSidebar: View {
     @ObservedObject var zoom: SidebarZoom
     let sidebar: SidebarView
 
-    var body: some View { sidebar.interfaceScale(zoom.scale) }
+    /// `.themed()` once, at the root: a theme change redraws the whole sidebar in place.
+    var body: some View { sidebar.interfaceScale(zoom.scale).themed() }
 }
 
 /// The sidebar's right edge: one hairline, so the sidebar reads apart from the terminal beside it.
@@ -384,6 +385,7 @@ struct SidebarView: View {
     let machine: MachineMonitor
     let backpack: BackpackController
     let terminalMatch: TerminalMatchSettings
+    let theme: ThemeSettings
     /// Where the terminal editor is saved: the app's own suite.
     let terminalEditorDefaults: UserDefaults
     /// The app's one Files panel model, made when the panel first shows in any window.
@@ -708,7 +710,7 @@ struct SidebarView: View {
                                     prompter: model.prompter, tools: agentTools, store: model.$sessions.eraseToAnyPublisher(),
                                     changed: agentsChanged)
         sheet.present(over: anchor.window) { dismiss in
-            SettingsPanel(backpack: backpack, integrations: integrations, environment: environment, terminalEditor: model.terminalEditorSettings(defaults: terminalEditorDefaults), terminalMatch: terminalMatch, feedback: feedback,
+            SettingsPanel(backpack: backpack, integrations: integrations, environment: environment, terminalEditor: model.terminalEditorSettings(defaults: terminalEditorDefaults), terminalMatch: terminalMatch, theme: theme, feedback: feedback,
                           agentDefaults: agentDefaults, agents: agents, close: dismiss)
         }
     }

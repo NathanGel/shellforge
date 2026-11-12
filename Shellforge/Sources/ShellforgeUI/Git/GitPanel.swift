@@ -474,6 +474,8 @@ private struct GitBranchLine: View {
                             choosing = false
                             Task { await actions.switchBranch(section, to: branch, model: model) }
                         }
+                        // A popover is a root of its own, so it follows a theme change itself.
+                        .themed()
                     }
             }
         }

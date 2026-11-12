@@ -1260,6 +1260,12 @@ static void iTermUncaughtExceptionHandler(NSException *exception) {
 }
 
 - (void)updateAppearance {
+    // Shellforge: a single light or dark theme holds the app to its appearance.
+    NSAppearance *shellforgeAppearance = [iTermShellforgeThemes forcedAppearance];
+    if (shellforgeAppearance) {
+        self.appearance = shellforgeAppearance;
+        return;
+    }
     iTermPreferencesTabStyle preferredStyle = [iTermPreferences intForKey:kPreferenceKeyTabStyle];
     switch (preferredStyle) {
         case TAB_STYLE_AUTOMATIC:

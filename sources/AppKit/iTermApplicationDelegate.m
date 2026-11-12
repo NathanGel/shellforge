@@ -1510,6 +1510,8 @@ void TurnOnDebugLoggingAutomatically(void) {
         suUpdater.delegate = (id<SUUpdaterDelegate>)[iTermTestHostIsolation updaterDelegate];
     }
     [[iTermApplication sharedApplication] updateAppearance];
+    // Shellforge: the saved theme, and its appearance, before the first window; then it follows the Mac.
+    [iTermShellforgeThemes start];
     [[iTermUserDefaults userDefaults] it_addObserverForKey:kPreferenceKeyTabStyle
                                                      block:^(id _Nonnull newValue) {
         [[iTermApplication sharedApplication] updateAppearance];

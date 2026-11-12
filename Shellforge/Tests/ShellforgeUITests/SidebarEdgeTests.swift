@@ -17,7 +17,7 @@ import ShellforgeDesign
                                               machine: MachineMonitor(sensor: InertMachineSensor(), power: InertPower()),
                                               backpack: BackpackController(ports: .inert, settings: BackpackSettings(defaults: nil), toast: { _ in }),
                                               zoom: SidebarZoom(settings: SidebarLayoutSettings(defaults: ScratchDefaults.make())),
-                                              terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()), terminalEditorDefaults: ScratchDefaults.make(), feedback: FeedbackPrompt(defaults: ScratchDefaults.make(), channel: .dev))
+                                              terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()), theme: ThemeSettings(defaults: ScratchDefaults.make()), terminalEditorDefaults: ScratchDefaults.make(), feedback: FeedbackPrompt(defaults: ScratchDefaults.make(), channel: .dev))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: view.frame.width, height: 400), styleMask: [.borderless],
                               backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -49,7 +49,7 @@ import ShellforgeDesign
         let view = ShellforgeSidebar.makeView(model: model, chooseFolder: { nil }, hooks: hooks,
                                               machine: MachineMonitor(sensor: InertMachineSensor(), power: InertPower()),
                                               backpack: BackpackController(ports: .inert, settings: BackpackSettings(defaults: nil), toast: { _ in }),
-                                              zoom: zoom, terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()), terminalEditorDefaults: ScratchDefaults.make(), feedback: FeedbackPrompt(defaults: ScratchDefaults.make(), channel: .dev),
+                                              zoom: zoom, terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()), theme: ThemeSettings(defaults: ScratchDefaults.make()), terminalEditorDefaults: ScratchDefaults.make(), feedback: FeedbackPrompt(defaults: ScratchDefaults.make(), channel: .dev),
                                               panelCornerRadius: 8)
         #expect(view.fittingSize.width <= Size.sidebarMinWidth - Space.inset, "the content asks for \(view.fittingSize.width) pt")
     }

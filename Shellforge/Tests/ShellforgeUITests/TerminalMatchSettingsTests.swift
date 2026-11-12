@@ -33,7 +33,7 @@ import SwiftUI
                                                         testGitLab: { _ in "x" }, testGitHub: { _ in "x" })
             let backpack = BackpackController(ports: .inert, settings: BackpackSettings(defaults: nil), toast: { _ in })
             let host = NSHostingView(rootView: SettingsPanel(backpack: backpack, integrations: integrations, environment: nil,
-                                                             terminalMatch: settings,
+                                                             terminalMatch: settings, theme: ThemeSettings(defaults: ScratchDefaults.make()),
                                                              feedback: FeedbackPrompt(defaults: ScratchDefaults.make(), channel: .dev),
                                                              agentDefaults: AgentDefaultsSettingsModel(agents: [], catalogue: { _ in [] }, remembered: [:],
                                                                                                        defaults: ScratchDefaults.make()),
@@ -51,7 +51,9 @@ import SwiftUI
             view.subviews.compactMap { $0 as? NSSwitch } + view.subviews.flatMap { switches($0) }
         }
         let first = sheet(), second = sheet()
-        let a = try #require(switches(first).first), b = try #require(switches(second).first)
+        // Core's switches, in order: Theme's Follow Mac Appearance and Match Terminal, then Feedback.
+        func match(_ view: NSView) -> NSSwitch? { let all = switches(view); return all.count == 3 ? all[1] : nil }
+        let a = try #require(match(first)), b = try #require(match(second))
         a.performClick(nil)
         first.layoutSubtreeIfNeeded(); second.layoutSubtreeIfNeeded()
         #expect(a.state == .on)

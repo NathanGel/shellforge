@@ -228,7 +228,7 @@ private final class CountingLister: @unchecked Sendable {
                                               machine: MachineMonitor(sensor: InertMachineSensor(), power: InertPower()),
                                               backpack: BackpackController(ports: .inert, settings: BackpackSettings(defaults: nil), toast: { _ in }),
                                               zoom: SidebarZoom(settings: SidebarLayoutSettings(defaults: ScratchDefaults.make())),
-                                              terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()), terminalEditorDefaults: ScratchDefaults.make(),
+                                              terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()), theme: ThemeSettings(defaults: ScratchDefaults.make()), terminalEditorDefaults: ScratchDefaults.make(),
                                               feedback: FeedbackPrompt(defaults: ScratchDefaults.make(), channel: .dev),
                                               files: FilesHolder { self.files(lister) })
         view.frame = NSRect(x: 0, y: 0, width: Size.sidebarWidth, height: 600)

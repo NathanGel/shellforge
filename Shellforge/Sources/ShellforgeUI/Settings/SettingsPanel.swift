@@ -15,6 +15,7 @@ struct SettingsPanel: View {
     var environment: EnvironmentModel?
     var terminalEditor: TerminalEditorSettings?
     let terminalMatch: TerminalMatchSettings
+    let theme: ThemeSettings
     @ObservedObject var feedback: FeedbackPrompt
     @ObservedObject var agentDefaults: AgentDefaultsSettingsModel
     let agents: AgentListModel
@@ -22,6 +23,7 @@ struct SettingsPanel: View {
     @State private var failure: String?
     /// This sheet's own switch, from what is saved when it opens.
     @State private var matchDraft = false
+    @State private var themeDraft = ThemeChoice()
     @State private var feedbackDraft = true
     @State private var editorDraft = ""
     /// The agent form open in the panel, if one is.
@@ -42,7 +44,7 @@ struct SettingsPanel: View {
         .task { integrations.testConfigured() }
         .task { await backpack.refreshSetup() }
         .task { await agentDefaults.load() }
-        .onAppear { matchDraft = terminalMatch.isOn; feedbackDraft = feedback.isEnabled; editorDraft = terminalEditor?.saved ?? "" }
+        .onAppear { matchDraft = terminalMatch.isOn; themeDraft = theme.choice; feedbackDraft = feedback.isEnabled; editorDraft = terminalEditor?.saved ?? "" }
         // An agent added, changed or removed here shows in the defaults list at once.
         .onReceive(agents.$rows.dropFirst()) { rows in
             agentDefaults.update(agents: rows.filter(\.installed).map(\.agent))
@@ -59,7 +61,7 @@ struct SettingsPanel: View {
                     MacSettingsCard(backpack: backpack)
                     if let environment { SettingsRowDivider(); EnvironmentCard(model: environment) }
                     SettingsRowDivider()
-                    TerminalMatchCard(isOn: $matchDraft)
+                    ThemeCard(choice: $themeDraft, matchesTerminal: $matchDraft)
                     SettingsRowDivider()
                     FeedbackPromptCard(isOn: $feedbackDraft)
                     if let terminalEditor { SettingsRowDivider(); TerminalEditorCard(settings: terminalEditor, draft: $editorDraft) }
@@ -94,6 +96,7 @@ struct SettingsPanel: View {
     private func save() {
         failure = integrations.save()
         guard failure == nil else { return }
+        theme.save(themeDraft)
         terminalMatch.save(matchDraft)
         feedback.save(feedbackDraft)
         terminalEditor?.save(editorDraft)
