@@ -29,13 +29,18 @@ public struct TerminalNode: Equatable, Sendable, Identifiable {
 public struct SidebarTree: Equatable, Sendable {
     public var projects: [ProjectNode]
     public var otherTabs: [TabSnapshot]
+    /// Tabs a panel opened whose owner exists, in window order; the panels list them.
+    public var panelTabs: [TabSnapshot]
 
-    public init(projects: [ProjectNode], otherTabs: [TabSnapshot]) {
+    public init(projects: [ProjectNode], otherTabs: [TabSnapshot], panelTabs: [TabSnapshot] = []) {
         self.projects = projects
         self.otherTabs = otherTabs
+        self.panelTabs = panelTabs
     }
 
-    public static func build(_ workspace: Workspace, tabs: [TabSnapshot]) -> SidebarTree {
+    /// `isOwned` says whether a panel tag’s owner (host, project, task) still exists; a tab whose
+    /// owner is gone lists under other tabs, so it stays reachable.
+    public static func build(_ workspace: Workspace, tabs: [TabSnapshot], isOwned: (PanelTab) -> Bool = { _ in true }) -> SidebarTree {
         let ordered = tabs.sorted { $0.tabId < $1.tabId }
         let known = Set(workspace.tasks.map(\.id))
         // Only a terminal whose project is drawn has a row; another's tabs are other tabs.
@@ -51,11 +56,17 @@ public struct SidebarTree: Equatable, Sendable {
                 })
             }, children: workspace.children(in: project.id))
         }
-        let other = ordered.filter { tab in
+        // A task or terminal tag wins over a panel tag: `unclaimed` is what neither owns.
+        let unclaimed = ordered.filter { tab in
             if let terminal = tab.terminalId, terminals.contains(terminal) { return false }
             return tab.taskId.map { !known.contains($0) } ?? true
         }
-        return SidebarTree(projects: projects, otherTabs: other)
+        var panelTabs: [TabSnapshot] = []
+        var other: [TabSnapshot] = []
+        for tab in unclaimed {
+            if let panel = tab.panel, isOwned(panel) { panelTabs.append(tab) } else { other.append(tab) }
+        }
+        return SidebarTree(projects: projects, otherTabs: other, panelTabs: panelTabs)
     }
 
     /// The task whose tag `tab` carries, if it is one of the workspace's.

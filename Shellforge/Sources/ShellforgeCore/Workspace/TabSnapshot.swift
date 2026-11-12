@@ -7,6 +7,8 @@ public enum ShellforgeTags {
     public static let project = "user.shellforge_project"
     /// A terminal's tab: a plain shell in its project's folder, under a row of its own.
     public static let terminal = "user.shellforge_terminal"
+    /// A tab a sidebar panel opened (an ssh session, a file, a diff); see `PanelTab.tagValue`.
+    public static let panel = "user.shellforge_panel"
 }
 
 /// One live tab, as the sidebar needs it. Built by the terminal host from iTerm2's sessions.
@@ -22,8 +24,11 @@ public struct TabSnapshot: Equatable, Sendable, Identifiable {
     public var terminalId: UUID?
     /// Its panes: more than one once split (⌘D). Close then closes the focused pane, not the tab.
     public var paneCount = 1
+    /// The panel that opened it; nil for a tab of no panel.
+    public var panel: PanelTab?
 
-    public init(id: String, tabId: Int, title: String, taskId: UUID?, projectId: UUID?, terminalId: UUID? = nil, paneCount: Int = 1) {
+    public init(id: String, tabId: Int, title: String, taskId: UUID?, projectId: UUID?, terminalId: UUID? = nil, paneCount: Int = 1, panel: PanelTab? = nil) {
+        self.panel = panel
         self.paneCount = paneCount
         self.id = id
         self.tabId = tabId
@@ -46,5 +51,10 @@ extension TabSnapshot {
     /// A tab's terminal, from its panes' tags: the first pane that names one.
     public static func terminal(ofPanes panes: [String?]) -> UUID? {
         panes.lazy.compactMap { $0.flatMap(UUID.init(uuidString:)) }.first
+    }
+
+    /// A tab’s panel, from its panes’ tags with the focused pane first: the first pane that names one.
+    public static func panel(ofPanes panes: [String?]) -> PanelTab? {
+        panes.lazy.compactMap { $0.flatMap(PanelTab.init(tagValue:)) }.first
     }
 }

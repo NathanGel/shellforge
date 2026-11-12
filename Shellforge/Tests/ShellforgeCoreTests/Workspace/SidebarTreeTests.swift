@@ -75,4 +75,42 @@ import Testing
         #expect(tree.task(owning: owned) == a)
         #expect(tree.task(owning: tab("s2", 2, task: nil)) == nil)
     }
+
+    // MARK: Panel tabs
+
+    private func panelTab(_ id: String, _ tabId: Int, _ panel: PanelTab, task: UUID? = nil) -> TabSnapshot {
+        TabSnapshot(id: id, tabId: tabId, title: id, taskId: task, projectId: task == nil ? nil : project.id, panel: panel)
+    }
+
+    @Test func aTaggedTabIsNotAnOtherTab() {
+        let tab = panelTab("s1", 1, .ssh(alias: "staging"))
+        let tree = SidebarTree.build(Workspace(projects: [project], tasks: []), tabs: [tab, self.tab("s2", 2, task: nil)])
+        #expect(tree.panelTabs.map(\.id) == ["s1"])
+        #expect(tree.otherTabs.map(\.id) == ["s2"])
+    }
+
+    @Test func anOrphanedPanelTabIsAnOtherTab() {
+        let tab = panelTab("s1", 1, .ssh(alias: "staging"))
+        let tree = SidebarTree.build(Workspace(projects: [project], tasks: []), tabs: [tab], isOwned: { _ in false })
+        #expect(tree.panelTabs.isEmpty)
+        #expect(tree.otherTabs.map(\.id) == ["s1"])
+    }
+
+    @Test func aSplitKeepsItsPanelTag() {
+        let panel = PanelTab.file(project: project.id, path: "src/app.ts")
+        let found = TabSnapshot.panel(ofPanes: [nil, panel.tagValue])
+        let tab = TabSnapshot(id: "s1", tabId: 1, title: "app.ts", taskId: nil, projectId: nil, paneCount: 2, panel: found)
+        let tree = SidebarTree.build(Workspace(projects: [project], tasks: []), tabs: [tab])
+        #expect(tree.panelTabs.map(\.id) == ["s1"])
+        #expect(tree.panelTabs[0].panel == panel)
+    }
+
+    @Test func aTaskTagWinsOverAPanelTag() {
+        let a = login
+        let tab = panelTab("s1", 1, .ssh(alias: "staging"), task: a.id)
+        let tree = SidebarTree.build(Workspace(projects: [project], tasks: [a]), tabs: [tab])
+        #expect(tree.projects[0].tasks[0].tabs.map(\.id) == ["s1"])
+        #expect(tree.panelTabs.isEmpty)
+        #expect(tree.otherTabs.isEmpty)
+    }
 }
