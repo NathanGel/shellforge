@@ -1,0 +1,326 @@
+import AppKit
+import ShellforgeCore
+import ShellforgeDesign
+import SwiftUI
+
+/// What is at a row's path on disk when the row is activated: what git or the listing said may be
+/// out of date by then.
+public enum FileKind: Sendable, Equatable {
+    case file, folder, gone
+
+    /// Reads the disk: call it off the main actor.
+    public static func onDisk(_ path: String) -> FileKind {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) else { return .gone }
+        return isDirectory.boolValue ? .folder : .file
+    }
+}
+
+/// Opens a file of the Files panel in a terminal tab: a new tab in the project's folder, titled
+/// with the file's name, typing `EditorCommand.line`. The editor is resolved at the click — the
+/// Settings choice, else `$EDITOR`, else `vi` — and the login environment is read off the main
+/// actor, as it may run a login shell when it has not been read yet.
+@MainActor
+struct FileOpener {
+    let host: TerminalHost
+    /// The app's own suite, where Settings › Core › Terminal editor is saved.
+    let defaults: UserDefaults
+    let environment: @Sendable () -> [String: String]
+    var kind: @Sendable (String) -> FileKind = FileKind.onDisk
+
+    /// A file still there opens in its editor. One gone since the listing opens nothing: the
+    /// project is listed again. A folder never opens an editor: it folds or unfolds instead.
+    func open(_ node: FileNode, in project: Project, files: FilesModel) async {
+        let path = URL(fileURLWithPath: project.path).appendingPathComponent(node.path).path
+        let (kind, environment) = (self.kind, self.environment)
+        let (found, variables) = await BackgroundWork.run { () -> (FileKind, [String: String]) in
+            let found = kind(path)
+            return (found, found == .file ? environment() : [:])
+        }
+        switch found {
+        case .gone:
+            await files.refresh(project: project.id)
+        case .folder:
+            files.toggleFolder(project: project.id, folder: node)
+            await files.refresh(project: project.id)
+        case .file:
+            let editor = EditorCommand.editor(setting: defaults.string(forKey: EditorCommand.settingKey), environment: variables)
+            host.openTab(in: project.path, title: node.name, command: EditorCommand.line(editor: editor, file: node.path))
+        }
+    }
+}
+
+extension FilesModel {
+    /// Folds or unfolds a folder; one opened that was never loaded (outside a repository) is read.
+    func toggleFolder(project: UUID, folder: FileNode) {
+        let opening = !isOpen(project: project, folder: folder.path)
+        toggle(project: project, folder: folder.path)
+        guard opening, folder.isFolder, folder.children == nil else { return }
+        Task { await loadChildren(project: project, folder: folder.path) }
+    }
+}
+
+/// The Files panel: one section per workspace project, in the workspace's order — the project's
+/// row (its provider mark, a chevron, its name) folds it — then its tree. Only open folders'
+/// children are made into rows. `titled` false when the title is pinned above the panel instead.
+struct FilesPanel: View {
+    @ObservedObject var model: FilesModel
+    let titled: Bool
+    var providers: [UUID: Provider] = [:]
+    let opener: FileOpener
+    @Environment(\.interfaceScale) private var scale
+
+    /// The panel's `ViewMark`.
+    static let markName = "FilesPanel"
+
+    /// A row's `ViewMark`, for tests: the project's id and the row's path ("" for the project's row).
+    nonisolated static func rowMark(project: UUID, path: String) -> String { "FilesRow:\(project.uuidString):\(path)" }
+
+    /// One line of the panel.
+    enum Row: Identifiable, Equatable {
+        case project(Project, open: Bool)
+        /// What the section says in place of its tree: loading, its folder gone, why it can't be read.
+        case message(project: UUID, text: String, warns: Bool)
+        case node(Project, FileNode, depth: Int, open: Bool)
+
+        var id: String {
+            switch self {
+            case .project(let project, _): FilesPanel.rowMark(project: project.id, path: "")
+            case .message(let project, _, _): "message:" + project.uuidString
+            case .node(let project, let node, _, _): FilesPanel.rowMark(project: project.id, path: node.path)
+            }
+        }
+    }
+
+    static let loadingText = "Loading…"
+    static let missingText = "Folder not found"
+    static let emptyText = "No files"
+
+    /// The rows drawn: a closed section or folder contributes no rows below its own.
+    static func rows(_ sections: [FilesSection], isOpen: (UUID, String) -> Bool) -> [Row] {
+        sections.flatMap { section -> [Row] in
+            let project = section.project
+            let open = isOpen(project.id, "")
+            var rows: [Row] = [.project(project, open: open)]
+            guard open else { return rows }
+            switch section.state {
+            case .loading: rows.append(.message(project: project.id, text: loadingText, warns: false))
+            case .missing: rows.append(.message(project: project.id, text: missingText, warns: true))
+            case .unreadable(let reason): rows.append(.message(project: project.id, text: reason, warns: true))
+            case .tree(let nodes) where nodes.isEmpty: rows.append(.message(project: project.id, text: emptyText, warns: false))
+            case .tree(let nodes): rows += treeRows(nodes, project: project, depth: 0, isOpen: isOpen)
+            }
+            return rows
+        }
+    }
+
+    private static func treeRows(_ nodes: [FileNode], project: Project, depth: Int, isOpen: (UUID, String) -> Bool) -> [Row] {
+        nodes.flatMap { node -> [Row] in
+            let open = node.isFolder && isOpen(project.id, node.path)
+            let row = Row.node(project, node, depth: depth, open: open)
+            guard open, let children = node.children else { return [row] }
+            return [row] + treeRows(children, project: project, depth: depth + 1, isOpen: isOpen)
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if titled { FilesPanelTitle() }
+            List {
+                ForEach(Self.rows(model.sections, isOpen: model.isOpen)) { row in
+                    rowView(row).listRowSeparator(.hidden)
+                }
+            }
+            .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
+            .background(NativeRowHighlight.off)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(ViewMark(name: Self.markName))
+    }
+
+    @ViewBuilder private func rowView(_ row: Row) -> some View {
+        switch row {
+        case .project(let project, let open):
+            FilesProjectRow(project: project, open: open, provider: providers[project.id] ?? .git,
+                            toggle: { model.toggle(project: project.id, folder: "") })
+                .background(ViewMark(name: row.id))
+        case .message(_, let text, let warns):
+            RowCaption(text, warns: warns)
+                .frame(maxWidth: .infinity, minHeight: scale(Size.menuRow), alignment: .leading)
+                .padding(.leading, scale(Space.section) + SidebarRowLayout.chevronWidth(scale) + scale(Space.base))
+        case .node(let project, let node, let depth, let open):
+            FileRow(project: project, node: node, depth: depth, open: open,
+                    activate: { activate(node, in: project) },
+                    openInEditor: { openFile(node, in: project) })
+                .background(ViewMark(name: row.id))
+        }
+    }
+
+    private func activate(_ node: FileNode, in project: Project) {
+        if node.isFolder { model.toggleFolder(project: project.id, folder: node) } else { openFile(node, in: project) }
+    }
+
+    private func openFile(_ node: FileNode, in project: Project) {
+        Task { await opener.open(node, in: project, files: model) }
+    }
+}
+
+/// The panel's own title, when it is not pinned above the panel.
+struct FilesPanelTitle: View {
+    @Environment(\.interfaceScale) private var scale
+
+    var body: some View {
+        SidebarHeading(ActivityPanel.files.title)
+            .frame(height: scale(Size.menuRow))
+            .background(ViewMark(name: SidebarHeader.markName))
+            .padding(.horizontal, SidebarRowLayout.listInset + scale(Space.base))
+    }
+}
+
+/// A project's row in the Files panel: a chevron, its provider mark and its name, as its header in
+/// Sessions has them. A click folds or unfolds the section.
+private struct FilesProjectRow: View {
+    let project: Project
+    let open: Bool
+    let provider: Provider
+    let toggle: () -> Void
+    @Environment(\.interfaceScale) private var scale
+
+    var body: some View {
+        HStack(spacing: scale(Space.base)) {
+            HeaderChevron(collapsed: !open).frame(width: SidebarRowLayout.chevronWidth(scale))
+            ProviderIcon(provider: provider)
+            HeaderTitle(text: project.name)
+            Spacer(minLength: scale(Space.tight))
+        }
+        .frame(height: scale(Size.projectRow)).padding(.leading, scale(Space.base)).padding(.trailing, SidebarRowLayout.trailingInset(scale))
+        .modifier(RowPill(selected: false))
+        .contentShape(Rectangle())
+        .onTapGesture(perform: toggle)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(project.name), project")
+        .accessibilityValue(open ? FileRow.expanded : FileRow.collapsed)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { toggle() }
+        .accessibilityAction(named: Text(open ? FileRow.fold : FileRow.unfold), toggle)
+        .contextMenu {
+            Button(FileRow.revealTitle) { FileRow.reveal(project.path) }
+            Divider()
+            OpenInMenuItems(folder: project.path)
+        }
+    }
+}
+
+/// A file or folder of a project's tree: a folder's chevron, its symbol and its name, indented by
+/// its depth. A folder folds or unfolds on a click; a file opens in the terminal editor.
+private struct FileRow: View {
+    let project: Project
+    let node: FileNode
+    let depth: Int
+    let open: Bool
+    let activate: () -> Void
+    let openInEditor: () -> Void
+    @Environment(\.interfaceScale) private var scale
+    @Environment(\.surface) private var surface
+
+    static let folderSymbol = "folder"
+    static let fileSymbol = "doc"
+    /// The folder and file symbols' drawn size, as `ProviderIcon` draws its SF Symbol fallbacks in
+    /// the same `Size.avatar` column, so a tree's symbols line up under the project's mark.
+    private static let glyphSize: CGFloat = 10
+
+    static let expanded = "Expanded"
+    static let collapsed = "Collapsed"
+    static let fold = "Fold"
+    static let unfold = "Unfold"
+    static let openTitle = "Open in Terminal Editor"
+    static let revealTitle = "Reveal in Finder"
+
+    private var path: String { URL(fileURLWithPath: project.path).appendingPathComponent(node.path).path }
+
+    var body: some View {
+        HStack(spacing: scale(Space.base)) {
+            HeaderChevron(collapsed: !open).frame(width: SidebarRowLayout.chevronWidth(scale))
+                .opacity(node.isFolder ? 1 : 0)
+            Icon(.symbol(node.isFolder ? Self.folderSymbol : Self.fileSymbol), size: scale(Self.glyphSize), tint: surface.secondaryInk)
+                .frame(width: scale(Size.avatar), height: scale(Size.avatar))
+            RowTitle(node.name)
+            Spacer(minLength: scale(Space.tight))
+        }
+        .frame(height: scale(Size.menuRow))
+        .padding(.leading, scale(Space.base) + scale(Space.block) * CGFloat(depth + 1))
+        .padding(.trailing, SidebarRowLayout.trailingInset(scale))
+        .modifier(RowPill(selected: false))
+        .contentShape(Rectangle())
+        .onTapGesture(perform: activate)
+        .help(node.path)
+        .modifier(FileRowAccessibility(name: node.name, isFolder: node.isFolder, open: open, activate: activate))
+        .contextMenu { menu }
+    }
+
+    @ViewBuilder private var menu: some View {
+        if node.isFolder {
+            Button(Self.revealTitle) { Self.reveal(path) }
+            Divider()
+            OpenInMenuItems(folder: path)
+        } else {
+            Button(Self.openTitle, action: openInEditor)
+            Button(Self.revealTitle) { Self.reveal(path) }
+            if OpenIn.vsCodeInstalled {
+                Divider()
+                Button("Open in VS Code") { Self.openInVSCode(path) }
+            }
+        }
+    }
+
+    @MainActor static func reveal(_ path: String) {
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+    }
+
+    @MainActor private static func openInVSCode(_ path: String) {
+        guard let app = OpenIn.vsCode else { return }
+        NSWorkspace.shared.open([URL(fileURLWithPath: path)], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
+    }
+}
+
+/// VoiceOver: a row is read as its name and kind; a folder says whether it is open, and offers Fold
+/// or Unfold; a file's default action opens it.
+private struct FileRowAccessibility: ViewModifier {
+    let name: String
+    let isFolder: Bool
+    let open: Bool
+    let activate: () -> Void
+
+    func body(content: Content) -> some View {
+        let labelled = content
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(name), \(isFolder ? "folder" : "file")")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { activate() }
+        if isFolder {
+            labelled
+                .accessibilityValue(open ? FileRow.expanded : FileRow.collapsed)
+                .accessibilityAction(named: Text(open ? FileRow.fold : FileRow.unfold), activate)
+        } else {
+            labelled
+        }
+    }
+}
+
+/// The Files panel's model, made the first time the panel is shown in its window: until then no
+/// project is listed or watched for it.
+@MainActor
+public final class FilesHolder {
+    private let make: @MainActor () -> FilesModel
+    private var made: FilesModel?
+
+    public init(_ make: @escaping @MainActor () -> FilesModel) { self.make = make }
+
+    var model: FilesModel {
+        if let made { return made }
+        let model = make()
+        made = model
+        return model
+    }
+}

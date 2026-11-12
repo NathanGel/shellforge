@@ -154,7 +154,7 @@ final class iTermShellforgeSidebar: NSObject {
         let view = ShellforgeSidebar.makeView(model: model, chooseFolder: FolderChooser.choose, hooks: hooks, machine: machine,
                                           backpack: backpack, zoom: zoom, terminalMatch: iTermShellforgeTerminalMatch.settings,
                                           terminalEditorDefaults: iTermUserDefaults.userDefaults(),
-                                          feedback: feedback, activityOrder: activityOrder,
+                                          feedback: feedback, activityOrder: activityOrder, files: FilesHolder { makeFiles() },
                                           panelCornerRadius: floats ? panelCornerRadius : nil,
                                           agentTools: agentTools, agentsChanged: { agentsChanged() },
                                           showBackpack: { [weak windowController] present in
@@ -166,6 +166,16 @@ final class iTermShellforgeSidebar: NSObject {
         })
         sidebarViews.setObject(view, forKey: model)
         return view
+    }
+
+    /// A window's Files panel model: the workspace's projects, followed as they are added, removed
+    /// or reordered; its open folders saved on this Mac, in the app's own suite.
+    private static func makeFiles() -> FilesModel {
+        let files = FilesModel(projects: [], launcher: launcher, defaults: iTermUserDefaults.userDefaults(),
+                               watcher: { _ in FolderWatcher() })
+        // The publisher hands over the current projects at once, then each change.
+        files.follow(document.$workspace.map(\.projects))
+        return files
     }
 
     /// The default profile changed to run the login shell in `directory`.
@@ -713,7 +723,7 @@ extension iTermShellforgeSidebar {
 
     private static let panelsController = PanelMenuController()
 
-    /// View › Show Sessions and Show Metrics, for the key window's sidebar.
+    /// View › Show Sessions, Show Metrics and Show Files, for the key window's sidebar.
     @objc static func panelMenuItems() -> [NSMenuItem] { panelsController.items }
 
     /// The key window's sidebar view, as `makeView` made it.
@@ -729,7 +739,7 @@ extension iTermShellforgeSidebar {
     }
 }
 
-/// View › Show Sessions and Show Metrics: each item's tag is its panel's place in `ActivityPanel.allCases`.
+/// View › Show Sessions, Show Metrics and Show Files: each item's tag is its panel's place in `ActivityPanel.allCases`.
 @MainActor
 private final class PanelMenuController: NSObject, NSMenuItemValidation {
     private(set) var items: [NSMenuItem] = []

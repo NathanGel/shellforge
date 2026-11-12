@@ -42,10 +42,10 @@ import Testing
         let source = ActivityOrderSource(defaults: defaults)
         let first = ActivityModel(source: source), second = ActivityModel(source: source)
         first.move(.metrics, before: .sessions)
-        #expect(first.layout.order == [.metrics, .sessions])
-        #expect(second.layout.order == [.metrics, .sessions])
-        #expect(ActivityOrderStore.load(defaults) == ["metrics", "sessions"])
-        #expect(ActivityModel(defaults: defaults).layout.order == [.metrics, .sessions], "a new window reads the saved order")
+        #expect(first.layout.order == [.metrics, .sessions, .files])
+        #expect(second.layout.order == [.metrics, .sessions, .files])
+        #expect(ActivityOrderStore.load(defaults) == ["metrics", "sessions", "files"])
+        #expect(ActivityModel(defaults: defaults).layout.order == [.metrics, .sessions, .files], "a new window reads the saved order")
     }
 
     @Test func movingKeepsTheSelection() {
@@ -61,12 +61,12 @@ import Testing
         let model = ActivityModel(defaults: defaults)
         model.move(fromOffsets: IndexSet(integer: 0), toOffset: 0)
         model.move(fromOffsets: IndexSet(integer: 0), toOffset: 1)
-        #expect(model.layout.order == [.sessions, .metrics])
+        #expect(model.layout.order == [.sessions, .metrics, .files])
         #expect(ActivityOrderStore.load(defaults) == nil, "nothing moved, so nothing is saved")
         model.move(fromOffsets: IndexSet(integer: 0), toOffset: 2)
-        #expect(model.layout.order == [.metrics, .sessions])
+        #expect(model.layout.order == [.metrics, .sessions, .files])
         model.move(fromOffsets: IndexSet(integer: 1), toOffset: 0)
-        #expect(model.layout.order == [.sessions, .metrics])
+        #expect(model.layout.order == [.sessions, .metrics, .files])
     }
 
     /// A drag's drop, as `move(fromOffsets:toOffset:)` takes it: past half a cell the icon trades
@@ -116,9 +116,9 @@ import Testing
         let model = ActivityModel(source: ActivityOrderSource(defaults: nil))
         let count = model.layout.order.count
         model.move(fromOffsets: IndexSet(integer: 0), toOffset: try #require(ActivityBar.stepOffset(from: 0, up: false, count: count)))
-        #expect(model.layout.order == [.metrics, .sessions])
+        #expect(model.layout.order == [.metrics, .sessions, .files])
         model.move(fromOffsets: IndexSet(integer: 1), toOffset: try #require(ActivityBar.stepOffset(from: 1, up: true, count: count)))
-        #expect(model.layout.order == [.sessions, .metrics])
+        #expect(model.layout.order == [.sessions, .metrics, .files])
     }
 
     /// The drop, handed to the model: the dragged panel lands where it was released.
@@ -127,7 +127,7 @@ import Testing
         let cell = ActivityBar.width(.standard)
         let destination = try #require(ActivityBar.dropOffset(from: 0, translation: cell, cell: cell, count: model.layout.order.count))
         model.move(fromOffsets: IndexSet(integer: 0), toOffset: destination)
-        #expect(model.layout.order == [.metrics, .sessions])
+        #expect(model.layout.order == [.metrics, .sessions, .files])
     }
 
     /// The whole sidebar, hosted in a window, with this window's activity bar `activity`.
@@ -299,7 +299,7 @@ import Testing
         #expect(window.firstResponder !== list)
     }
 
-    /// View › Show Sessions and Show Metrics: each item names its panel, its key is a free ⌃⌘ one,
+    /// View › Show Sessions, Show Metrics and Show Files: each item names its panel, its key is a free ⌃⌘ one,
     /// and showing it on a sidebar selects that panel.
     @Test func theViewMenusPanelCommandsSelectThePanel() throws {
         let (sidebar, _) = try sidebarModel()
@@ -307,7 +307,7 @@ import Testing
         defer { window.close() }
         let items = SidebarCommandMenu.panels
         #expect(items.map(\.panel) == ActivityPanel.allCases)
-        #expect(items.map(\.title) == ["Show Sessions", "Show Metrics"])
+        #expect(items.map(\.title) == ["Show Sessions", "Show Metrics", "Show Files"])
         for item in items.reversed() {
             ShellforgeSidebar.show(item.panel, on: view)
             #expect(activity.layout.selected == item.panel)

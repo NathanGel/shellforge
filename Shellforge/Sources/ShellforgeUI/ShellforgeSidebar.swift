@@ -24,11 +24,13 @@ public enum ShellforgeSidebar {
     /// `agentTools` is what the app bundle gives the agents, for Settings › Agents, and
     /// `agentsChanged` is told each time Settings › Agents adds, changes or removes one.
     /// `activityOrder` is the app's one activity bar order, which every window's bar follows; each
-    /// sidebar keeps its own selected panel.
+    /// sidebar keeps its own selected panel. `files` makes this window's Files panel model, the
+    /// first time the panel shows; nil leaves the panel empty.
     public static func makeView(model: SidebarModel, chooseFolder: @escaping @MainActor () -> String?, hooks: AgentHooksModel,
                                 machine: MachineMonitor, backpack: BackpackController, zoom: SidebarZoom,
                                 terminalMatch: TerminalMatchSettings, terminalEditorDefaults: UserDefaults = .standard, feedback: FeedbackPrompt,
-                                activityOrder: ActivityOrderSource = ActivityOrderSource(defaults: nil), panelCornerRadius: CGFloat? = nil,
+                                activityOrder: ActivityOrderSource = ActivityOrderSource(defaults: nil), files: FilesHolder? = nil,
+                                panelCornerRadius: CGFloat? = nil,
                                 agentTools: AgentTools = .none, agentsChanged: @escaping @MainActor () -> Void = {},
                                 showBackpack: @escaping @MainActor (@escaping @MainActor () -> Void) -> Void = { _ in },
                                 showFeedback: @escaping @MainActor (@escaping @MainActor () -> Void) -> Void = { _ in },
@@ -41,8 +43,8 @@ public enum ShellforgeSidebar {
         let feedbackPresenter = SheetPresenter()
         let activity = ActivityModel(source: activityOrder)
         let sidebar = SidebarView(model: model, activity: activity, chooseFolder: chooseFolder,
-                                  hooks: hooks, machine: machine, backpack: backpack, terminalMatch: terminalMatch, terminalEditorDefaults: terminalEditorDefaults, feedback: feedback,
-                                  chrome: chrome, showBackpack: { [weak presenter] present in
+                                  hooks: hooks, machine: machine, backpack: backpack, terminalMatch: terminalMatch, terminalEditorDefaults: terminalEditorDefaults, files: files,
+                                  feedback: feedback, chrome: chrome, showBackpack: { [weak presenter] present in
             guard let presenter else { return }
             presenter.present = present
             showBackpack { [weak presenter] in presenter?.present?() }
@@ -97,7 +99,8 @@ public enum ShellforgeSidebar {
         (view as? SidebarHostingView<ZoomedSidebar>)?.chrome?.windowControls
     }
 
-    /// Shows `panel` in the sidebar `view` (one `makeView` made): View › Show Sessions, Show Metrics.
+    /// Shows `panel` in the sidebar `view` (one `makeView` made): View › Show Sessions, Show Metrics,
+    /// Show Files.
     public static func show(_ panel: ActivityPanel, on view: NSView) {
         (view as? SidebarHostingView<ZoomedSidebar>)?.activity?.select(panel)
     }
@@ -380,6 +383,8 @@ struct SidebarView: View {
     let backpack: BackpackController
     let terminalMatch: TerminalMatchSettings
     var terminalEditorDefaults: UserDefaults = .standard
+    /// This window's Files panel model, made when the panel first shows.
+    var files: FilesHolder? = nil
     let feedback: FeedbackPrompt
     @ObservedObject var chrome: SidebarChrome
     let showBackpack: @MainActor (@escaping @MainActor () -> Void) -> Void
@@ -463,6 +468,7 @@ struct SidebarView: View {
             switch activity.layout.selected {
             case .sessions: header(controls)
             case .metrics: panelTitle(.metrics, controls)
+            case .files: panelTitle(.files, controls)
             }
         }
     }
@@ -494,6 +500,17 @@ struct SidebarView: View {
                              footer: SidebarFooterHost(model: model, hooks: hooks, machine: machine, backpack: backpack,
                                                        toggleMac: { BackpackToggle(backpack: backpack, presentSheet: presentBackpack).run() },
                                                        openMacSettings: showMacSettings))
+            }
+            if activity.layout.selected == .files {
+                if let files {
+                    FilesPanel(model: files.model, titled: chrome.windowControls == nil, providers: model.providers,
+                               opener: FileOpener(host: model.host, defaults: terminalEditorDefaults,
+                                                  environment: { [launcher = model.launcher] in launcher.environment.variables }))
+                } else {
+                    // A sidebar made without a Files model: the panel's title over nothing.
+                    VStack(spacing: 0) { if chrome.windowControls == nil { FilesPanelTitle() } }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                }
             }
         }
     }

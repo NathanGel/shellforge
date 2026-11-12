@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import ShellforgeCore
 
@@ -65,6 +66,16 @@ public final class FilesModel: ObservableObject {
     }
 
     // -- projects -------------------------------------------------------------------------
+
+    private var following: AnyCancellable?
+
+    /// Follows the workspace's projects, delivered on the main thread: added, removed or reordered
+    /// in Sessions, the sections follow in the workspace's order.
+    public func follow(_ projects: some Publisher<[Project], Never>) {
+        following = projects.removeDuplicates().sink { [weak self] projects in
+            MainActor.assumeIsolated { self?.update(projects: projects) }
+        }
+    }
 
     public func update(projects: [Project]) {
         let ids = Set(projects.map(\.id))

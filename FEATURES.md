@@ -14,6 +14,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 - [Tabs and panes](#tabs-and-panes)
 - [Terminals](#terminals)
 - [Metrics](#metrics)
+- [Files](#files)
 - [Dock badge](#dock-badge)
 - [Backpack Mode](#backpack-mode)
 - [Tunnels](#tunnels)
@@ -66,9 +67,10 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 
 - **Where it is.** A narrow column of plain line icons down the sidebar's left edge, VS Code's way: the full height of the sidebar, below the window buttons' row when they are in the sidebar. The panel's header, the banners and the metrics strip sit in the column beside it. Each icon shows one panel beside it:
   - Sessions (the stack of cards): projects, tasks, terminals and tabs, as the sidebar has always shown them;
-  - Metrics (the gauge): see [Metrics](#metrics).
+  - Metrics (the gauge): see [Metrics](#metrics);
+  - Files (the folder): see [Files](#files).
 - **Switching.** Click an icon. The selected one is drawn brighter, with an accent stripe along the bar's left edge. Each window shows its own panel; Sessions keeps its scroll position and selection while another panel shows, and the Tasks menu's commands work whatever the panel.
-- **From the keyboard.** View › Show Sessions (⌃⌘E) and Show Metrics (⌃⌘M) show that panel in the key window's sidebar, opening the sidebar if it is hidden. Back on Sessions, the keyboard returns to its list if it was there.
+- **From the keyboard.** View › Show Sessions (⌃⌘E), Show Metrics (⌃⌘M) and Show Files (⌃⌘I) show that panel in the key window's sidebar, opening the sidebar if it is hidden. Back on Sessions, the keyboard returns to its list if it was there.
 - **Panel order.** Drag an icon up or down the bar to reorder the panels: it follows the pointer, the others make room, and it lands where you let go. A click that doesn't move only selects, and a drag the system cancels drops nothing. Every window's bar follows the same order, and it is kept after a restart. VoiceOver offers Move Up and Move Down on each icon instead.
 - **Settings** is the gear at the bottom of the bar.
 - **Rearrange mode** keeps its Done / Cancel bar at the top whichever panel shows.
@@ -256,6 +258,19 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
 - **Vendors you don't use are hidden.** A vendor with no usage data whose CLI isn't installed gets no row and no gauge. Once installed, it reads "No usage data yet" until its first report. Claude Code counts as installed when it is on your PATH or `~/.claude` exists.
 - Claude reads "Usage disconnected" (amber) until its status-line shim is installed (Agent hooks).
 
+## Files
+
+- **What it lists.** The Files panel has one section per project, in the order Sessions shows them. Click a project's row to fold or unfold its section; folders fold the same way, and the open ones are remembered on this Mac.
+  - In a git repository: what git sees, the tracked files still on disk and the untracked ones git doesn't ignore. Ignored files, such as `node_modules` or build output, are hidden. A submodule is a folder with nothing listed in it.
+  - In a folder that isn't a repository: the folder itself, one level at a time as you open folders, without dot files.
+  - Task worktrees, under `.worktrees/`, are never listed.
+  - A project whose folder is gone says “Folder not found”; one git can't read says why.
+- **Up to date.** Each project's folder is watched, so a file added, renamed or deleted shows up without a refresh. Nothing is listed or watched until the panel is first shown in a window.
+- **Opening a file.** Click it: a new tab opens in the project's folder, titled with the file's name, running your terminal editor on it, such as `vim src/app.ts`. Quitting the editor closes the tab. A file deleted since the list was drawn opens nothing, and the list is read again.
+- **Which editor.** Settings › Core › Terminal editor, a command such as `nvim` or `micro`. Left empty, it is `$EDITOR` from your login shell, else `vi`.
+- **Right-click** a file for Open in Terminal Editor, Reveal in Finder and, when it is installed, Open in VS Code; a folder or a project for Reveal in Finder, Open in Finder and, when it is installed, Open in VS Code.
+- **From the keyboard.** View › Show Files (⌃⌘I).
+
 ## Dock badge
 
 - The Dock icon counts the task and terminal rows waiting on you, the same rows Focus View shows. Each row counts once, however many windows show it. There is no badge at zero.
@@ -350,7 +365,7 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
 | ⌃⌘⌫ | Remove Task |
 | ⌃⌘A / ⌃⌘L | Focus View / List View |
 | ⌃⌘S | Hide / Show Sidebar |
-| ⌃⌘E / ⌃⌘M | Show Sessions / Show Metrics |
+| ⌃⌘E / ⌃⌘M / ⌃⌘I | Show Sessions / Show Metrics / Show Files |
 | ⌘B | Backpack Mode |
 | ⌘+ / ⌘− / ⌘0 | Sidebar text bigger / smaller / normal, after a click in the sidebar |
 
@@ -367,7 +382,8 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
   - dividers: Rename, Rearrange and Remove Divider;
   - project, task and SSH rows: Rearrange (greyed menus aside, it is left out while another window is rearranging);
   - in Rearrange mode, every row: Move Up / Move Down (while possible), one step within its own list, and a project's Fold / Unfold;
-  - activity bar icons: Move Up / Move Down (while possible), to reorder the panels.
+  - activity bar icons: Move Up / Move Down (while possible), to reorder the panels;
+  - the Files panel's projects and folders: Fold / Unfold. Its rows read their name and whether each is a file, a folder or a project, and a folder whether it is expanded.
 - **Labels:** tunnel rows read their state, the Metrics panel's Mac row reads its readings, and the metrics strip reads all of its readings, both windows of each vendor ("Claude Code: 5-hour limit 42 % used, weekly limit 84 % used"), and opens the panel.
 
 ## The helper (shellforged)
