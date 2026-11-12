@@ -38,8 +38,14 @@ final class iTermShellforgeThemes: NSObject {
     @objc static func start() {
         guard appearanceObservation == nil else { return }
         apply()
-        appearanceObservation = NSApp.observe(\.effectiveAppearance) { app, _ in
-            MainActor.assumeIsolated { appearanceChanged(isDark: app.effectiveAppearance.it_isDark) }
+        // Applied on the next turn of the main queue, not inside the KVO callback: applying sets the
+        // app's appearance and recolours, and `setAppearance:` re-entered from such a chain has
+        // crashed before (iTermUserDefaultsObserver.m). The appearance is read then, so the
+        // latest one wins.
+        appearanceObservation = NSApp.observe(\.effectiveAppearance) { _, _ in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { appearanceChanged(isDark: NSApp.effectiveAppearance.it_isDark) }
+            }
         }
     }
 
@@ -73,7 +79,11 @@ final class iTermShellforgeThemes: NSObject {
         } else if holdsAppearance {
             // Only what the theme held is given back; an appearance flip leaves the app's alone.
             holdsAppearance = false
-            if let app = NSApp as? iTermApplication { app.updateAppearance() } else { NSApp.appearance = nil }
+            if let app = NSApp as? iTermApplication {
+                app.updateAppearance()
+            } else if NSApp.appearance != nil {
+                NSApp.appearance = nil
+            }
         }
         let dark = isDark ?? NSApp.effectiveAppearance.it_isDark
         appliedDark = dark

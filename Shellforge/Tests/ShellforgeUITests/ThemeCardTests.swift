@@ -30,9 +30,23 @@ import Testing
     }
 
     @Test func followingTheMacOffersALightAndADarkTheme() {
-        let (host, window) = host(ThemeChoice(followsMac: true))
+        let (host, window) = host(ThemeChoice(followsMac: true, light: "github-light", dark: "dracula"))
         defer { window.close() }
-        #expect(descendants(of: NSPopUpButton.self, in: host).count == 2)
+        let pickers = descendants(of: NSPopUpButton.self, in: host)
+        #expect(pickers.count == 2)
+        #expect(pickers.first?.itemTitles == ["Shellforge", "Light Modern", "GitHub Light", "Solarized Light"], "light and adaptive")
+        #expect(pickers.last?.itemTitles == ["Shellforge", "Dark Modern", "One Dark", "Dracula", "GitHub Dark", "Solarized Dark", "Nord"],
+                "dark and adaptive")
+        #expect(pickers.first?.titleOfSelectedItem == "GitHub Light")
+        #expect(pickers.last?.titleOfSelectedItem == "Dracula")
+    }
+
+    /// A saved theme of the other appearance reads as Shellforge, as an unknown one does.
+    @Test func aThemeOfTheOtherAppearanceReadsAsShellforge() {
+        let (host, window) = host(ThemeChoice(followsMac: true, light: "dracula", dark: "github-light"))
+        defer { window.close() }
+        let pickers = descendants(of: NSPopUpButton.self, in: host)
+        #expect(pickers.map(\.titleOfSelectedItem) == ["Shellforge", "Shellforge"])
     }
 
     @Test func notFollowingTheMacOffersOneTheme() {

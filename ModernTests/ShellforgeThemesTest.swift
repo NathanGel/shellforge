@@ -13,11 +13,9 @@ import XCTest
 @MainActor
 final class ShellforgeThemesTest: XCTestCase {
     private var savedDefaults: ShellforgeDefaultsSnapshot!
-    private var savedAppearance: NSAppearance?
 
     override func setUp() async throws {
         savedDefaults = ShellforgeDefaultsSnapshot()
-        savedAppearance = NSApp.appearance
         iTermShellforgeTerminalMatch.setOn(false)
         // iTerm2's own Light and Dark themes pin the app's appearance; Automatic leaves it be.
         iTermUserDefaults.userDefaults().set(iTermPreferencesTabStyle.TAB_STYLE_AUTOMATIC.rawValue, forKey: kPreferenceKeyTabStyle)
@@ -25,8 +23,8 @@ final class ShellforgeThemesTest: XCTestCase {
     }
 
     override func tearDown() async throws {
+        // Re-applies the saved theme, and with it the app's appearance.
         savedDefaults.restore()
-        NSApp.appearance = savedAppearance
     }
 
     func testASingleThemeSetsTheAppAppearance() {

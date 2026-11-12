@@ -59,8 +59,8 @@ public enum GearMenu {
     private static func themeItems(choice: ThemeChoice, match: Bool) -> [Item] {
         let themes: [Item]
         if choice.followsMac {
-            let light = ThemeCatalog.all.filter { $0.appearance != .dark }.map { pick($0, in: choice, \.light) }
-            let dark = ThemeCatalog.all.filter { $0.appearance != .light }.map { pick($0, in: choice, \.dark) }
+            let light = ThemeCatalog.lightChoices.map { pick($0, in: choice, \.light) }
+            let dark = ThemeCatalog.darkChoices.map { pick($0, in: choice, \.dark) }
             themes = [.submenu(lightTitle, light), .submenu(darkTitle, dark)]
         } else {
             themes = ThemeCatalog.all.map { pick($0, in: choice, \.single) }

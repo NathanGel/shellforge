@@ -10,6 +10,13 @@ public enum ThemeCatalog {
         githubDark, githubLight, solarizedDark, solarizedLight, nord,
     ]
 
+    /// The themes a light Mac can take while following the Mac: the light ones and the adaptive
+    /// Shellforge, in catalogue order. Settings’ Light picker and the gear menu’s Light Theme list.
+    public static let lightChoices: [Theme] = all.filter { $0.appearance != .dark }
+
+    /// The themes a dark Mac can take while following the Mac: the dark ones and Shellforge.
+    public static let darkChoices: [Theme] = all.filter { $0.appearance != .light }
+
     /// The theme with `id`; Shellforge when there is none, or no such theme.
     public static func theme(id: String?) -> Theme {
         all.first { $0.id == id } ?? shellforge

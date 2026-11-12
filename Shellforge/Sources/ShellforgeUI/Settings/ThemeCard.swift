@@ -11,6 +11,9 @@ struct ThemeCard: View {
 
     static let followMacTitle = "Follow Mac Appearance"
     static let matchTitle = "Match Terminal"
+    /// The switches' accessibility identifiers, which tests find them by.
+    static let followMacIdentifier = "Settings.Core.Theme.FollowMac"
+    static let matchIdentifier = "Settings.Core.Theme.MatchTerminal"
 
     private var status: SettingsStatus {
         guard choice.followsMac else { return SettingsStatus(.ready, ThemeCatalog.theme(id: choice.single).name) }
@@ -27,17 +30,17 @@ struct ThemeCard: View {
             EmptyView()
         } content: {
             VStack(alignment: .leading, spacing: Space.gap) {
-                switchRow(Self.followMacTitle, isOn: $choice.followsMac)
+                switchRow(Self.followMacTitle, identifier: Self.followMacIdentifier, isOn: $choice.followsMac)
                 if choice.followsMac {
                     HStack(alignment: .top, spacing: Space.gap) {
-                        picker("Light", selection: $choice.light)
-                        picker("Dark", selection: $choice.dark)
+                        picker("Light", themes: ThemeCatalog.lightChoices, selection: $choice.light)
+                        picker("Dark", themes: ThemeCatalog.darkChoices, selection: $choice.dark)
                     }
                 } else {
-                    picker("Theme", selection: $choice.single)
+                    picker("Theme", themes: ThemeCatalog.all, selection: $choice.single)
                 }
-                switchRow(Self.matchTitle, isOn: $matchesTerminal)
-                Text("Uses Shellforge’s colours and iTerm2’s Minimal theme. Your profiles are not changed.")
+                switchRow(Self.matchTitle, identifier: Self.matchIdentifier, isOn: $matchesTerminal)
+                Text("Uses the theme’s colours in the terminal, with iTerm2’s Minimal theme. Your profiles are not changed.")
                     .font(Typography.help)
                     .foregroundStyle(Palette.muted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -45,18 +48,19 @@ struct ThemeCard: View {
         }
     }
 
-    private func switchRow(_ title: String, isOn: Binding<Bool>) -> some View {
+    private func switchRow(_ title: String, identifier: String, isOn: Binding<Bool>) -> some View {
         HStack(spacing: Space.gap) {
             Text(title).font(Typography.body).foregroundStyle(Palette.text)
             Spacer(minLength: Space.gap)
-            SettingsSwitch(title: title, isOn: isOn)
+            SettingsSwitch(title: title, isOn: isOn, identifier: identifier)
         }
     }
 
-    /// A theme id from the ten, by name; an id no longer in the catalogue reads as Shellforge.
-    private func picker(_ label: String, selection: Binding<String>) -> some View {
+    /// A theme id from `themes`, by name; an id not among them — gone from the catalogue, or a
+    /// theme of the other appearance — reads as Shellforge, the first.
+    private func picker(_ label: String, themes: [Theme], selection: Binding<String>) -> some View {
         FormField(label) {
-            Select(values: ThemeCatalog.all.map(\.id),
+            Select(values: themes.map(\.id),
                    selection: Binding(get: { ThemeCatalog.theme(id: selection.wrappedValue).id }, set: { selection.wrappedValue = $0 }),
                    label: { ThemeCatalog.theme(id: $0).name })
         }.frame(maxWidth: .infinity)
