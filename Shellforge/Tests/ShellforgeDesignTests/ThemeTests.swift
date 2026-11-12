@@ -232,21 +232,6 @@ extension Theme: CustomTestStringConvertible {
 /// 0.2199999988) — far below the 1⁄255 step a screen can show. Accepted as “today’s” on review.
 private let floatPrecision: CGFloat = 0.000001
 
-/// The surface inks that fall short in a fixed theme because of the theme’s own base colours — its
-/// muted on its hover or selection, its onAccent on its accent — not a derivation in `Palette`. Each
-/// is a known issue until the catalog’s values are settled; one that starts to pass fails as an
-/// unrecorded known issue, so this list cannot outlive its gap.
-private let catalogContrastGaps: Set = [
-    "One Dark inactiveSelection secondary",
-    "Dracula hover secondary", "Dracula inactiveSelection secondary",
-    "Nord inactiveSelection secondary",
-    "Solarized Dark accent ink", "Solarized Dark accent secondary", "Solarized Dark hover ink",
-    "Solarized Dark hover secondary", "Solarized Dark inactiveSelection ink",
-    "Solarized Dark inactiveSelection secondary", "Solarized Dark sheet secondary", "Solarized Dark sidebar secondary",
-    "Solarized Light accent ink", "Solarized Light accent secondary", "Solarized Light hover ink",
-    "Solarized Light inactiveSelection ink", "Solarized Light inactiveSelection secondary",
-]
-
 /// The appearances today’s colours are held in: light and dark, each with Increase Contrast.
 private let appearances: [NSAppearance.Name] = [.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua]
 
@@ -483,16 +468,8 @@ extension ThemeTests {
                 }
                 let ink = over(surface.ink).contrast(with: ground)
                 let secondary = over(surface.secondaryInk).contrast(with: ground)
-                func check(_ passes: Bool, _ which: String, _ ratio: Double) {
-                    let key = "\(theme.name) \(surface) \(which)"
-                    guard catalogContrastGaps.contains(key) else {
-                        #expect(passes, "\(key): \(ratio)")
-                        return
-                    }
-                    withKnownIssue("a theme colour in ThemeCatalog, under review") { #expect(passes, "\(key): \(ratio)") }
-                }
-                check(ink >= 4.5, "ink", ink)
-                check(secondary >= 3, "secondary", secondary)
+                #expect(ink >= 4.5, "\(theme.name) \(surface): ink \(ink)")
+                #expect(secondary >= 3, "\(theme.name) \(surface): secondary ink \(secondary)")
             }
         }
     }

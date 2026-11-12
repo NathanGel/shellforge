@@ -50,7 +50,8 @@ public enum ThemeCatalog {
     /// being those hues.
     static let oneDark = Theme(
         id: "one-dark", name: "One Dark", appearance: .dark,
-        colors: colors(background: 0x282C34, raised: 0x2C313A, sidebar: 0x21252B, text: 0xABB2BF, muted: 0x828997,
+        // Muted: 0x828997, one step toward text (0x838A98) to reach 3:1 on the selection.
+        colors: colors(background: 0x282C34, raised: 0x2C313A, sidebar: 0x21252B, text: 0xABB2BF, muted: 0x838A98,
                        border: 0x181A1F, accent: 0x61AFEF, onAccent: 0x282C34, selection: 0x3A3F4B, hover: 0x2C313A,
                        link: 0x61AFEF, green: 0x98C379, amber: 0xE5C07B, red: 0xE06C75),
         terminal: terminal(background: 0x282C34, foreground: 0xABB2BF, bold: 0xABB2BF, cursor: 0x528BFF,
@@ -64,7 +65,9 @@ public enum ThemeCatalog {
     /// for the sidebar and raised surfaces, and its ANSI terminal colours.
     static let dracula = Theme(
         id: "dracula", name: "Dracula", appearance: .dark,
-        colors: colors(background: 0x282A36, raised: 0x343746, sidebar: 0x21222C, text: 0xF8F8F2, muted: 0x6272A4,
+        // Muted: the spec’s comment 0x6272A4, 25 % toward text (0x8894B8) to reach 3:1 on the hover
+        // and the selection.
+        colors: colors(background: 0x282A36, raised: 0x343746, sidebar: 0x21222C, text: 0xF8F8F2, muted: 0x8894B8,
                        border: 0x191A21, accent: 0xBD93F9, onAccent: 0x282A36, selection: 0x44475A, hover: 0x424450,
                        link: 0x8BE9FD, green: 0x50FA7B, amber: 0xFFB86C, red: 0xFF5555),
         terminal: terminal(background: 0x282A36, foreground: 0xF8F8F2, bold: 0xF8F8F2, cursor: 0xF8F8F2,
@@ -106,12 +109,17 @@ public enum ThemeCatalog {
     /// Ethan Schoonover’s Solarized (ethanschoonover.com/solarized), dark: base03 background,
     /// base02 raised, base0 text, base01 muted, blue accent, and the canonical terminal mapping
     /// (bright colours on the base tones and orange/violet). The sidebar is VS Code’s Solarized
-    /// Dark one, darker than base03: base0 text on base02 is under 4.5:1. Selection and hover are
-    /// VS Code’s Solarized Dark list colours.
+    /// Dark one, darker than base03: base0 text on base02 is under 4.5:1. Selection and hover start
+    /// from VS Code’s Solarized Dark list colours, moved for contrast as noted below.
     static let solarizedDark = Theme(
         id: "solarized-dark", name: "Solarized Dark", appearance: .dark,
-        colors: colors(background: 0x002B36, raised: 0x073642, sidebar: 0x00212B, text: 0x839496, muted: 0x586E75,
-                       border: 0x073642, accent: 0x268BD2, onAccent: 0x002B36, selection: 0x005A6F, hover: 0x004454,
+        // Muted: base01 0x586E75, 23 % toward text (0x62777D) to reach 3:1 on the background.
+        // onAccent: base03 0x002B36 is under 4.5:1 on blue, as is white; black (0x000000) reads.
+        // Selection: VS Code’s 0x005A6F, 91 % toward the background (0x002F3B), and hover: 0x004454,
+        // 82 % toward it (0x002F3B): base0 text is only 4.75:1 on base03, so a row it reads on can
+        // barely step off the background.
+        colors: colors(background: 0x002B36, raised: 0x073642, sidebar: 0x00212B, text: 0x839496, muted: 0x62777D,
+                       border: 0x073642, accent: 0x268BD2, onAccent: 0x000000, selection: 0x002F3B, hover: 0x002F3B,
                        link: 0x268BD2, green: 0x859900, amber: 0xB58900, red: 0xDC322F),
         terminal: terminal(background: 0x002B36, foreground: 0x839496, bold: 0x93A1A1, cursor: 0x93A1A1,
                            cursorText: 0x002B36, selection: 0x073642, selectedText: 0x93A1A1,
@@ -120,11 +128,14 @@ public enum ThemeCatalog {
     /// Ethan Schoonover’s Solarized, light: base3 background, base01 text (its emphasised tone:
     /// the body tone, base00, is under 4.5:1 on base3), base00 muted, blue accent, the canonical
     /// terminal mapping. The sidebar is halfway from base3 to base2: base01 on base2 is under
-    /// 4.5:1. Selection is VS Code’s Solarized Light list selection.
+    /// 4.5:1. Selection starts from VS Code’s Solarized Light list selection, moved for contrast as noted below.
     static let solarizedLight = Theme(
         id: "solarized-light", name: "Solarized Light", appearance: .light,
+        // onAccent: base3 0xFDF6E3 is under 4.5:1 on blue, as is white; black (0x000000) reads.
+        // Selection: VS Code’s 0xDFCA88, 74 % toward the background (0xF5EBCB), and hover: base2
+        // 0xEEE8D5, 18 % toward it (0xF1EBD8), for base01 text to reach 4.5:1 on them.
         colors: colors(background: 0xFDF6E3, raised: 0xFDF6E3, sidebar: 0xF6EFDC, text: 0x586E75, muted: 0x657B83,
-                       border: 0xEEE8D5, accent: 0x268BD2, onAccent: 0xFDF6E3, selection: 0xDFCA88, hover: 0xEEE8D5,
+                       border: 0xEEE8D5, accent: 0x268BD2, onAccent: 0x000000, selection: 0xF5EBCB, hover: 0xF1EBD8,
                        link: 0x268BD2, green: 0x859900, amber: 0xB58900, red: 0xDC322F),
         terminal: terminal(background: 0xFDF6E3, foreground: 0x657B83, bold: 0x586E75, cursor: 0x586E75,
                            cursorText: 0xFDF6E3, selection: 0xEEE8D5, selectedText: 0x586E75,
@@ -143,7 +154,9 @@ public enum ThemeCatalog {
     /// mapping (nord-iterm2). Muted is nord4 at 60 % over nord0: Nord’s comment grey is under 3:1.
     static let nord = Theme(
         id: "nord", name: "Nord", appearance: .dark,
-        colors: colors(background: 0x2E3440, raised: 0x3B4252, sidebar: 0x3B4252, text: 0xD8DEE9, muted: 0x949AA5,
+        // Muted: nord4 at 60 % (0x949AA5), 17 % further toward text (0xA0A6B1) to reach 3:1 on the
+        // selection, nord3.
+        colors: colors(background: 0x2E3440, raised: 0x3B4252, sidebar: 0x3B4252, text: 0xD8DEE9, muted: 0xA0A6B1,
                        border: 0x434C5E, accent: 0x88C0D0, onAccent: 0x2E3440, selection: 0x4C566A, hover: 0x434C5E,
                        link: 0x88C0D0, green: 0xA3BE8C, amber: 0xEBCB8B, red: 0xBF616A),
         terminal: terminal(background: 0x2E3440, foreground: 0xD8DEE9, bold: 0xECEFF4, cursor: 0xD8DEE9,
