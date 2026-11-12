@@ -107,8 +107,9 @@ public enum Palette {
     public static let border = base(.separatorColor, \.border)
     /// The background of a secondary (unemphasized) selection — a selected row that is not first
     /// responder. Kept neutral; the accent is reserved for the current step and focus.
-    /// Under a theme, the theme's hover: neutral, a step short of its selection.
-    public static let controlActive = base(.unemphasizedSelectedContentBackgroundColor, \.hover)
+    /// Under a theme, the theme's own selection colour — its list selection, inked with `text` as
+    /// macOS's grey one is.
+    public static let controlActive = base(.unemphasizedSelectedContentBackgroundColor, \.selection)
     /// The command preview block in a sheet, kept visually distinct from the surrounding surface:
     /// AppKit's text background resolves too close to the window background in both appearances.
     /// Under a theme, the theme's sidebar colour: its own step off the background.
@@ -277,8 +278,10 @@ public enum Palette {
     public static let statusChipDoneFill = accent.opacity(0.17)
     /// A done chip's edge.
     public static let statusChipDoneStroke = accent.opacity(0.42)
-    /// The system colour for an actively selected row or item, stronger than a hover.
-    public static let selection = base(.selectedContentBackgroundColor, \.selection)
+    /// The system colour for an actively selected row or item, stronger than a hover. Under a theme,
+    /// the theme's accent: a selected row is inked `onAccent`, which the theme pairs with its accent,
+    /// not with its (often neutral) selection colour.
+    public static let selection = base(.selectedContentBackgroundColor, \.accent)
     /// A faint ring drawn around an item that is idle or inactive, using the lowest-emphasis
     /// label colour.
     /// Under a theme, its muted colour at 60 %, as macOS's tertiary label sits behind its secondary.

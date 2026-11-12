@@ -232,6 +232,21 @@ extension Theme: CustomTestStringConvertible {
 /// 0.2199999988) — far below the 1⁄255 step a screen can show. Accepted as “today’s” on review.
 private let floatPrecision: CGFloat = 0.000001
 
+/// The surface inks that fall short in a fixed theme because of the theme’s own base colours — its
+/// muted on its hover or selection, its onAccent on its accent — not a derivation in `Palette`. Each
+/// is a known issue until the catalog’s values are settled; one that starts to pass fails as an
+/// unrecorded known issue, so this list cannot outlive its gap.
+private let catalogContrastGaps: Set = [
+    "One Dark inactiveSelection secondary",
+    "Dracula hover secondary", "Dracula inactiveSelection secondary",
+    "Nord inactiveSelection secondary",
+    "Solarized Dark accent ink", "Solarized Dark accent secondary", "Solarized Dark hover ink",
+    "Solarized Dark hover secondary", "Solarized Dark inactiveSelection ink",
+    "Solarized Dark inactiveSelection secondary", "Solarized Dark sheet secondary", "Solarized Dark sidebar secondary",
+    "Solarized Light accent ink", "Solarized Light accent secondary", "Solarized Light hover ink",
+    "Solarized Light inactiveSelection ink", "Solarized Light inactiveSelection secondary",
+]
+
 /// The appearances today’s colours are held in: light and dark, each with Increase Contrast.
 private let appearances: [NSAppearance.Name] = [.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua]
 
@@ -323,7 +338,8 @@ extension ThemeTests {
                 #expect(resolves(Palette.muted, to: colors.muted, in: name), "muted in \(name.rawValue)")
                 #expect(resolves(Palette.border, to: colors.border, in: name), "border in \(name.rawValue)")
                 #expect(resolves(Palette.onAccent, to: colors.onAccent, in: name), "onAccent in \(name.rawValue)")
-                #expect(resolves(Palette.selection, to: colors.selection, in: name), "selection in \(name.rawValue)")
+                #expect(resolves(Palette.selection, to: colors.accent, in: name), "selection in \(name.rawValue)")
+                #expect(resolves(Palette.controlActive, to: colors.selection, in: name), "controlActive in \(name.rawValue)")
                 #expect(resolves(Palette.rowHover, to: colors.hover, in: name), "rowHover in \(name.rawValue)")
                 #expect(resolves(Palette.rowHoverSolid, to: colors.hover, in: name), "rowHoverSolid in \(name.rawValue)")
                 #expect(resolves(Palette.link, to: colors.link, in: name), "link in \(name.rawValue)")
@@ -404,6 +420,83 @@ extension ThemeTests {
 
     /// A theme change redraws `.themed()` content in the new colours and keeps its state: the
     /// view’s `@State` text is the one it was made with, not a new one from a rebuilt view.
+    /// A root out of its window when the theme changes takes the new colours when it is back.
+    @MainActor @Test func themedRedrawsARootThatWasAwayDuringTheChange() throws {
+        let host = NSHostingView(rootView: StatefulSwatch(seen: SeenText()).themed())
+        host.frame = NSRect(x: 0, y: 0, width: 40, height: 40)
+        host.appearance = NSAppearance(named: .darkAqua)
+        let window = window(hosting: host, orderFront: false)
+        defer { window.close() }
+        let dracula = ThemeCatalog.theme(id: "dracula")
+        let draculaBackground = try #require(dracula.colors).background
+        ThemeRuntime.$override.withValue(ThemeCatalog.shellforge) { settle(host) }
+
+        let after = ThemeRuntime.$override.withValue(dracula) { () -> SRGB? in
+            window.contentView = NSView(frame: host.frame)
+            NotificationCenter.default.post(name: ThemeRuntime.didChange, object: nil)
+            window.contentView = host
+            settle(host)
+            return centre(of: host)
+        }
+        #expect(after.map { nearly($0, draculaBackground) } == true, "\(String(describing: after))")
+    }
+
+    /// A root that follows its window's appearance (none of its own) still follows it after a change.
+    @MainActor @Test func themedLeavesAFollowingRootFollowing() throws {
+        let host = NSHostingView(rootView: StatefulSwatch(seen: SeenText()).themed())
+        host.frame = NSRect(x: 0, y: 0, width: 40, height: 40)
+        let window = window(hosting: host, orderFront: false)
+        window.appearance = NSAppearance(named: .darkAqua)
+        defer { window.close() }
+        let dracula = ThemeCatalog.theme(id: "dracula")
+        let draculaBackground = try #require(dracula.colors).background
+        ThemeRuntime.$override.withValue(ThemeCatalog.shellforge) { settle(host) }
+
+        let after = ThemeRuntime.$override.withValue(dracula) { () -> SRGB? in
+            NotificationCenter.default.post(name: ThemeRuntime.didChange, object: nil)
+            settle(host)
+            return centre(of: host)
+        }
+        #expect(host.appearance == nil, "the root was held to an appearance it did not have")
+        #expect(after.map { nearly($0, draculaBackground) } == true, "\(String(describing: after))")
+    }
+
+    /// In every fixed theme, whatever a surface inks reads on the surface’s own fill: its ink at
+    /// 4.5:1, its secondary ink at 3:1. Translucent inks are composited over the fill first. Every
+    /// surface’s `occludingBackground` is opaque under a fixed theme; one that is not is recorded
+    /// rather than measured, since its contrast depends on what lies beneath.
+    @MainActor @Test(arguments: ThemeCatalog.all.filter { $0.colors != nil })
+    func everySurfaceInkIsReadable(theme: Theme) {
+        let surfaces: [Surface] = [.sidebar, .hover, .accent, .inactiveSelection, .sheet]
+        ThemeRuntime.$override.withValue(theme) {
+            for surface in surfaces {
+                let fill = components(surface.occludingBackground, in: .darkAqua)
+                guard fill.count == 4, fill[3] > 0.999 else {
+                    Issue.record("\(theme.name) \(surface): its fill is translucent, so its contrast is not measured")
+                    continue
+                }
+                let ground = SRGB(red: fill[0], green: fill[1], blue: fill[2])
+                @MainActor func over(_ ink: Color) -> SRGB {
+                    let c = components(ink, in: .darkAqua)
+                    return SRGB(red: c[0] * c[3] + ground.red * (1 - c[3]), green: c[1] * c[3] + ground.green * (1 - c[3]),
+                                blue: c[2] * c[3] + ground.blue * (1 - c[3]))
+                }
+                let ink = over(surface.ink).contrast(with: ground)
+                let secondary = over(surface.secondaryInk).contrast(with: ground)
+                func check(_ passes: Bool, _ which: String, _ ratio: Double) {
+                    let key = "\(theme.name) \(surface) \(which)"
+                    guard catalogContrastGaps.contains(key) else {
+                        #expect(passes, "\(key): \(ratio)")
+                        return
+                    }
+                    withKnownIssue("a theme colour in ThemeCatalog, under review") { #expect(passes, "\(key): \(ratio)") }
+                }
+                check(ink >= 4.5, "ink", ink)
+                check(secondary >= 3, "secondary", secondary)
+            }
+        }
+    }
+
     @MainActor @Test func themedKeepsStateWhileTheColourChanges() throws {
         let seen = SeenText()
         let host = NSHostingView(rootView: StatefulSwatch(seen: seen).themed())
@@ -426,7 +519,10 @@ extension ThemeTests {
             settle(host)
             return (stale, centre(of: host))
         }
-        #expect(beforeChange == shellforge, "without the notice SwiftUI keeps the colour it resolved")
+        // A guard that the probe is needed, not a requirement: should SwiftUI one day re-resolve a
+        // dynamic colour by itself, this fails and the probe can go.
+        #expect(beforeChange == shellforge,
+                "SwiftUI now redraws a dynamic colour in the new theme by itself: the probe behind .themed() is no longer needed")
         #expect(afterChange.map { nearly($0, draculaBackground) } == true, "\(String(describing: afterChange))")
         #expect(seen.text == text, "the view was rebuilt: its state started over")
         #expect(host.appearance?.name == .darkAqua, "the appearance is put back")

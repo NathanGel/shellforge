@@ -3,6 +3,8 @@ import AppKit
 import os
 import SwiftUI
 
+private let themeLog = Logger(subsystem: "io.github.nathangel.shellforge", category: "theme")
+
 /// The theme Shellforge draws in, read by every `Palette` token and the terminal palette each time
 /// they resolve. Thread-safe: a colour resolves wherever AppKit draws it, so reading never waits on
 /// the main actor. Shellforge until someone sets another.
@@ -73,6 +75,12 @@ struct ThemeRedraw: NSViewRepresentable {
 /// one turn of the run loop, so nothing is drawn on screen in the other appearance; the views keep
 /// their identity, so no state is lost.
 final class ThemeRedrawView: NSView {
+    /// Said once, not per probe or per change: `.themed()` found no SwiftUI root to redraw.
+    private static var reportedNoHost = false
+    /// A theme change came while this probe was out of its window, so its root has not resolved
+    /// the new colours yet: done when it is back in one.
+    private var redrawPending = false
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: ThemeRuntime.didChange, object: nil)
@@ -84,7 +92,28 @@ final class ThemeRedrawView: NSView {
     }
 
     @objc private func themeDidChange(_ notification: Notification) {
-        guard let host = hostingView else { return }
+        guard window != nil else {
+            redrawPending = true
+            return
+        }
+        redraw()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard redrawPending, window != nil else { return }
+        redrawPending = false
+        redraw()
+    }
+
+    private func redraw() {
+        guard let host = hostingView else {
+            if !Self.reportedNoHost {
+                Self.reportedNoHost = true
+                themeLog.debug(".themed() found no NSHostingView above it; its colours keep the old theme")
+            }
+            return
+        }
         let kept = host.appearance
         let isDark = host.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         host.appearance = NSAppearance(named: isDark ? .aqua : .darkAqua)
@@ -92,18 +121,23 @@ final class ThemeRedrawView: NSView {
         host.appearance = kept
     }
 
-    /// The SwiftUI root this probe sits in: the nearest ancestor that is an `NSHostingView`, read by
+    /// The SwiftUI root this probe sits in: the outermost ancestor that is an `NSHostingView`, so a
+    /// probe below an inner host (a cell's, a representable's) still redraws the whole root. Read by
     /// class name because its generic content type is not known here.
     private var hostingView: NSView? {
+        var found: NSView?
         var view = superview
         while let candidate = view {
             var cls: AnyClass? = type(of: candidate)
             while let current = cls {
-                if NSStringFromClass(current).contains("NSHostingView") { return candidate }
+                if NSStringFromClass(current).contains("NSHostingView") {
+                    found = candidate
+                    break
+                }
                 cls = class_getSuperclass(current)
             }
             view = candidate.superview
         }
-        return nil
+        return found
     }
 }
