@@ -11,9 +11,6 @@ struct ThemeCard: View {
 
     static let followMacTitle = "Follow Mac Appearance"
     static let matchTitle = "Match Terminal"
-    /// The switches' accessibility identifiers, which tests find them by.
-    static let followMacIdentifier = "Settings.Core.Theme.FollowMac"
-    static let matchIdentifier = "Settings.Core.Theme.MatchTerminal"
 
     private var status: SettingsStatus {
         guard choice.followsMac else { return SettingsStatus(.ready, ThemeCatalog.theme(id: choice.single).name) }
@@ -30,7 +27,7 @@ struct ThemeCard: View {
             EmptyView()
         } content: {
             VStack(alignment: .leading, spacing: Space.gap) {
-                switchRow(Self.followMacTitle, identifier: Self.followMacIdentifier, isOn: $choice.followsMac)
+                switchRow(Self.followMacTitle, isOn: $choice.followsMac)
                 if choice.followsMac {
                     HStack(alignment: .top, spacing: Space.gap) {
                         picker("Light", themes: ThemeCatalog.lightChoices, selection: $choice.light)
@@ -39,7 +36,7 @@ struct ThemeCard: View {
                 } else {
                     picker("Theme", themes: ThemeCatalog.all, selection: $choice.single)
                 }
-                switchRow(Self.matchTitle, identifier: Self.matchIdentifier, isOn: $matchesTerminal)
+                switchRow(Self.matchTitle, isOn: $matchesTerminal)
                 Text("Uses the theme’s colours in the terminal, with iTerm2’s Minimal theme. Your profiles are not changed.")
                     .font(Typography.help)
                     .foregroundStyle(Palette.muted)
@@ -48,11 +45,11 @@ struct ThemeCard: View {
         }
     }
 
-    private func switchRow(_ title: String, identifier: String, isOn: Binding<Bool>) -> some View {
+    private func switchRow(_ title: String, isOn: Binding<Bool>) -> some View {
         HStack(spacing: Space.gap) {
             Text(title).font(Typography.body).foregroundStyle(Palette.text)
             Spacer(minLength: Space.gap)
-            SettingsSwitch(title: title, isOn: isOn, identifier: identifier)
+            SettingsSwitch(title: title, isOn: isOn)
         }
     }
 

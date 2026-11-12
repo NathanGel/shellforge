@@ -44,20 +44,49 @@ import SwiftUI
         return host
     }
 
-    /// The switch with the accessibility identifier `identifier` in `view`.
-    static func settingsSwitch(_ identifier: String, in view: NSView) -> NSSwitch? {
-        if let found = view as? NSSwitch, found.accessibilityIdentifier() == identifier { return found }
-        return view.subviews.lazy.compactMap { settingsSwitch(identifier, in: $0) }.first
+    static func switches(in view: NSView) -> [NSSwitch] {
+        view.subviews.compactMap { $0 as? NSSwitch } + view.subviews.flatMap { switches(in: $0) }
+    }
+
+    /// Presses Save, ⌘↩, in a window of its own for `sheet`; the window is handed back to close.
+    static func save(_ sheet: NSView) throws -> NSWindow {
+        let window = NSWindow(contentRect: sheet.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = sheet
+        sheet.layoutSubtreeIfNeeded()
+        let commandReturn = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.command], timestamp: 0,
+                                                          windowNumber: window.windowNumber, context: nil, characters: "\r",
+                                                          charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36))
+        _ = window.performKeyEquivalent(with: commandReturn)
+        return window
+    }
+
+    /// Which of a Settings sheet's switches is the one whose Save makes `saved` true, found by what
+    /// it does: each is clicked and saved in a scratch sheet of its own. No control carries a tag
+    /// for tests, and a switch added to Settings doesn't move it.
+    static func switchIndex(where saved: (TerminalMatchSettings, ThemeSettings) -> Bool) throws -> Int? {
+        let count = switches(in: sheet(match: TerminalMatchSettings(defaults: ScratchDefaults.make()),
+                                       theme: ThemeSettings(defaults: ScratchDefaults.make()))).count
+        for index in 0..<count {
+            let match = TerminalMatchSettings(defaults: ScratchDefaults.make())
+            let theme = ThemeSettings(defaults: ScratchDefaults.make())
+            let scratch = sheet(match: match, theme: theme)
+            switches(in: scratch)[index].performClick(nil)
+            let window = try save(scratch)
+            window.close()
+            if saved(match, theme) { return index }
+        }
+        return nil
     }
 
     /// Each Settings sheet keeps its own unsaved switch: one opened in another window neither resets
     /// it nor saves it.
     @Test func twoSettingsSheetsDoNotShareTheirSwitch() throws {
+        let index = try #require(try Self.switchIndex { match, _ in match.isOn }, "Match Terminal")
         let settings = TerminalMatchSettings(defaults: ScratchDefaults.make())
         let theme = ThemeSettings(defaults: ScratchDefaults.make())
         let first = Self.sheet(match: settings, theme: theme), second = Self.sheet(match: settings, theme: theme)
-        let a = try #require(Self.settingsSwitch(ThemeCard.matchIdentifier, in: first))
-        let b = try #require(Self.settingsSwitch(ThemeCard.matchIdentifier, in: second))
+        let a = Self.switches(in: first)[index], b = Self.switches(in: second)[index]
         a.performClick(nil)
         first.layoutSubtreeIfNeeded(); second.layoutSubtreeIfNeeded()
         #expect(a.state == .on)
@@ -68,28 +97,20 @@ import SwiftUI
     /// The theme twin: Follow Mac Appearance turned off in one sheet is that sheet's own until its
     /// Save, which writes the choice; the other sheet, unsaved, neither shows nor writes it.
     @Test func theThemeIsSavedOnlyByItsOwnSheetsSave() throws {
+        let index = try #require(try Self.switchIndex { _, theme in !theme.choice.followsMac }, "Follow Mac Appearance")
         let store = ScratchDefaults.make()
         let theme = ThemeSettings(defaults: store)
         let match = TerminalMatchSettings(defaults: ScratchDefaults.make())
         let first = Self.sheet(match: match, theme: theme), second = Self.sheet(match: match, theme: theme)
-        let a = try #require(Self.settingsSwitch(ThemeCard.followMacIdentifier, in: first))
-        let b = try #require(Self.settingsSwitch(ThemeCard.followMacIdentifier, in: second))
+        let a = Self.switches(in: first)[index], b = Self.switches(in: second)[index]
         a.performClick(nil)
         first.layoutSubtreeIfNeeded(); second.layoutSubtreeIfNeeded()
         #expect(a.state == .off)
         #expect(b.state == .on, "the other sheet's switch is its own")
         #expect(theme.choice.followsMac, "nothing saved yet")
         #expect(store.object(forKey: ThemeSettings.followsMacKey) == nil)
-        // Save is ⌘↩, in the sheet's window.
-        let window = NSWindow(contentRect: first.frame, styleMask: [.titled], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        window.contentView = first
+        let window = try Self.save(first)
         defer { window.close() }
-        first.layoutSubtreeIfNeeded()
-        let commandReturn = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.command], timestamp: 0,
-                                                          windowNumber: window.windowNumber, context: nil, characters: "\r",
-                                                          charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36))
-        _ = window.performKeyEquivalent(with: commandReturn)
         #expect(!theme.choice.followsMac, "Save wrote the sheet's choice")
         #expect(store.object(forKey: ThemeSettings.followsMacKey) as? Bool == false)
     }

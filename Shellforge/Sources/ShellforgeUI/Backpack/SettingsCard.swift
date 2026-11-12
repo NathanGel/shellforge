@@ -1,5 +1,4 @@
 // Ported from AiTerm (app/Sources/AiTerm/Views/SettingsCard.swift), GPLv3, Laurens D'Hondt.
-import AppKit
 import SwiftUI
 import ShellforgeDesign
 
@@ -117,43 +116,14 @@ struct SettingsGroup<Rows: View>: View {
     }
 }
 
-/// A Settings switch: a small trailing `NSSwitch` whose title, unseen, is what VoiceOver reads. The
-/// row beside it shows the same title in its own type. An AppKit switch rather than SwiftUI's
-/// `Toggle`, so its accessibility label and `identifier` — a card's `static let`, which tests find
-/// it by — sit on the switch itself.
-struct SettingsSwitch: NSViewRepresentable {
+/// A Settings switch: a small trailing toggle whose title, hidden, is what VoiceOver reads. The
+/// row beside it shows the same title in its own type.
+struct SettingsSwitch: View {
     let title: String
     let isOn: Binding<Bool>
-    var identifier: String?
 
-    init(title: String, isOn: Binding<Bool>, identifier: String? = nil) {
-        self.title = title
-        self.isOn = isOn
-        self.identifier = identifier
-    }
-
-    @MainActor final class Coordinator: NSObject {
-        var isOn: Binding<Bool>
-        init(isOn: Binding<Bool>) { self.isOn = isOn }
-        @objc func toggled(_ sender: NSSwitch) { isOn.wrappedValue = sender.state == .on }
-    }
-
-    func makeCoordinator() -> Coordinator { Coordinator(isOn: isOn) }
-
-    func makeNSView(context: Context) -> NSSwitch {
-        let control = NSSwitch()
-        control.controlSize = .small
-        control.target = context.coordinator
-        control.action = #selector(Coordinator.toggled(_:))
-        control.setContentHuggingPriority(.required, for: .horizontal)
-        return control
-    }
-
-    func updateNSView(_ control: NSSwitch, context: Context) {
-        context.coordinator.isOn = isOn
-        control.state = isOn.wrappedValue ? .on : .off
-        control.setAccessibilityLabel(title)
-        control.setAccessibilityIdentifier(identifier)
+    var body: some View {
+        Toggle(title, isOn: isOn).labelsHidden().toggleStyle(.switch).controlSize(.small)
     }
 }
 

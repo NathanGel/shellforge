@@ -6,9 +6,6 @@ struct FeedbackPromptCard: View {
     /// The sheet's own, unsaved switch.
     @Binding var isOn: Bool
 
-    /// The switch's accessibility identifier, which tests find it by.
-    static let switchIdentifier = "Settings.Core.Feedback.AskForFeedback"
-
     private var status: SettingsStatus {
         isOn ? SettingsStatus(.ready, "On") : SettingsStatus(.idle, "Off")
     }
@@ -19,7 +16,7 @@ struct FeedbackPromptCard: View {
         } chips: {
             EmptyView()
         } actions: {
-            SettingsSwitch(title: "Ask for feedback now and then", isOn: $isOn, identifier: Self.switchIdentifier)
+            SettingsSwitch(title: "Ask for feedback now and then", isOn: $isOn)
         } content: {
             Text("A note in the sidebar every few months, asking what to add or fix. Help › Send Feedback… works any time, once a day.")
                 .font(Typography.help)
