@@ -14,6 +14,8 @@ struct TunnelRowView: View {
     /// Rearrange mode, greyed while another window is in it: the row's one menu item.
     var canRearrange = true
     var rearrange: () -> Void = {}
+    /// False where the row cannot be rearranged at all (the SSH panel): no menu, no Rearrange action.
+    var offersRearrange = true
     @Environment(\.interfaceScale) private var scale
     @Environment(\.surface) private var surface
 
@@ -133,10 +135,27 @@ struct TunnelRowView: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Tunnel \(row.alias)")
         .accessibilityValue(row.missing ? "Not in SSH config" : row.state.rawValue)
-        .modifier(RearrangeAccessibilityAction(canRearrange: canRearrange, action: rearrange))
-        .rowContextMenu { RearrangeMenuItem(enabled: canRearrange, action: rearrange) }
+        .modifier(TunnelRowRearrange(offered: offersRearrange, enabled: canRearrange, action: rearrange))
     }
 
     /// The context menu's items.
     static let menuTitles = [RearrangeMenuItem.title]
+}
+
+/// A tunnel row's Rearrange, in its menu and to VoiceOver; nothing at all where it isn't offered,
+/// rather than an item that is always grey.
+private struct TunnelRowRearrange: ViewModifier {
+    let offered: Bool
+    let enabled: Bool
+    let action: () -> Void
+
+    func body(content: Content) -> some View {
+        if offered {
+            content
+                .modifier(RearrangeAccessibilityAction(canRearrange: enabled, action: action))
+                .rowContextMenu { RearrangeMenuItem(enabled: enabled, action: action) }
+        } else {
+            content
+        }
+    }
 }

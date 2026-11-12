@@ -484,7 +484,7 @@ struct SidebarView: View {
             case .metrics: panelTitle(.metrics, controls)
             case .files: panelTitle(.files, controls)
             case .git: panelTitle(.git, controls)
-            case .ssh: panelTitle(.ssh, controls) { SSHAddHostButton(action: nil) }
+            case .ssh: panelTitle(.ssh, controls) { SSHAddHostButton(action: showAddHost) }
             }
         }
     }
@@ -542,9 +542,8 @@ struct SidebarView: View {
                 }
             }
             if activity.layout.selected == .ssh {
-                // Add Host's sheet comes later: until then its button is greyed.
                 SSHPanel(model: model, document: model.document, titled: chrome.windowControls == nil, providers: model.providers,
-                         showTunnels: showTunnels, showSSHHost: showSSHHost)
+                         showTunnels: showTunnels, showSSHHost: showSSHHost, addHost: showAddHost)
             }
         }
     }
@@ -750,6 +749,11 @@ struct SidebarView: View {
             SSHHostSheet(projectName: project.name, current: project.sshHost, loadHosts: model.loadSSHHosts,
                          submit: { model.setSSHHost($0, on: id) }, dismiss: dismiss)
         }
+    }
+
+    /// Add Host, from the SSH panel: a host appended to `~/.ssh/config`, optionally made a project's.
+    private func showAddHost() {
+        sheet.present(over: anchor.window) { dismiss in AddHostSheet(model: AddHostModel(sidebar: model), dismiss: dismiss) }
     }
 
     /// AiTerm's New terminal sheet: the row's name, prefilled with the suggestion.

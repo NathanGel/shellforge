@@ -109,13 +109,14 @@ extension SidebarModel {
     }
 
     /// Any host of the config in a tab of its own, titled with its alias: in the project's folder,
-    /// or, with no project (the SSH panel's Other hosts), in the home folder. A host the config does
-    /// not have is said, not run, as `openSSHHost` does.
+    /// or, with no project (the SSH panel's Other hosts), in the home folder. The config is read
+    /// again first, so a host just added or removed elsewhere is answered as it is now; a host the
+    /// config does not have is said, not run, as `openSSHHost` does.
     public func connect(alias: String, in projectId: UUID?) async {
         let project = projectId.flatMap(project)
         // A project removed meanwhile: its row is gone too, so nothing opens.
         if projectId != nil, project == nil { return }
-        if sshHosts == nil { _ = await loadSSHHosts() }
+        _ = await loadSSHHosts()
         guard sshHosts?[alias] != nil else {
             lastError = "\(alias) isn’t in ~/.ssh/config."
             return

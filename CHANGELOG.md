@@ -40,6 +40,18 @@ it and refuses to release a version that has none.
   `origin/feature/login-page` gives a local branch tracking it), and asks what New Task asks for a
   Project folder task. Click a file to see its diff in a new tab. The panel reads nothing until it
   is first shown, then follows each repository as it changes. View › Show Git shows it.
+- **SSH panel.** A fifth panel (the server rack) lists the hosts in `~/.ssh/config`: each
+  project's SSH host and tunnels under the project, then every other host under Other hosts.
+  Connect opens `ssh <host>` in a new tab, in the project's folder or, for Other hosts, your home
+  folder; a tunnel's row starts and stops it as in Sessions. A host a project names that the config
+  no longer has is dimmed with “Not in ~/.ssh/config”. Right-click a project for Tunnels… and SSH
+  Host…. The config is read when the panel first shows and again whenever `~/.ssh` changes.
+  View › Show SSH (⌃⌘H) shows it.
+- **Add Host.** The SSH panel's + button adds a host to `~/.ssh/config`: a name, an address,
+  and optionally a user, a port and an identity file, and the project it is for. The file is
+  copied to `config.shellforge-backup` first and the new `Host` block is appended; nothing else in
+  it changes. It accepts only what ssh can read, and refuses a name already in the config. A
+  missing `~/.ssh` or config is created, private to you.
 
 ### Changed
 

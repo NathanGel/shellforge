@@ -55,6 +55,11 @@ dragged is where new windows start.
 ⌘↩ in a section's commit message field commits that section; ↩ adds a line. The field keeps ⌘↩
 while it has the keyboard, so it never reaches the main menu, even while Commit is off.
 
+## SSH panel
+
+The panel has no keys of its own beyond View › Show SSH (⌃⌘H). In Add Host, ⌘↩ adds the host and
+⎋ cancels, as in every sheet.
+
 ## Sheets
 
 ⌘↩ presses the primary button; ⎋ closes an open list first, then the sheet — or, on New Task's

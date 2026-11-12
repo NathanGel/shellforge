@@ -19,6 +19,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 - [Dock badge](#dock-badge)
 - [Backpack Mode](#backpack-mode)
 - [Tunnels](#tunnels)
+- [SSH](#ssh)
 - [Environment](#environment)
 - [Settings and connections](#settings-and-connections)
 - [Keyboard](#keyboard)
@@ -70,9 +71,10 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
   - Sessions (the stack of cards): projects, tasks, terminals and tabs, as the sidebar has always shown them;
   - Metrics (the gauge): see [Metrics](#metrics);
   - Files (the folder): see [Files](#files);
-  - Git (the branch): see [Git](#git).
+  - Git (the branch): see [Git](#git);
+  - SSH (the server rack): see [SSH](#ssh).
 - **Switching.** Click an icon. The selected one is drawn brighter, with an accent stripe along the bar's left edge. Each window shows its own panel; Sessions keeps its scroll position and selection while another panel shows, and the Tasks menu's commands work whatever the panel.
-- **From the keyboard.** View › Show Sessions (⌃⌘E), Show Metrics (⌃⌘M), Show Files (⌃⌘I) and Show Git (no key) show that panel in the key window's sidebar, opening the sidebar if it is hidden. Back on Sessions, the keyboard returns to its list if it was there.
+- **From the keyboard.** View › Show Sessions (⌃⌘E), Show Metrics (⌃⌘M), Show Files (⌃⌘I), Show Git (no key) and Show SSH (⌃⌘H) show that panel in the key window's sidebar, opening the sidebar if it is hidden. Back on Sessions, the keyboard returns to its list if it was there.
 - **Panel order.** Drag an icon up or down the bar to reorder the panels: it follows the pointer, the others make room, and it lands where you let go. A click that doesn't move only selects, and a drag the system cancels drops nothing. Every window's bar follows the same order, and it is kept after a restart. VoiceOver offers Move Up and Move Down on each icon instead.
 - **Settings** is the gear at the bottom of the bar.
 - **Rearrange mode** keeps its Done / Cancel bar at the top whichever panel shows.
@@ -338,6 +340,22 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
 - **Ports in a task's shell.** `SHELLFORGE_TUNNEL_<ALIAS>_PORT` is set for each running tunnel, and `_PORT_2` and so on for extra forwards.
 - **View › Tunnels** has Start or Stop for each linked tunnel. Open Quickly (⇧⌘O) finds them by name.
 
+## SSH
+
+- **Grouping.** The SSH panel lists each project that names hosts, under its own header: its SSH host and its tunnels, each host once. Then **Other hosts**: every other host in `~/.ssh/config`, by name. A host a project names that the config no longer has is dimmed, with “Not in ~/.ssh/config”, and can't connect.
+- **Connect.** A host's terminal button opens `ssh <host>` in a new tab titled with the host, in the project's folder, or your home folder for Other hosts. The config is read again first, so a host just added or removed is answered as it is now.
+- **Tunnels.** A tunnel's row is the one Sessions shows: its state, ports, Start / Stop and Answer in Tab. Rearrange is in Sessions only.
+- **Project menu.** Right-click a project's header for Tunnels… and SSH Host….
+- **Up to date.** Nothing is read until the panel first shows in a window; then `~/.ssh` (and, when the config is a link, its target's folder) is watched, and the panel follows every change.
+- **Add Host.** The + in the panel's header, or Add Host… when the panel is empty, opens a sheet:
+  - Name, Address (HostName), User, Port, Identity file (Choose… starts in `~/.ssh`), and For project (None, or a project).
+  - Add is off until the host can be added; the line above the buttons says why.
+  - It accepts only what ssh can read: a name of letters, digits, dots, dashes and underscores; an address of letters, digits, dots, dashes and colons; a user of those and `@`; a port from 1 to 65535; and an identity file with no quotes, backslashes, `#` or line breaks (one with spaces is written in quotes). It refuses a name already in the config, `Include`d files too, in any case. A stray character there would make ssh refuse the whole config, every host in it.
+  - **The backup.** Before anything is written, the whole config is copied byte for byte to `config.shellforge-backup` beside it, replacing an older backup. Then one `Host` block is appended at the end; nothing already in the file is changed or moved. A failed backup appends nothing. Through a link, the file it points to grows and the link stays.
+  - A missing `~/.ssh` (private to you) or config (readable only by you) is created, and the sidebar says “Created ~/.ssh/config.”
+  - With a project chosen, the host becomes its SSH host. When the project already has another, it asks first: Replace, or Keep the old one.
+  - **An earlier `Host *` wins.** ssh uses the first value it finds for each setting, and Add Host appends at the end. A `Host *` block earlier in the config that sets User or IdentityFile therefore overrides the new host's own User or IdentityFile. To let a host's own values count, move the `Host *` block to the end of the config.
+
 ## Environment
 
 - **Commands run with your login shell's environment**, so your PATH and tools are found.
@@ -388,6 +406,7 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
 | ⌃⌘A / ⌃⌘L | Focus View / List View |
 | ⌃⌘S | Hide / Show Sidebar |
 | ⌃⌘E / ⌃⌘M / ⌃⌘I | Show Sessions / Show Metrics / Show Files (Show Git has no key) |
+| ⌃⌘H | Show SSH |
 | ⌘↩ | Commit, in the Git panel's message field (↩ adds a line) |
 | ⌘B | Backpack Mode |
 | ⌘+ / ⌘− / ⌘0 | Sidebar text bigger / smaller / normal, after a click in the sidebar |

@@ -154,6 +154,7 @@ private struct SSHProjectHeader: View {
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(title), project")
+        .accessibilityAddTraits(.isHeader)
         .accessibilityAction(named: Text(SSHPanel.tunnelsTitle), showTunnels)
         .accessibilityAction(named: Text(sshHostTitle), showSSHHost)
         .contextMenu {
@@ -235,7 +236,7 @@ private struct SSHHostRow: View {
                     .padding(.leading, scale(Space.base) + scale(Size.avatar) + scale(Space.inset))
             }
             if let tunnel {
-                TunnelRowView(row: tunnel, start: start, stop: stop, answerInTab: answerInTab, canRearrange: false)
+                TunnelRowView(row: tunnel, start: start, stop: stop, answerInTab: answerInTab, offersRearrange: false)
             }
         }
     }
