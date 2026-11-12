@@ -13658,8 +13658,10 @@ static BOOL iTermApproximatelyEqualRects(NSRect lhs, NSRect rhs, double epsilon)
     NSColor *background = self.currentSession.processedBackgroundColor;
     // The terminal's colour stands only when its lightness agrees with the window's: light glass
     // over a dark terminal turns murky, and the strip's title is inked for the window's lightness.
+    // The strip takes the window's colour too: iTerm2's own would be the Minimal theme's, which the
+    // tab look always uses, and that is the terminal's colour again.
     if (background && background.isDark != self.window.effectiveAppearance.it_isDark) {
-        return forStrip ? nil : [NSColor windowBackgroundColor];
+        return [NSColor windowBackgroundColor];
     }
     return background;
 }

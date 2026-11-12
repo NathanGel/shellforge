@@ -7,6 +7,7 @@
 
 #import "PSMMinimalTabStyle.h"
 #import "PSMOverflowPopUpButton.h"
+#import "iTerm2SharedARC-Swift.h"
 
 @implementation NSColor(PSMMinimalTabStyle)
 
@@ -65,7 +66,8 @@
 }
 
 - (NSColor *)tabBarColor {
-    NSColor *minimalStyleColor = [self.delegate minimalTabStyleBackgroundColor];
+    // Shellforge: the theme's strip, when it colours one; the terminal's background otherwise.
+    NSColor *minimalStyleColor = iTermShellforgeTabLook.stripColor ?: [self.delegate minimalTabStyleBackgroundColor];
     DLog(@"Computing tab bar color. delegate=%@ minimalStyleColor=%@", self.delegate, minimalStyleColor);
     if (PSMShouldExtendTransparencyIntoMinimalTabBar()) {
       const CGFloat alpha = [self alphaValue:[self backgroundAlphaValue:NO]
@@ -202,7 +204,7 @@ static CGFloat PSMWeightedAverage(CGFloat l, CGFloat u, CGFloat w) {
         const double base = [[self.tabBar.delegate tabView:self.tabBar
                                              valueOfOption:PSMTabBarControlOptionMinimalStyleBackgroundColorDifference] doubleValue];
         const CGFloat difference = PSMWeightedAverage(0, base, pow(transparencyAlpha, 5));
-        NSColor *color = [self colorByDimmingColor:[self.tabBarColor psm_nonSelectedColorWithDifference:difference]];
+        NSColor *color = [self colorByDimmingColor:[self nonSelectedTabBaseColorWithDifference:difference]];
         const CGFloat alpha = [self backgroundAlphaValue:NO];
         if (alpha != 1) {
             color = [color colorWithAlphaComponent:alpha];
@@ -211,8 +213,20 @@ static CGFloat PSMWeightedAverage(CGFloat l, CGFloat u, CGFloat w) {
     } else {
         const double difference = [[self.tabBar.delegate tabView:self.tabBar
                                                    valueOfOption:PSMTabBarControlOptionMinimalStyleBackgroundColorDifference] doubleValue];
-        return [self colorByDimmingColor:[self.tabBarColor psm_nonSelectedColorWithDifference:difference]];
+        return [self colorByDimmingColor:[self nonSelectedTabBaseColorWithDifference:difference]];
     }
+}
+
+// Shellforge: the theme's colour for the other tabs, when it gives one; otherwise the strip's,
+// stepped off it by `difference`.
+- (NSColor *)nonSelectedTabBaseColorWithDifference:(double)difference {
+    return iTermShellforgeTabLook.inactiveTabColor ?: [self.tabBarColor psm_nonSelectedColorWithDifference:difference];
+}
+
+// Shellforge: the theme's colour for the active tab, when it gives one; otherwise the strip's.
+- (NSColor *)selectedTabBaseColor {
+    NSColor *themed = iTermShellforgeTabLook.activeTabColor;
+    return themed ? [self colorByDimmingColor:themed] : self.tabBarColor;
 }
 
 - (NSColor *)backgroundColorSelected:(BOOL)selected highlightAmount:(CGFloat)highlightAmount {
@@ -220,7 +234,7 @@ static CGFloat PSMWeightedAverage(CGFloat l, CGFloat u, CGFloat w) {
     if (self.tabBar.cells.count > 1 && !selected) {
         color = [self nonSelectedTabColor];
     } else {
-        color = self.tabBarColor;
+        color = [self selectedTabBaseColor];
     }
     const CGFloat alpha = [self backgroundAlphaValue:selected];
     if (PSMShouldExtendTransparencyIntoMinimalTabBar()) {
@@ -321,6 +335,23 @@ static CGFloat PSMWeightedAverage(CGFloat l, CGFloat u, CGFloat w) {
         [path setLineWidth:2];
         [path stroke];
     }
+    [self drawShellforgeEdgeOnSelectedCell:cell tabBarControl:bar];
+}
+
+// Shellforge: VS Code's accent edge along the top of the active tab — along its leading side in a
+// vertical tab bar, whose tabs are stacked. The bar is flipped, so its top is the cell's minimum y.
+- (void)drawShellforgeEdgeOnSelectedCell:(PSMTabBarCell *)cell
+                           tabBarControl:(PSMTabBarControl *)bar {
+    const NSRect frame = cell.frame;
+    const CGFloat depth = iTermShellforgeTabLook.edgeWidth;
+    NSRect edge;
+    if (bar.orientation == PSMTabBarHorizontalOrientation) {
+        edge = NSMakeRect(NSMinX(frame), NSMinY(frame), NSWidth(frame), depth);
+    } else {
+        edge = NSMakeRect(NSMinX(frame), NSMinY(frame), depth, NSHeight(frame));
+    }
+    [iTermShellforgeTabLook.activeEdgeColor set];
+    NSRectFillUsingOperation(edge, NSCompositingOperationSourceOver);
 }
 
 - (NSColor *)outlineColor {

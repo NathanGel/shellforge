@@ -52,6 +52,22 @@ it and refuses to release a version that has none.
   copied to `config.shellforge-backup` first and the new `Host` block is appended; nothing else in
   it changes. It accepts only what ssh can read, and refuses a name already in the config. A
   missing `~/.ssh` or config is created, private to you.
+- **Themes.** Ten themes: Shellforge (light and dark, as before), Dark Modern, Light Modern, One
+  Dark, Dracula, GitHub Dark, GitHub Light, Solarized Dark, Solarized Light and Nord. A theme
+  colours everything Shellforge draws: the activity bar, the panels, the sheets, the metrics strip
+  and the terminal tab strip; its accent takes the place of the Mac's in Shellforge, focus rings
+  included. Settings › Core › Theme picks one, or, with Follow Mac Appearance on (the default), a
+  light one and a dark one that follow the Mac. A single light or dark theme holds Shellforge to
+  its appearance. Match Terminal lays the theme's colours over every terminal, as Match the
+  terminal to Shellforge did; your profiles are not changed. Until you pick a theme, Shellforge
+  looks as it did.
+- **Gear menu.** The gear at the foot of the activity bar is a menu now, like VS Code's Manage
+  menu: Settings…; Theme, with the themes (or Light Theme and Dark Theme while following the
+  Mac), Follow Mac Appearance and Match Terminal, each applied at once; and Customize.
+- **Hide panels.** Gear › Customize has one Show item per panel, such as Show Metrics. Untick
+  one and the panel leaves the activity bar and the View menu, and its ⌃⌘ key does nothing; a
+  window that showed it switches to the first panel left. The last shown panel can't be hidden.
+  The choice is this Mac's and every window follows it.
 
 ### Changed
 
@@ -63,6 +79,14 @@ it and refuses to release a version that has none.
   isn't installed, such as Codex on a Mac without it, no longer shows "No usage data yet".
   Claude Code counts as installed when `~/.claude` exists, even off your PATH. With no vendor
   to show, the Metrics panel leaves out its Usage group.
+- **Terminal tabs always use the VS Code look.** iTerm2's Minimal theme is used whatever
+  Settings › Appearance › Theme says, with a 2 pt accent line along the top of the active tab and
+  the tab strip in the theme's colours (Minimal's own, from the terminal's background, under the
+  Shellforge theme without Match Terminal). If you chose another iTerm2 theme, such as Regular or
+  Dark, your tabs, title bar and window edges change; before macOS 26 the window loses its separate
+  title bar, as Minimal's windows do. Your setting is kept, and the Theme control is greyed out.
+- **Settings › Core's Match terminal card is the Theme card.** Match Terminal is its last switch,
+  under the theme choice, and keeps the choice you made.
 - **The Sessions header no longer has a Settings gear.** Settings is the gear at the foot of the
   activity bar; Mac Settings… is on the Metrics panel's Mac row (right-click).
 - **Banners show above every panel.** An error, work in progress such as "Adding demo…", a

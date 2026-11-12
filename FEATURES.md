@@ -6,6 +6,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 
 - [The sidebar](#the-sidebar)
 - [Activity bar](#activity-bar)
+- [Themes](#themes)
 - [Projects](#projects)
 - [Dividers](#dividers)
 - [Rearranging the sidebar](#rearranging-the-sidebar)
@@ -34,7 +35,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 
 - **Where it is.** Every terminal window has a sidebar on its left. It follows the window's appearance: light or dark, as macOS or iTerm2's Appearance setting has it. iTerm2's tab bar is hidden in these windows, because the sidebar lists the tabs instead.
 - **On macOS 26 and later** the sidebar floats: a rounded glass panel 10 pt inside the window and 10 pt from the terminal (in full screen too), on the terminal's own colour, with the window buttons in its top corner; their row is left to them, and the Projects header sits below it, beside the activity bar. The window's title sits over the terminal on the same row. Earlier macOS versions keep the full-height sidebar.
-  - With Match the terminal to Shellforge on, the window keeps its own title bar and buttons; only the colours change.
+  - The window keeps its own title bar and buttons under the VS Code tab look and with Match Terminal on; only the colours change.
   - The sidebar button sits just after the window buttons and stays there open or closed. In full screen it has its own row at the top of the panel, above Projects; with the sidebar closed, a slim bar in the terminal's colour keeps the button in the same place; click it to open the sidebar, or move the pointer to the screen's left edge and it slides in over the terminal, and away again when you leave it.
 - **Hide and show.** Use ⌃⌘S, View › Hide Sidebar / Show Sidebar, or the sidebar button.
   - On macOS 26 the button sits just after the window buttons, as above.
@@ -51,7 +52,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 - **Terminal space.** The terminal always keeps at least 320 pt, about 40 columns, with iTerm2's toolbelt counted.
   - While the sidebar shows, the window can't be dragged narrower than both minimums together: 724 pt, plus the toolbelt's width when it is open. The sidebar shrinks to its minimum, then the window stops, rather than the sidebar jumping away.
   - A window sized some other way, such as tiling or a smaller screen, can still end up too narrow. There the sidebar steps aside.
-- **Selection.** The selected row uses the system's selection: the accent while the window is active, grey while it is not.
+- **Selection.** The selected row uses the system's selection: the accent while the window is active, grey while it is not. Under a theme other than Shellforge, the theme's accent and selection colours.
 - **Header.** Projects, then its buttons, left to right:
   - Agent hooks (the bolt);
   - New Tab in Home Folder (the terminal icon), which opens a shell in `~` that belongs to no project;
@@ -74,10 +75,23 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
   - Git (the branch): see [Git](#git);
   - SSH (the server rack): see [SSH](#ssh).
 - **Switching.** Click an icon. The selected one is drawn brighter, with an accent stripe along the bar's left edge. Each window shows its own panel; Sessions keeps its scroll position and selection while another panel shows, and the Tasks menu's commands work whatever the panel.
-- **From the keyboard.** View › Show Sessions (⌃⌘E), Show Metrics (⌃⌘M), Show Files (⌃⌘I), Show Git (no key) and Show SSH (⌃⌘H) show that panel in the key window's sidebar, opening the sidebar if it is hidden. Back on Sessions, the keyboard returns to its list if it was there.
+- **From the keyboard.** View › Show Sessions (⌃⌘E), Show Metrics (⌃⌘M), Show Files (⌃⌘I), Show Git (no key) and Show SSH (⌃⌘H) show that panel in the key window's sidebar, opening the sidebar if it is hidden. Back on Sessions, the keyboard returns to its list if it was there. A hidden panel's item leaves the View menu.
 - **Panel order.** Drag an icon up or down the bar to reorder the panels: it follows the pointer, the others make room, and it lands where you let go. A click that doesn't move only selects, and a drag the system cancels drops nothing. Every window's bar follows the same order, and it is kept after a restart. VoiceOver offers Move Up and Move Down on each icon instead.
-- **Settings** is the gear at the bottom of the bar.
+- **The gear menu.** The gear at the bottom of the bar opens a menu, like VS Code's Manage menu:
+  - **Settings…** opens Settings;
+  - **Theme** lists the ten [themes](#themes), the current one ticked. While Follow Mac Appearance is on, it has Light Theme (the light themes and Shellforge) and Dark Theme (the dark themes and Shellforge) instead. Under them are the Follow Mac Appearance and Match Terminal switches. A choice here applies at once and is saved;
+  - **Customize** has one Show item per panel, in the bar's order (Show Sessions, Show Metrics and so on).
+- **Hiding panels.** Untick a panel under Gear › Customize to take it off the bar and out of the View menu; its ⌃⌘ key does nothing until you tick it again. A window that showed it switches to the first panel left. The last shown panel's item is greyed out, so one always shows. The choice is kept per Mac, not synced, and every window follows it.
 - **Rearrange mode** keeps its Done / Cancel bar at the top whichever panel shows.
+
+## Themes
+
+- **The themes.** Shellforge, Dark Modern, Light Modern, One Dark, Dracula, GitHub Dark, GitHub Light, Solarized Dark, Solarized Light and Nord, each from its published palette. Shellforge is light or dark with the Mac and looks as Shellforge always has; every other theme is either light or dark.
+- **What a theme colours.** Everything Shellforge draws: the activity bar, the panels, the sheets (Settings, New Task, Tunnels, Backpack Mode and the rest), the metrics strip and the terminal tab strip. Its accent takes the place of the Mac's accent colour in Shellforge, focus rings included. Brand marks, such as Claude's or GitHub's, keep their own colours.
+- **Choosing one.** In Settings › Core › Theme (on Save), or from the gear menu (at once).
+- **Follow Mac Appearance.** On by default. While on, you pick a Light theme and a Dark theme, and Shellforge takes the one for the Mac's current appearance, switching when the Mac does. While off, you pick one theme, and a light or dark theme holds Shellforge to its appearance whatever the Mac's; the Shellforge theme still follows the Mac.
+- **Match Terminal.** Off by default. While on, every terminal, including tabs opened later, takes the theme's terminal colours: background, text, cursor, selection and the 16 colours. See [Terminal](#settings-and-connections) for the details. Your profiles are not changed, and switching it off brings their colours back.
+- **Terminal tabs** always use the VS Code look: iTerm2's Minimal theme, with a 2 pt accent line along the top of the active tab and the tab strip in the theme's colours. Under the Shellforge theme without Match Terminal, the strip keeps Minimal's own colours, taken from the terminal's background. The accent line is the theme's accent, the Mac's under Shellforge.
 
 ## Projects
 
@@ -376,7 +390,7 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
 ## Settings and connections
 
 - **Opening Settings.** Click the gear at the bottom of the activity bar, or right-click the Metrics panel's Mac row › Mac Settings…. It is one sheet in three sections; nothing is saved until Save, apart from the agents themselves.
-  - **Core:** the Mac card (Backpack setup), the Environment card, and the Match the terminal to Shellforge and Feedback switches.
+  - **Core:** the Mac card (Backpack setup), the Environment card, the Theme card and the Feedback switch.
   - **Agents:** every agent, built in, ready-made and your own, to add, edit, duplicate or remove ([Agents](#agents)); then one row per installed agent, with its **Default model** and **Default reasoning**.
   - **Services:** Jira (site, email, API token), GitLab (host, token) and GitHub (token).
 - **Connections.**
@@ -392,10 +406,11 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
   - If a saved model is no longer offered, the row says so and the sheets ask you to choose a current model instead of quietly starting another.
 - **Settings looks like System Settings:** Core, Agents and Services are each one grouped box, one row per setting or service.
 - **Feedback.** Settings › Core › Ask for feedback now and then, a switch, on by default, takes effect on Save. Turning it back on waits 90 days before the next note. Help › Send Feedback… works either way.
-- **Terminal.** Settings › Core › Match the terminal to Shellforge, a switch, off by default, takes effect on Save.
-  - Every terminal, including tabs opened later, uses Shellforge's colours: a background one step off the sidebar (darker in dark mode, lighter in light mode), the sidebar's text and selection colours, the macOS accent colour for the cursor, and macOS's system colours for the 16 terminal colours, each readable on the background.
-  - iTerm2 uses its Minimal theme, so the title bar and window edges match. Settings › Appearance's Theme is greyed out while it is on.
-  - Your profiles and your theme setting are not changed. Switching it off brings them back at once.
+- **Theme.** Settings › Core › Theme has Follow Mac Appearance, then the Light and Dark pickers (or one Theme picker while it is off), then Match Terminal. They take effect on Save. See [Themes](#themes).
+- **Terminal.** Settings › Core › Theme › Match Terminal, a switch, off by default, takes effect on Save.
+  - Every terminal, including tabs opened later, uses the theme's colours. Under the Shellforge theme they are Shellforge's own: a background one step off the sidebar (darker in dark mode, lighter in light mode), the sidebar's text and selection colours, the macOS accent colour for the cursor, and macOS's system colours for the 16 terminal colours, each readable on the background. Under another theme, its published terminal colours.
+  - iTerm2 always uses its Minimal theme (see [Themes](#themes)), so the title bar and window edges match. Settings › Appearance's Theme is greyed out.
+  - Your profiles and your theme setting are not changed. Switching it off brings the profiles' colours back at once.
   - A colour set for one tab (Edit Session, the Python API) still wins.
   - In light mode the match uses a light palette, and it switches when the appearance does.
 
@@ -416,6 +431,7 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
 | ⌘+ / ⌘− / ⌘0 | Sidebar text bigger / smaller / normal, after a click in the sidebar |
 
 - They act on the key window's sidebar.
+- A panel hidden with Gear › Customize leaves the View menu, and its key does nothing.
 - iTerm2's own keys are unchanged.
 - ⌃⌘D, ⌃⌘Q and ⌃⌘Space belong to macOS, so Shellforge does not use them.
 

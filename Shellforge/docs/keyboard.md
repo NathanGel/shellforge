@@ -42,6 +42,9 @@ iTerm2.
 | ⌃⌘H | Show SSH | The same, for the SSH panel. H, as S is Hide Sidebar's. |
 | — | Tunnels › Start / Stop Tunnel … | No keys; Open Quickly (⇧⌘O) finds them by name. |
 
+A panel hidden with the activity bar's gear › Customize leaves the View menu: its Show item is
+gone and its ⌃⌘ key does nothing until the panel is shown again.
+
 ## The sidebar's edge
 
 Its right edge drags it to a width, from its minimum (404 pt, the 44 pt activity bar included) to
