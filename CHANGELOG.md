@@ -42,8 +42,8 @@ it and refuses to release a version that has none.
   is first shown, then follows each repository as it changes. View › Show Git shows it.
 - **SSH panel.** A fifth panel (the server rack) lists the hosts in `~/.ssh/config`: each
   project's SSH host and tunnels under the project, then every other host under Other hosts.
-  Connect opens `ssh <host>` in a new tab, in the project's folder or, for Other hosts, your home
-  folder; a tunnel's row starts and stops it as in Sessions. A host a project names that the config
+  Open in Terminal opens `ssh <host>` in a new tab, in the project's folder or, for Other hosts, your home
+  folder; a tunnel host's row starts and stops it as in Sessions. A host a project names that the config
   no longer has is dimmed with “Not in ~/.ssh/config”. Right-click a project for Tunnels… and SSH
   Host…. The config is read when the panel first shows and again whenever `~/.ssh` changes.
   View › Show SSH (⌃⌘H) shows it.
@@ -68,6 +68,17 @@ it and refuses to release a version that has none.
 - **Banners show above every panel.** An error, work in progress such as "Adding demo…", a
   fallback PATH, a helper problem or the feedback note is pinned at the top of the sidebar,
   whichever panel shows, and so is Rearrange mode's Cancel and Done.
+- **Panels list the tabs they open.** A tab opened from the SSH, Files or Git panel is listed in
+  that panel, no longer under Sessions’ Other Tabs: an ssh session under its host, a file open in
+  the editor under the file (or its project, while the file’s folder is closed), and a diff under
+  its file (or its repository, once the file has no changes left). Click the line to bring the tab
+  forward, or its × to close it, which asks first only when ⌘W would. The tabs are found again
+  after a restart. When the host, project or task a tab belongs to is gone, it moves back under
+  Other Tabs. Other Tabs keeps every other tab of no task, such as New Tab in Home Folder’s.
+- **One row per SSH host, with one-click Start/Stop and Open in Terminal.** A host that is also a
+  project’s tunnel is a single row, with the tunnel’s Start or Stop beside Open in Terminal (the
+  old Connect), so starting `db-tunnel` or opening `ssh staging` is one click. Clicking the row
+  itself opens nothing.
 - **Sidebar questions use iTermWarning.** Removing a task, importing worktrees, switching a
   branch and the sidebar's other questions are iTerm2's own alerts now, so they can be answered
   from iTerm2 Buddy on your phone as well as at the Mac.

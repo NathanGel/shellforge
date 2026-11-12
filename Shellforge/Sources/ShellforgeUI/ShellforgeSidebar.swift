@@ -520,7 +520,7 @@ struct SidebarView: View {
             }
             if activity.layout.selected == .files {
                 if let filesModel {
-                    FilesPanel(model: filesModel, titled: chrome.windowControls == nil, providers: model.providers,
+                    FilesPanel(model: filesModel, sidebar: model, titled: chrome.windowControls == nil, providers: model.providers,
                                opener: FileOpener(host: model.host, defaults: terminalEditorDefaults,
                                                   environment: { [launcher = model.launcher] in launcher.environment.variables }))
                 } else {
@@ -531,7 +531,7 @@ struct SidebarView: View {
             }
             if activity.layout.selected == .git {
                 if let gitModel {
-                    GitPanel(model: gitModel, titled: chrome.windowControls == nil, providers: model.providers,
+                    GitPanel(model: gitModel, sidebar: model, titled: chrome.windowControls == nil, providers: model.providers,
                              actions: GitPanelActions(host: model.host, defaults: terminalEditorDefaults,
                                                       environment: { [launcher = model.launcher] in launcher.environment.variables },
                                                       launcher: model.launcher, prompter: { [model] in model.prompter },

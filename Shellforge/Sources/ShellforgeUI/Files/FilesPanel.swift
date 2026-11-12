@@ -17,7 +17,7 @@ public enum FileKind: Sendable, Equatable {
 }
 
 /// Opens a file of the Files panel in a terminal tab: a new tab in the project's folder, titled
-/// with the file's name, typing `EditorCommand.line`. The editor is resolved at the click — the
+/// with the file's name, typing `EditorCommand.line`, tagged with the file so the panel lists it. The editor is resolved at the click — the
 /// Settings choice, else `$EDITOR`, else `vi` — and the login environment is read off the main
 /// actor, as it may run a login shell when it has not been read yet.
 @MainActor
@@ -45,7 +45,8 @@ struct FileOpener {
             await files.refresh(project: project.id)
         case .file:
             let editor = EditorCommand.editor(setting: defaults.string(forKey: EditorCommand.settingKey), environment: variables)
-            host.openTab(in: project.path, title: node.name, command: EditorCommand.line(editor: editor, file: node.path))
+            host.openTab(in: project.path, title: node.name, command: EditorCommand.line(editor: editor, file: node.path),
+                         panel: .file(project: project.id, path: node.path))
         }
     }
 }
@@ -62,9 +63,12 @@ extension FilesModel {
 
 /// The Files panel: one section per workspace project, in the workspace's order — the project's
 /// row (its provider mark, a chevron, its name) folds it — then its tree. Only open folders'
-/// children are made into rows. `titled` false when the title is pinned above the panel instead.
+/// children are made into rows. Under a file's row, this window's editor tabs of it. `titled`
+/// false when the title is pinned above the panel instead.
 struct FilesPanel: View {
     @ObservedObject var model: FilesModel
+    /// This window's model, for its tabs: the Files model is the app's, the tabs are the window's.
+    @ObservedObject var sidebar: SidebarModel
     let titled: Bool
     var providers: [UUID: Provider] = [:]
     let opener: FileOpener
@@ -75,6 +79,9 @@ struct FilesPanel: View {
 
     /// A row's `ViewMark`, for tests: the project's id and the row's path ("" for the project's row).
     nonisolated static func rowMark(project: UUID, path: String) -> String { "FilesRow:\(project.uuidString):\(path)" }
+
+    /// A tab's line, for tests: the row it is listed under and the tab.
+    nonisolated static func tabMark(row: String, tab: String) -> String { "FilesTab:\(row):\(tab)" }
 
     /// One line of the panel.
     enum Row: Identifiable, Equatable {
@@ -120,6 +127,29 @@ struct FilesPanel: View {
         }
     }
 
+    /// Where each editor tab is listed, by the id of the row it goes under: its file's row while
+    /// that row is drawn, else its project's row — the file's folder is closed, or the file is no
+    /// longer listed — so every tab stays in reach. A tab of a project the panel doesn't list is
+    /// left out: Sessions lists it under Other Tabs once its project is gone. In tab order.
+    static func tabLines(_ rows: [Row], tabs: [TabSnapshot]) -> [String: [TabSnapshot]] {
+        let drawn = Set(rows.map(\.id))
+        var lines: [String: [TabSnapshot]] = [:]
+        for tab in tabs {
+            guard case .file(let project, let path) = tab.panel else { continue }
+            let file = rowMark(project: project, path: path)
+            let header = rowMark(project: project, path: "")
+            guard let row = drawn.contains(file) ? file : drawn.contains(header) ? header : nil else { continue }
+            lines[row, default: []].append(tab)
+        }
+        return lines
+    }
+
+    /// How far a tab's line under `row` is indented: one step past the file's row.
+    private func tabIndent(_ row: Row) -> CGFloat {
+        if case .node(_, _, let depth, _) = row { return FileRow.leadingInset(depth: depth + 1, scale) }
+        return FileRow.leadingInset(depth: 0, scale)
+    }
+
     private static func treeRows(_ nodes: [FileNode], project: Project, depth: Int, isOpen: (UUID, String) -> Bool) -> [Row] {
         nodes.flatMap { node -> [Row] in
             let open = node.isFolder && isOpen(project.id, node.path)
@@ -141,9 +171,16 @@ struct FilesPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if titled { PanelTitle(panel: .files) }
+            let rows = Self.rows(model.sections, isOpen: model.isOpen)
+            let lines = Self.tabLines(rows, tabs: sidebar.tree.panelTabs)
             List {
-                ForEach(Self.rows(model.sections, isOpen: model.isOpen)) { row in
+                ForEach(rows) { row in
                     rowView(row).listRowSeparator(.hidden)
+                    ForEach(lines[row.id] ?? []) { tab in
+                        PanelTabLine(tab: tab, indent: tabIndent(row), model: sidebar)
+                            .background(ViewMark(name: Self.tabMark(row: row.id, tab: tab.id)))
+                            .listRowSeparator(.hidden)
+                    }
                 }
             }
             .listStyle(.sidebar)

@@ -230,7 +230,7 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
 ## Tabs and panes
 
 - **New Tab in Home Folder.** Use the header's terminal button or Tasks › New Tab in Home Folder (no key: ⌘T is iTerm2's). It opens and selects a shell in your home folder, listed under **Other Tabs**. It works whenever a terminal window is in front, with or without a project.
-- **A task's tabs** are listed under it when it is selected and has more than one. Tabs of no task are listed under **Other Tabs**.
+- **A task's tabs** are listed under it when it is selected and has more than one. Tabs of no task are listed under **Other Tabs**, except those the SSH, Files and Git panels opened: each of those is listed in its panel, under the host, file or repository it was opened for. Once that host leaves `~/.ssh/config`, or that project or task is removed, the tab moves back under Other Tabs, so every tab stays in reach.
 - **Closing from the sidebar.** Right-click a tab row, or a task row, for **Close Tab**. On a tab split with ⌘D, the item reads **Close Pane** and closes only the focused pane.
   - Anything running asks first, as ⌘W does.
   - A task row brings its tab to the front before closing a pane of it.
@@ -271,6 +271,7 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
   - A project whose folder is gone says “Folder not found”; one git can't read says why.
 - **Up to date.** Each project's folder is watched, so a file added, renamed or deleted shows up without a refresh. Nothing is listed or watched until the panel is first shown in any window; every window then shows the same lists and open folders.
 - **Opening a file.** Click it: a new tab opens in the project's folder, titled with the file's name, running your terminal editor on it, such as `vim src/app.ts`. Quitting the editor closes the tab. A file deleted since the list was drawn opens nothing, and the list is read again.
+- **Its open tabs.** Each window lists its editor tabs in the panel, one line each, indented under the file's row; while the file's folder is closed, or the file is no longer listed, under its project's row instead. Click a line to bring its tab forward; its × (or right-click, Close Tab) closes it, asking first only when ⌘W would. They are not under Sessions' Other Tabs.
 - **Which editor.** Settings › Core › Terminal editor, a command such as `nvim` or `micro`. Left empty, it is `$EDITOR` from your login shell, else `vi`.
 - **Right-click** a file for Open in Terminal Editor, Reveal in Finder and, when it is installed, Open in VS Code; a folder or a project for Reveal in Finder, Open in Finder and, when it is installed, Open in VS Code.
 - **From the keyboard.** View › Show Files (⌃⌘I).
@@ -281,6 +282,7 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
   - The branch line shows the branch and how far it is ahead of and behind its upstream, such as `main ↑2 ↓1`; or “No commits yet”, “Detached at abc1234”, “Not a git repository” or “Folder not found”. A spinner shows while git works, and a problem is shown under the line, in red, until the next action.
   - Changes fall in three lists: Merge Changes (conflicts, marked `!`), Staged Changes and Changes (untracked files included, marked `U`). Each row shows the status letter, the file's name and its folder. Task worktrees, under `.worktrees/`, are never listed.
 - **Diffs in a tab.** Click a file, or its View Diff button, to open its diff in a new tab in the repository, titled “Diff: app.ts”, running `git diff -- ':(literal)src/app.ts'` (`--staged` for a staged file, with both paths for a staged rename). The tab stays at the shell after the pager.
+- **Its open diff tabs.** Each window lists its diff tabs in the panel, one line each, indented under the file's row (the first one, for a file in two lists). Once the file has no changes left, or its section is folded, the line moves under the repository's row; a task's diff under its project's row while the task's section isn't shown. Click a line to bring its tab forward; its × (or right-click, Close Tab) closes it, asking first only when ⌘W would. A file opened in the editor from here is a plain tab, under Sessions' Other Tabs.
 - **Paths are taken literally.** Every file the panel hands git is a literal path, so acting on `app/[id]/page.tsx` never touches `app/i/page.tsx`.
 - **File actions.** Hover a row for its buttons, or right-click it:
   - Changes: Stage, Discard Changes, View Diff, Open in Terminal Editor;
@@ -342,9 +344,11 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
 
 ## SSH
 
-- **Grouping.** The SSH panel lists each project that names hosts, under its own header: its SSH host and its tunnels, each host once. Then **Other hosts**: every other host in `~/.ssh/config`, by name. A host a project names that the config no longer has is dimmed, with “Not in ~/.ssh/config”, and can't connect.
-- **Connect.** A host's terminal button opens `ssh <host>` in a new tab titled with the host, in the project's folder, or your home folder for Other hosts. The config is read again first, so a host just added or removed is answered as it is now.
-- **Tunnels.** A tunnel's row is the one Sessions shows: its state, ports, Start / Stop and Answer in Tab. Rearrange is in Sessions only.
+- **Grouping.** The SSH panel lists each project that names hosts, under its own header: its SSH host and its tunnels, each host once. Then **Other hosts**: every other host in `~/.ssh/config`, by name. A host a project names that the config no longer has is dimmed, with “Not in ~/.ssh/config”, and has no Open in Terminal.
+- **One row per host.** A dot, the host's name, then its buttons. Clicking the row itself does nothing. A host that is one of the project's tunnels is still one row: the dot is the tunnel's state, the ports and keep-running mark follow the name, and its error, uptime and traffic sit under it, as in Sessions. A plain host's dot is green while this window has a session open on it.
+- **Start / Stop.** A tunnel host's ▶ or ■ starts or stops the tunnel in one click, and Answer in Tab shows when ssh needs an answer. Rearrange is in Sessions only.
+- **Open in Terminal.** A host's terminal button opens `ssh <host>` in a new tab titled with the host, in the project's folder, or your home folder for Other hosts. The config is read again first, so a host just added or removed is answered as it is now.
+- **Open sessions.** Each window lists its ssh tabs under their host, one line each, such as `staging`. Click a line to bring its tab forward; its × (or right-click, Close Tab) closes it, asking first only when ⌘W would. They are not under Sessions' Other Tabs; once the host leaves the config, they move back there.
 - **Project menu.** Right-click a project's header for Tunnels… and SSH Host….
 - **Up to date.** The panel starts watching `~/.ssh` (and, when the config is a link, its target's folder) when it first shows in a window, and follows each change there. Two cases wait for the next time the panel is selected: a `~/.ssh` made outside Add Host after the panel showed, and a config that became a link since.
 - **Add Host.** The + in the panel's header, or Add Host… when the panel is empty, opens a sheet:

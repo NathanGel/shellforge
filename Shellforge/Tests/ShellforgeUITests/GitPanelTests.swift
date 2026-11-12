@@ -64,6 +64,14 @@ private final class InertGitWatcher: FolderWatching, @unchecked Sendable {
                                           git: git)
     }
 
+    /// A window's sidebar over a workspace holding `projects` and `tasks`, its tabs in `host`.
+    private func sidebar(_ host: FakeTerminalHost = FakeTerminalHost(), projects: [Project], tasks: [TaskItem] = []) throws -> SidebarModel {
+        let folder = TestScratch.root.appendingPathComponent("shellforge-git-tabs-\(UUID().uuidString)")
+        let document = WorkspaceDocument(store: WorkspaceStore(folder: folder))
+        try document.update { $0.projects += projects; $0.tasks += tasks }
+        return SidebarModel(host: host, document: document, launcher: launcher, jiraSettings: { nil })
+    }
+
     private func window(_ view: NSView) -> NSWindow {
         view.frame = NSRect(x: 0, y: 0, width: Size.sidebarWidth, height: 600)
         let window = NSWindow(contentRect: view.frame, styleMask: [.borderless], backing: .buffered, defer: false)
@@ -117,6 +125,55 @@ private final class InertGitWatcher: FolderWatching, @unchecked Sendable {
         _ = try #require(GitPanel.rows([section], isOpen: { _ in true }).first { $0.id == GitPanel.changeID(section.id, .changes, change) })
         actions(host).viewDiff(change, list: .changes, in: section)
         #expect(host.openedPlain.map { "\($0.directory)|\($0.title)|\($0.command)" } == ["/demo|Diff: app.ts|git diff -- ':(literal)src/app.ts'"])
+    }
+
+    /// A diff tab carries its repository's and file's tag, leaves Other Tabs, and lists under its
+    /// file's change row; drawn in the panel, it is there.
+    @Test func aDiffTabListsUnderItsFile() async throws {
+        let change = GitChange(path: "src/app.ts", letter: .modified)
+        let ready = status(.branch("main"), unstaged: [change])
+        let folder = TestScratch.root.appendingPathComponent("shellforge-gitpanel-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        let demo = Project(name: "demo", path: folder)
+        let host = FakeTerminalHost()
+        let sidebar = try self.sidebar(host, projects: [demo])
+        let model = GitModel(projects: [demo], tasks: [], launcher: launcher, watcher: { _ in InertGitWatcher() },
+                             read: { _, _ in ready }, act: { _, _, _, _ in })
+        await model.settled()
+        let section = try #require(model.sections.first)
+        actions(host).viewDiff(change, list: .changes, in: section)
+        #expect(host.openedPlain.map(\.panel) == [.diff(repo: "project:" + demo.id.uuidString, path: "src/app.ts")])
+        #expect(sidebar.tree.otherTabs.isEmpty, "not under Sessions’ Other Tabs")
+        let tab = try #require(host.tabs.first)
+
+        let row = GitPanel.changeID(section.id, .changes, change)
+        let rows = GitPanel.rows(model.sections, isOpen: { _ in true })
+        #expect(GitPanel.tabLines(rows, tabs: [tab], projectOf: { _ in nil }) == [row: [tab]])
+        let folded = GitPanel.rows(model.sections, isOpen: { _ in false })
+        #expect(GitPanel.tabLines(folded, tabs: [tab], projectOf: { _ in nil }) == [GitPanel.titleID(section.id): [tab]],
+                "a folded section lists it under its title")
+
+        let panel = GitPanel(model: model, sidebar: sidebar, titled: true, actions: actions(host))
+        let view = NSHostingView(rootView: panel)
+        let window = window(view)
+        defer { window.close() }
+        #expect(marks(in: view).contains(GitPanel.tabMark(row: row, tab: tab.id)))
+    }
+
+    /// A diff tab whose file has no changes left lists under its repository's title; a task's
+    /// whose section is not drawn, under its project's.
+    @Test func aDiffTabOfACleanFileListsUnderTheSection() {
+        let taskId = UUID()
+        let clean = section(.project(demo.id), status(.branch("main")))
+        let tab = TabSnapshot(id: "s1", tabId: 1, title: "Diff: app.ts", taskId: nil, projectId: nil,
+                              panel: .diff(repo: GitPanel.key(.project(demo.id)), path: "src/app.ts"))
+        let ofTask = TabSnapshot(id: "s2", tabId: 2, title: "Diff: app.ts", taskId: nil, projectId: nil,
+                                 panel: .diff(repo: "task:" + taskId.uuidString.lowercased(), path: "src/app.ts"))
+        let elsewhere = TabSnapshot(id: "s3", tabId: 3, title: "Diff: app.ts", taskId: nil, projectId: nil,
+                                    panel: .diff(repo: GitPanel.key(.project(UUID())), path: "src/app.ts"))
+        let rows = GitPanel.rows([clean], isOpen: { _ in true })
+        let lines = GitPanel.tabLines(rows, tabs: [tab, ofTask, elsewhere], projectOf: { $0 == taskId ? self.demo.id : nil })
+        #expect(lines == [GitPanel.titleID(clean.id): [tab, ofTask]], "a repository the panel doesn’t list has no line")
     }
 
     /// A file both staged and changed again has a row in each list, each with its own id.
@@ -183,7 +240,7 @@ private final class InertGitWatcher: FolderWatching, @unchecked Sendable {
         let model = GitModel(projects: [demo], tasks: [], launcher: launcher, watcher: { _ in InertGitWatcher() },
                              read: { _, _ in ready }, act: { action, _, _, _ in acted.record(action) })
         await model.settled()
-        let panel = GitPanel(model: model, titled: true, actions: actions(FakeTerminalHost()))
+        let panel = GitPanel(model: model, sidebar: try sidebar(projects: [demo]), titled: true, actions: actions(FakeTerminalHost()))
         let host = NSHostingView(rootView: panel)
         let window = window(host)
         defer { window.close() }

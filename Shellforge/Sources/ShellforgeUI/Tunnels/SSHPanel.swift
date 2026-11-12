@@ -30,7 +30,7 @@ struct SSHPanel: View {
     static let startTitle = "Start"
     static let stopTitle = "Stop"
     static let answerTitle = "Answer in Tab"
-    static let showTitle = "Show"
+    static let showTitle = PanelTabLine.showTitle
 
     /// Open in Terminal's tooltip.
     static func openInTerminalHelp(_ alias: String) -> String { "\(openInTerminalTitle): ssh \(alias) in a new tab" }
@@ -134,8 +134,7 @@ struct SSHPanel: View {
     }
 
     private func sessionRow(_ tab: TabSnapshot, of entry: SSHPanelEntry, in section: SSHPanelSection) -> some View {
-        SSHSessionRow(tab: tab, selected: tab.id == model.drawnTabId,
-                      show: { model.select(tab: tab.id) }, close: { model.closeTab(tab.id) }, closeTitle: model.closeTitle(ofTab: tab.id))
+        PanelTabLine(tab: tab, indent: scale(Space.section) + scale(Size.avatar), model: model)
             .background(ViewMark(name: Self.sessionMark(section: section.id, alias: entry.alias, tab: tab.id)))
     }
 }
@@ -321,39 +320,6 @@ private struct SSHHostRow: View {
         }
         .frame(minHeight: scale(Size.menuRow))
         .padding(.leading, scale(Space.base)).padding(.trailing, SidebarRowLayout.trailingInset(scale))
-    }
-}
-
-/// A tab open on a host, indented under its row: its title; a click brings it forward and its ×
-/// closes it, as closing a tab in Sessions does.
-private struct SSHSessionRow: View {
-    let tab: TabSnapshot
-    let selected: Bool
-    let show: () -> Void
-    let close: () -> Void
-    let closeTitle: String
-    @Environment(\.interfaceScale) private var scale
-    @Environment(\.surface) private var surface
-
-    var body: some View {
-        SelectableRow(selected: selected, activate: show) {
-            HStack(spacing: scale(Space.inset)) {
-                RowTitle(tab.title)
-                Spacer(minLength: scale(Space.tight))
-                Button(action: close) {
-                    Image(systemName: "xmark").font(Typography.micro).foregroundStyle(surface.secondaryInk)
-                }
-                .buttonStyle(.plain)
-                .frame(width: SidebarRowLayout.trailingSlot(scale), height: SidebarRowLayout.trailingSlot(scale))
-                .help(closeTitle)
-            }
-        }
-        .padding(.leading, scale(Space.section) + scale(Size.avatar))
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(tab.title)
-        .accessibilityAction(named: Text(SSHPanel.showTitle), show)
-        .accessibilityAction(named: Text(closeTitle), close)
-        .contextMenu { Button(closeTitle, action: close) }
     }
 }
 

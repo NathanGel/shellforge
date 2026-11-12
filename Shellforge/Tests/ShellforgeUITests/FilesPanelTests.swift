@@ -39,8 +39,16 @@ private final class CountingLister: @unchecked Sendable {
         FileOpener(host: host, defaults: ScratchDefaults.make(), environment: { editor.map { ["EDITOR": $0] } ?? [:] }, kind: { _ in kind })
     }
 
-    private func hosted(_ model: FilesModel) -> (NSView, NSWindow) {
-        let panel = FilesPanel(model: model, titled: true, opener: opener(FakeTerminalHost(), kind: .file))
+    /// A window's sidebar over a workspace holding `demo`, its tabs in `host`.
+    private func sidebar(_ host: FakeTerminalHost = FakeTerminalHost()) throws -> SidebarModel {
+        let folder = TestScratch.root.appendingPathComponent("shellforge-files-tabs-\(UUID().uuidString)")
+        let document = WorkspaceDocument(store: WorkspaceStore(folder: folder))
+        try document.update { $0.projects.append(demo) }
+        return SidebarModel(host: host, document: document, launcher: launcher, jiraSettings: { nil })
+    }
+
+    private func hosted(_ model: FilesModel, sidebar: SidebarModel) -> (NSView, NSWindow) {
+        let panel = FilesPanel(model: model, sidebar: sidebar, titled: true, opener: opener(FakeTerminalHost(), kind: .file))
         let host = NSHostingView(rootView: panel)
         host.frame = NSRect(x: 0, y: 0, width: Size.sidebarWidth, height: 600)
         let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
@@ -61,10 +69,10 @@ private final class CountingLister: @unchecked Sendable {
         #expect(ActivityLayout(saved: ["sessions", "metrics"]).order == [.sessions, .metrics, .files, .git, .ssh])
     }
 
-    @Test func onlyOpenFoldersAreDrawn() async {
+    @Test func onlyOpenFoldersAreDrawn() async throws {
         let model = files(CountingLister(.git(["src/app.ts", "README.md"])))
         await model.refresh(project: demo.id)
-        let (host, window) = hosted(model)
+        let (host, window) = hosted(model, sidebar: try sidebar())
         defer { window.close() }
         let mark = { FilesPanel.rowMark(project: self.demo.id, path: $0) }
         var drawn = marks(in: host)
@@ -151,6 +159,62 @@ private final class CountingLister: @unchecked Sendable {
         projects.send([acme])
         #expect(model.sections.map(\.project.name) == ["acme-web"])
         await model.settled()
+    }
+
+    /// An editor tab carries its file's tag and lists under its file's row, or under its project's
+    /// row while the file's folder is closed: never under Other Tabs.
+    @Test func anEditorTabListsUnderItsFile() async throws {
+        let host = FakeTerminalHost()
+        let sidebar = try self.sidebar(host)
+        let model = files(CountingLister(.git(["src/app.ts", "README.md"])))
+        await model.refresh(project: demo.id)
+        await opener(host, kind: .file).open(appTs, in: demo, files: model)
+        #expect(host.openedPlain.map(\.panel) == [.file(project: demo.id, path: "src/app.ts")])
+        #expect(sidebar.tree.otherTabs.isEmpty, "not under Sessions’ Other Tabs")
+        let tab = try #require(host.tabs.first).id
+        let (view, window) = hosted(model, sidebar: sidebar)
+        defer { window.close() }
+        let header = FilesPanel.rowMark(project: demo.id, path: "")
+        let file = FilesPanel.rowMark(project: demo.id, path: "src/app.ts")
+        var drawn = marks(in: view)
+        #expect(drawn.contains(FilesPanel.tabMark(row: header, tab: tab)), "src is closed: under the project’s row")
+        model.toggle(project: demo.id, folder: "src")
+        drawn = marks(in: view)
+        #expect(drawn.contains(FilesPanel.tabMark(row: file, tab: tab)))
+        #expect(!drawn.contains(FilesPanel.tabMark(row: header, tab: tab)), "listed once")
+        // A file no longer listed lists under its project's row; a project not listed, nowhere.
+        let gone = TabSnapshot(id: "g", tabId: 90, title: "old.ts", taskId: nil, projectId: nil,
+                               panel: .file(project: demo.id, path: "src/old.ts"))
+        let elsewhere = TabSnapshot(id: "e", tabId: 91, title: "app.ts", taskId: nil, projectId: nil,
+                                    panel: .file(project: UUID(), path: "src/app.ts"))
+        let rows = FilesPanel.rows(model.sections, isOpen: model.isOpen)
+        let lines = FilesPanel.tabLines(rows, tabs: [gone, elsewhere])
+        #expect(lines == [header: [gone]])
+    }
+
+    /// A tab's line in the panel brings its tab forward, and its × closes it through Sessions' close.
+    @Test func closingFromThePanelClosesTheTab() async throws {
+        let host = FakeTerminalHost()
+        let sidebar = try self.sidebar(host)
+        let model = files(CountingLister(.git(["src/app.ts"])))
+        await model.refresh(project: demo.id)
+        model.toggle(project: demo.id, folder: "src")
+        await opener(host, kind: .file).open(appTs, in: demo, files: model)
+        await opener(host, kind: .file).open(appTs, in: demo, files: model)
+        let tabs = sidebar.panelTabs(for: .file(project: demo.id, path: "src/app.ts"))
+        #expect(tabs.count == 2)
+        let (view, window) = hosted(model, sidebar: sidebar)
+        defer { window.close() }
+        let file = FilesPanel.rowMark(project: demo.id, path: "src/app.ts")
+        #expect(marks(in: view).isSuperset(of: tabs.map { FilesPanel.tabMark(row: file, tab: $0.id) }))
+        let first = PanelTabLine(tab: tabs[0], indent: 0, model: sidebar)
+        first.show()
+        #expect(host.selectedTabId == tabs[0].id)
+        PanelTabLine(tab: tabs[1], indent: 0, model: sidebar).close()
+        #expect(host.closed == [tabs[1].id])
+        let drawn = marks(in: view)
+        #expect(!drawn.contains(FilesPanel.tabMark(row: file, tab: tabs[1].id)))
+        #expect(drawn.contains(FilesPanel.tabMark(row: file, tab: tabs[0].id)))
     }
 
     @Test func showFilesSelectsThePanel() throws {

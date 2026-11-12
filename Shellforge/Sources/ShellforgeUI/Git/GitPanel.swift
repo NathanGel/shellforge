@@ -39,11 +39,13 @@ struct GitPanelActions {
     let busyTask: @MainActor (UUID) -> String?
     var kind: @Sendable (String) -> FileKind = FileKind.onDisk
 
-    /// A change's diff, in a new tab in its repository. The tab keeps its shell after the pager:
-    /// git's `less -FRX` quits at once on a short diff, which would close a tab that ran it with `exec`.
+    /// A change's diff, in a new tab in its repository, tagged with the repository and the file so
+    /// the panel lists it. The tab keeps its shell after the pager: git's `less -FRX` quits at once
+    /// on a short diff, which would close a tab that ran it with `exec`.
     func viewDiff(_ change: GitChange, list: GitChangeList, in section: GitSection) {
         let name = (change.path as NSString).lastPathComponent
-        host.openTab(in: section.path, title: "Diff: \(name)", command: GitActions.diffLine(for: change, staged: list == .staged))
+        host.openTab(in: section.path, title: "Diff: \(name)", command: GitActions.diffLine(for: change, staged: list == .staged),
+                     panel: .diff(repo: GitPanel.key(section.id), path: change.path))
     }
 
     /// A changed file in the terminal editor, as the Files panel opens one. A file no longer there
@@ -83,15 +85,18 @@ struct GitPanelActions {
 
 /// The Git panel: one section per workspace project, in the workspace's order — its row (provider
 /// mark, chevron, name) folds it — then its branch, commit message and changes; under it, each of
-/// its tasks with changes, the same way but for Switch Branch. `titled` false when the title is
-/// pinned above the panel instead.
+/// its tasks with changes, the same way but for Switch Branch. Under a change's row, this window's
+/// diff tabs of it. `titled` false when the title is pinned above the panel instead.
 struct GitPanel: View {
     @ObservedObject var model: GitModel
+    /// This window's model, for its tabs: the Git model is the app's, the tabs are the window's.
+    @ObservedObject var sidebar: SidebarModel
     let titled: Bool
     var providers: [UUID: Provider] = [:]
     let actions: GitPanelActions
     /// Folded sections, for this window only.
     @State private var folded: Set<GitRepoID> = []
+    @Environment(\.interfaceScale) private var scale
 
     /// The panel's `ViewMark`.
     static let markName = "GitPanel"
@@ -125,6 +130,59 @@ struct GitPanel: View {
     }
 
     static func titleID(_ repo: GitRepoID) -> String { key(repo) + ":title" }
+
+    /// The repository a diff tab's tag names: `key`'s form, its uuid in either case.
+    static func repo(ofTag repo: String) -> GitRepoID? {
+        let parts = repo.split(separator: ":", maxSplits: 1)
+        guard parts.count == 2, let id = UUID(uuidString: String(parts[1])) else { return nil }
+        switch parts[0] {
+        case "project": return .project(id)
+        case "task": return .task(id)
+        default: return nil
+        }
+    }
+
+    /// A tab's line, for tests: the row it is listed under and the tab.
+    nonisolated static func tabMark(row: String, tab: String) -> String { "GitTab:\(row):\(tab)" }
+
+    /// Where each diff tab is listed, by the id of the row it goes under: its file's change row,
+    /// the first drawn if the file is in two lists; else, the file having no changes left or its
+    /// section folded, its repository's title row; else, a task's section not drawn (folded under
+    /// its project, or listed no more for want of changes), its project's title row. Every tab of
+    /// a repository the panel lists stays in reach. `projectOf` names a task's project. In tab order.
+    static func tabLines(_ rows: [Row], tabs: [TabSnapshot], projectOf: (UUID) -> UUID?) -> [String: [TabSnapshot]] {
+        var changeRows: [String: String] = [:]
+        var drawn: Set<String> = []
+        for row in rows {
+            drawn.insert(row.id)
+            if case .change(_, let change) = row.kind {
+                let file = key(row.section.id) + "\n" + change.path
+                if changeRows[file] == nil { changeRows[file] = row.id }
+            }
+        }
+        var lines: [String: [TabSnapshot]] = [:]
+        for tab in tabs {
+            guard case .diff(let tag, let path) = tab.panel, let repo = repo(ofTag: tag) else { continue }
+            var candidates = [changeRows[key(repo) + "\n" + path], titleID(repo)]
+            if case .task(let task) = repo, let project = projectOf(task) { candidates.append(titleID(.project(project))) }
+            guard let row = candidates.compactMap({ $0 }).first(where: drawn.contains) else { continue }
+            lines[row, default: []].append(tab)
+        }
+        return lines
+    }
+
+    /// How far a tab's line under `row` is indented: one step past a change's row, or past the
+    /// title row it is listed under.
+    private func tabIndent(_ row: Row) -> CGFloat {
+        let depth = row.section.isTask ? 1 : 0
+        if case .change = row.kind { return GitTitleRow.contentInset(depth: depth + 1, scale) }
+        return GitTitleRow.contentInset(depth: depth, scale)
+    }
+
+    /// A task's project, as this window's workspace has it.
+    private func project(ofTask task: UUID) -> UUID? {
+        sidebar.document.workspace.tasks.first { $0.id == task }?.projectId
+    }
 
     /// A change's row: qualified by its list, as a file both staged and changed again is in two.
     static func changeID(_ repo: GitRepoID, _ list: GitChangeList, _ change: GitChange) -> String {
@@ -235,9 +293,16 @@ struct GitPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if titled { PanelTitle(panel: .git) }
+            let rows = Self.rows(model.sections, isOpen: { !folded.contains($0) })
+            let lines = Self.tabLines(rows, tabs: sidebar.tree.panelTabs, projectOf: project(ofTask:))
             List {
-                ForEach(Self.rows(model.sections, isOpen: { !folded.contains($0) })) { row in
+                ForEach(rows) { row in
                     rowView(row).listRowSeparator(.hidden)
+                    ForEach(lines[row.id] ?? []) { tab in
+                        PanelTabLine(tab: tab, indent: tabIndent(row), model: sidebar)
+                            .background(ViewMark(name: Self.tabMark(row: row.id, tab: tab.id)))
+                            .listRowSeparator(.hidden)
+                    }
                 }
             }
             .listStyle(.sidebar)
