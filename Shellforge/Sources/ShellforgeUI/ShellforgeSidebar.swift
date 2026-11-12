@@ -416,7 +416,7 @@ struct SidebarView: View {
             if let controls = chrome.windowControls { Color.clear.frame(height: controls.bandHeight) }
             HStack(spacing: 0) {
                 // VS Code's way: the bar the full height below the band, the panel's column beside it.
-                ActivityBar(model: activity, openSettings: showMacSettings)
+                ActivityBar(model: activity, theme: theme, terminalMatch: terminalMatch, openSettings: showMacSettings)
                 panelColumn
             }
         }

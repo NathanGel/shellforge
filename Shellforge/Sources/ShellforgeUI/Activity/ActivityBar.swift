@@ -4,13 +4,17 @@ import SwiftUI
 
 /// The sidebar's activity bar, VS Code's way: one plain line icon per panel in the shared order,
 /// each centred in a square cell, the selected one in the primary ink with an accent stripe flush
-/// against the bar's left edge, and Settings fixed at the bottom. A click selects; a press dragged
+/// against the bar's left edge, and the gear's menu (`GearMenu`) fixed at the bottom. Only the
+/// panels the bar shows are drawn: Customize hides the others. A click selects; a press dragged
 /// past `liftDistance` lifts the icon, which follows the pointer up or down the bar, and the release
 /// drops it where it is (`release`). VoiceOver reorders with Move Up and Move Down instead. A drag gesture of the bar's own rather than a `List`'s move,
 /// whose table added margins of its own, or per-icon `onDrag`/`onDrop`, which proved unreliable in
 /// this sidebar.
 struct ActivityBar: View {
     @ObservedObject var model: ActivityModel
+    /// The app's theme choice and Match Terminal switch, which the gear menu changes at once.
+    @ObservedObject var theme: ThemeSettings
+    @ObservedObject var terminalMatch: TerminalMatchSettings
     let openSettings: () -> Void
     @Environment(\.interfaceScale) private var scale
     @Environment(\.surface) private var surface
@@ -89,20 +93,26 @@ struct ActivityBar: View {
 
     var body: some View {
         let cell = Self.width(scale)
-        let order = model.layout.order
+        let order = model.layout.visibleOrder
         VStack(spacing: 0) {
             ForEach(Array(order.enumerated()), id: \.element) { index, panel in
                 icon(panel, at: index, cell: cell, count: order.count)
             }
             Spacer(minLength: 0)
-            Button(action: openSettings) {
+            // `.button` + `.plain`, as `AddMenu`'s: the glyph drawn as the panels' are, not by a pop-up button.
+            Menu {
+                GearMenuContent(items: GearMenu.items(choice: theme.choice, match: terminalMatch.isOn, layout: model.layout)) { action in
+                    GearMenu.perform(action, theme: theme, terminalMatch: terminalMatch, activity: model, openSettings: openSettings)
+                }
+            } label: {
                 glyph("gearshape", ink: surface.secondaryInk)
                     .frame(width: cell, height: cell)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .help("Settings…")
-            .accessibilityLabel("Settings")
+            .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden)
+            .frame(width: cell, height: cell)
+            .help("Manage")
+            .accessibilityLabel("Manage")
         }
         .coordinateSpace(name: Self.space)
         .frame(width: cell)

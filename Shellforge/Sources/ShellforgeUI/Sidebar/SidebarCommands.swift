@@ -191,6 +191,12 @@ public enum SidebarCommandMenu {
         PanelItem(panel: .git, key: "", modifiers: []),
         PanelItem(panel: .ssh, key: "h", modifiers: keys),
     ]
+
+    /// The View menu's Show items with `hidden` left out: a panel the bar hides has no item, and its
+    /// key does nothing.
+    public static func panels(hidden: Set<ActivityPanel>) -> [PanelItem] {
+        panels.filter { !hidden.contains($0.panel) }
+    }
 }
 
 /// Each window's sidebar, so a menu command acts on the key window's and never another's.

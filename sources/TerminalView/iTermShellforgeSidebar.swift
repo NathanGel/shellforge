@@ -777,9 +777,11 @@ extension iTermShellforgeSidebar {
 }
 
 /// View › Show Sessions, Show Metrics, Show Files, Show Git and Show SSH: each item's tag is its panel's place in `ActivityPanel.allCases`.
+/// A panel the activity bar hides has its item hidden and disabled, so its key does nothing.
 @MainActor
 private final class PanelMenuController: NSObject, NSMenuItemValidation {
     private(set) var items: [NSMenuItem] = []
+    private var watch: AnyCancellable?
 
     override init() {
         super.init()
@@ -790,6 +792,13 @@ private final class PanelMenuController: NSObject, NSMenuItemValidation {
             menuItem.tag = ActivityPanel.allCases.firstIndex(of: item.panel) ?? 0
             return menuItem
         }
+        watch = iTermShellforgeSidebar.activityOrder.$hidden.sink { [weak self] hidden in
+            self?.showOnly(SidebarCommandMenu.panels(hidden: hidden).map(\.panel))
+        }
+    }
+
+    private func showOnly(_ shown: [ActivityPanel]) {
+        for item in items { item.isHidden = Self.panel(of: item).map { !shown.contains($0) } ?? true }
     }
 
     private static func panel(of item: NSMenuItem) -> ActivityPanel? {
@@ -802,7 +811,8 @@ private final class PanelMenuController: NSObject, NSMenuItemValidation {
     }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        guard let panel = Self.panel(of: menuItem), let view = iTermShellforgeSidebar.keySidebarView else { return false }
+        guard let panel = Self.panel(of: menuItem), !iTermShellforgeSidebar.activityOrder.hidden.contains(panel),
+              let view = iTermShellforgeSidebar.keySidebarView else { return false }
         menuItem.state = ShellforgeSidebar.shownPanel(of: view) == panel ? .on : .off
         return true
     }

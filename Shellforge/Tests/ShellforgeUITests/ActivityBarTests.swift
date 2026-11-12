@@ -451,4 +451,147 @@ import Testing
             #expect(scale(Size.sidebarWidth) - ActivityBar.width(scale) >= scale(420), "at ×\(scale.factor)")
         }
     }
+
+    /// A hidden panel's icon leaves the bar; the gear stays.
+    @Test func hiddenPanelsLeaveTheBar() throws {
+        let (sidebar, _) = try sidebarModel()
+        let activity = ActivityModel(source: ActivityOrderSource(defaults: nil))
+        let (host, window) = hosted(sidebar, activity: activity, controls: nil)
+        defer { window.close() }
+        #expect(shown(ActivityBar.iconMarkName, in: host).count == ActivityPanel.allCases.count + 1)
+        #expect(activity.setHidden(.metrics, true) && activity.setHidden(.git, true))
+        #expect(activity.layout.visibleOrder == [.sessions, .files, .ssh])
+        #expect(shown(ActivityBar.iconMarkName, in: host).count == 3 + 1, "a hidden panel’s icon is still drawn")
+        activity.select(.metrics)
+        #expect(activity.layout.selected == .sessions, "a hidden panel was shown")
+    }
+
+    /// A drop is counted in the shown panels: with Metrics hidden, the first icon dropped one cell
+    /// down lands after Files, the second icon drawn.
+    @Test func aDropCountsOnlyShownPanels() {
+        let model = ActivityModel(source: ActivityOrderSource(defaults: nil))
+        model.setHidden(.metrics, true)
+        model.move(fromOffsets: IndexSet(integer: 0), toOffset: 2)
+        #expect(model.layout.visibleOrder == [.files, .sessions, .git, .ssh])
+    }
+
+    /// Hiding the panel two windows show switches each to the first panel still shown; a window
+    /// showing another keeps it.
+    @Test func hidingTheShownPanelShowsTheFirstLeft() {
+        let source = ActivityOrderSource(defaults: nil)
+        source.move(.files, before: .sessions)
+        let first = ActivityModel(source: source), second = ActivityModel(source: source), third = ActivityModel(source: source)
+        first.select(.sessions)
+        second.select(.sessions)
+        third.select(.git)
+        #expect(first.setHidden(.sessions, true))
+        #expect(first.layout.selected == .files && second.layout.selected == .files)
+        #expect(third.layout.selected == .git)
+    }
+
+    @Test func theLastPanelCannotBeHidden() {
+        let defaults = ScratchDefaults.make()
+        let model = ActivityModel(defaults: defaults)
+        for panel in [ActivityPanel.sessions, .metrics, .files, .git] { #expect(model.setHidden(panel, true)) }
+        #expect(!model.setHidden(.ssh, true))
+        #expect(model.layout.visibleOrder == [.ssh] && model.layout.selected == .ssh)
+        #expect(ActivityHiddenStore.load(defaults) == ["sessions", "metrics", "files", "git"])
+    }
+
+    /// One hidden set for the app, saved on this Mac for the next launch.
+    @Test func hiddenIsSharedAndSaved() {
+        let defaults = ScratchDefaults.make()
+        let source = ActivityOrderSource(defaults: defaults)
+        let first = ActivityModel(source: source), second = ActivityModel(source: source)
+        first.setHidden(.files, true)
+        #expect(second.layout.hidden == [.files])
+        #expect(ActivityHiddenStore.load(defaults) == ["files"])
+        #expect(ActivityModel(defaults: defaults).layout.visibleOrder == [.sessions, .metrics, .git, .ssh], "a new window reads the saved set")
+        second.setHidden(.files, false)
+        #expect(first.layout.hidden.isEmpty)
+        #expect(ActivityHiddenStore.load(defaults) == [])
+    }
+
+    @Test func unknownHiddenValuesAreIgnored() {
+        let defaults = ScratchDefaults.make()
+        ActivityHiddenStore.save(["svn", "git"], to: defaults)
+        #expect(ActivityModel(defaults: defaults).layout.hidden == [.git])
+    }
+
+    /// View › Show …: a hidden panel has no item, so its ⌃⌘ key does nothing either.
+    @Test func aHiddenPanelHasNoShowItem() {
+        #expect(SidebarCommandMenu.panels(hidden: []).map(\.panel) == ActivityPanel.allCases)
+        #expect(SidebarCommandMenu.panels(hidden: [.metrics, .ssh]).map(\.title) == ["Show Sessions", "Show Files", "Show Git"])
+    }
+
+    /// The titles of `items`, a divider as “-”.
+    private func titles(_ items: [GearMenu.Item]) -> [String] { items.map { $0.title ?? "-" } }
+
+    private func submenu(_ title: String, in items: [GearMenu.Item]) throws -> [GearMenu.Item] {
+        try #require(items.first { $0.title == title }).children
+    }
+
+    /// The checked item's title in `items`.
+    private func checked(_ items: [GearMenu.Item]) -> [String] {
+        items.compactMap { if case .button(let title, true, _, _) = $0 { title } else { nil } }
+    }
+
+    /// VS Code's Manage menu: Settings…, Theme (the ten, or Light and Dark submenus while following
+    /// the Mac, then the two toggles) and Customize (a Show toggle per panel, the last shown disabled).
+    @Test func theGearMenuOffersSettingsThemesAndCustomize() throws {
+        let names = ThemeCatalog.all.map(\.name)
+        let single = ThemeChoice(followsMac: false, single: "dracula")
+        var layout = ActivityLayout(saved: nil)
+        let items = GearMenu.items(choice: single, match: true, layout: layout)
+        #expect(titles(items) == ["Settings…", "-", "Theme", "Customize"])
+        #expect(items.first == .button("Settings…", checked: nil, enabled: true, .openSettings))
+        let theme = try submenu("Theme", in: items)
+        #expect(titles(theme) == names + ["-", "Follow Mac Appearance", "Match Terminal"])
+        #expect(checked(theme) == ["Dracula", "Match Terminal"])
+
+        let following = GearMenu.items(choice: ThemeChoice(followsMac: true, light: "github-light", dark: "nord"), match: false, layout: layout)
+        let followingTheme = try submenu("Theme", in: following)
+        #expect(titles(followingTheme) == ["Light Theme", "Dark Theme", "-", "Follow Mac Appearance", "Match Terminal"])
+        #expect(checked(followingTheme) == ["Follow Mac Appearance"])
+        let light = try submenu("Light Theme", in: followingTheme), dark = try submenu("Dark Theme", in: followingTheme)
+        #expect(titles(light) == ["Shellforge", "Light Modern", "GitHub Light", "Solarized Light"])
+        #expect(titles(dark) == ["Shellforge", "Dark Modern", "One Dark", "Dracula", "GitHub Dark", "Solarized Dark", "Nord"])
+        #expect(checked(light) == ["GitHub Light"] && checked(dark) == ["Nord"])
+
+        for panel in [ActivityPanel.metrics, .files, .git] { layout.setHidden(panel, true) }
+        let customize = try submenu("Customize", in: GearMenu.items(choice: single, match: false, layout: layout))
+        #expect(titles(customize) == ["Show Sessions", "Show Metrics", "Show Files", "Show Git", "Show SSH"])
+        #expect(customize[1] == .button("Show Metrics", checked: false, enabled: true, .showPanel(.metrics, true)))
+        #expect(customize[0] == .button("Show Sessions", checked: true, enabled: true, .showPanel(.sessions, false)))
+        layout.setHidden(.ssh, true)
+        let last = try submenu("Customize", in: GearMenu.items(choice: single, match: false, layout: layout))
+        #expect(last[0] == .button("Show Sessions", checked: true, enabled: false, .showPanel(.sessions, false)), "the last shown panel can be hidden")
+    }
+
+    /// A theme, Follow Mac and Match Terminal chosen from the menu are saved at once; Customize hides a panel.
+    @Test func choosingAThemeFromTheMenuSavesIt() throws {
+        let store = ScratchDefaults.make()
+        let theme = ThemeSettings(defaults: store), match = TerminalMatchSettings(defaults: store)
+        let activity = ActivityModel(source: ActivityOrderSource(defaults: nil))
+        var opened = 0
+        func choose(_ path: [String]) throws {
+            var items = GearMenu.items(choice: theme.choice, match: match.isOn, layout: activity.layout)
+            for title in path.dropLast() { items = try submenu(title, in: items) }
+            guard case .button(_, _, _, let action) = try #require(items.first { $0.title == path.last }) else {
+                Issue.record("\(path) is not a button"); return
+            }
+            GearMenu.perform(action, theme: theme, terminalMatch: match, activity: activity, openSettings: { opened += 1 })
+        }
+        try choose(["Theme", "Dark Theme", "Dracula"])
+        #expect(ThemeSettings(defaults: store).choice == ThemeChoice(followsMac: true, dark: "dracula"))
+        try choose(["Theme", "Follow Mac Appearance"])
+        try choose(["Theme", "Nord"])
+        #expect(ThemeSettings(defaults: store).choice == ThemeChoice(followsMac: false, dark: "dracula", single: "nord"))
+        try choose(["Theme", "Match Terminal"])
+        #expect(TerminalMatchSettings(defaults: store).isOn)
+        try choose(["Customize", "Show Git"])
+        #expect(activity.layout.hidden == [.git])
+        try choose(["Settings…"])
+        #expect(opened == 1)
+    }
 }
