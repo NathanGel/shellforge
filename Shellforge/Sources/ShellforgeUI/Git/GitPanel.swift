@@ -48,8 +48,9 @@ struct GitPanelActions {
                      panel: .diff(repo: GitPanel.key(section.id), path: change.path))
     }
 
-    /// A changed file in the terminal editor, as the Files panel opens one. A file no longer there
-    /// opens nothing: its repository is read again.
+    /// A changed file in the terminal editor, as the Files panel opens one, tagged as a diff tab is
+    /// so the panel lists it under the file. A file no longer there opens nothing: its repository is
+    /// read again.
     func openInEditor(_ change: GitChange, in section: GitSection, model: GitModel) async {
         let path = URL(fileURLWithPath: section.path).appendingPathComponent(change.path).path
         let (kind, environment) = (self.kind, self.environment)
@@ -63,7 +64,8 @@ struct GitPanelActions {
         }
         let editor = EditorCommand.editor(setting: defaults.string(forKey: EditorCommand.settingKey), environment: variables)
         host.openTab(in: section.path, title: (change.path as NSString).lastPathComponent,
-                     command: EditorCommand.line(editor: editor, file: change.path))
+                     command: EditorCommand.line(editor: editor, file: change.path),
+                     panel: .diff(repo: GitPanel.key(section.id), path: change.path))
     }
 
     /// Asks first; a Cancel discards nothing.
@@ -172,11 +174,12 @@ struct GitPanel: View {
     }
 
     /// How far a tab's line under `row` is indented: one step past a change's row, or past the
-    /// title row it is listed under.
+    /// title row it is listed under. Past `SelectableRow`'s own padding, which already holds the
+    /// inset's `Space.base`.
     private func tabIndent(_ row: Row) -> CGFloat {
         let depth = row.section.isTask ? 1 : 0
-        if case .change = row.kind { return GitTitleRow.contentInset(depth: depth + 1, scale) }
-        return GitTitleRow.contentInset(depth: depth, scale)
+        let step = if case .change = row.kind { 1 } else { 0 }
+        return max(0, GitTitleRow.contentInset(depth: depth + step, scale) - scale(Space.base))
     }
 
     /// A task's project, as this window's workspace has it.

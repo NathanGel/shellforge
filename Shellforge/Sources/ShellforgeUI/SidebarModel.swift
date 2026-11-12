@@ -578,6 +578,10 @@ public final class SidebarModel: ObservableObject {
         let built = SidebarTree.build(workspace, tabs: host.tabs, isOwned: { self.owns($0, in: workspace) })
         // Assigned only when it differs: `@Published` announces every assignment.
         if built != tree { tree = built }
+        // Here rather than in `refresh`, so a tab moved by a config change (`sshHosts`) keeps no
+        // stale footer context either.
+        contexts.prune(keeping: Set(tree.projects.flatMap(\.tasks).map { FooterRow.task($0.id) }
+                                    + (tree.otherTabs + tree.panelTabs + terminalTabs).map { FooterRow.tab($0.tabId) }))
     }
 
     /// Whether a panel tab's owner exists: an ssh tab's host in the config (or the config not read
@@ -607,9 +611,8 @@ public final class SidebarModel: ObservableObject {
         rebuildTree(current)
         if host.selectedTabId != drawnTabId { drawnTabId = host.selectedTabId }
         if current.dividers != drawnDividers { drawnDividers = current.dividers }
-        refreshSSHHosts(tree.projects.map(\.project))
-        contexts.prune(keeping: Set(tree.projects.flatMap(\.tasks).map { FooterRow.task($0.id) }
-                                    + (tree.otherTabs + terminalTabs).map { FooterRow.tab($0.tabId) }))
+        let hasSSHTab = tree.panelTabs.contains { if case .ssh = $0.panel { true } else { false } }
+        refreshSSHHosts(tree.projects.map(\.project), hasSSHTab: hasSSHTab)
         detectProviders(tree.projects.map(\.project))
         // A project removed, in this window or another, leaves nothing read about it behind.
         let present = Set(current.projects.map(\.id))
@@ -660,8 +663,8 @@ public final class SidebarModel: ObservableObject {
     /// a dictionary read.
     private func footerRowResolver(_ store: SessionStore) -> (SessionInfo) -> FooterRow? {
         let tasks = Set(document.workspace.tasks.map(\.id))
-        // Terminal tabs keep the footer row they had as other tabs: the tab's own.
-        let others = Set(tree.otherTabs.map(\.tabId) + terminalTabs.map(\.tabId))
+        // Terminal and panel tabs keep the footer row they had as other tabs: the tab's own.
+        let others = Set((tree.otherTabs + tree.panelTabs + terminalTabs).map(\.tabId))
         var byPane: [String: FooterRow] = [:]
         for tab in host.tabs {
             let row: FooterRow? = tab.taskId.flatMap { tasks.contains($0) ? FooterRow.task($0) : nil }

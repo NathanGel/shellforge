@@ -144,10 +144,11 @@ struct FilesPanel: View {
         return lines
     }
 
-    /// How far a tab's line under `row` is indented: one step past the file's row.
+    /// How far a tab's line under `row` is indented: one step past the file's row. Past
+    /// `SelectableRow`'s own padding, which already holds the inset's `Space.base`.
     private func tabIndent(_ row: Row) -> CGFloat {
-        if case .node(_, _, let depth, _) = row { return FileRow.leadingInset(depth: depth + 1, scale) }
-        return FileRow.leadingInset(depth: 0, scale)
+        let depth = if case .node(_, _, let fileDepth, _) = row { fileDepth + 1 } else { 0 }
+        return max(0, FileRow.leadingInset(depth: depth, scale) - scale(Space.base))
     }
 
     private static func treeRows(_ nodes: [FileNode], project: Project, depth: Int, isOpen: (UUID, String) -> Bool) -> [Row] {

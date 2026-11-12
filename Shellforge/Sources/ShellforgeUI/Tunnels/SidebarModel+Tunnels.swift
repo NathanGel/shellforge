@@ -276,9 +276,12 @@ extension SidebarModel {
     /// Reads the config off the main actor when a project has tunnels, one read at a time. Every
     /// refresh reads it whole — the files it includes as well as itself — since a port changed in
     /// an included file is a port a new tab would otherwise get wrong; the rows redraw only when
-    /// the hosts changed.
-    func refreshSSHHosts(_ projects: [Project]) {
-        guard !readingSSH, projects.contains(where: { !$0.tunnels.isEmpty || $0.sshHost != nil }) else { return }
+    /// the hosts changed. `hasSSHTab`, a tab tagged for an ssh host is open: until the config is
+    /// first read it is read for that tab too, so a tab whose host has left the config returns to
+    /// Other Tabs without waiting for the SSH panel to show.
+    func refreshSSHHosts(_ projects: [Project], hasSSHTab: Bool = false) {
+        let named = projects.contains(where: { !$0.tunnels.isEmpty || $0.sshHost != nil })
+        guard !readingSSH, named || (sshHosts == nil && hasSSHTab) else { return }
         readingSSH = true
         let generation = beginSSHRead()
         let source = sshConfig

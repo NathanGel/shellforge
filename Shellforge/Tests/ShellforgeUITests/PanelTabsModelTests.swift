@@ -78,6 +78,37 @@ import Testing
         #expect(s.model.tree.otherTabs.map(\.id) == ["s1", "s2"])
     }
 
+    /// A selected panel tab is the footer's row, as it was under Other Tabs.
+    @Test func aSelectedSSHTabHasAFooterRow() throws {
+        let s = try setup()
+        s.host.tabs = [tab(1, .ssh(alias: "staging"))]
+        s.host.selectedTabId = "s1"
+        s.host.onChange?()
+        #expect(s.model.panelTabs(for: .ssh(alias: "staging")).map(\.id) == ["s1"])
+        #expect(s.model.footerRow != nil)
+    }
+
+    /// An ssh tab open before the config was ever read has it read, though no project names a host:
+    /// the tab of a host the config no longer has returns to Other Tabs without the SSH panel.
+    @Test func anSSHTabHasTheConfigRead() async throws {
+        let folder = TestScratch.root.appendingPathComponent("shellforge-panel-tabs-ssh-\(UUID().uuidString)")
+        let config = folder.appendingPathComponent("ssh/config")
+        try FileManager.default.createDirectory(at: config.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "Host build-box\n  HostName build-box.example.com\n".write(to: config, atomically: true, encoding: .utf8)
+        let document = WorkspaceDocument(store: WorkspaceStore(folder: folder.appendingPathComponent("workspace")))
+        try document.update { $0.projects.append(Project(name: "demo", path: "/demo")) }
+        let launcher = CommandLauncher(resolve: { ResolvedEnvironment(variables: ["PATH": "/usr/bin"], source: .loginShell("/bin/zsh")) })
+        let host = FakeTerminalHost()
+        let model = SidebarModel(host: host, document: document, launcher: launcher, jiraSettings: { nil },
+                                 sshConfig: SSHConfigSource(file: config, home: folder))
+        host.onChange?()
+        #expect(model.sshHosts == nil, "no project names a host and no ssh tab is open: nothing is read")
+        host.tabs = [tab(1, .ssh(alias: "staging"))]
+        host.onChange?()
+        #expect(await eventually { model.sshHosts != nil })
+        #expect(model.tree.otherTabs.map(\.id) == ["s1"])
+    }
+
     /// A repository id is `project:<uuid>` or `task:<uuid>`, in either case, as the Git panel writes it.
     @Test func aDiffTabIsOwnedWhileItsRepositoriesProjectOrTaskExists() throws {
         let s = try setup()

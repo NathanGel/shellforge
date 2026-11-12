@@ -69,7 +69,8 @@ import Testing
         plainOpened.append(directory)
     }
 
-    /// The tabs of no task opened: a tunnel answered in a tab.
+    /// The tabs of no task opened: a tunnel answered in a tab. Fires `onChange` synchronously; the
+    /// real host fires it from the launch's async completion.
     var openedPlain: [(directory: String, title: String, command: String, panel: PanelTab?)] = []
 
     func openTab(in directory: String, title: String, command: String, panel: PanelTab?) {

@@ -140,8 +140,7 @@ final class ShellforgeHostTest: XCTestCase {
         let session = try XCTUnwrap(PTYSession(synthetic: true))
         iTermShellforgeHost.tag(session, panel: .ssh(alias: "staging"))
         let saved = session.encodableArrangementVariables()
-        let user = saved["user"] as? [AnyHashable: Any]
-        XCTAssertEqual((user?["shellforge_panel"] ?? saved[ShellforgeTags.panel]) as? String, "ssh:staging", "\(saved)")
+        XCTAssertEqual(saved[ShellforgeTags.panel] as? String, "ssh:staging", "\(saved)")
     }
 
     /// A pane split off a panel's tab takes the panel's tag, so the tab stays the host's when the

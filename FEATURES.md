@@ -282,7 +282,7 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
   - The branch line shows the branch and how far it is ahead of and behind its upstream, such as `main ↑2 ↓1`; or “No commits yet”, “Detached at abc1234”, “Not a git repository” or “Folder not found”. A spinner shows while git works, and a problem is shown under the line, in red, until the next action.
   - Changes fall in three lists: Merge Changes (conflicts, marked `!`), Staged Changes and Changes (untracked files included, marked `U`). Each row shows the status letter, the file's name and its folder. Task worktrees, under `.worktrees/`, are never listed.
 - **Diffs in a tab.** Click a file, or its View Diff button, to open its diff in a new tab in the repository, titled “Diff: app.ts”, running `git diff -- ':(literal)src/app.ts'` (`--staged` for a staged file, with both paths for a staged rename). The tab stays at the shell after the pager.
-- **Its open diff tabs.** Each window lists its diff tabs in the panel, one line each, indented under the file's row (the first one, for a file in two lists). Once the file has no changes left, or its section is folded, the line moves under the repository's row; a task's diff under its project's row while the task's section isn't shown. Click a line to bring its tab forward; its × (or right-click, Close Tab) closes it, asking first only when ⌘W would. A file opened in the editor from here is a plain tab, under Sessions' Other Tabs.
+- **Its open diff tabs.** Each window lists its diff tabs in the panel, one line each, indented under the file's row (the first one, for a file in two lists). Once the file has no changes left, or its section is folded, the line moves under the repository's row; a task's diff under its project's row while the task's section isn't shown. Click a line to bring its tab forward; its × (or right-click, Close Tab) closes it, asking first only when ⌘W would. A file opened in the terminal editor from here is listed the same way, under its file.
 - **Paths are taken literally.** Every file the panel hands git is a literal path, so acting on `app/[id]/page.tsx` never touches `app/i/page.tsx`.
 - **File actions.** Hover a row for its buttons, or right-click it:
   - Changes: Stage, Discard Changes, View Diff, Open in Terminal Editor;
@@ -338,17 +338,17 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
   - A drop after it was up restarts, waiting longer after each failure.
   - An early failure is not restarted.
   - Keep-running tunnels survive quitting and are picked up at the next launch.
-- **Answer in Tab.** When ssh needs a host key, a passphrase or a code, the row offers to run it in a tab where you can answer.
+- **Answer in Tab.** When ssh needs a host key, a passphrase or a code, the row's keyboard button offers to run it in a tab where you can answer.
 - **Ports in a task's shell.** `SHELLFORGE_TUNNEL_<ALIAS>_PORT` is set for each running tunnel, and `_PORT_2` and so on for extra forwards.
 - **View › Tunnels** has Start or Stop for each linked tunnel. Open Quickly (⇧⌘O) finds them by name.
 
 ## SSH
 
 - **Grouping.** The SSH panel lists each project that names hosts, under its own header: its SSH host and its tunnels, each host once. Then **Other hosts**: every other host in `~/.ssh/config`, by name. A host a project names that the config no longer has is dimmed, with “Not in ~/.ssh/config”, and has no Open in Terminal.
-- **One row per host.** A dot, the host's name, then its buttons. Clicking the row itself does nothing. A host that is one of the project's tunnels is still one row: the dot is the tunnel's state, the ports and keep-running mark follow the name, and its error, uptime and traffic sit under it, as in Sessions. A plain host's dot is green while this window has a session open on it.
+- **One row per host.** A dot, the host's name, then its buttons. Clicking the row itself does nothing. A host that is one of the project's tunnels is still one row: the dot is the tunnel's state, the ports and keep-running mark follow the name, and its error, uptime and traffic sit under it, as in Sessions. Only a tunnel host has a dot; a plain host leaves its place empty, so the names line up.
 - **Start / Stop.** A tunnel host's ▶ or ■ starts or stops the tunnel in one click, and Answer in Tab shows when ssh needs an answer. Rearrange is in Sessions only.
 - **Open in Terminal.** A host's terminal button opens `ssh <host>` in a new tab titled with the host, in the project's folder, or your home folder for Other hosts. The config is read again first, so a host just added or removed is answered as it is now.
-- **Open sessions.** Each window lists its ssh tabs under their host, one line each, such as `staging`. Click a line to bring its tab forward; its × (or right-click, Close Tab) closes it, asking first only when ⌘W would. They are not under Sessions' Other Tabs; once the host leaves the config, they move back there.
+- **Open sessions.** Each window lists its ssh tabs under their host, one line each, such as `staging`. Click a line to bring its tab forward; its × (or right-click, Close Tab) closes it, asking first only when ⌘W would. They are not under Sessions' Other Tabs; once the host leaves the config, they move back there. A host that two projects name lists its sessions under both.
 - **Project menu.** Right-click a project's header for Tunnels… and SSH Host….
 - **Up to date.** The panel starts watching `~/.ssh` (and, when the config is a link, its target's folder) when it first shows in a window, and follows each change there. Two cases wait for the next time the panel is selected: a `~/.ssh` made outside Add Host after the panel showed, and a config that became a link since.
 - **Add Host.** The + in the panel's header, or Add Host… when the panel is empty, opens a sheet:

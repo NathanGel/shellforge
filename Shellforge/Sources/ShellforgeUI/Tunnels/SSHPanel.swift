@@ -82,6 +82,20 @@ struct SSHPanel: View {
         "\(entry.alias), \(tunnel?.state.rawValue ?? "host")"
     }
 
+    /// What VoiceOver reads after a host's label: its tunnel's error, uptime and traffic, ports and
+    /// keep-running, as the row shows them; else that the config no longer has it.
+    static func accessibilityValue(_ entry: SSHPanelEntry, tunnel: TunnelRowItem?, now: Date) -> String {
+        var parts: [String] = []
+        if let tunnel {
+            if let caption = TunnelRowView.look(tunnel).caption { parts.append(caption) }
+            if let detail = TunnelRowView.detail(tunnel, now: now) { parts.append(detail) }
+            if !tunnel.ports.isEmpty { parts.append(tunnel.ports) }
+            if tunnel.keepRunning { parts.append(TunnelRowView.keepsRunningText) }
+        }
+        if parts.isEmpty, !entry.inConfig { return "Not in SSH config" }
+        return parts.joined(separator: ", ")
+    }
+
     /// The actions a host's row offers VoiceOver: its buttons'.
     static func accessibilityActions(_ entry: SSHPanelEntry, tunnel: TunnelRowItem?) -> [String] {
         buttons(entry, tunnel: tunnel).map(title)
@@ -98,8 +112,9 @@ struct SSHPanel: View {
                     ForEach(sections) { section in
                         header(section).listRowSeparator(.hidden)
                         ForEach(section.entries) { entry in
+                            let sessions = Self.sessions(model, alias: entry.alias)
                             hostRow(entry, in: section).listRowSeparator(.hidden)
-                            ForEach(Self.sessions(model, alias: entry.alias)) { tab in
+                            ForEach(sessions) { tab in
                                 sessionRow(tab, of: entry, in: section).listRowSeparator(.hidden)
                             }
                         }
@@ -128,13 +143,13 @@ struct SSHPanel: View {
     private func hostRow(_ entry: SSHPanelEntry, in section: SSHPanelSection) -> some View {
         let projectId: UUID? = if case .project(let id) = section.kind { id } else { nil }
         let tunnel = entry.isTunnel ? projectId.flatMap { id in model.tunnelRows(of: id).first { $0.alias == entry.alias } } : nil
-        let open = !Self.sessions(model, alias: entry.alias).isEmpty
-        return SSHHostRow(entry: entry, tunnel: tunnel, projectId: projectId, hasSession: open, model: model)
+        return SSHHostRow(entry: entry, tunnel: tunnel, projectId: projectId, model: model)
             .background(ViewMark(name: Self.rowMark(section: section.id, alias: entry.alias)))
     }
 
     private func sessionRow(_ tab: TabSnapshot, of entry: SSHPanelEntry, in section: SSHPanelSection) -> some View {
-        PanelTabLine(tab: tab, indent: scale(Space.section) + scale(Size.avatar), model: model)
+        // Past `SelectableRow`'s own padding, which already holds the `Space.section` step.
+        PanelTabLine(tab: tab, indent: scale(Size.avatar), model: model)
             .background(ViewMark(name: Self.sessionMark(section: section.id, alias: entry.alias, tab: tab.id)))
     }
 }
@@ -216,7 +231,7 @@ private struct SSHOtherHeader: View {
     }
 }
 
-/// A host, on one line: a dot — its tunnel's state, or whether a tab of it is open — its alias,
+/// A host, on one line: a tunnel's dot for its state (a plain host has none), its alias,
 /// dimmed with “Not in ~/.ssh/config” when the config no longer has it, then its buttons. A
 /// tunnel's ports, error and uptime as its row in Sessions shows them. Clicking the row itself does
 /// nothing. One element to VoiceOver, with its buttons as its actions.
@@ -224,8 +239,6 @@ private struct SSHHostRow: View {
     let entry: SSHPanelEntry
     let tunnel: TunnelRowItem?
     let projectId: UUID?
-    /// A tab of this window is open on the host.
-    let hasSession: Bool
     let model: SidebarModel
     @Environment(\.interfaceScale) private var scale
     @Environment(\.surface) private var surface
@@ -237,7 +250,6 @@ private struct SSHHostRow: View {
 
     private var look: TunnelRowView.Look? { tunnel.map { TunnelRowView.look($0) } }
     private var buttons: [SSHPanel.HostButton] { SSHPanel.buttons(entry, tunnel: tunnel) }
-    private var captionInset: CGFloat { scale(Size.avatar) + scale(Space.inset) }
 
     private func run(_ button: SSHPanel.HostButton) {
         switch button {
@@ -248,14 +260,10 @@ private struct SSHHostRow: View {
         }
     }
 
-    private var dotColor: Color {
-        if let look { return TunnelRowView.color(look.tone) }
-        return hasSession ? Palette.green : Palette.muted
-    }
-
     private func symbol(_ button: SSHPanel.HostButton) -> String {
         switch button {
-        case .answerInTab, .openInTerminal: "terminal"
+        case .answerInTab: TunnelRowView.answerInTabSymbol
+        case .openInTerminal: "terminal"
         case .start: "play.fill"
         case .stop: "stop.fill"
         }
@@ -274,7 +282,7 @@ private struct SSHHostRow: View {
         content
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(SSHPanel.accessibilityLabel(entry, tunnel: tunnel))
-            .accessibilityValue(entry.inConfig ? "" : "Not in SSH config")
+            .accessibilityValue(SSHPanel.accessibilityValue(entry, tunnel: tunnel, now: Date()))
             .modifier(SSHRowAction(button: .answerInTab, offered: buttons, run: answerInTab))
             .modifier(SSHRowAction(button: .start, offered: buttons, run: start))
             .modifier(SSHRowAction(button: .stop, offered: buttons, run: stop))
@@ -282,44 +290,18 @@ private struct SSHHostRow: View {
     }
 
     private var content: some View {
-        VStack(alignment: .leading, spacing: scale(Space.tight)) {
-            HStack(spacing: scale(Space.inset)) {
-                ToneDot(color: dotColor, size: scale(Size.statusMarkSmall)).frame(width: scale(Size.avatar))
-                RowTitle(entry.alias, dimmed: !entry.inConfig || tunnel?.missing == true)
-                if let tunnel, !tunnel.ports.isEmpty {
-                    Text(tunnel.ports).font(Typography.monoCode).foregroundStyle(surface.secondaryInk).lineLimit(1)
-                        .help(TunnelRowView.portsHelp(tunnel) ?? "")
+        let caption = look?.caption ?? (entry.inConfig ? nil : SSHPanel.missingText)
+        return TunnelRowContent(alias: entry.alias, row: tunnel, dimmed: !entry.inConfig || tunnel?.missing == true,
+                                caption: caption, captionWarns: look?.caption != nil) {
+            ForEach(buttons, id: \.self) { button in
+                Button(action: { run(button) }) {
+                    Image(systemName: symbol(button)).font(Typography.micro).foregroundStyle(surface.secondaryInk)
                 }
-                if tunnel?.keepRunning == true {
-                    Image(systemName: "pin.fill").font(Typography.micro).foregroundStyle(surface.secondaryInk)
-                        .help("Keeps running after Shellforge quits")
-                }
-                Spacer(minLength: scale(Space.tight))
-                ForEach(buttons, id: \.self) { button in
-                    Button(action: { run(button) }) {
-                        Image(systemName: symbol(button)).font(Typography.micro).foregroundStyle(surface.secondaryInk)
-                    }
-                    .buttonStyle(.plain)
-                    .frame(width: SidebarRowLayout.trailingSlot(scale), height: SidebarRowLayout.trailingSlot(scale))
-                    .help(help(button))
-                }
-            }
-            if let caption = look?.caption {
-                RowCaption(caption, warns: true).lineLimit(2).padding(.leading, captionInset)
-            } else if !entry.inConfig {
-                RowCaption(SSHPanel.missingText).lineLimit(1).padding(.leading, captionInset)
-            }
-            if let tunnel {
-                // Re-drawn each minute, for the uptime.
-                TimelineView(.everyMinute) { context in
-                    if let detail = TunnelRowView.detail(tunnel, now: context.date) {
-                        RowCaption(detail).lineLimit(1).padding(.leading, captionInset)
-                    }
-                }
+                .buttonStyle(.plain)
+                .frame(width: SidebarRowLayout.trailingSlot(scale), height: SidebarRowLayout.trailingSlot(scale))
+                .help(help(button))
             }
         }
-        .frame(minHeight: scale(Size.menuRow))
-        .padding(.leading, scale(Space.base)).padding(.trailing, SidebarRowLayout.trailingInset(scale))
     }
 }
 

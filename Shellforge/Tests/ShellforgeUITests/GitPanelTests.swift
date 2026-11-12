@@ -160,6 +160,28 @@ private final class InertGitWatcher: FolderWatching, @unchecked Sendable {
         #expect(marks(in: view).contains(GitPanel.tabMark(row: row, tab: tab.id)))
     }
 
+    /// A file opened in the terminal editor from Git carries the same tag as its diff, leaves Other
+    /// Tabs, and lists under its file's change row.
+    @Test func anEditorTabFromGitListsUnderItsFile() async throws {
+        let change = GitChange(path: "src/app.ts", letter: .modified)
+        let ready = status(.branch("main"), unstaged: [change])
+        let folder = TestScratch.root.appendingPathComponent("shellforge-gitpanel-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        let demo = Project(name: "demo", path: folder)
+        let host = FakeTerminalHost()
+        let sidebar = try self.sidebar(host, projects: [demo])
+        let model = GitModel(projects: [demo], tasks: [], launcher: launcher, watcher: { _ in InertGitWatcher() },
+                             read: { _, _ in ready }, act: { _, _, _, _ in })
+        await model.settled()
+        let section = try #require(model.sections.first)
+        await actions(host).openInEditor(change, in: section, model: model)
+        #expect(host.openedPlain.map(\.panel) == [.diff(repo: "project:" + demo.id.uuidString, path: "src/app.ts")])
+        #expect(sidebar.tree.otherTabs.isEmpty, "not under Sessions’ Other Tabs")
+        let tab = try #require(host.tabs.first)
+        let rows = GitPanel.rows(model.sections, isOpen: { _ in true })
+        #expect(GitPanel.tabLines(rows, tabs: [tab], projectOf: { _ in nil }) == [GitPanel.changeID(section.id, .changes, change): [tab]])
+    }
+
     /// A diff tab whose file has no changes left lists under its repository's title; a task's
     /// whose section is not drawn, under its project's.
     @Test func aDiffTabOfACleanFileListsUnderTheSection() {

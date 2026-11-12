@@ -70,8 +70,9 @@ it and refuses to release a version that has none.
   whichever panel shows, and so is Rearrange mode's Cancel and Done.
 - **Panels list the tabs they open.** A tab opened from the SSH, Files or Git panel is listed in
   that panel, no longer under Sessions’ Other Tabs: an ssh session under its host, a file open in
-  the editor under the file (or its project, while the file’s folder is closed), and a diff under
-  its file (or its repository, once the file has no changes left). Click the line to bring the tab
+  the editor under the file (or its project, while the file’s folder is closed), and a diff, or
+  a file opened in the editor from Git, under its file (or its repository, once the file has no
+  changes left). Click the line to bring the tab
   forward, or its × to close it, which asks first only when ⌘W would. The tabs are found again
   after a restart. When the host, project or task a tab belongs to is gone, it moves back under
   Other Tabs. Other Tabs keeps every other tab of no task, such as New Tab in Home Folder’s.

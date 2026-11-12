@@ -48,11 +48,12 @@ private final class FakeSSHWatcher: FolderWatching, @unchecked Sendable {
         try text.write(to: configFile, atomically: true, encoding: .utf8)
     }
 
-    /// Project `demo` at `/demo`, naming `sshHost`, over a scratch config holding `config`.
+    /// Project `demo` at `/demo`, naming `sshHost`, over a scratch config holding `config`; its
+    /// workspace in `workspace`, by default the suite's own.
     private func model(sshHost: String? = nil, tunnels: [TunnelDefinition] = [], config: String = twoHosts, feed: FakeFeed? = nil,
-                       host: FakeTerminalHost = FakeTerminalHost()) throws -> (SidebarModel, FakeTerminalHost, UUID, SSHWatchers) {
+                       host: FakeTerminalHost = FakeTerminalHost(), workspace: URL? = nil) throws -> (SidebarModel, FakeTerminalHost, UUID, SSHWatchers) {
         try writeConfig(config)
-        let document = WorkspaceDocument(store: WorkspaceStore(folder: folder.appendingPathComponent("workspace")))
+        let document = WorkspaceDocument(store: WorkspaceStore(folder: workspace ?? folder.appendingPathComponent("workspace")))
         var project = Project(name: "demo", path: "/demo")
         project.sshHost = sshHost
         project.tunnels = tunnels
@@ -252,6 +253,26 @@ private final class FakeSSHWatcher: FolderWatching, @unchecked Sendable {
         #expect(rows == [SSHPanel.rowMark(section: section, alias: "db-tunnel")], "one row, the host’s")
     }
 
+    /// VoiceOver hears what a tunnel host's row shows: its error, uptime, ports and keep-running;
+    /// a host gone from the config, that it is.
+    @Test func aTunnelHostsValueSaysWhatItsRowShows() {
+        let entry = SSHPanelEntry(alias: "db-tunnel", isProjectHost: false, isTunnel: true, inConfig: true)
+        var tunnel = TunnelRowItem(projectId: UUID(), alias: "db-tunnel",
+                                   forwards: [LocalForward(bind: nil, localPort: 5432, remoteHost: "db.internal", remotePort: 5432)],
+                                   state: .up, error: nil, missing: false, since: 0)
+        tunnel.keepRunning = true
+        #expect(SSHPanel.accessibilityValue(entry, tunnel: tunnel, now: Date(timeIntervalSince1970: 7200 + 300))
+                == "up 2h 5m, 5432, Keeps running after quit")
+        tunnel.state = .failed
+        tunnel.error = "bind: Address already in use"
+        tunnel.keepRunning = false
+        #expect(SSHPanel.accessibilityValue(entry, tunnel: tunnel, now: Date()) == "bind: Address already in use, 5432")
+        let gone = SSHPanelEntry(alias: "staging", isProjectHost: true, isTunnel: false, inConfig: false)
+        #expect(SSHPanel.accessibilityValue(gone, tunnel: nil, now: Date()) == "Not in SSH config")
+        #expect(SSHPanel.accessibilityValue(SSHPanelEntry(alias: "staging", isProjectHost: true, isTunnel: false, inConfig: true),
+                                            tunnel: nil, now: Date()).isEmpty)
+    }
+
     @Test func aPlainHostHasOnlyOpenInTerminal() async throws {
         let (model, _, _, _) = try model(sshHost: "staging")
         _ = await model.loadSSHHosts()
@@ -272,7 +293,7 @@ private final class FakeSSHWatcher: FolderWatching, @unchecked Sendable {
     }
 
     /// Showing the panel, with its hosts read, opens, starts and connects nothing: only a button does.
-    @Test func clickingTheRowOpensNothing() async throws {
+    @Test func drawingTheRowOpensNothing() async throws {
         let feed = FakeFeed()
         let (model, host, _, _) = try model(sshHost: "staging", tunnels: [TunnelDefinition(alias: "db-tunnel")], config: Self.tunnelConfig,
                                             feed: feed)
@@ -301,6 +322,7 @@ private final class FakeSSHWatcher: FolderWatching, @unchecked Sendable {
         await model.connect(alias: "staging", in: project)
         await model.connect(alias: "staging", in: project)
         host.openTab(in: "/demo", title: "zsh", command: "zsh")
+        let plain = try #require(host.tabs.last).id
         let tabs = SSHPanel.sessions(model, alias: "staging")
         #expect(tabs.count == 2)
         let (view, window) = made(model)
@@ -309,7 +331,7 @@ private final class FakeSSHWatcher: FolderWatching, @unchecked Sendable {
         let section = try #require(SSHPanel.sections(model).first).id
         let shown = marks(in: view)
         for tab in tabs { #expect(shown.contains(SSHPanel.sessionMark(section: section, alias: "staging", tab: tab.id))) }
-        #expect(!shown.contains { $0.hasPrefix("SSHSession:") && $0.hasSuffix(":s3") }, "an untagged tab is not listed")
+        #expect(!shown.contains { $0.hasPrefix("SSHSession:") && $0.hasSuffix(":" + plain) }, "an untagged tab is not listed")
         model.select(tab: tabs[0].id)
         #expect(host.selectedTabId == tabs[0].id)
         model.closeTab(tabs[1].id)
@@ -321,7 +343,7 @@ private final class FakeSSHWatcher: FolderWatching, @unchecked Sendable {
     @Test func aPanelListsOnlyItsWindowsTabs() async throws {
         let (first, firstHost, project, _) = try model(sshHost: "staging")
         let otherHost = FakeTerminalHost()
-        let (second, _, _, _) = try model(sshHost: "staging", host: otherHost)
+        let (second, _, _, _) = try model(sshHost: "staging", host: otherHost, workspace: folder.appendingPathComponent("workspace-2"))
         await second.connect(alias: "staging", in: second.document.workspace.projects.first?.id)
         firstHost.tabsElsewhere = otherHost.tabs
         firstHost.onChange?()

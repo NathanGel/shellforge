@@ -8,7 +8,8 @@ import SwiftUI
 struct PanelTabLine: View {
     let tab: TabSnapshot
     let selected: Bool
-    /// How far the line starts from the panel's edge.
+    /// How far the line's title starts past `SelectableRow`'s own leading padding. The pill is not
+    /// indented: the indent moves the content only, as for every selectable row.
     let indent: CGFloat
     let show: () -> Void
     let close: () -> Void
@@ -46,10 +47,11 @@ struct PanelTabLine: View {
                 .frame(width: SidebarRowLayout.trailingSlot(scale), height: SidebarRowLayout.trailingSlot(scale))
                 .help(closeTitle)
             }
+            .padding(.leading, indent)
         }
-        .padding(.leading, indent)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(tab.title)
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
         .accessibilityAction(named: Text(Self.showTitle), show)
         .accessibilityAction(named: Text(closeTitle), close)
         .contextMenu { Button(closeTitle, action: close) }

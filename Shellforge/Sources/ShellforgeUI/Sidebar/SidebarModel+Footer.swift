@@ -4,7 +4,8 @@ import ShellforgeCore
 /// The footer's rows: the selected task's or tab's context and spend, and the vendors' usage.
 extension SidebarModel {
     /// The footer's first row: the selected task's, else the selected tab's when it belongs to no
-    /// task (AiTerm's terminal row); nothing when neither — SYSTEM then holds the Mac alone.
+    /// task (AiTerm's terminal row) — a terminal's, a panel's or another tab; nothing when neither —
+    /// SYSTEM then holds the Mac alone.
     public var footerRow: UsageTaskRow? {
         if let id = selectedTaskId {
             let task = document.workspace.tasks.first { $0.id == id }
@@ -13,7 +14,7 @@ extension SidebarModel {
                                      contexts: contexts.percents(forRow: .task(id)), preferring: host.selectedTabId)
         }
         guard let id = host.selectedTabId,
-              let tab = (tree.otherTabs + terminalTabs).first(where: { $0.id == id }) else { return nil }
+              let tab = (tree.otherTabs + tree.panelTabs + terminalTabs).first(where: { $0.id == id }) else { return nil }
         return UsageRows.taskRow(sessions: sessions.sessions(ofTab: id), fallback: .shell,
                                  contexts: contexts.percents(forRow: .tab(tab.tabId)), preferring: id)
     }

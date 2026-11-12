@@ -84,54 +84,33 @@ struct TunnelRowView: View {
 
     private var look: Look { Self.look(row) }
 
+    /// Answer in Tab's glyph, in Sessions and the SSH panel alike.
+    static let answerInTabSymbol = "keyboard"
+    /// What VoiceOver says for the keep-running pin.
+    static let keepsRunningText = "Keeps running after quit"
+
     var body: some View {
-        VStack(alignment: .leading, spacing: scale(Space.tight)) {
-            HStack(spacing: scale(Space.inset)) {
-                ToneDot(color: Self.color(look.tone), size: scale(Size.statusMarkSmall))
-                    .frame(width: scale(Size.avatar))
-                RowTitle(row.alias, dimmed: row.missing)
-                if !row.ports.isEmpty {
-                    Text(row.ports).font(Typography.monoCode).foregroundStyle(surface.secondaryInk).lineLimit(1)
-                        .help(Self.portsHelp(row) ?? "")
+        TunnelRowContent(alias: row.alias, row: row, dimmed: row.missing, caption: look.caption) {
+            if look.answersInTab {
+                Button(action: answerInTab) {
+                    Image(systemName: Self.answerInTabSymbol).font(Typography.micro).foregroundStyle(surface.secondaryInk)
                 }
-                if row.keepRunning {
-                    Image(systemName: "pin.fill").font(Typography.micro).foregroundStyle(surface.secondaryInk)
-                        .help("Keeps running after Shellforge quits")
-                        .accessibilityLabel("Keeps running after quit")
-                }
-                Spacer(minLength: scale(Space.tight))
-                if look.answersInTab {
-                    Button(action: answerInTab) {
-                        Image(systemName: "terminal").font(Typography.micro).foregroundStyle(surface.secondaryInk)
-                    }
-                    .buttonStyle(.plain)
-                    .frame(width: SidebarRowLayout.trailingSlot(scale), height: SidebarRowLayout.trailingSlot(scale))
-                    .help("Answer in Tab: ssh needs an answer")
-                    .accessibilityLabel("Answer \(row.alias) in a tab")
-                }
-                if let action = look.action {
-                    Button(action: action == .start ? start : stop) {
-                        Image(systemName: action == .start ? "play.fill" : "stop.fill")
-                            .font(Typography.micro).foregroundStyle(surface.secondaryInk)
-                    }
-                    .buttonStyle(.plain)
-                    .frame(width: SidebarRowLayout.trailingSlot(scale), height: SidebarRowLayout.trailingSlot(scale))
-                    .help(action == .start ? "Start \(row.alias)" : "Stop \(row.alias)")
-                    .accessibilityLabel(action == .start ? "Start \(row.alias)" : "Stop \(row.alias)")
-                }
+                .buttonStyle(.plain)
+                .frame(width: SidebarRowLayout.trailingSlot(scale), height: SidebarRowLayout.trailingSlot(scale))
+                .help("Answer in Tab: ssh needs an answer")
+                .accessibilityLabel("Answer \(row.alias) in a tab")
             }
-            if let caption = look.caption {
-                RowCaption(caption, warns: true).lineLimit(2).padding(.leading, scale(Size.avatar) + scale(Space.inset))
-            }
-            // Re-drawn each minute, for the uptime.
-            TimelineView(.everyMinute) { context in
-                if let detail = Self.detail(row, now: context.date) {
-                    RowCaption(detail).lineLimit(1).padding(.leading, scale(Size.avatar) + scale(Space.inset))
+            if let action = look.action {
+                Button(action: action == .start ? start : stop) {
+                    Image(systemName: action == .start ? "play.fill" : "stop.fill")
+                        .font(Typography.micro).foregroundStyle(surface.secondaryInk)
                 }
+                .buttonStyle(.plain)
+                .frame(width: SidebarRowLayout.trailingSlot(scale), height: SidebarRowLayout.trailingSlot(scale))
+                .help(action == .start ? "Start \(row.alias)" : "Stop \(row.alias)")
+                .accessibilityLabel(action == .start ? "Start \(row.alias)" : "Stop \(row.alias)")
             }
         }
-        .frame(minHeight: scale(Size.menuRow))
-        .padding(.leading, scale(Space.base)).padding(.trailing, SidebarRowLayout.trailingInset(scale))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Tunnel \(row.alias)")
         .accessibilityValue(row.missing ? "Not in SSH config" : row.state.rawValue)
@@ -157,5 +136,61 @@ private struct TunnelRowRearrange: ViewModifier {
         } else {
             content
         }
+    }
+}
+
+/// What a tunnel's row and an SSH host's row both draw: a dot for the tunnel's state, the alias,
+/// the tunnel's ports and keep-running pin, then `trailing`'s buttons; under them a caption and,
+/// re-drawn each minute, the tunnel's uptime and traffic. A host that is no tunnel (`row` nil) has
+/// no dot, its slot kept empty so the aliases line up. The caller adds its own accessibility.
+struct TunnelRowContent<Trailing: View>: View {
+    let alias: String
+    let row: TunnelRowItem?
+    let dimmed: Bool
+    let caption: String?
+    /// A tunnel's caption is a warning; a plain host's “not in the config” is not.
+    var captionWarns = true
+    @ViewBuilder let trailing: () -> Trailing
+    @Environment(\.interfaceScale) private var scale
+    @Environment(\.surface) private var surface
+
+    private var captionInset: CGFloat { scale(Size.avatar) + scale(Space.inset) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: scale(Space.tight)) {
+            HStack(spacing: scale(Space.inset)) {
+                if let row {
+                    ToneDot(color: TunnelRowView.color(TunnelRowView.look(row).tone), size: scale(Size.statusMarkSmall))
+                        .frame(width: scale(Size.avatar))
+                } else {
+                    Color.clear.frame(width: scale(Size.avatar), height: scale(Size.statusMarkSmall))
+                }
+                RowTitle(alias, dimmed: dimmed)
+                if let row, !row.ports.isEmpty {
+                    Text(row.ports).font(Typography.monoCode).foregroundStyle(surface.secondaryInk).lineLimit(1)
+                        .help(TunnelRowView.portsHelp(row) ?? "")
+                }
+                if row?.keepRunning == true {
+                    Image(systemName: "pin.fill").font(Typography.micro).foregroundStyle(surface.secondaryInk)
+                        .help("Keeps running after Shellforge quits")
+                        .accessibilityLabel(TunnelRowView.keepsRunningText)
+                }
+                Spacer(minLength: scale(Space.tight))
+                trailing()
+            }
+            if let caption {
+                RowCaption(caption, warns: captionWarns).lineLimit(captionWarns ? 2 : 1).padding(.leading, captionInset)
+            }
+            if let row {
+                // Re-drawn each minute, for the uptime.
+                TimelineView(.everyMinute) { context in
+                    if let detail = TunnelRowView.detail(row, now: context.date) {
+                        RowCaption(detail).lineLimit(1).padding(.leading, captionInset)
+                    }
+                }
+            }
+        }
+        .frame(minHeight: scale(Size.menuRow))
+        .padding(.leading, scale(Space.base)).padding(.trailing, SidebarRowLayout.trailingInset(scale))
     }
 }
