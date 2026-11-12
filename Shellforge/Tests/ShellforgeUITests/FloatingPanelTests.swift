@@ -3,7 +3,7 @@ import SwiftUI
 import Testing
 @testable import ShellforgeTestSupport
 @testable import ShellforgeCore
-import ShellforgeDesign
+@testable import ShellforgeDesign
 @testable import ShellforgeUI
 
 /// The floating sidebar is a rounded panel: its corners show what is behind it, its edge is the
@@ -54,6 +54,87 @@ import ShellforgeDesign
         view.cacheDisplay(in: view.bounds, to: rep)
         window.close()
         return rep
+    }
+
+    /// The ground under `theme`, with `kind` as this Mac's material: its centre pixel, and whether
+    /// it holds the system material's view.
+    private func ground(cornerRadius: CGFloat?, kind: ShellforgeMaterial.Kind, theme: Theme) throws -> (centre: NSColor?, material: Bool) {
+        try ThemeRuntime.$override.withValue(theme) {
+            let view = NSHostingView(rootView: SidebarGround(cornerRadius: cornerRadius, kind: kind).frame(width: 200, height: 200))
+            view.frame = NSRect(x: 0, y: 0, width: 200, height: 200)
+            let window = NSWindow(contentRect: view.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.appearance = NSAppearance(named: .darkAqua)
+            window.backgroundColor = .systemRed
+            window.contentView = view
+            view.layoutSubtreeIfNeeded()
+            // `Snapshot`'s device-RGB bitmap, as the theme tests read colours: the view's own cache
+            // is in the screen's colour space.
+            let rep = try #require(Snapshot.bitmap(of: view))
+            @MainActor func holdsMaterial(_ view: NSView) -> Bool { view is NSVisualEffectView || view.subviews.contains(where: holdsMaterial) }
+            let material = holdsMaterial(view)
+            window.close()
+            return (rep.colorAt(x: rep.pixelsWide / 2, y: rep.pixelsHigh / 2)?.usingColorSpace(.sRGB), material)
+        }
+    }
+
+    /// Final-review fix: under a theme the sidebar's ground is the theme's opaque chrome, floating
+    /// or flush, on every Mac's material; under Shellforge it is the material, as before.
+    @Test(arguments: [CGFloat(10), nil], [ShellforgeMaterial.Kind.glass, .sidebar, .opaque])
+    func aThemeGroundsTheSidebarInItsChrome(cornerRadius: CGFloat?, kind: ShellforgeMaterial.Kind) throws {
+        let dracula = ThemeCatalog.theme(id: "dracula")
+        let chrome = try #require(dracula.colors).sidebar
+        #expect(chrome == SRGB(red: 0x21 / 255.0, green: 0x22 / 255.0, blue: 0x2C / 255.0))
+        let themed = try ground(cornerRadius: cornerRadius, kind: kind, theme: dracula)
+        let centre = try #require(themed.centre)
+        #expect(abs(centre.redComponent - chrome.red) <= 1.5 / 255 && abs(centre.greenComponent - chrome.green) <= 1.5 / 255
+                && abs(centre.blueComponent - chrome.blue) <= 1.5 / 255 && centre.alphaComponent > 0.99, "\(centre)")
+        #expect(!themed.material, "a theme's ground is its colour, not the Mac's material")
+    }
+
+    @Test(arguments: [CGFloat(10), nil])
+    func theShellforgeGroundIsTheMaterial(cornerRadius: CGFloat?) throws {
+        #expect(try ground(cornerRadius: cornerRadius, kind: .sidebar, theme: ThemeCatalog.shellforge).material,
+                "the system sidebar material, as before themes")
+        let opaque = try ground(cornerRadius: cornerRadius, kind: .opaque, theme: ThemeCatalog.shellforge)
+        #expect(!opaque.material)
+        #expect(!isRedOrClear(opaque.centre), "Reduce Transparency's opaque surface, as before")
+    }
+
+    /// A ground on screen when the theme changes follows it: from the material to the chrome and
+    /// back, without being made again.
+    @Test func aThemeChangeRegroundsAShownSidebar() throws {
+        @MainActor func holdsMaterial(_ view: NSView) -> Bool { view is NSVisualEffectView || view.subviews.contains(where: holdsMaterial) }
+        /// Turns of the run loop until `done`, for SwiftUI to apply the state change; bounded by
+        /// turns, not by time, so a slow machine only takes longer.
+        func pump(_ view: NSView, until done: () -> Bool) {
+            for _ in 0..<500 where !done() {
+                RunLoop.main.run(mode: .default, before: Date())
+                view.layoutSubtreeIfNeeded()
+            }
+        }
+        let view = ThemeRuntime.$override.withValue(ThemeCatalog.shellforge) {
+            NSHostingView(rootView: SidebarGround(cornerRadius: 10, kind: .sidebar).frame(width: 200, height: 200))
+        }
+        view.frame = NSRect(x: 0, y: 0, width: 200, height: 200)
+        let window = NSWindow(contentRect: view.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = view
+        defer { window.close() }
+        ThemeRuntime.$override.withValue(ThemeCatalog.shellforge) { view.layoutSubtreeIfNeeded() }
+        #expect(holdsMaterial(view))
+
+        ThemeRuntime.$override.withValue(ThemeCatalog.theme(id: "nord")) {
+            NotificationCenter.default.post(name: ThemeRuntime.didChange, object: nil)
+            pump(view) { !holdsMaterial(view) }
+        }
+        #expect(!holdsMaterial(view), "under Nord the ground is the chrome")
+
+        ThemeRuntime.$override.withValue(ThemeCatalog.shellforge) {
+            NotificationCenter.default.post(name: ThemeRuntime.didChange, object: nil)
+            pump(view) { holdsMaterial(view) }
+        }
+        #expect(holdsMaterial(view), "back under Shellforge, the material again")
     }
 
     @Test func aFloatingPanelHasRoundCorners() throws {

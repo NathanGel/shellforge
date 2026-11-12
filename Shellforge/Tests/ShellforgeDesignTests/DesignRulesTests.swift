@@ -65,6 +65,8 @@ struct DesignRulesTests {
         // and deletes these. The stale check below then proves none is left.
         Exception(file: "ShellforgeDesign/Metrics.swift", rule: .colour, line: "case .black: nsWeight = .black",
                   reason: "Font.Weight.black mapped to NSFont.Weight.black: a weight, not a colour"),
+        Exception(file: "ShellforgeDesign/ThemeRuntime.swift", rule: .colour, line: "name: NSColor.systemColorsDidChangeNotification",
+                  reason: "the notice that the accent colour changed, which `.themed()` redraws on: a notification, not a colour"),
         Exception(file: "ShellforgeDesign/Hairline.swift", rule: .length, line: ".frame(height: 1)",
                   reason: "the hairline is a one-point stroke, which does not scale, not a length on the scale"),
         Exception(file: "ShellforgeUI/ShellforgeSidebar.swift", rule: .length, line: "Rectangle().fill(Palette.border).frame(width: 1)",

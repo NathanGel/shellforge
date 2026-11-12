@@ -91,4 +91,26 @@ final class ShellforgeThemesTest: XCTestCase {
         XCTAssertEqual(Double(dark.greenComponent), Double(expected.greenComponent), accuracy: 2.0 / 255)
         XCTAssertEqual(Double(dark.blueComponent), Double(expected.blueComponent), accuracy: 2.0 / 255)
     }
+
+    /// Match Terminal off after a fixed theme brings back the profile's own colours, and the profile
+    /// was never written: the match is an overlay, end to end.
+    func testMatchOffAfterAThemeBringsBackTheProfile() throws {
+        let fixture = TerminalWindowTestFixture()
+        defer { fixture.close() }
+        let session = try XCTUnwrap(fixture.terminal.currentSession())
+        let guid = try XCTUnwrap(session.profile?[KEY_GUID] as? String)
+        let savedProfile = try XCTUnwrap(ProfileModel.sharedInstance().bookmark(withGuid: guid)) as NSDictionary
+        iTermShellforgeThemes.save(followsMac: false, single: "dracula")
+        let own = try XCTUnwrap(session.screen.colorMap.color(forKey: kColorMapBackground)?.usingColorSpace(.sRGB))
+        iTermShellforgeTerminalMatch.setOn(true)
+        let matched = try XCTUnwrap(session.screen.colorMap.color(forKey: kColorMapBackground)?.usingColorSpace(.sRGB))
+        let dracula = try XCTUnwrap(iTermShellforgeTerminalMatch.paletteColor(forKey: KEY_BACKGROUND_COLOR)?.usingColorSpace(.sRGB))
+        XCTAssertEqual(Double(matched.redComponent), Double(dracula.redComponent), accuracy: 2.0 / 255, "Dracula while matched")
+        iTermShellforgeTerminalMatch.setOn(false)
+        let after = try XCTUnwrap(session.screen.colorMap.color(forKey: kColorMapBackground)?.usingColorSpace(.sRGB))
+        for (x, y) in [(after.redComponent, own.redComponent), (after.greenComponent, own.greenComponent), (after.blueComponent, own.blueComponent)] {
+            XCTAssertEqual(Double(x), Double(y), accuracy: 2.0 / 255, "the profile's own background again")
+        }
+        XCTAssertEqual(ProfileModel.sharedInstance().bookmark(withGuid: guid) as NSDictionary?, savedProfile, "the profile was never written")
+    }
 }

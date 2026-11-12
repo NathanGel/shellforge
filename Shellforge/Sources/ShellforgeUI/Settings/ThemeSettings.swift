@@ -38,3 +38,17 @@ public final class ThemeSettings: ObservableObject {
         onChange?()
     }
 }
+
+extension ThemeChoice {
+    /// This choice with the fields a sheet changed — each of `draft`'s that differs from `opened`,
+    /// what was saved when the sheet opened — and every other field kept as it is now: a pick made
+    /// from a gear menu while the sheet was open survives the sheet's Save, field by field.
+    public func merging(_ draft: ThemeChoice, openedWith opened: ThemeChoice) -> ThemeChoice {
+        var merged = self
+        if draft.followsMac != opened.followsMac { merged.followsMac = draft.followsMac }
+        if draft.light != opened.light { merged.light = draft.light }
+        if draft.dark != opened.dark { merged.dark = draft.dark }
+        if draft.single != opened.single { merged.single = draft.single }
+        return merged
+    }
+}

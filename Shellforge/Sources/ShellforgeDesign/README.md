@@ -65,7 +65,7 @@ tokenised — they are one-off optical corrections on a single element, not a sc
 from. Their absence from `Metrics` and `Palette` is a decision, not an oversight.
 
 `Palette` has a third rule enforced by a test: every distinctly-written token resolves to a distinct
-colour. Where two roles share a value, declare it as an alias in the source (`sidebar = surface`) —
+colour. Where two roles share a value, declare it as an alias in the source (`sidebar = chrome`) —
 the test reads the aliases from there, so that declaration is all it takes.
 `PaletteDistinctionTests` fails the build otherwise — it exists because a hover wash once resolved
 to the surface it was painted over and drew a visible halo around every hovered avatar.

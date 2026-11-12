@@ -54,13 +54,13 @@ it and refuses to release a version that has none.
   missing `~/.ssh` or config is created, private to you.
 - **Themes.** Ten themes: Shellforge (light and dark, as before), Dark Modern, Light Modern, One
   Dark, Dracula, GitHub Dark, GitHub Light, Solarized Dark, Solarized Light and Nord. A theme
-  colours everything Shellforge draws: the sidebar, the activity bar, the panels, the sheets and
-  the metrics strip; its accent takes the place of the Mac's in Shellforge, focus rings and
-  Settings' switches included. The terminal takes the theme only with Match Terminal on. Settings › Core › Theme picks one, or, with Follow Mac Appearance on (the default), a
-  light one and a dark one that follow the Mac. A single light or dark theme holds Shellforge to
-  its appearance. Match Terminal lays the theme's colours over every terminal, as Match the
-  terminal to Shellforge did; your profiles are not changed. Until you pick a theme, Shellforge
-  looks as it did.
+  colours everything Shellforge draws: the sidebar, the activity bar, the panels, the sheets and the
+  metrics strip; its accent takes the place of the Mac's in Shellforge, focus rings and Settings'
+  switches included. The terminal takes the theme only with Match Terminal on. Settings › Core ›
+  Theme picks one, or, with Follow Mac Appearance on (the default), a light one and a dark one that
+  follow the Mac. A single light or dark theme holds Shellforge to its appearance. Match Terminal
+  lays the theme's colours over every terminal, as Match the terminal to Shellforge did; your
+  profiles are not changed. Until you pick a theme, Shellforge looks as it did.
 - **Gear menu.** The gear at the foot of the activity bar is a menu now, like VS Code's Manage
   menu: Settings…; Theme, with the themes (or Light Theme and Dark Theme while following the
   Mac), Follow Mac Appearance and Match Terminal, each applied at once; and Customize.

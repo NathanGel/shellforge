@@ -247,12 +247,13 @@ public enum Palette {
     /// The footer card's ground: a faint wash, black in light and white in dark, that sets the
     /// footer apart from the rows above it without a rule.
     public static let footerCard = veil(light: 0.04, dark: 0.05)
-    /// The sidebar's own background; equal to `surface` but named separately so sidebar styling
-    /// reads locally.
-    public static let sidebar = surface
     /// The activity bar and the panels' ground: the theme's sidebar colour, a step off its
-    /// background. Under the Shellforge theme it is `surface`'s colour exactly.
+    /// background. Under the Shellforge theme it is `surface`'s colour exactly, and the sidebar is
+    /// drawn on the Mac's material instead (`SidebarGround`).
     public static let chrome = base(.windowBackgroundColor, \.sidebar)
+    /// The sidebar's own background, named so sidebar styling reads locally: `chrome`, which is
+    /// `surface`'s colour under the Shellforge theme.
+    public static let sidebar = chrome
     /// The wash painted behind a sidebar row while the pointer is over it: literal white in dark,
     /// literal black in light. Not `.primary`, whose own alpha (≈0.847) compounds with an opacity.
     /// Under a theme, the theme's hover colour, which is opaque.

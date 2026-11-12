@@ -89,8 +89,15 @@ public struct ThemeChoice: Equatable, Sendable {
     /// theme otherwise.
     public func active(isDark: Bool) -> Theme {
         guard followsMac else { return ThemeCatalog.theme(id: single) }
-        return ThemeCatalog.theme(id: isDark ? dark : light)
+        return isDark ? darkTheme : lightTheme
     }
+
+    /// The light slot's theme: Shellforge when its id is not one a light Mac can take — unknown, or
+    /// a dark theme.
+    public var lightTheme: Theme { ThemeCatalog.theme(id: light, among: ThemeCatalog.lightChoices) }
+
+    /// The dark slot's theme: Shellforge when its id is not one a dark Mac can take.
+    public var darkTheme: Theme { ThemeCatalog.theme(id: dark, among: ThemeCatalog.darkChoices) }
 
     /// The appearance the app is held to: the single theme’s, unless following the Mac or the
     /// single theme is adaptive (Shellforge), when the Mac decides.

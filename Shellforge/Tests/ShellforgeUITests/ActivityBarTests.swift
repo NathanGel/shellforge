@@ -568,6 +568,21 @@ import Testing
         #expect(last[0] == .button("Show Sessions", checked: true, enabled: false, .showPanel(.sessions, false)), "the last shown panel can be hidden")
     }
 
+    /// A slot holding a theme of the other appearance checks Shellforge, as the Settings picker
+    /// shows it and as it applies.
+    @Test func aCrossedSlotChecksShellforgeInTheMenu() throws {
+        let crossed = ThemeChoice(followsMac: true, light: "dracula", dark: "github-light")
+        let theme = try submenu("Theme", in: GearMenu.items(choice: crossed, match: false, layout: ActivityLayout(saved: nil)))
+        #expect(checked(try submenu("Light Theme", in: theme)) == ["Shellforge"])
+        #expect(checked(try submenu("Dark Theme", in: theme)) == ["Shellforge"])
+    }
+
+    /// The gear's tooltip is VS Code's word; VoiceOver reads what it holds.
+    @Test func theGearSaysWhatItHolds() {
+        #expect(ActivityBar.gearHelp == "Manage")
+        #expect(ActivityBar.gearLabel == "Settings, Theme and Customize")
+    }
+
     /// A theme, Follow Mac and Match Terminal chosen from the menu are saved at once; Customize hides a panel.
     @Test func choosingAThemeFromTheMenuSavesIt() throws {
         let store = ScratchDefaults.make()

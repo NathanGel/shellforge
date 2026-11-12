@@ -3,7 +3,8 @@
 //  ModernTests
 //
 //  The app's defaults the Shellforge tests change — the sidebar's width, whether it is hidden, its
-//  text size, Match the terminal, the theme, the tab style and position — as they were before a test,
+//  text size, Match the terminal, the theme, the hidden panels, the tab style and position — as they
+//  were before a test,
 //  put back after it, so no test hands the next one a sidebar left hidden, a terminal left matched or
 //  a theme left on.
 //
@@ -18,7 +19,9 @@ struct ShellforgeDefaultsSnapshot {
     private static let keys = ["ShellforgeSidebarWidth", "ShellforgeSidebarHidden", "ShellforgeSidebarScale",
                                Self.matchKey, kPreferenceKeyTabStyle, kPreferenceKeyTabPosition,
                                // `ThemeSettings`' keys.
-                               "ShellforgeThemeFollowsMac", "ShellforgeThemeLight", "ShellforgeThemeDark", "ShellforgeTheme"]
+                               "ShellforgeThemeFollowsMac", "ShellforgeThemeLight", "ShellforgeThemeDark", "ShellforgeTheme",
+                               // The panels the activity bar hides.
+                               "NoSyncShellforgeActivityHidden"]
     private let values: [String: Any]
     private let matched: Bool
     private let theme: (followsMac: Bool, light: String, dark: String, single: String)

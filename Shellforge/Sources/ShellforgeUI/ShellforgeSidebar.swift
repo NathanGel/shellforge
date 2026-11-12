@@ -200,24 +200,40 @@ struct SidebarEdge: View {
 
 /// What the sidebar is drawn on: the floating panel — a rounded `MaterialBackground` with a hairline
 /// outline — or, classic, the sidebar material filling its column. Either runs under the title bar,
-/// so it ignores the safe area the content keeps to.
+/// so it ignores the safe area the content keeps to. Under any theme but Shellforge the ground is
+/// the theme's own, opaque `Palette.chrome`, in the same shape: the activity bar, the panels and the
+/// metrics strip all lie on it, so the theme's text and accent are read on the theme's colour.
 struct SidebarGround: View {
     let cornerRadius: CGFloat?
     /// This Mac's material; a test names one.
     var kind: ShellforgeMaterial.Kind = ShellforgeMaterial.current
+    /// Whether a theme with colours of its own applies. `.themed()` resolves colours again but
+    /// does not run bodies again, so the change between material and colour is followed here.
+    @State private var themed = ThemeRuntime.current.colors != nil
 
     var body: some View {
         Group {
             if let cornerRadius {
                 let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                MaterialBackground(shape, kind: kind)
+                fill(shape, kind: kind)
                     .overlay { shape.strokeBorder(Palette.border, lineWidth: 1) }
             } else {
                 // Glass is for the floating panel; a flush sidebar takes the sidebar material.
-                MaterialBackground(Rectangle(), kind: kind == .glass ? .sidebar : kind)
+                fill(Rectangle(), kind: kind == .glass ? .sidebar : kind)
             }
         }
         .ignoresSafeArea()
+        .onReceive(NotificationCenter.default.publisher(for: ThemeRuntime.didChange)) { _ in
+            themed = ThemeRuntime.current.colors != nil
+        }
+    }
+
+    @ViewBuilder private func fill(_ shape: some Shape, kind: ShellforgeMaterial.Kind) -> some View {
+        if themed {
+            shape.fill(Palette.chrome)
+        } else {
+            MaterialBackground(shape, kind: kind)
+        }
     }
 }
 

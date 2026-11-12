@@ -90,10 +90,20 @@ import Testing
         #expect(MetricsStrip.label(machine: [], vendors: [row], name: model.agentName) == "Renamed helper: weekly limit 84 % used")
     }
 
-    @Test func clickingTheStripOpensMetrics() {
+    @Test func clickingTheStripOpensMetrics() throws {
         let activity = ActivityModel(source: ActivityOrderSource(defaults: nil))
-        MetricsStrip.opener(activity)()
+        let open = try #require(MetricsStrip.opener(activity))
+        open()
         #expect(activity.layout.selected == .metrics)
+    }
+
+    /// With the Metrics panel hidden the strip shows nothing to open: no click, no “Show Metrics”.
+    @Test func withMetricsHiddenTheStripIsNoControl() throws {
+        let activity = ActivityModel(source: ActivityOrderSource(defaults: nil))
+        activity.setHidden(.metrics, true)
+        #expect(MetricsStrip.opener(activity) == nil)
+        activity.setHidden(.metrics, false)
+        #expect(MetricsStrip.opener(activity) != nil)
     }
 
     // MARK: - in the sidebar

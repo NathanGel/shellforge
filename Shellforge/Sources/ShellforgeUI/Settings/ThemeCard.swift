@@ -58,7 +58,7 @@ struct ThemeCard: View {
     private func picker(_ label: String, themes: [Theme], selection: Binding<String>) -> some View {
         FormField(label) {
             Select(values: themes.map(\.id),
-                   selection: Binding(get: { ThemeCatalog.theme(id: selection.wrappedValue).id }, set: { selection.wrappedValue = $0 }),
+                   selection: Binding(get: { ThemeCatalog.theme(id: selection.wrappedValue, among: themes).id }, set: { selection.wrappedValue = $0 }),
                    label: { ThemeCatalog.theme(id: $0).name })
         }.frame(maxWidth: .infinity)
     }

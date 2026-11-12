@@ -36,6 +36,18 @@ import Testing
         #expect(ThemeChoice().active(isDark: false) == ThemeCatalog.shellforge)
     }
 
+    /// A slot holding a theme of the other appearance — only `defaults write` gets one there —
+    /// reads as Shellforge, as an unknown id does.
+    @Test func aThemeInTheOtherAppearancesSlotIsShellforge() {
+        let crossed = ThemeChoice(followsMac: true, light: "dracula", dark: "github-light", single: "nord")
+        #expect(crossed.active(isDark: false) == ThemeCatalog.shellforge)
+        #expect(crossed.active(isDark: true) == ThemeCatalog.shellforge)
+        #expect(crossed.lightTheme == ThemeCatalog.shellforge && crossed.darkTheme == ThemeCatalog.shellforge)
+        #expect(ThemeCatalog.theme(id: "dracula", among: ThemeCatalog.lightChoices) == ThemeCatalog.shellforge)
+        #expect(ThemeCatalog.theme(id: "dracula", among: ThemeCatalog.darkChoices).id == "dracula")
+        #expect(ThemeChoice(light: "solarized-light", dark: "nord").active(isDark: false).id == "solarized-light")
+    }
+
     @Test func aSingleThemeIgnoresTheMac() {
         let choice = ThemeChoice(followsMac: false, light: "github-light", dark: "dracula", single: "nord")
         #expect(choice.active(isDark: true).id == "nord")
@@ -53,14 +65,27 @@ import Testing
         #expect(forced("dracula", followsMac: true) == nil)
     }
 
-    /// Text on the background and on the sidebar at least 4.5:1, the accent on the background at
-    /// least 3:1 (WCAG 2, from relative luminance).
+    /// Text on the background and on the sidebar at least 4.5:1, the accent on each at least 3:1
+    /// (WCAG 2, from relative luminance). The sidebar colour is the chrome the activity bar, the
+    /// panels and the metrics strip lie on.
     @Test(arguments: ThemeCatalog.all.filter { $0.colors != nil })
     func everyThemeIsReadable(theme: Theme) throws {
         let colors = try #require(theme.colors)
         #expect(colors.text.contrast(with: colors.background) >= 4.5, "\(theme.name): text on background")
         #expect(colors.text.contrast(with: colors.sidebar) >= 4.5, "\(theme.name): text on sidebar")
         #expect(colors.accent.contrast(with: colors.background) >= 3, "\(theme.name): accent on background")
+        #expect(colors.accent.contrast(with: colors.sidebar) >= 3, "\(theme.name): accent on sidebar")
+    }
+
+    /// The terminal's foreground on its background at least 4.5:1 in every fixed theme.
+    @Test(arguments: ThemeCatalog.all.filter { $0.terminal != nil })
+    func everyTerminalIsReadable(theme: Theme) throws {
+        let terminal = try #require(theme.terminal)
+        let foreground = try #require(terminal[.foreground]), background = try #require(terminal[.background])
+        // The one exception: Solarized's published base00 on base3 is 4.13:1, and a theme keeps its
+        // published palette.
+        let least = theme.id == "solarized-light" ? 4.0 : 4.5
+        #expect(foreground.contrast(with: background) >= least, "\(theme.name): \(foreground.contrast(with: background))")
     }
 
     @Test(arguments: ThemeCatalog.all.filter { $0.appearance != .adaptive })
@@ -316,7 +341,7 @@ extension ThemeTests {
         ThemeRuntime.$override.withValue(dracula) {
             for name in [NSAppearance.Name.aqua, .darkAqua] {
                 #expect(resolves(Palette.surface, to: colors.background, in: name), "surface in \(name.rawValue)")
-                #expect(resolves(Palette.sidebar, to: colors.background, in: name), "sidebar in \(name.rawValue)")
+                #expect(resolves(Palette.sidebar, to: colors.sidebar, in: name), "sidebar in \(name.rawValue)")
                 #expect(resolves(Palette.chrome, to: colors.sidebar, in: name), "chrome in \(name.rawValue)")
                 #expect(resolves(Palette.surfaceRaised, to: colors.raised, in: name), "surfaceRaised in \(name.rawValue)")
                 #expect(resolves(Palette.text, to: colors.text, in: name), "text in \(name.rawValue)")
@@ -503,5 +528,37 @@ extension ThemeTests {
         #expect(afterChange.map { nearly($0, draculaBackground) } == true, "\(String(describing: afterChange))")
         #expect(seen.text == text, "the view was rebuilt: its state started over")
         #expect(host.appearance?.name == .darkAqua, "the appearance is put back")
+    }
+
+    /// Final-review fix: the probe behind `.themed()` fills the root but is never a click's target,
+    /// and never the start of a window drag, so the sidebar's empty space stays the sidebar's.
+    @MainActor @Test func themedNeverTakesAClick() throws {
+        let host = NSHostingView(rootView: Color.clear.frame(width: 80, height: 80).themed())
+        host.frame = NSRect(x: 0, y: 0, width: 80, height: 80)
+        let window = window(hosting: host, orderFront: false)
+        defer { window.close() }
+        host.layoutSubtreeIfNeeded()
+        let probe = try #require(host.firstSubview(of: ThemeRedrawView.self))
+        #expect(!(host.hitTest(NSPoint(x: 40, y: 40)) is ThemeRedrawView))
+        #expect(probe.hitTest(probe.convert(NSPoint(x: probe.bounds.midX, y: probe.bounds.midY), to: probe.superview)) == nil)
+        #expect(!probe.mouseDownCanMoveWindow)
+    }
+
+    /// A new accent colour or Increase Contrast changes no appearance, so SwiftUI would keep every
+    /// token as it was: the probe makes the root resolve them again, as on a theme change.
+    @MainActor @Test func themedRedrawsOnANewAccentOrIncreaseContrast() throws {
+        let host = NSHostingView(rootView: StatefulSwatch(seen: SeenText()).themed())
+        host.frame = NSRect(x: 0, y: 0, width: 40, height: 40)
+        let window = window(hosting: host, orderFront: false)
+        defer { window.close() }
+        host.layoutSubtreeIfNeeded()
+        let probe = try #require(host.firstSubview(of: ThemeRedrawView.self))
+        let start = probe.redraws
+        NotificationCenter.default.post(name: NSColor.systemColorsDidChangeNotification, object: nil)
+        let afterAccent = probe.redraws
+        #expect(afterAccent > start, "the accent colour")
+        // AppKit may also post its own system-colours notice on this one, so at least one redraw.
+        NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil)
+        #expect(probe.redraws > afterAccent, "Increase Contrast")
     }
 }

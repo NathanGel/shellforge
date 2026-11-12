@@ -22,6 +22,12 @@ public enum ThemeCatalog {
         all.first { $0.id == id } ?? shellforge
     }
 
+    /// The theme with `id` among `themes`; Shellforge when it is not one of them — gone from the
+    /// catalogue, or a theme of the other appearance in a slot for one appearance.
+    public static func theme(id: String?, among themes: [Theme]) -> Theme {
+        themes.first { $0.id == id } ?? shellforge
+    }
+
     // MARK: - VS Code
 
     /// VS Code’s built-in Dark Modern (`dark_modern.json`, over `dark_vs`/`dark_plus` defaults) and

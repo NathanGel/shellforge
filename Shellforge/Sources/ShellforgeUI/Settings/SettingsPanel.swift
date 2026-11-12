@@ -25,6 +25,9 @@ struct SettingsPanel: View {
     @State private var matchDraft = false
     @State private var themeDraft = ThemeChoice()
     @State private var feedbackDraft = true
+    /// What was saved when the sheet opened: Save writes only what the sheet changed from it, so a
+    /// change made elsewhere meanwhile — another window's gear menu — is kept.
+    @State private var opened = Drafts(theme: ThemeChoice(), match: false, feedback: true)
     @State private var editorDraft = ""
     /// The agent form open in the panel, if one is.
     @State private var agentForm: AgentFormModel?
@@ -44,7 +47,10 @@ struct SettingsPanel: View {
         .task { integrations.testConfigured() }
         .task { await backpack.refreshSetup() }
         .task { await agentDefaults.load() }
-        .onAppear { matchDraft = terminalMatch.isOn; themeDraft = theme.choice; feedbackDraft = feedback.isEnabled; editorDraft = terminalEditor?.saved ?? "" }
+        .onAppear {
+            opened = Drafts(theme: theme.choice, match: terminalMatch.isOn, feedback: feedback.isEnabled)
+            matchDraft = opened.match; themeDraft = opened.theme; feedbackDraft = opened.feedback; editorDraft = terminalEditor?.saved ?? ""
+        }
         // An agent added, changed or removed here shows in the defaults list at once.
         .onReceive(agents.$rows.dropFirst()) { rows in
             agentDefaults.update(agents: rows.filter(\.installed).map(\.agent))
@@ -96,11 +102,26 @@ struct SettingsPanel: View {
     private func save() {
         failure = integrations.save()
         guard failure == nil else { return }
-        theme.save(themeDraft)
-        terminalMatch.save(matchDraft)
-        feedback.save(feedbackDraft)
+        Self.save(Drafts(theme: themeDraft, match: matchDraft, feedback: feedbackDraft), openedWith: opened,
+                  theme: theme, terminalMatch: terminalMatch, feedback: feedback)
         terminalEditor?.save(editorDraft)
         agentDefaults.save()
         Task { @MainActor in close() }
+    }
+
+    /// The sheet's switches and theme, as it holds them or as they were saved when it opened.
+    struct Drafts: Equatable {
+        var theme: ThemeChoice
+        var match: Bool
+        var feedback: Bool
+    }
+
+    /// Saves what the sheet changed since it opened — `drafts` where they differ from `opened` —
+    /// and leaves the rest as it is now, whoever set it.
+    static func save(_ drafts: Drafts, openedWith opened: Drafts, theme: ThemeSettings,
+                     terminalMatch: TerminalMatchSettings, feedback: FeedbackPrompt) {
+        theme.save(theme.choice.merging(drafts.theme, openedWith: opened.theme))
+        if drafts.match != opened.match { terminalMatch.save(drafts.match) }
+        if drafts.feedback != opened.feedback { feedback.save(drafts.feedback) }
     }
 }

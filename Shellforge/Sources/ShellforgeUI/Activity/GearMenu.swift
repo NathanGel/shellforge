@@ -59,11 +59,11 @@ public enum GearMenu {
     private static func themeItems(choice: ThemeChoice, match: Bool) -> [Item] {
         let themes: [Item]
         if choice.followsMac {
-            let light = ThemeCatalog.lightChoices.map { pick($0, in: choice, \.light) }
-            let dark = ThemeCatalog.darkChoices.map { pick($0, in: choice, \.dark) }
+            let light = ThemeCatalog.lightChoices.map { pick($0, in: choice, \.light, among: ThemeCatalog.lightChoices) }
+            let dark = ThemeCatalog.darkChoices.map { pick($0, in: choice, \.dark, among: ThemeCatalog.darkChoices) }
             themes = [.submenu(lightTitle, light), .submenu(darkTitle, dark)]
         } else {
-            themes = ThemeCatalog.all.map { pick($0, in: choice, \.single) }
+            themes = ThemeCatalog.all.map { pick($0, in: choice, \.single, among: ThemeCatalog.all) }
         }
         var follow = choice
         follow.followsMac.toggle()
@@ -74,12 +74,13 @@ public enum GearMenu {
         ]
     }
 
-    /// `theme` in the slot `slot` of `choice`: checked when it is the slot's theme (an unknown id
-    /// reads as Shellforge); choosing it puts it there.
-    private static func pick(_ theme: Theme, in choice: ThemeChoice, _ slot: WritableKeyPath<ThemeChoice, String>) -> Item {
+    /// `theme` in the slot `slot` of `choice`: checked when it is the slot's theme (an id not among
+    /// the slot's `themes` reads as Shellforge); choosing it puts it there.
+    private static func pick(_ theme: Theme, in choice: ThemeChoice, _ slot: WritableKeyPath<ThemeChoice, String>, among themes: [Theme]) -> Item {
         var chosen = choice
         chosen[keyPath: slot] = theme.id
-        return .button(theme.name, checked: ThemeCatalog.theme(id: choice[keyPath: slot]).id == theme.id, enabled: true, .chooseTheme(chosen))
+        let checked = ThemeCatalog.theme(id: choice[keyPath: slot], among: themes).id == theme.id
+        return .button(theme.name, checked: checked, enabled: true, .chooseTheme(chosen))
     }
 
     /// One Show toggle per panel, in the bar's order; the last one shown cannot be turned off.

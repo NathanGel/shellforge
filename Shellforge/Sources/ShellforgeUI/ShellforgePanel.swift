@@ -10,8 +10,9 @@ public enum ShellforgePanel {
     public static func present(_ view: some View, over parent: NSWindow?) -> NSPanel {
         let panel = NSPanel(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
         panel.isReleasedWhenClosed = false
-        // Its own root, so its own `.themed()`: a theme change while it is up redraws it too.
-        let host = NSHostingView(rootView: view.themed())
+        // Its own root, so its own `.themed()` and the theme's accent on every native control in it,
+        // as the sidebar root has: a theme change while it is up redraws it too.
+        let host = NSHostingView(rootView: view.tint(Palette.accent).themed())
         panel.contentView = host
         panel.setContentSize(host.fittingSize)
         if let parent { parent.beginSheet(panel) } else { panel.center(); panel.makeKeyAndOrderFront(nil) }

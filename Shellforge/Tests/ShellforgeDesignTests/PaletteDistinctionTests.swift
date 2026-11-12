@@ -6,7 +6,7 @@ import Foundation
 
 /// After the 4b unification, two `Palette` members that are written differently must not resolve
 /// to the same value — that is precisely the defect 6d0c853 introduced. Members that are *written*
-/// as aliases (`sidebar = surface`) are exempt: they declare their sameness honestly.
+/// as aliases (`sidebar = chrome`) are exempt: they declare their sameness honestly.
 @MainActor
 struct PaletteDistinctionTests {
     /// Every semantic colour `Palette` declares, by its Swift name. Kept here rather than generated:
@@ -111,7 +111,7 @@ struct PaletteDistinctionTests {
         Set(try captures(#"static (?:let|var) (\w+)"#, in: body).map(\.name))
     }
 
-    /// The members written as another member's name — `sidebar = surface` — which declare their
+    /// The members written as another member's name — `sidebar = chrome` — which declare their
     /// sameness in the source and so are exempt from the distinctness check. Read from the source,
     /// so declaring an alias there is the whole of the work.
     private static func aliases(in body: String) throws -> Set<String> {

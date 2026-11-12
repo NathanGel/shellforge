@@ -57,12 +57,13 @@ extension View {
     /// Redraws this view's content in the new theme when the theme changes, keeping its identity:
     /// its state — scroll position, open rows, a half-typed field — survives the change.
     public func themed() -> some View {
-        background(ThemeRedraw())
+        background(ThemeRedraw().allowsHitTesting(false))
     }
 }
 
-/// `.themed()`'s probe: an AppKit view inside the SwiftUI root that, on `ThemeRuntime.didChange`,
-/// makes the root resolve its colours again.
+/// `.themed()`'s probe: an AppKit view inside the SwiftUI root that, on `ThemeRuntime.didChange` —
+/// or a new accent colour or Increase Contrast, which change no appearance either — makes the root
+/// resolve its colours again.
 struct ThemeRedraw: NSViewRepresentable {
     func makeNSView(context: Context) -> ThemeRedrawView { ThemeRedrawView() }
     func updateNSView(_ nsView: ThemeRedrawView, context: Context) {}
@@ -81,15 +82,34 @@ final class ThemeRedrawView: NSView {
     /// the new colours yet: done when it is back in one.
     private var redrawPending = false
 
+    /// How many times this probe made its root resolve its colours again, for the tests.
+    private(set) var redraws = 0
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: ThemeRuntime.didChange, object: nil)
+        observe()
     }
 
     required init?(coder: NSCoder) {
         super.init(coder: coder)
-        NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: ThemeRuntime.didChange, object: nil)
+        observe()
     }
+
+    /// The theme, and what changes a system colour without changing the appearance: the accent
+    /// colour and Increase Contrast. Every token is a dynamic colour now, even under Shellforge, so
+    /// SwiftUI would keep each as it resolved it until the appearance changes.
+    private func observe() {
+        let center = NotificationCenter.default
+        center.addObserver(self, selector: #selector(themeDidChange), name: ThemeRuntime.didChange, object: nil)
+        center.addObserver(self, selector: #selector(themeDidChange), name: NSColor.systemColorsDidChangeNotification, object: nil)
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(themeDidChange),
+                                                          name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil)
+    }
+
+    /// Never a click's target: the probe fills the whole root, behind it, and a click in the root's
+    /// empty space is the root's own — never the start of a window drag.
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override var mouseDownCanMoveWindow: Bool { false }
 
     @objc private func themeDidChange(_ notification: Notification) {
         guard window != nil else {
@@ -114,6 +134,7 @@ final class ThemeRedrawView: NSView {
             }
             return
         }
+        redraws += 1
         let kept = host.appearance
         let isDark = host.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         host.appearance = NSAppearance(named: isDark ? .aqua : .darkAqua)

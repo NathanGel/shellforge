@@ -37,6 +37,8 @@ struct ActivityBar: View {
 
     /// The bar's, each icon's and the selected icon's stripe's `ViewMark`s.
     static let markName = "ActivityBar", iconMarkName = "ActivityBarIcon", stripeMarkName = "ActivityBarStripe"
+    /// The gear's tooltip, VS Code's word, and what VoiceOver reads for it: all it holds.
+    static let gearHelp = "Manage", gearLabel = "Settings, Theme and Customize"
 
     /// How far a press travels before it lifts the icon: less is a click's slip, which selects.
     static let liftDistance: CGFloat = Space.tight
@@ -111,8 +113,9 @@ struct ActivityBar: View {
             }
             .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden)
             .frame(width: cell, height: cell)
-            .help("Manage")
-            .accessibilityLabel("Manage")
+            // VS Code's word for the tooltip; VoiceOver says what is behind it.
+            .help(Self.gearHelp)
+            .accessibilityLabel(Self.gearLabel)
         }
         .coordinateSpace(name: Self.space)
         .frame(width: cell)

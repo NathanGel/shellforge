@@ -157,4 +157,22 @@ final class ShellforgeHostTest: XCTestCase {
         iTermShellforgeHost.join([original, other])
         XCTAssertEqual(iTermShellforgeHost.panel(ofPanes: [other]), .ssh(alias: "db-tunnel"))
     }
+
+    /// A panel the activity bar hides leaves the View menu: its item is hidden, which also takes
+    /// its ⌃⌘ key out of matching, and refuses validation; shown again, the item is back.
+    @MainActor func testAHiddenPanelLeavesTheViewMenu() throws {
+        let saved = ShellforgeDefaultsSnapshot()
+        let wasHidden = iTermShellforgeSidebar.activityOrder.hidden.contains(.ssh)
+        defer {
+            iTermShellforgeSidebar.activityOrder.setHidden(.ssh, wasHidden)
+            saved.restore()
+        }
+        let tag = try XCTUnwrap(ActivityPanel.allCases.firstIndex(of: .ssh))
+        let item = try XCTUnwrap(iTermShellforgeSidebar.panelMenuItems().first { $0.tag == tag })
+        XCTAssertTrue(iTermShellforgeSidebar.activityOrder.setHidden(.ssh, true))
+        XCTAssertTrue(item.isHidden)
+        XCTAssertEqual((item.target as? NSMenuItemValidation)?.validateMenuItem(item), false)
+        iTermShellforgeSidebar.activityOrder.setHidden(.ssh, false)
+        XCTAssertFalse(item.isHidden)
+    }
 }

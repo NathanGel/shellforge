@@ -30,7 +30,7 @@ import Testing
         "InterfaceScale": "8cd10c61121676480e5fae9e24d5e9499ee7babcb165739c16514f3174cda745",
         "Logos": "af2e1ee98ac438ca5bc59b58aa2fcffca6269ad502c2b1c73f78b875dfd7a4f5",
         "Metrics": "5d2dda0e021ea1ba4b41f046c66bd9c5d15d4963b8c2d37d3de48b86787dcf78",
-        "Palette": "52f1b45db30373056772d01f76f32a2e6cf236acd5bea84a5098861ea8fd6456",
+        "Palette": "eb97e7658674c52e0102b551f07311131f1cbb6ebdeb961b7680e309c62ae58a",
         "SidebarHeading": "920a10e24175cc889fa22c5437ca486ddebd7ee2605350795edb56138ebca38f",
         "Surface": "59282e263f6d4728cd2af4ec4e48ffbbf6b18557111a89a6a97e9d4fe89adf7e",
         "SymbolMark": "4e2801b33a0284b0ab889398eaac1a6164465feed0a8a177922b41501ae61cc5",

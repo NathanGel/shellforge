@@ -6,13 +6,13 @@ import SwiftUI
 /// shown vendor's mark, then its `5h` and `wk` windows as a ring and a number —
 /// `cpu ◔ 23%  ram ◔ 61%` over `Ⓒ 5h ◔ 42% · wk ◔ 84%  Ⓧ wk ◔ 12%`. Neither line wraps: vendors
 /// that would not fit fold into “+N”. The whole strip is one control, and a click shows the Metrics
-/// panel, where the full footer is.
+/// panel, where the full footer is — unless the Metrics panel is hidden, when the strip is only read.
 struct MetricsStrip: View {
     /// The Mac's readings (`MachineMonitor.lines`); the strip draws CPU and memory.
     let machine: [UsageLine]
     let vendors: [UsageVendorRow]
-    /// Shows the Metrics panel (`opener`).
-    let open: () -> Void
+    /// Shows the Metrics panel (`opener`); nil while it is hidden, when the strip is no control.
+    let open: (() -> Void)?
     /// What a vendor is called when the strip is read out: `SidebarModel.agentName`.
     var agentName: @MainActor (SessionAgent) -> String = { $0.rawValue }
     @Environment(\.interfaceScale) private var scale
@@ -47,9 +47,11 @@ struct MetricsStrip: View {
     /// A window's number ink: amber past its own warning, the text ink below it.
     static func ink(_ line: UsageLine) -> Color { line.warning ? Palette.amber : Palette.text }
 
-    /// What a click on the strip does in `activity`'s window.
-    static func opener(_ activity: ActivityModel) -> () -> Void {
-        { [weak activity] in activity?.select(.metrics) }
+    /// What a click on the strip does in `activity`'s window: nothing, and no click, while the
+    /// Metrics panel is hidden.
+    static func opener(_ activity: ActivityModel) -> (() -> Void)? {
+        guard !activity.layout.hidden.contains(.metrics) else { return nil }
+        return { [weak activity] in activity?.select(.metrics) }
     }
 
     var body: some View {
@@ -83,15 +85,29 @@ struct MetricsStrip: View {
                 .padding(.horizontal, SidebarRowLayout.listInset)
         }
         .padding(.bottom, scale(Space.base))
-        .contentShape(Rectangle())
-        .onTapGesture(perform: open)
-        .help(Self.helpText)
         .background(ViewMark(name: Self.markName))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Self.label(machine: gauges, vendors: vendors, name: agentName))
-        .accessibilityHint(Self.helpText)
-        .accessibilityAddTraits(.isButton)
-        .accessibilityAction(.default, open)
+        .modifier(Opener(open: open))
+    }
+
+    /// The strip as a control that shows the Metrics panel, when there is one to show.
+    private struct Opener: ViewModifier {
+        let open: (() -> Void)?
+
+        func body(content: Content) -> some View {
+            if let open {
+                content
+                    .contentShape(Rectangle())
+                    .onTapGesture(perform: open)
+                    .help(MetricsStrip.helpText)
+                    .accessibilityHint(MetricsStrip.helpText)
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityAction(.default, open)
+            } else {
+                content
+            }
+        }
     }
 
     /// The strip read as words: each reading's own, then each vendor by name with its windows in
@@ -157,7 +173,7 @@ struct MetricsStripHost: View {
     @ObservedObject var model: SidebarModel
     @ObservedObject var hooks: AgentHooksModel
     @ObservedObject var machine: MachineMonitor
-    let open: () -> Void
+    let open: (() -> Void)?
     @Environment(\.footerClock) private var footerClock
 
     var body: some View {

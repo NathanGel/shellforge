@@ -3,6 +3,7 @@ import Testing
 @testable import ShellforgeTestSupport
 @testable import ShellforgeUI
 @testable import ShellforgeCore
+import ShellforgeDesign
 import AppKit
 import Combine
 import SwiftUI
@@ -113,6 +114,44 @@ import SwiftUI
         defer { window.close() }
         #expect(!theme.choice.followsMac, "Save wrote the sheet's choice")
         #expect(store.object(forKey: ThemeSettings.followsMacKey) as? Bool == false)
+    }
+
+    /// Final-review fix: a theme or Match Terminal changed from a gear menu while a Settings sheet
+    /// is open survives that sheet's Save when the sheet left it alone.
+    @Test func aGearChangeMadeWhileTheSheetIsOpenSurvivesItsSave() throws {
+        let theme = ThemeSettings(defaults: ScratchDefaults.make())
+        let match = TerminalMatchSettings(defaults: ScratchDefaults.make())
+        let sheet = Self.sheet(match: match, theme: theme)
+        let outside = ThemeChoice(followsMac: true, dark: "dracula")
+        theme.save(outside)
+        match.save(true)
+        let window = try Self.save(sheet)
+        defer { window.close() }
+        #expect(theme.choice == outside, "the gear's theme is kept")
+        #expect(match.isOn, "the gear's Match Terminal is kept")
+    }
+
+    /// Field by field: Follow Mac turned off in the sheet and a dark theme picked from the gear
+    /// meanwhile both hold after the sheet's Save.
+    @Test func theSheetSavesOnlyTheFieldsItChanged() throws {
+        let index = try #require(try Self.switchIndex { _, theme in !theme.choice.followsMac }, "Follow Mac Appearance")
+        let theme = ThemeSettings(defaults: ScratchDefaults.make())
+        let match = TerminalMatchSettings(defaults: ScratchDefaults.make())
+        let sheet = Self.sheet(match: match, theme: theme)
+        Self.switches(in: sheet)[index].performClick(nil)
+        theme.save(ThemeChoice(followsMac: true, dark: "nord"))
+        let window = try Self.save(sheet)
+        defer { window.close() }
+        #expect(theme.choice == ThemeChoice(followsMac: false, dark: "nord"))
+    }
+
+    @Test func mergingKeepsWhatTheSheetLeftAlone() {
+        let opened = ThemeChoice()
+        var draft = opened
+        draft.single = "nord"
+        let now = ThemeChoice(followsMac: false, light: "github-light", single: "dracula")
+        #expect(now.merging(draft, openedWith: opened) == ThemeChoice(followsMac: false, light: "github-light", single: "nord"))
+        #expect(now.merging(opened, openedWith: opened) == now, "an unchanged sheet changes nothing")
     }
 
     @Test func onChangeIsCalledOnlyWhenTheSavedValueChanges() {
