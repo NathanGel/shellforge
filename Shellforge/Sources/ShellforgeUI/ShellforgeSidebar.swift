@@ -17,7 +17,7 @@ public enum ShellforgeSidebar {
     /// `backpack` is the app's one Backpack Mode; `showBackpack` hands back how this sidebar opens
     /// its sheet, for the View menu's ⌘B. `hideSidebar` is the header's Hide Sidebar button: ⌃⌘S.
     /// `zoom` is the app's one text size, which every window's sidebar draws at; its sheets, in
-    /// panels of their own, stay at `.standard`. `terminalMatch` is the app's one Settings › Core ›
+    /// panels of their own, stay at `.standard`. `terminalEditorDefaults` is where the terminal editor is saved (the app's own suite). `terminalMatch` is the app's one Settings › Core ›
     /// Terminal switch. `feedback` is the app's one feedback prompt, and `showFeedback` hands back how
     /// this sidebar opens the feedback form, for the Help menu. `panelCornerRadius`, when given, draws
     /// the sidebar as a floating panel with those corners (macOS 26); nil draws the classic sidebar.
@@ -27,7 +27,7 @@ public enum ShellforgeSidebar {
     /// sidebar keeps its own selected panel.
     public static func makeView(model: SidebarModel, chooseFolder: @escaping @MainActor () -> String?, hooks: AgentHooksModel,
                                 machine: MachineMonitor, backpack: BackpackController, zoom: SidebarZoom,
-                                terminalMatch: TerminalMatchSettings, feedback: FeedbackPrompt,
+                                terminalMatch: TerminalMatchSettings, terminalEditorDefaults: UserDefaults = .standard, feedback: FeedbackPrompt,
                                 activityOrder: ActivityOrderSource = ActivityOrderSource(defaults: nil), panelCornerRadius: CGFloat? = nil,
                                 agentTools: AgentTools = .none, agentsChanged: @escaping @MainActor () -> Void = {},
                                 showBackpack: @escaping @MainActor (@escaping @MainActor () -> Void) -> Void = { _ in },
@@ -41,7 +41,7 @@ public enum ShellforgeSidebar {
         let feedbackPresenter = SheetPresenter()
         let activity = ActivityModel(source: activityOrder)
         let sidebar = SidebarView(model: model, activity: activity, chooseFolder: chooseFolder,
-                                  hooks: hooks, machine: machine, backpack: backpack, terminalMatch: terminalMatch, feedback: feedback,
+                                  hooks: hooks, machine: machine, backpack: backpack, terminalMatch: terminalMatch, terminalEditorDefaults: terminalEditorDefaults, feedback: feedback,
                                   chrome: chrome, showBackpack: { [weak presenter] present in
             guard let presenter else { return }
             presenter.present = present
@@ -379,6 +379,7 @@ struct SidebarView: View {
     let machine: MachineMonitor
     let backpack: BackpackController
     let terminalMatch: TerminalMatchSettings
+    var terminalEditorDefaults: UserDefaults = .standard
     let feedback: FeedbackPrompt
     @ObservedObject var chrome: SidebarChrome
     let showBackpack: @MainActor (@escaping @MainActor () -> Void) -> Void
@@ -649,7 +650,7 @@ struct SidebarView: View {
                                     prompter: model.prompter, tools: agentTools, store: model.$sessions.eraseToAnyPublisher(),
                                     changed: agentsChanged)
         sheet.present(over: anchor.window) { dismiss in
-            SettingsPanel(backpack: backpack, integrations: integrations, environment: environment, terminalEditor: model.terminalEditorSettings(), terminalMatch: terminalMatch, feedback: feedback,
+            SettingsPanel(backpack: backpack, integrations: integrations, environment: environment, terminalEditor: model.terminalEditorSettings(defaults: terminalEditorDefaults), terminalMatch: terminalMatch, feedback: feedback,
                           agentDefaults: agentDefaults, agents: agents, close: dismiss)
         }
     }

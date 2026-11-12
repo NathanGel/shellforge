@@ -3,12 +3,12 @@ import SwiftUI
 
 /// Settings › Core › Terminal editor: the command that opens a file in a terminal tab.
 struct TerminalEditorCard: View {
-    let placeholder: String
+    @ObservedObject var settings: TerminalEditorSettings
     /// The sheet's own, unsaved command.
     @Binding var draft: String
 
     var body: some View {
-        SettingsCard(title: "Terminal editor", status: SettingsStatus(.idle, draft.isEmpty ? "From $EDITOR" : "Your command")) {
+        SettingsCard(title: "Terminal editor", status: SettingsStatus(.idle, draft.isEmpty ? settings.emptyStatus : "Your command")) {
             SymbolMark(symbol: "terminal", size: Size.control, style: .paper)
         } chips: {
             EmptyView()
@@ -16,12 +16,13 @@ struct TerminalEditorCard: View {
             EmptyView()
         } content: {
             VStack(alignment: .leading, spacing: Space.block) {
-                Input(placeholder: placeholder, text: $draft, monospaced: true)
+                Input(placeholder: settings.placeholder, text: $draft, monospaced: true)
                 Text("Files open in a terminal tab with this command. Leave it empty to use $EDITOR.")
                     .font(Typography.help)
                     .foregroundStyle(Palette.muted)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+        .task { await settings.load() }
     }
 }

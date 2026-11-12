@@ -62,7 +62,7 @@ struct SettingsPanel: View {
                     TerminalMatchCard(isOn: $matchDraft)
                     SettingsRowDivider()
                     FeedbackPromptCard(isOn: $feedbackDraft)
-                    if let terminalEditor { SettingsRowDivider(); TerminalEditorCard(placeholder: terminalEditor.placeholder, draft: $editorDraft) }
+                    if let terminalEditor { SettingsRowDivider(); TerminalEditorCard(settings: terminalEditor, draft: $editorDraft) }
                 }
                 SettingsSection("Agents") {
                     AgentsCard(model: agents, open: { agentForm = $0 })
