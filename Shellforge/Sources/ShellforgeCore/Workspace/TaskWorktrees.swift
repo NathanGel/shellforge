@@ -1,9 +1,15 @@
 import Foundation
 
 /// A git command that exited non-zero, with git's own words.
-public struct GitFailure: Error, CustomStringConvertible, Equatable {
+public struct GitFailure: Error, CustomStringConvertible, Equatable, LocalizedError {
     public var command: String
     public var message: String
+    public var errorDescription: String? { message }
+
+    public init(command: String = "git", message: String) {
+        self.command = command
+        self.message = message
+    }
     public var description: String { "\(command) failed: \(message.trimmingCharacters(in: .whitespacesAndNewlines))" }
 }
 
