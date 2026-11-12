@@ -363,13 +363,17 @@ public final class GitModel: ObservableObject {
     private nonisolated static let countTimeout: TimeInterval = 30
 
     /// `git rev-list --count <base>..HEAD`: commits a branch with no upstream has that its base
-    /// lacks. Nil when they can't be counted: no base branch, or one that is gone.
+    /// lacks. A base New Task took from origin may exist only there, so `origin/<base>` is tried
+    /// next. Nil when they can't be counted: no base branch, or one that is gone.
     private nonisolated static func commits(in path: String, notOn base: String, launcher: CommandLauncher) -> Int? {
-        guard !base.isEmpty, !base.hasPrefix("-"),
-              let out = try? launcher.run("git", ["-C", path, "rev-list", "--count", "\(base)..HEAD"],
-                                          extra: ["LC_ALL": "C", "GIT_OPTIONAL_LOCKS": "0"], timeout: Self.countTimeout),
-              !out.timedOut, out.status == 0 else { return nil }
-        return Int(out.stdout.trimmingCharacters(in: .whitespacesAndNewlines))
+        guard !base.isEmpty, !base.hasPrefix("-") else { return nil }
+        for ref in ["refs/heads/\(base)", "refs/remotes/origin/\(base)"] {
+            guard let out = try? launcher.run("git", ["-C", path, "rev-list", "--count", "\(ref)..HEAD"],
+                                              extra: ["LC_ALL": "C", "GIT_OPTIONAL_LOCKS": "0"], timeout: Self.countTimeout),
+                  !out.timedOut, out.status == 0 else { continue }
+            return Int(out.stdout.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        return nil
     }
 
     /// A worktree's folder in the main repository's `.git/worktrees/`, from its `.git` file
