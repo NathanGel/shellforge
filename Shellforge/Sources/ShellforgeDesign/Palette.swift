@@ -157,9 +157,9 @@ public enum Palette {
     /// for the release in Applications. The warning family, declared as an alias of `amber`.
     public static let devBuild = amber
     /// The "DEV" lettering on `devBuild`. White, like everything on a saturated fill: the pill sits
-    /// on the app icon, not on the window, so no appearance-resolving label colour applies. An alias
-    /// of `onAccent`, the one solid white this file writes.
-    public static let devBuildInk = onAccent
+    /// on the app icon, not on the window, so no appearance-resolving label colour applies, and no
+    /// theme's either: an alias of `markPaper`, the white that never changes.
+    public static let devBuildInk = markPaper
 
     // -- on the accent ------------------------------------------------------------------
     /// Ink on the accent: a selected row's title, marks and badges, a primary button's keycaps.
@@ -193,9 +193,10 @@ public enum Palette {
 
     // -- vendor marks -------------------------------------------------------------------
     /// The white of a round vendor mark: the Codex, GitLab and GitHub discs, and the logo on Claude's,
-    /// Jira's, Pi's, Grok's and the shell's. A mark keeps its vendor's colours, not the appearance's;
-    /// the same white as `onAccent`, declared as an alias.
-    public static let markPaper = onAccent
+    /// Jira's, Pi's, Grok's and the shell's. A mark keeps its vendor's colours, not the appearance's
+    /// nor the theme's: white in every theme, where `onAccent` takes the theme's own ink. The same
+    /// white as `onAccent` under the Shellforge theme (`PaletteDistinctionTests` allows it).
+    public static let markPaper = Color.white
     /// The black of a round vendor mark: the Pi, Grok and shell discs.
     public static let markInk = Color.black
 
@@ -248,6 +249,9 @@ public enum Palette {
     /// The sidebar's own background; equal to `surface` but named separately so sidebar styling
     /// reads locally.
     public static let sidebar = surface
+    /// The activity bar and the panels' ground: the theme's sidebar colour, a step off its
+    /// background. Under the Shellforge theme it is `surface`'s colour exactly.
+    public static let chrome = base(.windowBackgroundColor, \.sidebar)
     /// The wash painted behind a sidebar row while the pointer is over it: literal white in dark,
     /// literal black in light. Not `.primary`, whose own alpha (≈0.847) compounds with an opacity.
     /// Under a theme, the theme's hover colour, which is opaque.

@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import os
 import SwiftUI
 
@@ -51,22 +52,58 @@ final class ThemeStore: Sendable {
 }
 
 extension View {
-    /// Redraws this view's content when the theme changes, so every `Palette` colour in it resolves
-    /// again in the new theme. The content is rebuilt, so state inside it starts over.
+    /// Redraws this view's content in the new theme when the theme changes, keeping its identity:
+    /// its state — scroll position, open rows, a half-typed field — survives the change.
     public func themed() -> some View {
-        modifier(ThemedContent())
+        background(ThemeRedraw())
     }
 }
 
-/// `.themed()`: a counter the content takes as its identity, bumped on `ThemeRuntime.didChange`.
-/// SwiftUI keeps a resolved colour until something it depends on changes; a new identity is the
-/// one change that reaches every colour below.
-struct ThemedContent: ViewModifier {
-    @State private var version = 0
+/// `.themed()`'s probe: an AppKit view inside the SwiftUI root that, on `ThemeRuntime.didChange`,
+/// makes the root resolve its colours again.
+struct ThemeRedraw: NSViewRepresentable {
+    func makeNSView(context: Context) -> ThemeRedrawView { ThemeRedrawView() }
+    func updateNSView(_ nsView: ThemeRedrawView, context: Context) {}
+}
 
-    func body(content: Content) -> some View {
-        content
-            .id(version)
-            .onReceive(NotificationCenter.default.publisher(for: ThemeRuntime.didChange)) { _ in version += 1 }
+/// SwiftUI keeps a dynamic colour as it resolved it until the appearance it was drawn in changes:
+/// a new environment value, a fresh body or a redraw all leave it be. So on a theme change this
+/// flips its hosting view to the other appearance, lays it out — SwiftUI resolves every colour
+/// there — and puts the appearance back, when SwiftUI resolves them again in the new theme. All in
+/// one turn of the run loop, so nothing is drawn on screen in the other appearance; the views keep
+/// their identity, so no state is lost.
+final class ThemeRedrawView: NSView {
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: ThemeRuntime.didChange, object: nil)
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: ThemeRuntime.didChange, object: nil)
+    }
+
+    @objc private func themeDidChange(_ notification: Notification) {
+        guard let host = hostingView else { return }
+        let kept = host.appearance
+        let isDark = host.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        host.appearance = NSAppearance(named: isDark ? .aqua : .darkAqua)
+        host.layoutSubtreeIfNeeded()
+        host.appearance = kept
+    }
+
+    /// The SwiftUI root this probe sits in: the nearest ancestor that is an `NSHostingView`, read by
+    /// class name because its generic content type is not known here.
+    private var hostingView: NSView? {
+        var view = superview
+        while let candidate = view {
+            var cls: AnyClass? = type(of: candidate)
+            while let current = cls {
+                if NSStringFromClass(current).contains("NSHostingView") { return candidate }
+                cls = class_getSuperclass(current)
+            }
+            view = candidate.superview
+        }
+        return nil
     }
 }

@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import Testing
+@testable import ShellforgeTestSupport
 @testable import ShellforgeDesign
 
 /// The ten themes, which one applies for a choice, and that every theme reads.
@@ -159,7 +160,7 @@ extension Theme: CustomTestStringConvertible {
         ("badgeSelectedHovered", Palette.badgeSelectedHovered, badgeSelectedHovered),
         ("noticeError", Palette.noticeError, destructive.opacity(0.12)), ("noticeWarning", Palette.noticeWarning, amber.opacity(0.14)),
         ("noticeInfo", Palette.noticeInfo, muted.opacity(0.10)), ("footerCard", Palette.footerCard, footerCard),
-        ("sidebar", Palette.sidebar, surface), ("rowHover", Palette.rowHover, rowHover),
+        ("sidebar", Palette.sidebar, surface), ("chrome", Palette.chrome, surface), ("rowHover", Palette.rowHover, rowHover),
         ("rowHoverSolid", Palette.rowHoverSolid, rowHoverSolid),
         ("statusChipQuietFill", Palette.statusChipQuietFill, muted.opacity(0.14)),
         ("statusChipQuietStroke", Palette.statusChipQuietStroke, muted.opacity(0.30)),
@@ -170,6 +171,9 @@ extension Theme: CustomTestStringConvertible {
         ("selection", Palette.selection, selection), ("idleRing", Palette.idleRing, idleRing),
         ("spinnerTrack", Palette.spinnerTrack, spinnerTrack), ("spinner", Palette.spinner, muted), ("done", Palette.done, accent),
     ]
+
+    /// The vendor marks’ white and black and the DEV pill’s lettering: the same in every theme.
+    static let brandWhiteAndBlack: Set = ["markPaper", "markInk", "devBuildInk"]
 
     /// `ShellforgeTerminalPalette.colors(in:)` as it was before themes came.
     static func terminalColors(in appearance: NSAppearance?) -> [TerminalColorRole: SRGB] {
@@ -224,23 +228,40 @@ extension Theme: CustomTestStringConvertible {
 }
 
 /// How far two resolutions of one colour may differ: a 32-bit float’s rounding, which SwiftUI’s
-/// `opacity` stores an alpha in once the colour behind it is an `NSColor` — a millionth of the
-/// 1⁄255 step a screen can show.
+/// `opacity` stores an alpha in once the colour behind it is an `NSColor` (0.22 resolves to
+/// 0.2199999988) — far below the 1⁄255 step a screen can show. Accepted as “today’s” on review.
 private let floatPrecision: CGFloat = 0.000001
 
 /// The appearances today’s colours are held in: light and dark, each with Increase Contrast.
 private let appearances: [NSAppearance.Name] = [.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua]
 
-/// Counts how often a view appears, so a test can see `.themed()` rebuild its content.
-@MainActor private final class AppearCount {
-    var count = 0
+/// The `@State` text a `StatefulSwatch` drew last.
+@MainActor private final class SeenText {
+    var text: String?
 }
 
-private struct AppearCounter: View {
-    let counter: AppearCount
+/// A surface swatch with state: its text is made once per view identity, so a rebuilt view shows
+/// a new one.
+private struct StatefulSwatch: View {
+    let seen: SeenText
+    @State private var text = UUID().uuidString
+
     var body: some View {
-        Color.clear.frame(width: 10, height: 10).onAppear { counter.count += 1 }
+        seen.text = text
+        return Rectangle().fill(Palette.surface).overlay(Text(text).hidden())
     }
+}
+
+/// The colour at the middle of what `view` draws.
+@MainActor private func centre(of view: NSView) -> SRGB? {
+    guard let bitmap = Snapshot.bitmap(of: view),
+          let pixel = bitmap.colorAt(x: bitmap.pixelsWide / 2, y: bitmap.pixelsHigh / 2)?.usingColorSpace(.sRGB) else { return nil }
+    return SRGB(red: pixel.redComponent, green: pixel.greenComponent, blue: pixel.blueComponent)
+}
+
+/// Within one 8-bit step a channel: a drawn pixel against the colour it was drawn in.
+private func nearly(_ a: SRGB, _ b: SRGB) -> Bool {
+    abs(a.red - b.red) <= 1.5 / 255 && abs(a.green - b.green) <= 1.5 / 255 && abs(a.blue - b.blue) <= 1.5 / 255
 }
 
 /// How many times a store posted, counted wherever it posts from.
@@ -267,7 +288,7 @@ extension ThemeTests {
 
     @MainActor @Test func everyTokenIsHeldToToday() {
         // The frozen list covers every token the manifest in PaletteDistinctionTests names.
-        #expect(Today.tokens.count == 55)
+        #expect(Today.tokens.count == 56)
         #expect(Set(Today.tokens.map(\.name)).count == Today.tokens.count)
     }
 
@@ -296,6 +317,7 @@ extension ThemeTests {
             for name in [NSAppearance.Name.aqua, .darkAqua] {
                 #expect(resolves(Palette.surface, to: colors.background, in: name), "surface in \(name.rawValue)")
                 #expect(resolves(Palette.sidebar, to: colors.background, in: name), "sidebar in \(name.rawValue)")
+                #expect(resolves(Palette.chrome, to: colors.sidebar, in: name), "chrome in \(name.rawValue)")
                 #expect(resolves(Palette.surfaceRaised, to: colors.raised, in: name), "surfaceRaised in \(name.rawValue)")
                 #expect(resolves(Palette.text, to: colors.text, in: name), "text in \(name.rawValue)")
                 #expect(resolves(Palette.muted, to: colors.muted, in: name), "muted in \(name.rawValue)")
@@ -317,7 +339,7 @@ extension ThemeTests {
     @MainActor @Test(arguments: ThemeCatalog.all.filter { $0.colors != nil })
     func aFixedThemeLooksTheSameInLightAndDark(theme: Theme) {
         ThemeRuntime.$override.withValue(theme) {
-            for token in Today.tokens where token.name != "markInk" {
+            for token in Today.tokens where !Today.brandWhiteAndBlack.contains(token.name) {
                 #expect(components(token.live, in: .aqua) == components(token.live, in: .darkAqua), "\(theme.name): \(token.name)")
             }
         }
@@ -341,7 +363,8 @@ extension ThemeTests {
     @MainActor @Test func brandColoursNeverChange() {
         let brands = [Palette.claude, Palette.jira, Palette.gitlab, Palette.vscode, Palette.openai, Palette.grok]
         func resolved() -> [[CGFloat]] {
-            brands.map { components($0.color, in: .darkAqua) } + [components(Palette.markInk, in: .darkAqua)]
+            brands.map { components($0.color, in: .darkAqua) }
+                + [Palette.markInk, Palette.markPaper, Palette.devBuildInk].map { components($0, in: .darkAqua) }
         }
         let shellforge = ThemeRuntime.$override.withValue(ThemeCatalog.shellforge) { resolved() }
         for theme in ThemeCatalog.all {
@@ -379,17 +402,33 @@ extension ThemeTests {
         #expect(ThemeRuntime.$override.withValue(nil) { ThemeRuntime.current } == ThemeRuntime.shared.current)
     }
 
-    @MainActor @Test func themedRebuildsItsContentOnAThemeChange() {
-        let counter = AppearCount()
-        let host = NSHostingView(rootView: AppearCounter(counter: counter).themed())
-        host.frame = NSRect(x: 0, y: 0, width: 20, height: 20)
+    /// A theme change redraws `.themed()` content in the new colours and keeps its state: the
+    /// view’s `@State` text is the one it was made with, not a new one from a rebuilt view.
+    @MainActor @Test func themedKeepsStateWhileTheColourChanges() throws {
+        let seen = SeenText()
+        let host = NSHostingView(rootView: StatefulSwatch(seen: seen).themed())
+        host.frame = NSRect(x: 0, y: 0, width: 40, height: 40)
+        host.appearance = NSAppearance(named: .darkAqua)
         let window = window(hosting: host, orderFront: false)
         defer { window.close() }
-        settle(host)
-        let before = counter.count
-        #expect(before >= 1)
-        NotificationCenter.default.post(name: ThemeRuntime.didChange, object: nil)
-        settle(host)
-        #expect(counter.count > before)
+        let dracula = ThemeCatalog.theme(id: "dracula")
+        let draculaBackground = try #require(dracula.colors).background
+
+        let shellforge = ThemeRuntime.$override.withValue(ThemeCatalog.shellforge) { () -> SRGB? in
+            settle(host)
+            return centre(of: host)
+        }
+        let text = try #require(seen.text)
+        let (beforeChange, afterChange) = ThemeRuntime.$override.withValue(dracula) { () -> (SRGB?, SRGB?) in
+            settle(host)
+            let stale = centre(of: host)
+            NotificationCenter.default.post(name: ThemeRuntime.didChange, object: nil)
+            settle(host)
+            return (stale, centre(of: host))
+        }
+        #expect(beforeChange == shellforge, "without the notice SwiftUI keeps the colour it resolved")
+        #expect(afterChange.map { nearly($0, draculaBackground) } == true, "\(String(describing: afterChange))")
+        #expect(seen.text == text, "the view was rebuilt: its state started over")
+        #expect(host.appearance?.name == .darkAqua, "the appearance is put back")
     }
 }

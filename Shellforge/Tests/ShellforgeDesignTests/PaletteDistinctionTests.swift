@@ -53,6 +53,7 @@ struct PaletteDistinctionTests {
         ("badgeHovered", Palette.badgeHovered),
         ("badgeSelectedHovered", Palette.badgeSelectedHovered),
         ("sidebar", Palette.sidebar),
+        ("chrome", Palette.chrome),
         ("rowHover", Palette.rowHover),
         ("rowHoverSolid", Palette.rowHoverSolid),
         ("footerCard", Palette.footerCard),
@@ -140,10 +141,16 @@ struct PaletteDistinctionTests {
                 "PaletteDistinctionTests.colors lists what Palette does not declare: \(listed.subtracting(declared).sorted())")
     }
 
+    /// Members that equal another under the Shellforge theme on purpose, and part under another
+    /// theme, so they cannot be written as aliases: `chrome` is `surface` until a theme gives its
+    /// sidebar its own colour; `markPaper` is `onAccent`'s white until a theme's ink on its accent is
+    /// dark — a vendor mark stays white in every theme.
+    private static let apartUnderATheme: Set = ["chrome", "markPaper"]
+
     @Test func everyDistinctNameMeansADistinctValue() throws {
         let aliases = try Self.aliases(in: Self.paletteBody())
         var byValue: [String: [String]] = [:]
-        for token in Self.colors where !aliases.contains(token.name) {
+        for token in Self.colors where !aliases.contains(token.name) && !Self.apartUnderATheme.contains(token.name) {
             byValue[ColorProbe.rgba(token.color), default: []].append(token.name)
         }
         let collisions = byValue.filter { $0.value.count > 1 }
