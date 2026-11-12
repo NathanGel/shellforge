@@ -163,17 +163,20 @@ public final class FilesModel: ObservableObject {
         let generation = counter
         let openFolders = expanded(project).filter { !$0.isEmpty }
         let list = self.list, launcher = self.launcher
-        let state = await BackgroundWork.run { () -> FilesSection.State? in
-            let state = Self.state(for: list(path, launcher), path: path, openFolders: openFolders)
-            return state == shown ? nil : state
+        let (state, plainFolder) = await BackgroundWork.run { () -> (FilesSection.State?, Bool) in
+            let listing = list(path, launcher)
+            let state = Self.state(for: listing, path: path, openFolders: openFolders)
+            let plainFolder: Bool
+            if case .folder = listing { plainFolder = true } else { plainFolder = false }
+            return (state == shown ? nil : state, plainFolder)
         }
         guard !Task.isCancelled, epochs[project] == epoch, generation > applied[project, default: 0],
               let index = sections.firstIndex(where: { $0.id == project }) else { return }
         applied[project] = generation
         if let state { sections[index].state = state }
-        // A folder opened while this listing ran was not read with it, and may have lost what its
-        // own load put in: one more refresh reads it.
-        if expanded(project).contains(where: { !$0.isEmpty && !openFolders.contains($0) }) { refreshSoon(project: project) }
+        // A plain folder's folder opened while this listing ran was not read with it, and may have
+        // lost what its own load put in: one more refresh reads it. A repository's tree is whole.
+        if plainFolder, expanded(project).contains(where: { !$0.isEmpty && !openFolders.contains($0) }) { refreshSoon(project: project) }
     }
 
     /// Fills in a folder of a project that is not in a repository, which is listed one level at a

@@ -99,12 +99,26 @@ import Testing
         #expect(submodules == ["lib/sub"], "the listing marks it as a submodule")
     }
 
-    /// Without git (no Command Line Tools) there is no repository to show: the folder is listed.
+    /// Without git on the PATH there is no repository to show: the folder is listed.
     @Test func aGitThatCannotBeLaunchedListsThePlainFolder() throws {
         let folder = try plainFolder()
         try write("README.md", in: folder)
         let noTools = try plainFolder()
         let launcher = CommandLauncher(resolve: { ResolvedEnvironment(variables: ["PATH": noTools], source: .loginShell("/bin/zsh")) })
+        #expect(ProjectFiles.list(folder, launcher: launcher)
+            == .folder([FileNode(name: "README.md", path: "README.md", isFolder: false, children: nil)]))
+    }
+
+    /// macOS's `/usr/bin/git` without the Command Line Tools runs, then xcrun refuses: no repository
+    /// to show, so the folder is listed.
+    @Test func gitWithoutTheCommandLineToolsListsThePlainFolder() throws {
+        let folder = try plainFolder()
+        try write("README.md", in: folder)
+        let stubs = try plainFolder()
+        let stub = stubs + "/git"
+        try write("git", in: stubs, "#!/bin/sh\necho \"\(ProjectFiles.noDeveloperTools) (/Library/Developer/CommandLineTools), missing xcrun at: /Library/Developer/CommandLineTools/usr/bin/xcrun\" >&2\nexit 1\n")
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: stub)
+        let launcher = CommandLauncher(resolve: { ResolvedEnvironment(variables: ["PATH": stubs + ":/bin:/usr/bin"], source: .loginShell("/bin/zsh")) })
         #expect(ProjectFiles.list(folder, launcher: launcher)
             == .folder([FileNode(name: "README.md", path: "README.md", isFolder: false, children: nil)]))
     }

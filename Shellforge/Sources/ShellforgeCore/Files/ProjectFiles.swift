@@ -84,7 +84,8 @@ public enum ProjectFiles {
 
     /// `git -C projectPath args -z`, its NUL-separated entries. git speaks English (`LC_ALL=C`)
     /// so "not a git repository" can be told from every other refusal, which is never hidden. A
-    /// git that cannot be launched at all lists the folder as it is: without git there is no
+    /// git that cannot be launched at all, or macOS's `/usr/bin/git` stub without the Command Line
+    /// Tools (it runs, then xcrun refuses), lists the folder as it is: without git there is no
     /// repository to show.
     private static func git(_ args: [String], in projectPath: String, launcher: CommandLauncher) throws -> [String] {
         let out: ChildOutput
@@ -95,11 +96,16 @@ public enum ProjectFiles {
         }
         if out.timedOut { throw GitListingProblem.failed("git timed out") }
         guard out.status == 0 else {
-            if out.stderr.contains("not a git repository") { throw GitListingProblem.notARepository }
+            if out.stderr.contains("not a git repository") || out.stderr.contains(noDeveloperTools) {
+                throw GitListingProblem.notARepository
+            }
             throw GitListingProblem.failed("git: " + firstLine(out.stderr))
         }
         return out.stdout.split(separator: "\0").map(String.init)
     }
+
+    /// What `/usr/bin/git` says through xcrun when the Command Line Tools are not installed.
+    static let noDeveloperTools = "xcrun: error: invalid active developer path"
 
     private static func firstLine(_ text: String) -> String {
         text.split(separator: "\n").first.map { $0.trimmingCharacters(in: .whitespaces) } ?? text
