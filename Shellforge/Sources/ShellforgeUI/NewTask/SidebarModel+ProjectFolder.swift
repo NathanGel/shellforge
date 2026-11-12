@@ -22,11 +22,13 @@ extension SidebarModel {
     }
 
     private func switchProjectFolder(draft: TaskDraft, branch: String, project: Project, taken: [String]) async throws -> TaskDraft {
-        let busy = tree.projects.first(where: { $0.id == project.id })?.tasks.first(where: {
-            !$0.tabs.isEmpty && ProjectFolderTasks.isProjectFolder($0.task, in: project)
-        })
         let flow = BranchSwitchFlow(prompter: prompter, launcher: launcher)
-        let result = try await flow.switchProject(project, to: branch, busyTask: busy?.task.title,
+        let busy: @MainActor () -> String? = { [self] in
+            tree.projects.first(where: { $0.id == project.id })?.tasks.first(where: {
+                !$0.tabs.isEmpty && ProjectFolderTasks.isProjectFolder($0.task, in: project)
+            })?.task.title
+        }
+        let result = try await flow.switchProject(project, to: branch, busyTask: busy,
                                                   stashLabel: "“\(draft.title)”", offerOtherWorktree: true)
         switch result {
         case .useWorktree(let path):

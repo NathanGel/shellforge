@@ -22,11 +22,11 @@ public struct BranchSwitchFlow {
         self.launcher = launcher
     }
 
-    /// `busyTask` is the title of a task working in the folder now, asked about before anything
-    /// changes. `stashLabel` follows “Shellforge: before” in the stash’s message. With
+    /// `busyTask` gives the title of a task working in the folder, asked about before anything
+    /// changes; it is read just before that question, after any earlier one was answered. `stashLabel` follows “Shellforge: before” in the stash’s message. With
     /// `offerOtherWorktree`, a branch checked out in another worktree offers that worktree;
     /// without, it is only reported.
-    public func switchProject(_ project: Project, to branch: String, busyTask: String?, stashLabel: String,
+    public func switchProject(_ project: Project, to branch: String, busyTask: @MainActor () -> String?, stashLabel: String,
                               offerOtherWorktree: Bool) async throws -> BranchSwitchResult {
         let launcher = self.launcher
         let obstacle = try await BackgroundWork.run { try ProjectFolderSwitch.check(branch, in: project, launcher: launcher) }
@@ -50,8 +50,8 @@ public struct BranchSwitchFlow {
             break
         }
         let create = obstacle == .missing
-        if let busyTask {
-            try await confirm(AlertPrompt(message: "“\(busyTask)” is also working in this folder.",
+        if let busy = busyTask() {
+            try await confirm(AlertPrompt(message: "“\(busy)” is also working in this folder.",
                                           detail: "Switching to \(branch) changes the files under it while it works.",
                                           buttons: ["Switch Anyway", "Cancel"]))
         }

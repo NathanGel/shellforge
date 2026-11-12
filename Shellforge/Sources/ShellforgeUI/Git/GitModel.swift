@@ -390,6 +390,8 @@ public final class GitModel: ObservableObject {
             guard let current = try GitStatus.read(repo, launcher: launcher).unstaged.first(where: { $0.path == change.path }) else {
                 throw GitFailure(message: "\(change.path) has no changes to discard.")
             }
+            // The change is no longer the one the person agreed to throw away: nothing is done.
+            guard GitActions.discardTrashes(current) == GitActions.discardTrashes(change) else { return }
             try GitActions.discard(current, in: repo, launcher: launcher, trash: trash)
         case .commit:
             let status = try GitStatus.read(repo, launcher: launcher)
@@ -406,9 +408,10 @@ public final class GitModel: ObservableObject {
     /// says so. Escape answers Cancel.
     public func confirmDiscard(_ change: GitChange, prompter: Prompter) async -> Bool {
         let name = (change.path as NSString).lastPathComponent
+        let why = change.letter == .untracked ? "It isn’t in git yet" : "It was only marked to be added"
         let prompt = GitActions.discardTrashes(change)
             ? AlertPrompt(message: "Move “\(name)” to the Trash?",
-                          detail: "It isn’t in git yet, so discarding it moves the file to the Trash.",
+                          detail: "\(why), so discarding it moves the file to the Trash.",
                           buttons: ["Move to Trash", "Cancel"], defaultDeletes: true)
             : AlertPrompt(message: "Discard changes to “\(name)”?", detail: "This can’t be undone.",
                           buttons: ["Discard Changes", "Cancel"], defaultDeletes: true)
@@ -416,17 +419,20 @@ public final class GitModel: ObservableObject {
     }
 
     /// Switches a project's folder to `branch`, asking what `flow` asks, after what is queued for
-    /// the repository; then reads it again. `busyTask` is a task working in the folder now. A
+    /// the repository; then reads it again. `busyTask` gives a task working in the folder, read
+    /// just before the flow asks about it. A
     /// Cancel is no problem; any other failure is the section's problem until the next action.
     /// A task's worktree is not switched.
-    public func switchBranch(_ repo: GitRepoID, to branch: String, flow: BranchSwitchFlow, busyTask: String?) async {
+    public func switchBranch(_ repo: GitRepoID, to branch: String, flow: BranchSwitchFlow,
+                             busyTask: @escaping @MainActor () -> String?) async {
         guard case .project = repo, let epoch = epochs[repo] else { return }
         await enqueue(repo) { [weak self] in
             await self?.runSwitch(repo, to: branch, flow: flow, busyTask: busyTask, epoch: epoch)
         }.value
     }
 
-    private func runSwitch(_ id: GitRepoID, to branch: String, flow: BranchSwitchFlow, busyTask: String?, epoch: Int) async {
+    private func runSwitch(_ id: GitRepoID, to branch: String, flow: BranchSwitchFlow,
+                           busyTask: @MainActor () -> String?, epoch: Int) async {
         await busy(id, epoch: epoch) { repo in
             let project = Project(id: repo.projectId, name: repo.title, path: repo.path)
             do {

@@ -81,7 +81,8 @@ import Testing
         #expect(try repo.git("stash", "list").contains("Shellforge: before Fix"))
     }
 
-    @Test func stashMessageNamesTheTask() {
-        #expect(ProjectFolderSwitch.stashMessage(task: "Fix login") == "Shellforge: before “Fix login”")
+    @Test func stashMessageSaysWhatCameNext() {
+        #expect(ProjectFolderSwitch.stashMessage(before: "“Fix login”") == "Shellforge: before “Fix login”")
+        #expect(ProjectFolderSwitch.stashMessage(before: "switching to “main”") == "Shellforge: before switching to “main”")
     }
 }
