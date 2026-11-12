@@ -239,7 +239,6 @@
 #import "NSWorkspace+iTerm.h"
 #import "ProfilePreferencesViewController.h"
 #import "PSMCachedTitle.h"
-#import "PSMMinimalTabStyle.h"
 #import "PSMRolloverButton.h"
 #import "PSMTabBarCell.h"
 #import "PSMTabBarControl.h"

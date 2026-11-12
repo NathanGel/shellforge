@@ -4738,7 +4738,6 @@
 		CDCC2B56B9ECB9B461A9EEFA /* AITabTitleGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45FB9AAD273DCCA975189D9B /* AITabTitleGenerator.swift */; };
 		CE902D9AE7A0A17744578496 /* iTermRecordingProfileSanitizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25F400887FD7A5B23D916AD9 /* iTermRecordingProfileSanitizer.swift */; };
 		CF138846630690AA6A7BCFD5 /* iTermGitClient.m in Sources */ = {isa = PBXBuildFile; fileRef = A687B66925AD6FF600E0A658 /* iTermGitClient.m */; };
-		CF66FF8BAB49A26910E2EF8B /* iTermShellforgeTabLook.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0183D0C8C20663638DACB870 /* iTermShellforgeTabLook.swift */; };
 		D0FFF60F28B20947E4BD8F12 /* TmuxAddress.swift in Sources */ = {isa = PBXBuildFile; fileRef = F30D7F2F2EFCBD6F0ADB7393 /* TmuxAddress.swift */; };
 		D14E96013DD1B056E5D3648A /* KittyDnDViewDragHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B3B7308CA423F151EA51042 /* KittyDnDViewDragHost.swift */; };
 		D2EA0869C83835F0422A576A /* iTermTabTitleFrameFingerprint.m in Sources */ = {isa = PBXBuildFile; fileRef = 492BD49DF191574CBABE660D /* iTermTabTitleFrameFingerprint.m */; };
@@ -5182,7 +5181,6 @@
 		0071478CE7978AC6B38C5DF7 /* iTermWorkgroupSessionMode.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = iTermWorkgroupSessionMode.swift; sourceTree = "<group>"; };
 		00885D5646181ED6CFE9A2DE /* SetTabStatusTrigger.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SetTabStatusTrigger.swift; sourceTree = "<group>"; };
 		011BA2A554383D657736352C /* ClaudeCodeConfigDirResolver.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ClaudeCodeConfigDirResolver.swift; sourceTree = "<group>"; };
-		0183D0C8C20663638DACB870 /* iTermShellforgeTabLook.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = iTermShellforgeTabLook.swift; sourceTree = "<group>"; };
 		01B39A6571770B2627411423 /* iTermTabGroupBuiltInFunctions.h */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.h; path = iTermTabGroupBuiltInFunctions.h; sourceTree = "<group>"; };
 		0211A7DD1809A7F1194B6870 /* mul */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; name = mul; path = mul.lproj/SSHConfigurationWindow.xcstrings; sourceTree = "<group>"; };
 		02709B4528F17F4F1F61E95C /* CompanionAppNapBlocker.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CompanionAppNapBlocker.swift; sourceTree = "<group>"; };
@@ -13405,7 +13403,6 @@
 				AC78706E0C4963FB0DC6BA1F /* iTermShellforgeErrorLog.swift */,
 				86AA31A95B769FFFF036E8BF /* iTermShellforgeWarningPrompter.swift */,
 				6D732DC8E69579698406AFEE /* iTermShellforgeThemes.swift */,
-				0183D0C8C20663638DACB870 /* iTermShellforgeTabLook.swift */,
 			);
 			path = TerminalView;
 			sourceTree = "<group>";
@@ -20550,7 +20547,6 @@
 				A6FC02ED2BA42F69E884B1C6 /* iTermShellforgeErrorLog.swift in Sources */,
 				F7537E2AAA3868E07F3018AF /* iTermShellforgeWarningPrompter.swift in Sources */,
 				9DC07DAF0C01881ECAA96155 /* iTermShellforgeThemes.swift in Sources */,
-				CF66FF8BAB49A26910E2EF8B /* iTermShellforgeTabLook.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

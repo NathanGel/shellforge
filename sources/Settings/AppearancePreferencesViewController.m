@@ -16,10 +16,11 @@
 #import "iTermWarning.h"
 #import "PreferencePanel.h"
 
-// Shellforge: the one member of the tab look (iTermShellforgeTabLook.swift) this pane reads. Not the
-// whole Swift header, whose `state` methods make `[sender state]` ambiguous here.
-@interface iTermShellforgeTabLook : NSObject
+// Shellforge: the two members of the terminal match (iTermShellforgeTerminalMatch.swift) this pane
+// reads. Not the whole Swift header, whose `state` methods make `[sender state]` ambiguous here.
+@interface iTermShellforgeTerminalMatch : NSObject
 @property (class, nonatomic, readonly) BOOL overridesTheme;
+@property (class, nonatomic, readonly) NSNotificationName didChangeNotification;
 @end
 
 NSString *const iTermProcessTypeDidChangeNotification = @"iTermProcessTypeDidChangeNotification";
@@ -162,9 +163,13 @@ NSString *const iTermProcessTypeDidChangeNotification = @"iTermProcessTypeDidCha
         return [weakSelf unsignedIntegerForKey:kPreferenceKeyTabStyle] == TAB_STYLE_AUTOMATIC;
     };
     [self updateNonDefaultIndicatorVisibleForInfo:info];
-    // Shellforge: terminal tabs always use the Minimal theme, so this control has no effect; it says why.
-    info.shouldBeEnabled = ^BOOL{ return ![iTermShellforgeTabLook overridesTheme]; };
-    _tabStyle.toolTip = [iTermShellforgeTabLook overridesTheme] ? @"Shellforge’s terminal tabs always use the Minimal theme." : nil;
+    // Shellforge: while the terminal match is on, the theme is Minimal and this control has no effect.
+    info.shouldBeEnabled = ^BOOL{ return ![iTermShellforgeTerminalMatch overridesTheme]; };
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(shellforgeTerminalMatchDidChange:)
+                                                 name:iTermShellforgeTerminalMatch.didChangeNotification
+                                               object:nil];
+    [self shellforgeTerminalMatchDidChange:nil];
 
     info = [self defineControl:_sideMargins
                            key:kPreferenceKeySideMargins
@@ -553,6 +558,12 @@ NSString *const iTermProcessTypeDidChangeNotification = @"iTermProcessTypeDidCha
 
 - (CGFloat)minimumWidth {
     return 374;
+}
+
+// Shellforge: the Theme control follows the terminal match, and says why when it is greyed.
+- (void)shellforgeTerminalMatchDidChange:(NSNotification *)notification {
+    [self updateEnabledState];
+    _tabStyle.toolTip = [iTermShellforgeTerminalMatch overridesTheme] ? @"Shellforge’s terminal match uses the Minimal theme." : nil;
 }
 
 @end

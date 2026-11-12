@@ -82,8 +82,19 @@ final class ShellforgeTerminalMatchTest: XCTestCase {
         try assertSame(background(session), iTermShellforgeTerminalMatch.paletteColor(forKey: KEY_BACKGROUND_COLOR), "separate colours")
     }
 
-    nonisolated func testIsOnAnswersOffTheMainThread() async {
-        let answer = await Task.detached { iTermShellforgeTerminalMatch.isOn }.value
+    func testTheThemeIsMinimalOnlyWhileOn() {
+        let saved = iTermPreferences.int(forKey: kPreferenceKeyTabStyle)
+        let stored = iTermUserDefaults.userDefaults().object(forKey: kPreferenceKeyTabStyle) as? NSNumber
+        iTermShellforgeTerminalMatch.setOn(true)
+        XCTAssertEqual(iTermPreferences.int(forKey: kPreferenceKeyTabStyle), Int32(iTermPreferencesTabStyle.TAB_STYLE_MINIMAL.rawValue))
+        XCTAssertEqual(iTermUserDefaults.userDefaults().object(forKey: kPreferenceKeyTabStyle) as? NSNumber, stored,
+                       "the saved theme is not written")
+        iTermShellforgeTerminalMatch.setOn(false)
+        XCTAssertEqual(iTermPreferences.int(forKey: kPreferenceKeyTabStyle), saved)
+    }
+
+    nonisolated func testOverridesThemeAnswersOffTheMainThread() async {
+        let answer = await Task.detached { iTermShellforgeTerminalMatch.overridesTheme }.value
         XCTAssertFalse(answer)
     }
 
@@ -92,6 +103,10 @@ final class ShellforgeTerminalMatchTest: XCTestCase {
         let session = try XCTUnwrap(fixture.terminal.currentSession())
         iTermShellforgeTerminalMatch.setOn(true)
         XCTAssertEqual(session.view?.appearance?.name, .darkAqua, "Minimal: the session view takes the dark palette's appearance")
+        iTermShellforgeTerminalMatch.setOn(false)
+        if iTermPreferences.int(forKey: kPreferenceKeyTabStyle) != Int32(iTermPreferencesTabStyle.TAB_STYLE_MINIMAL.rawValue) {
+            XCTAssertNil(session.view?.appearance, "the user's theme again")
+        }
     }
 
     /// Review fix: iTerm2's own theme listeners (the status bar, the Colors pane, the effectiveTheme

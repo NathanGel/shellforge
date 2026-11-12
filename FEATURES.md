@@ -35,7 +35,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 
 - **Where it is.** Every terminal window has a sidebar on its left. It follows the window's appearance: light or dark, as macOS or iTerm2's Appearance setting has it. iTerm2's tab bar is hidden in these windows, because the sidebar lists the tabs instead.
 - **On macOS 26 and later** the sidebar floats: a rounded glass panel 10 pt inside the window and 10 pt from the terminal (in full screen too), on the terminal's own colour, with the window buttons in its top corner; their row is left to them, and the Projects header sits below it, beside the activity bar. The window's title sits over the terminal on the same row. Earlier macOS versions keep the full-height sidebar.
-  - The window keeps its own title bar and buttons under the VS Code tab look and with Match Terminal on; only the colours change.
+  - With Match Terminal on, the window keeps its own title bar and buttons; only the colours change.
   - The sidebar button sits just after the window buttons and stays there open or closed. In full screen it has its own row at the top of the panel, above Projects; with the sidebar closed, a slim bar in the terminal's colour keeps the button in the same place; click it to open the sidebar, or move the pointer to the screen's left edge and it slides in over the terminal, and away again when you leave it.
 - **Hide and show.** Use ⌃⌘S, View › Hide Sidebar / Show Sidebar, or the sidebar button.
   - On macOS 26 the button sits just after the window buttons, as above.
@@ -87,11 +87,10 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 ## Themes
 
 - **The themes.** Shellforge, Dark Modern, Light Modern, One Dark, Dracula, GitHub Dark, GitHub Light, Solarized Dark, Solarized Light and Nord, each from its published palette. Shellforge is light or dark with the Mac and looks as Shellforge always has; every other theme is either light or dark.
-- **What a theme colours.** Everything Shellforge draws: the activity bar, the panels, the sheets (Settings, New Task, Tunnels, Backpack Mode and the rest), the metrics strip and the terminal tab strip. Its accent takes the place of the Mac's accent colour in Shellforge, focus rings included. Brand marks, such as Claude's or GitHub's, keep their own colours.
+- **What a theme colours.** Everything Shellforge draws: the sidebar, the activity bar, the panels, the sheets (Settings, New Task, Tunnels, Backpack Mode and the rest) and the metrics strip. Its accent takes the place of the Mac's accent colour in Shellforge, focus rings and Settings' switches included. Brand marks, such as Claude's or GitHub's, keep their own colours. The terminal keeps its profile's colours unless Match Terminal is on.
 - **Choosing one.** In Settings › Core › Theme (on Save), or from the gear menu (at once).
 - **Follow Mac Appearance.** On by default. While on, you pick a Light theme and a Dark theme, and Shellforge takes the one for the Mac's current appearance, switching when the Mac does. While off, you pick one theme, and a light or dark theme holds Shellforge to its appearance whatever the Mac's; the Shellforge theme still follows the Mac.
 - **Match Terminal.** Off by default. While on, every terminal, including tabs opened later, takes the theme's terminal colours: background, text, cursor, selection and the 16 colours. See [Terminal](#settings-and-connections) for the details. Your profiles are not changed, and switching it off brings their colours back.
-- **Terminal tabs** always use the VS Code look: iTerm2's Minimal theme, with a 2 pt accent line along the top of the active tab and the tab strip in the theme's colours. Under the Shellforge theme without Match Terminal, the strip keeps Minimal's own colours, taken from the terminal's background. The accent line is the theme's accent, the Mac's under Shellforge.
 
 ## Projects
 
@@ -409,7 +408,7 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
 - **Theme.** Settings › Core › Theme has Follow Mac Appearance, then the Light and Dark pickers (or one Theme picker while it is off), then Match Terminal. They take effect on Save. See [Themes](#themes).
 - **Terminal.** Settings › Core › Theme › Match Terminal, a switch, off by default, takes effect on Save.
   - Every terminal, including tabs opened later, uses the theme's colours. Under the Shellforge theme they are Shellforge's own: a background one step off the sidebar (darker in dark mode, lighter in light mode), the sidebar's text and selection colours, the macOS accent colour for the cursor, and macOS's system colours for the 16 terminal colours, each readable on the background. Under another theme, its published terminal colours.
-  - iTerm2 always uses its Minimal theme (see [Themes](#themes)), so the title bar and window edges match. Settings › Appearance's Theme is greyed out.
+  - iTerm2 uses its Minimal theme, so the title bar and window edges match. Settings › Appearance's Theme is greyed out while it is on.
   - Your profiles and your theme setting are not changed. Switching it off brings the profiles' colours back at once.
   - A colour set for one tab (Edit Session, the Python API) still wins.
   - In light mode the match uses a light palette, and it switches when the appearance does.

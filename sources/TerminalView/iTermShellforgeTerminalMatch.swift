@@ -3,8 +3,8 @@
 //  Shellforge
 //
 //  Settings › Core › Theme's Match Terminal, for iTerm2's own code: Shellforge's colours laid over the
-//  profile a session loads its colours from, while it is on. The profiles are never written. (The
-//  Minimal theme it once brought is always on now: iTermShellforgeTabLook.swift.)
+//  profile a session loads its colours from, and iTerm2's Minimal theme, while it is on. Neither
+//  the profiles nor the theme setting are ever written.
 //
 
 import AppKit
@@ -49,9 +49,12 @@ final class iTermShellforgeTerminalMatch: NSObject {
     /// change from light to dark does nothing.
     private static var appearanceWasDark: Bool?
 
-    /// Whether the match is on. Asked from the tab look as it draws and on a theme change, so it
-    /// reads the saved value straight from defaults rather than making the main-actor `settings`.
-    @objc nonisolated static var isOn: Bool {
+    /// Posted after every session has been recoloured: Settings › Appearance greys its Theme control.
+    @objc static let didChangeNotification = NSNotification.Name("iTermShellforgeTerminalMatchDidChange")
+
+    /// Whether iTerm2's theme reads as Minimal. Asked from `computedTabStyle`, on any thread, so it
+    /// reads the saved value straight from defaults rather than the main-actor `settings`.
+    @objc nonisolated static var overridesTheme: Bool {
         iTermUserDefaults.userDefaults().bool(forKey: TerminalMatchSettings.defaultsKey)
     }
 
@@ -114,5 +117,6 @@ final class iTermShellforgeTerminalMatch: NSObject {
         // variable — hear a theme change as this notification; the setting itself is not written.
         iTermPreferenceDidChangeNotification(key: kPreferenceKeyTabStyle,
                                              value: iTermPreferences.object(forKey: kPreferenceKeyTabStyle)).post()
+        NotificationCenter.default.post(name: didChangeNotification, object: nil)
     }
 }

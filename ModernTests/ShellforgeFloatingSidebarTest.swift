@@ -124,12 +124,12 @@ final class ShellforgeFloatingSidebarTest: XCTestCase {
                       "column \(String(describing: column.color)), terminal \(String(describing: session.processedBackgroundColor))")
     }
 
-    /// The tab look's Minimal theme, which is always on, keeps a floating window normal.
-    func testTheTabLookKeepsAWindowNormal() throws {
+    func testTheColourMatchKeepsAWindowNormal() throws {
         try XCTSkipUnless(iTermShellforgeSidebar.floats)
         let saved = iTermUserDefaults.userDefaults().object(forKey: kPreferenceKeyTabStyle)
-        defer { iTermUserDefaults.userDefaults().set(saved, forKey: kPreferenceKeyTabStyle) }
+        defer { iTermUserDefaults.userDefaults().set(saved, forKey: kPreferenceKeyTabStyle); iTermShellforgeTerminalMatch.setOn(false) }
         iTermUserDefaults.userDefaults().set(Int(iTermPreferencesTabStyle.TAB_STYLE_AUTOMATIC.rawValue), forKey: kPreferenceKeyTabStyle)
+        iTermShellforgeTerminalMatch.setOn(true)
         XCTAssertEqual(iTermThemedWindowType(.WINDOW_TYPE_NORMAL), .WINDOW_TYPE_NORMAL)
         XCTAssertEqual(iTermThemedWindowType(.WINDOW_TYPE_MAXIMIZED), .WINDOW_TYPE_MAXIMIZED)
         // Minimal of the user's own choosing stays iTerm2's compact window.

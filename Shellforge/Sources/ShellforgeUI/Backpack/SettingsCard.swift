@@ -123,7 +123,8 @@ struct SettingsSwitch: View {
     let isOn: Binding<Bool>
 
     var body: some View {
-        Toggle(title, isOn: isOn).labelsHidden().toggleStyle(.switch).controlSize(.small)
+        // The theme's accent when on, as every other control Shellforge draws takes it.
+        Toggle(title, isOn: isOn).labelsHidden().toggleStyle(.switch).controlSize(.small).tint(Palette.accent)
     }
 }
 

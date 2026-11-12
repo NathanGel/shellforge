@@ -117,11 +117,11 @@ iTermWindowType iTermUnthemedWindowType(iTermWindowType windowType) {
 }
 
 // NOTE: If you change this also update iTermUnthemedWindowType
-// Shellforge: the theme that decides whether a window is compact. The tab look borrows Minimal's
-// colours, but a compact window has no title bar of its own, so beside a floating sidebar it would
-// lose the panel's buttons and title strip: the window takes the user's own theme instead.
+// Shellforge: the theme that decides whether a window is compact. The terminal match borrows
+// Minimal's colours, but a compact window has no title bar of its own, so beside a floating sidebar
+// it would lose the panel's buttons and title strip: the window takes the user's own theme instead.
 static iTermPreferencesTabStyle iTermWindowTypeTabStyle(void) {
-    if ([iTermShellforgeTabLook overridesTheme] && [iTermShellforgeSidebar floats]) {
+    if ([iTermShellforgeTerminalMatch overridesTheme] && [iTermShellforgeSidebar floats]) {
         NSNumber *saved = [[iTermUserDefaults userDefaults] objectForKey:kPreferenceKeyTabStyle];
         return saved ? (iTermPreferencesTabStyle)saved.intValue : TAB_STYLE_AUTOMATIC;
     }

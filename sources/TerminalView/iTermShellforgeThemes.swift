@@ -34,11 +34,9 @@ final class iTermShellforgeThemes: NSObject {
     /// Whether the app's appearance is the one a single theme holds it to.
     private static var holdsAppearance = false
 
-    /// At launch: applies the saved choice, then follows the app's appearance; the tab strips
-    /// follow the theme from here on.
+    /// At launch: applies the saved choice, then follows the app's appearance.
     @objc static func start() {
         guard appearanceObservation == nil else { return }
-        iTermShellforgeTabLook.start()
         apply()
         // Applied on the next turn of the main queue, not inside the KVO callback: applying sets the
         // app's appearance and recolours, and `setAppearance:` re-entered from such a chain has
