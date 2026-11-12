@@ -26,6 +26,15 @@ public enum GitActions {
         try unstage([change.originalPath, change.path].compactMap { $0 }, in: repo, launcher: launcher)
     }
 
+    /// Whether discarding the unstaged `change` moves its file to the Trash rather than restoring it.
+    public static func discardTrashes(_ change: GitChange) -> Bool {
+        isIntentToAdd(change) || change.letter == .untracked
+    }
+
+    private static func isIntentToAdd(_ change: GitChange) -> Bool {
+        [.added, .renamed, .copied].contains(change.letter)
+    }
+
     /// Throws away an unstaged `change`. A tracked file goes back to the index. An untracked file,
     /// and an intent-to-add one (`git add -N`: shown as an unstaged add, or a worktree rename, whose
     /// index blob is empty, so restoring would blank it), is moved to the Trash. Never for a conflict.
@@ -34,11 +43,10 @@ public enum GitActions {
         guard change.letter != .conflicted else {
             throw GitFailure(message: "Resolve this file’s conflict instead of discarding it.")
         }
-        let intentToAdd = [.added, .renamed, .copied].contains(change.letter)
-        if intentToAdd {
+        if isIntentToAdd(change) {
             try run(["rm", "--cached", "-q", "--", change.path], in: repo, action: "discard", launcher: launcher)
         }
-        if intentToAdd || change.letter == .untracked {
+        if discardTrashes(change) {
             let url = URL(fileURLWithPath: repo).appendingPathComponent(change.path)
             do {
                 try trash(url)

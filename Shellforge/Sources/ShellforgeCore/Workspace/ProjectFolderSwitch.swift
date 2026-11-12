@@ -54,5 +54,8 @@ public enum ProjectFolderSwitch {
         }
     }
 
-    public static func stashMessage(task: String) -> String { "Shellforge: before “\(task)”" }
+    public static func stashMessage(task: String) -> String { stashMessage(before: "“\(task)”") }
+
+    /// The stash's message, with `label` saying what came next: “switching to “main””.
+    public static func stashMessage(before label: String) -> String { "Shellforge: before \(label)" }
 }

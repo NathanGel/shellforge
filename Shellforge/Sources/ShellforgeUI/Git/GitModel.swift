@@ -51,6 +51,8 @@ public final class GitModel: ObservableObject {
 
     typealias Read = @Sendable (_ path: String, _ launcher: CommandLauncher) throws -> GitStatus
     typealias Act = @Sendable (_ action: GitAction, _ repo: String, _ message: String, _ launcher: CommandLauncher) throws -> Void
+    /// Moves a file to the Trash: what discarding an untracked file does.
+    public typealias Trash = @Sendable (URL) throws -> Void
 
     private struct Repo {
         var title: String
@@ -99,10 +101,13 @@ public final class GitModel: ObservableObject {
     /// Told each time an operation is queued. For tests.
     var enqueued: ((GitRepoID) -> Void)?
 
+    /// `trash` is for tests, which must not fill the real Trash.
     public convenience init(projects: [Project], tasks: [TaskItem], launcher: CommandLauncher,
-                            watcher: @escaping (String) -> FolderWatching) {
+                            watcher: @escaping (String) -> FolderWatching,
+                            trash: @escaping Trash = { try FileManager.default.trashItem(at: $0, resultingItemURL: nil) }) {
         self.init(projects: projects, tasks: tasks, launcher: launcher, watcher: watcher,
-                  read: { try GitStatus.read($0, launcher: $1) }, act: { try GitModel.run($0, in: $1, message: $2, launcher: $3) })
+                  read: { try GitStatus.read($0, launcher: $1) },
+                  act: { try GitModel.run($0, in: $1, message: $2, launcher: $3, trash: trash) })
     }
 
     /// `read` and `act` are for tests that must count reads or hold an action.
@@ -326,41 +331,53 @@ public final class GitModel: ObservableObject {
     }
 
     private func run(_ action: GitAction, in id: GitRepoID, epoch: Int) async {
+        let message = drafts[id] ?? ""
+        let act = self.act, launcher = self.launcher
+        await busy(id, epoch: epoch, work: { repo in
+            let path = repo.path
+            return await BackgroundWork.run { () -> String? in
+                do {
+                    try act(action, path, message, launcher)
+                    return nil
+                } catch {
+                    return Self.problem(error)
+                }
+            }
+        }, done: { [weak self] problem in
+            // A message typed while the commit ran is kept.
+            guard let self, action == .commit, problem == nil, self.drafts[id] == message, !message.isEmpty else { return }
+            self.objectWillChange.send()
+            self.drafts[id] = nil
+        })
+    }
+
+    /// Marks the repository busy, does `work`, which returns its problem, then reads the
+    /// repository again: busy until that read shows the outcome. `done` sees the problem first.
+    private func busy(_ id: GitRepoID, epoch: Int, work: (Repo) async -> String?, done: (String?) -> Void = { _ in }) async {
         guard epochs[id] == epoch, let repo = repos[id] else { return }
         repos[id]?.busy = true
         repos[id]?.actionProblem = nil
         repos[id]?.readProblem = nil
         publish()
-        let message = drafts[id] ?? ""
-        let act = self.act, launcher = self.launcher, path = repo.path
-        let problem = await BackgroundWork.run { () -> String? in
-            do {
-                try act(action, path, message, launcher)
-                return nil
-            } catch let failure as GitFailure {
-                return failure.message
-            } catch {
-                return "git: \(error.localizedDescription)"
-            }
-        }
+        let problem = await work(repo)
         guard epochs[id] == epoch, repos[id] != nil else { return }
         repos[id]?.actionProblem = problem
-        // A message typed while the commit ran is kept.
-        if action == .commit, problem == nil, drafts[id] == message, !message.isEmpty {
-            objectWillChange.send()
-            drafts[id] = nil
-        }
+        done(problem)
         publish()
-        // Busy until the read after the action shows its outcome.
         await load(id, epoch: epoch)
         guard epochs[id] == epoch, repos[id] != nil else { return }
         repos[id]?.busy = false
         publish()
     }
 
+    private nonisolated static func problem(_ error: Error) -> String {
+        (error as? GitFailure)?.message ?? "git: \(error.localizedDescription)"
+    }
+
     /// What `act` does outside tests. Discard and unstage work from the repository as it is now:
     /// discard takes only an unstaged change, and unstaging a rename takes its old path too.
-    nonisolated static func run(_ action: GitAction, in repo: String, message: String, launcher: CommandLauncher) throws {
+    nonisolated static func run(_ action: GitAction, in repo: String, message: String, launcher: CommandLauncher,
+                                trash: Trash = { try FileManager.default.trashItem(at: $0, resultingItemURL: nil) }) throws {
         switch action {
         case .stage(let paths):
             try GitActions.stage(paths, in: repo, launcher: launcher)
@@ -373,7 +390,7 @@ public final class GitModel: ObservableObject {
             guard let current = try GitStatus.read(repo, launcher: launcher).unstaged.first(where: { $0.path == change.path }) else {
                 throw GitFailure(message: "\(change.path) has no changes to discard.")
             }
-            try GitActions.discard(current, in: repo, launcher: launcher)
+            try GitActions.discard(current, in: repo, launcher: launcher, trash: trash)
         case .commit:
             let status = try GitStatus.read(repo, launcher: launcher)
             try GitActions.commit(message: message, in: repo, status: status, launcher: launcher)
@@ -382,6 +399,45 @@ public final class GitModel: ObservableObject {
             try GitActions.push(in: repo, status: status, launcher: launcher)
         case .pull:
             try GitActions.pull(in: repo, launcher: launcher)
+        }
+    }
+
+    /// Asks before `change` is thrown away. An untracked file goes to the Trash, and the question
+    /// says so. Escape answers Cancel.
+    public func confirmDiscard(_ change: GitChange, prompter: Prompter) async -> Bool {
+        let name = (change.path as NSString).lastPathComponent
+        let prompt = GitActions.discardTrashes(change)
+            ? AlertPrompt(message: "Move “\(name)” to the Trash?",
+                          detail: "It isn’t in git yet, so discarding it moves the file to the Trash.",
+                          buttons: ["Move to Trash", "Cancel"], defaultDeletes: true)
+            : AlertPrompt(message: "Discard changes to “\(name)”?", detail: "This can’t be undone.",
+                          buttons: ["Discard Changes", "Cancel"], defaultDeletes: true)
+        return await prompter.ask(prompt).confirmed
+    }
+
+    /// Switches a project's folder to `branch`, asking what `flow` asks, after what is queued for
+    /// the repository; then reads it again. `busyTask` is a task working in the folder now. A
+    /// Cancel is no problem; any other failure is the section's problem until the next action.
+    /// A task's worktree is not switched.
+    public func switchBranch(_ repo: GitRepoID, to branch: String, flow: BranchSwitchFlow, busyTask: String?) async {
+        guard case .project = repo, let epoch = epochs[repo] else { return }
+        await enqueue(repo) { [weak self] in
+            await self?.runSwitch(repo, to: branch, flow: flow, busyTask: busyTask, epoch: epoch)
+        }.value
+    }
+
+    private func runSwitch(_ id: GitRepoID, to branch: String, flow: BranchSwitchFlow, busyTask: String?, epoch: Int) async {
+        await busy(id, epoch: epoch) { repo in
+            let project = Project(id: repo.projectId, name: repo.title, path: repo.path)
+            do {
+                _ = try await flow.switchProject(project, to: branch, busyTask: busyTask,
+                                                 stashLabel: "switching to “\(branch)”", offerOtherWorktree: false)
+                return nil
+            } catch is CreationDeclined {
+                return nil
+            } catch {
+                return Self.problem(error)
+            }
         }
     }
 
