@@ -85,6 +85,164 @@ final class GitActionsTests: XCTestCase {
         XCTAssertFalse(try status(repo).hasChanges)
     }
 
+    private func discard(_ change: GitChange, _ repo: GitRepoFixture) throws -> [URL] {
+        var trashed: [URL] = []
+        try GitActions.discard(change, in: repo.path, launcher: repo.launcher) { trashed.append($0) }
+        return trashed
+    }
+
+    private func unstaged(_ repo: GitRepoFixture) throws -> GitChange { try XCTUnwrap(try status(repo).unstaged.first) }
+
+    func testDiscardingAnIntentToAddFileKeepsItInTheTrashNotBlanked() throws {
+        let repo = try GitRepoFixture()
+        try write("n.md", "precious\n", in: repo)
+        try repo.git("add", "-N", "n.md")
+        let trashed = try discard(try unstaged(repo), repo)
+        XCTAssertEqual(trashed.map(\.lastPathComponent), ["n.md"])
+        XCTAssertEqual(try String(contentsOfFile: "\(repo.path)/n.md", encoding: .utf8), "precious\n")
+        // The fake trash left the file, so it now shows as untracked: not in the index.
+        XCTAssertEqual(try status(repo).unstaged.map(\.letter), [.untracked])
+        XCTAssertEqual(try repo.git("ls-files"), "")
+    }
+
+    func testDiscardingAnIntentToAddRenameTrashesTheNewNameAndRestoresTheOld() throws {
+        let repo = try GitRepoFixture()
+        try tracked(repo, "old.md")
+        try repo.git("mv", "old.md", "new.md")
+        try repo.git("reset", "-q")
+        try repo.git("add", "-N", "new.md")
+        let change = try unstaged(repo)
+        XCTAssertEqual(change.letter, .renamed)
+        let trashed = try discard(change, repo)
+        XCTAssertEqual(trashed.map(\.lastPathComponent), ["new.md"])
+        XCTAssertEqual(try String(contentsOfFile: "\(repo.path)/old.md", encoding: .utf8), "x\n")
+    }
+
+    func testDiscardingARenamedThenEditedFileRestoresTheNewPathOnly() throws {
+        let repo = try GitRepoFixture()
+        try tracked(repo, "old.md")
+        try repo.git("mv", "old.md", "new.md")
+        try write("new.md", "edited\n", in: repo)
+        let change = try unstaged(repo)
+        XCTAssertEqual(change.originalPath, "old.md")
+        _ = try discard(change, repo)
+        XCTAssertEqual(try String(contentsOfFile: "\(repo.path)/new.md", encoding: .utf8), "x\n")
+        XCTAssertEqual(try status(repo).staged.first?.letter, .renamed)
+    }
+
+    func testDiscardRestoresADeletedFile() throws {
+        let repo = try GitRepoFixture()
+        try tracked(repo, "src/app.ts")
+        try FileManager.default.removeItem(atPath: "\(repo.path)/src/app.ts")
+        _ = try discard(try unstaged(repo), repo)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(repo.path)/src/app.ts"))
+    }
+
+    func testDiscardRestoresATypeChange() throws {
+        let repo = try GitRepoFixture()
+        try tracked(repo, "src/app.ts")
+        try FileManager.default.removeItem(atPath: "\(repo.path)/src/app.ts")
+        try FileManager.default.createSymbolicLink(atPath: "\(repo.path)/src/app.ts", withDestinationPath: "README.md")
+        let change = try unstaged(repo)
+        XCTAssertEqual(change.letter, .typeChanged)
+        _ = try discard(change, repo)
+        XCTAssertEqual(try String(contentsOfFile: "\(repo.path)/src/app.ts", encoding: .utf8), "x\n")
+    }
+
+    func testDiscardKeepsTheStagedPartOfAFile() throws {
+        let repo = try GitRepoFixture()
+        try tracked(repo, "src/app.ts")
+        try write("src/app.ts", "staged\n", in: repo)
+        try repo.git("add", "src/app.ts")
+        try write("src/app.ts", "worktree\n", in: repo)
+        _ = try discard(try unstaged(repo), repo)
+        XCTAssertEqual(try String(contentsOfFile: "\(repo.path)/src/app.ts", encoding: .utf8), "staged\n")
+        XCTAssertEqual(try status(repo).staged.map(\.path), ["src/app.ts"])
+    }
+
+    func testDiscardRefusesAConflict() throws {
+        let repo = try GitRepoFixture()
+        var trashed: [URL] = []
+        let message = failure {
+            try GitActions.discard(GitChange(path: "src/app.ts", letter: .conflicted), in: repo.path, launcher: repo.launcher) { trashed.append($0) }
+        }
+        XCTAssertNotNil(message)
+        XCTAssertTrue(trashed.isEmpty)
+    }
+
+    func testDiscardingAnUntrackedFileTrashesIt() throws {
+        let repo = try GitRepoFixture()
+        try write("README.md", in: repo)
+        let trashed = try discard(try unstaged(repo), repo)
+        XCTAssertEqual(trashed.map(\.lastPathComponent), ["README.md"])
+    }
+
+    func testUnstagingARenameTakesBothPaths() throws {
+        let repo = try GitRepoFixture()
+        try tracked(repo, "old.md")
+        try repo.git("mv", "old.md", "new.md")
+        let change = try XCTUnwrap(try status(repo).staged.first)
+        try GitActions.unstage(change, in: repo.path, launcher: repo.launcher)
+        let s = try status(repo)
+        XCTAssertTrue(s.staged.isEmpty)
+        XCTAssertEqual(Set(s.unstaged.map(\.path)), ["old.md", "new.md"])
+    }
+
+    func testUnstagingAnEditedAddedFileOnAnUnbornBranch() throws {
+        let seed = try GitRepoFixture()
+        let root = URL(fileURLWithPath: seed.path).deletingLastPathComponent().appendingPathComponent("fresh2").path
+        try seed.git(["init", "-q", "-b", "main", root], in: seed.path)
+        try "a\n".write(toFile: "\(root)/README.md", atomically: true, encoding: .utf8)
+        try seed.git(["add", "README.md"], in: root)
+        try "b\n".write(toFile: "\(root)/README.md", atomically: true, encoding: .utf8)
+        try GitActions.unstage(["README.md"], in: root, launcher: seed.launcher)
+        XCTAssertTrue(try GitStatus.read(root, launcher: seed.launcher).staged.isEmpty)
+    }
+
+    func testSmartCommitLeavesTaskWorktreesOut() throws {
+        let repo = try GitRepoFixture()
+        try repo.git("worktree", "add", "-q", ".worktrees/abc", "-b", "abc")
+        try write("README.md", in: repo)
+        try GitActions.commit(message: "docs", in: repo.path, status: try status(repo), launcher: repo.launcher)
+        XCTAssertEqual(try repo.git("ls-files", ".worktrees"), "")
+        XCTAssertEqual(try repo.git("show", "--name-only", "--format=", "HEAD"), "README.md")
+    }
+
+    func testAFailedSmartCommitPutsTheIndexBack() throws {
+        let repo = try GitRepoFixture()
+        let hook = "\(repo.path)/.git/hooks/commit-msg"
+        try "#!/bin/sh\nexit 1\n".write(toFile: hook, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: hook)
+        try write("README.md", in: repo)
+        XCTAssertNotNil(failure { try GitActions.commit(message: "docs", in: repo.path, status: try status(repo), launcher: repo.launcher) })
+        let s = try status(repo)
+        XCTAssertTrue(s.staged.isEmpty)
+        XCTAssertEqual(s.unstaged.map(\.path), ["README.md"])
+    }
+
+    func testPushNeedsABranch() throws {
+        let repo = try GitRepoFixture()
+        for head in [GitStatus.Head.detached(sha: "abc1234"), .unborn("main")] {
+            var s = try status(repo)
+            s.head = head
+            XCTAssertEqual(failure { try GitActions.push(in: repo.path, status: s, launcher: repo.launcher) },
+                           "Commit on a branch before pushing.")
+        }
+    }
+
+    func testPlainWordsForPushRefusals() {
+        let hook = "! [remote rejected] HEAD -> main (pre-receive hook declined)\nerror: failed to push some refs"
+        XCTAssertEqual(GitActions.plainWords(stderr: hook, action: "push"), "git: ! [remote rejected] HEAD -> main (pre-receive hook declined)")
+        XCTAssertEqual(GitActions.plainWords(stderr: " ! [rejected] main -> main (fetch first)", action: "push"),
+                       "The remote has commits this branch doesn’t. Pull first, then push.")
+    }
+
+    func testPlainWordsSkipHintsAndHideCredentials() {
+        let stderr = "\nhint: waiting\nfatal: unable to access 'https://user:token@example.com/acme-web.git/': Could not resolve host"
+        XCTAssertEqual(GitActions.plainWords(stderr: stderr, action: "pull"),
+                       "Git couldn’t reach origin: fatal: unable to access 'https://example.com/acme-web.git/': Could not resolve host")
+    }
+
     func testSmartCommitTakesEverythingWhenNothingIsStaged() throws {
         let repo = try GitRepoFixture()
         try tracked(repo, "src/app.ts")

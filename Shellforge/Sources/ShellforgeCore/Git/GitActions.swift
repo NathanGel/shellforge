@@ -17,43 +17,72 @@ public enum GitActions {
     public static func unstage(_ paths: [String], in repo: String, launcher: CommandLauncher) throws {
         guard !paths.isEmpty else { return }
         let unborn = try run(["rev-parse", "--verify", "-q", "HEAD"], in: repo, action: "unstage", launcher: launcher, allowFailure: true).status != 0
-        let args = unborn ? ["rm", "--cached", "-r", "-q", "--"] : ["restore", "--staged", "--"]
+        let args = unborn ? ["rm", "--cached", "-r", "-q", "-f", "--"] : ["restore", "--staged", "--"]
         try run(args + paths, in: repo, action: "unstage", launcher: launcher)
     }
 
-    /// Tracked files go back to the index; an untracked file goes to the Trash. Never for a conflict.
-    public static func discard(_ change: GitChange, in repo: String, launcher: CommandLauncher) throws {
+    /// Unstages `change`; a rename takes both its paths, so the old path's deletion goes too.
+    public static func unstage(_ change: GitChange, in repo: String, launcher: CommandLauncher) throws {
+        try unstage([change.originalPath, change.path].compactMap { $0 }, in: repo, launcher: launcher)
+    }
+
+    /// Throws away an unstaged `change`. A tracked file goes back to the index. An untracked file,
+    /// and an intent-to-add one (`git add -N`: shown as an unstaged add, or a worktree rename, whose
+    /// index blob is empty, so restoring would blank it), is moved to the Trash. Never for a conflict.
+    public static func discard(_ change: GitChange, in repo: String, launcher: CommandLauncher,
+                               trash: (URL) throws -> Void = { try FileManager.default.trashItem(at: $0, resultingItemURL: nil) }) throws {
         guard change.letter != .conflicted else {
             throw GitFailure(message: "Resolve this file’s conflict instead of discarding it.")
         }
-        if change.letter == .untracked {
+        let intentToAdd = [.added, .renamed, .copied].contains(change.letter)
+        if intentToAdd {
+            try run(["rm", "--cached", "-q", "--", change.path], in: repo, action: "discard", launcher: launcher)
+        }
+        if intentToAdd || change.letter == .untracked {
             let url = URL(fileURLWithPath: repo).appendingPathComponent(change.path)
             do {
-                try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+                try trash(url)
             } catch {
-                ErrorLogging.record("git", "trash \(url.path): \(error.localizedDescription)")
+                ErrorLogging.record("git", "trash: \(error.localizedDescription)")
                 throw GitFailure(message: "Couldn’t move \(change.path) to the Trash.")
+            }
+            if change.letter == .renamed, let original = change.originalPath {
+                try run(["restore", "--worktree", "--", original], in: repo, action: "discard", launcher: launcher)
             }
             return
         }
-        let paths = [change.originalPath, change.path].compactMap { $0 }
-        try run(["restore", "--worktree", "--"] + paths, in: repo, action: "discard", launcher: launcher)
+        try run(["restore", "--worktree", "--", change.path], in: repo, action: "discard", launcher: launcher)
     }
 
-    /// Commits what is staged; with nothing staged, everything (untracked files included).
+    /// Commits what is staged; with nothing staged, everything (untracked files included, task
+    /// worktrees excluded). A commit that fails then leaves the index as it was.
     public static func commit(message: String, in repo: String, status: GitStatus, launcher: CommandLauncher) throws {
         guard !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw GitFailure(message: "Write a commit message first.")
         }
-        if status.staged.isEmpty {
-            try run(["add", "-A"], in: repo, action: "commit", launcher: launcher)
+        let addedEverything = status.staged.isEmpty
+        if addedEverything {
+            try run(["add", "-A", "--", ".", ":(exclude).worktrees"], in: repo, action: "commit", launcher: launcher)
         }
-        try run(["commit", "-q", "-m", message], in: repo, action: "commit", launcher: launcher, timeout: commitTimeout)
+        do {
+            try run(["commit", "-q", "-m", message], in: repo, action: "commit", launcher: launcher, timeout: commitTimeout)
+        } catch {
+            if addedEverything {
+                var unborn = false
+                if case .unborn = status.head { unborn = true }
+                let undo = unborn ? ["rm", "--cached", "-r", "-q", "-f", "--", "."] : ["reset", "-q"]
+                _ = try? run(undo, in: repo, action: "commit", launcher: launcher)
+            }
+            throw error
+        }
     }
 
-    /// With an upstream, `git push`; without one, publishes the branch to origin.
+    /// With an upstream, `git push`; without one, publishes the branch to origin. Only from a branch.
     public static func push(in repo: String, status: GitStatus, launcher: CommandLauncher) throws {
-        if status.upstream == nil, case .branch(let name) = status.head {
+        guard case .branch(let name) = status.head else {
+            throw GitFailure(message: "Commit on a branch before pushing.")
+        }
+        if status.upstream == nil {
             try run(["push", "-u", "origin", name], in: repo, action: "push", launcher: launcher, remote: true)
         } else {
             try run(["push"], in: repo, action: "push", launcher: launcher, remote: true)
@@ -94,9 +123,11 @@ public enum GitActions {
 
     /// A refusal of `action`, from git's stderr (read under `LC_ALL=C`), in words a person can act on.
     public static func plainWords(stderr: String, action: String) -> String {
-        let first = stderr.split(separator: "\n").first.map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
+        let lines = stderr.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+        let first = (lines.first { !$0.isEmpty && !$0.hasPrefix("hint:") } ?? "")
+            .replacingOccurrences(of: "(://)[^/@\\s]+@", with: "$1", options: .regularExpression)
         func has(_ needles: String...) -> Bool { needles.contains { stderr.contains($0) } }
-        if action == "push", has("rejected", "non-fast-forward", "fetch first") {
+        if action == "push", has("[rejected]", "non-fast-forward", "fetch first") {
             return "The remote has commits this branch doesn’t. Pull first, then push."
         }
         if action == "pull", has("Not possible to fast-forward", "diverging") {
@@ -121,19 +152,24 @@ public enum GitActions {
         do {
             out = try launcher.run("git", ["-C", repo] + args, extra: extra, timeout: timeout ?? (remote ? remoteTimeout : localTimeout))
         } catch {
-            ErrorLogging.record("git", "git \(args.joined(separator: " ")): \(error.localizedDescription)")
+            logFailure(args, error.localizedDescription)
             throw GitFailure(message: "git: \(error.localizedDescription)")
         }
         if out.timedOut {
-            ErrorLogging.record("git", "git \(args.joined(separator: " ")) timed out")
+            logFailure(args, "timed out")
             throw GitFailure(message: "git timed out.")
         }
         guard out.status == 0 || allowFailure else {
             // git reports some refusals on stdout (“nothing to commit”).
             let text = out.stderr.isEmpty ? out.stdout : out.stderr
-            ErrorLogging.record("git", "git \(args.joined(separator: " ")) failed: \(text)")
+            logFailure(args, text)
             throw GitFailure(message: plainWords(stderr: text, action: action))
         }
         return out
+    }
+
+    /// The error log keeps git's details, but never the arguments: a commit message is typed text.
+    private static func logFailure(_ args: [String], _ detail: String) {
+        ErrorLogging.record("git", "git \(args.first ?? ""): \(detail)")
     }
 }
