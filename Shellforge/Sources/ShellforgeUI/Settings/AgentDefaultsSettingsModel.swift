@@ -21,23 +21,38 @@ final class AgentDefaultsSettingsModel: ObservableObject {
     }
 
     @Published private(set) var rows: [Row]
+    /// The installed agents are still being looked for: the list is not empty, only not known yet.
+    @Published private(set) var finding = false
+    private var find: (@Sendable () -> [AgentDefinition])?
     private var picked: Set<String> = []
     private let catalogue: @Sendable (AgentDefinition) throws -> [AgentModel]
     private let remembered: [String: String]
     private let defaults: UserDefaults
 
-    /// `agents` are the installed ones, in New Task's order.
+    /// `agents` are the installed ones, in New Task's order. `defaults` is the app's own suite.
     init(agents: [AgentDefinition], catalogue: @escaping @Sendable (AgentDefinition) throws -> [AgentModel],
-         remembered: [String: String], defaults: UserDefaults = .standard) {
+         remembered: [String: String], defaults: UserDefaults) {
         rows = agents.map { Row(agent: $0) }
         self.catalogue = catalogue
         self.remembered = remembered
         self.defaults = defaults
     }
 
+    /// The installed agents not known yet: `find` looks for them off the main actor, in `load`, since
+    /// it may wait for the login shell. The sheet opens at once and fills the list in.
+    convenience init(finding find: @escaping @Sendable () -> [AgentDefinition],
+                     catalogue: @escaping @Sendable (AgentDefinition) throws -> [AgentModel],
+                     remembered: [String: String], defaults: UserDefaults) {
+        self.init(agents: [], catalogue: catalogue, remembered: remembered, defaults: defaults)
+        self.find = find
+        finding = true
+    }
+
     /// The installed agents after Settings › Agents changed them: a row still there keeps what it
     /// read and what was picked in it, with the agent as it is now; a new one is yet to be read.
+    /// A list given here while the first look is still running is the newer one.
     func update(agents: [AgentDefinition]) {
+        finding = false
         let old = Dictionary(rows.map { ($0.id, $0) }) { first, _ in first }
         rows = agents.map { agent in
             guard var row = old[agent.id] else { return Row(agent: agent) }
@@ -50,6 +65,14 @@ final class AgentDefaultsSettingsModel: ObservableObject {
     /// Every agent's catalogue at once, off the main actor, so a slow one holds up only its card.
     /// `onlyUnloaded` reads only the rows not read yet, so a pick made in another is kept.
     func load(onlyUnloaded: Bool = false) async {
+        var onlyUnloaded = onlyUnloaded
+        if let find {
+            self.find = nil
+            let found = await BackgroundWork.run(find)
+            if finding { finding = false; rows = found.map { Row(agent: $0) } }
+            // A list `update` gave meanwhile may be read already.
+            onlyUnloaded = true
+        }
         let read = catalogue
         await withTaskGroup(of: (AgentDefinition, Result<[AgentModel], Error>).self) { group in
             for row in rows where !(onlyUnloaded && row.loaded) {
@@ -116,10 +139,12 @@ final class AgentDefaultsSettingsModel: ObservableObject {
 }
 
 extension SidebarModel {
-    /// Settings › Agents, over this sidebar's installed agents and the workspace's last-used models.
-    func agentDefaultsModel() -> AgentDefaultsSettingsModel {
-        let launcher = self.launcher
-        return AgentDefaultsSettingsModel(agents: agents.filter { launcher.locate($0.command) != nil }, catalogue: catalogue,
-                                          remembered: document.workspace.lastModelByAgent)
+    /// Settings › Agents, over this sidebar's installed agents and the workspace's last-used models,
+    /// saved in `defaults`, the app's own suite. The installed agents are looked for off the main
+    /// actor: that may wait for the login shell.
+    func agentDefaultsModel(defaults: UserDefaults) -> AgentDefaultsSettingsModel {
+        let launcher = self.launcher, agents = self.agents
+        return AgentDefaultsSettingsModel(finding: { agents.filter { launcher.locate($0.command) != nil } }, catalogue: catalogue,
+                                          remembered: document.workspace.lastModelByAgent, defaults: defaults)
     }
 }

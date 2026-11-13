@@ -75,7 +75,7 @@ final class AgentSettingsFixture {
                                          status: .eventProtocol, statusSetup: .init(file: "~/.gemini/settings.json", snippet: "x"))
     private let aider = AgentDefinition(id: "aider", name: "Aider", command: "aider", prompt: .typed)
 
-    @Test func rowsInOrder() throws {
+    @Test func rowsInOrder() async throws {
         let fixture = try AgentSettingsFixture()
         try fixture.readyMade([gemini, aider])
         try fixture.registry.save(AgentDefinition(id: "mine", name: "Mine", command: "mytool"))
@@ -85,7 +85,8 @@ final class AgentSettingsFixture {
         let list = fixture.list()
         #expect(list.rows.map(\.id) == ["claude", "codex", "grok", "pi", "aider", "gemini", "mine"])
         #expect(list.rows.map(\.origin) == [.builtIn, .builtIn, .builtIn, .builtIn, .readyMade, .readyMade, .own])
-        #expect(list.rows.map(\.installed) == [true, true, false, false, false, false, true])
+        // Whether each is installed comes once the login shell's first read is done, off the main actor.
+        await eventually(describing: "the installed agents") { list.rows.map(\.installed) == [true, true, false, false, false, false, true] }
         #expect(list.rows.map(\.overridden) == [false, true, false, false, false, false, false])
         #expect(list.rows.map(\.detection) == [.builtIn, .builtIn, .builtIn, .builtIn, .automatic, .exact, .automatic])
         #expect(AgentListModel.Detection.builtIn.label == "Built-in status")

@@ -37,7 +37,8 @@ final class iTermShellforgeSidebar: NSObject {
     /// Allow… installs, the iPhone's hotspot through CoreWLAN. Its toasts go to every sidebar's banner.
     static let backpack = BackpackController(
         ports: BackpackPorts.live(),
-        settings: BackpackSettings(defaults: .standard, secrets: Keychain.shared),
+        // The app's own suite; the bundle-id domain only for an earlier version's crash marker.
+        settings: BackpackSettings(defaults: iTermUserDefaults.userDefaults(), legacy: UserDefaults.standard, secrets: Keychain.shared),
         agentsWorking: { link.store.sessions.values.contains { $0.state == .working } },
         openLocationSettings: {
             if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_LocationServices") {
@@ -45,6 +46,12 @@ final class iTermShellforgeSidebar: NSObject {
             }
         },
         toast: { message in for model in sidebars.allObjects { model.lastError = message } })
+
+    /// Before anything reads them: the settings earlier versions kept in the bundle-id domain are
+    /// copied into the app's own suite, once (`SettingsMigration`).
+    @objc static func moveSettingsIntoSuite() {
+        SettingsMigration.run(from: UserDefaults.standard, into: iTermUserDefaults.userDefaults())
+    }
 
     /// Reads Shellforge's one Keychain item now, off the main thread, so its one prompt after an
     /// update comes at launch rather than when Buddy or AI first needs a secret.
@@ -166,7 +173,11 @@ final class iTermShellforgeSidebar: NSObject {
         // Read for each new window: an agent file added since shows in that window's New Task.
         let loaded = loadAgents()
         let model = SidebarModel(host: host, document: document, launcher: launcher, feed: link,
-                                 agents: loaded.agents, catalogue: { try catalogue.models(for: $0) }, sshConfig: .user,
+                                 agents: loaded.agents, catalogue: { try catalogue.models(for: $0) },
+                                 jiraSettings: { JiraSettings.load(defaults: iTermUserDefaults.userDefaults()) },
+                                 gitLabSettings: { GitLabSettings.load(defaults: iTermUserDefaults.userDefaults()) },
+                                 modelDefaults: { ModelSettings.loadAll(for: $0, defaults: iTermUserDefaults.userDefaults()) },
+                                 sshConfig: .user,
                                  readyMade: loaded.readyMade, secrets: Keychain.shared, tools: agentTools)
         if let problem = loaded.problem { model.lastError = problem }
         model.prompter = WarningPrompter()
@@ -178,7 +189,7 @@ final class iTermShellforgeSidebar: NSObject {
         watchClicks()
         let view = ShellforgeSidebar.makeView(model: model, chooseFolder: FolderChooser.choose, hooks: hooks, machine: machine,
                                           backpack: backpack, zoom: zoom, terminalMatch: iTermShellforgeTerminalMatch.settings, theme: iTermShellforgeThemes.settings,
-                                          terminalEditorDefaults: iTermUserDefaults.userDefaults(),
+                                          appDefaults: iTermUserDefaults.userDefaults(),
                                           feedback: feedback, activityOrder: activityOrder, files: files, git: git,
                                           panelCornerRadius: floats ? panelCornerRadius : nil,
                                           agentTools: agentTools, agentsChanged: { agentsChanged() },

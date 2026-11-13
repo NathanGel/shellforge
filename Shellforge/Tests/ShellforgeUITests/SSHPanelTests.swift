@@ -72,7 +72,7 @@ private final class FakeSSHWatcher: FolderWatching, @unchecked Sendable {
                                               machine: MachineMonitor(sensor: InertMachineSensor(), power: InertPower()),
                                               backpack: BackpackController(ports: .inert, settings: BackpackSettings(defaults: nil), toast: { _ in }),
                                               zoom: SidebarZoom(settings: SidebarLayoutSettings(defaults: ScratchDefaults.make())),
-                                              terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()), theme: ThemeSettings(defaults: ScratchDefaults.make()), terminalEditorDefaults: ScratchDefaults.make(),
+                                              terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()), theme: ThemeSettings(defaults: ScratchDefaults.make()), appDefaults: ScratchDefaults.make(),
                                               feedback: FeedbackPrompt(defaults: ScratchDefaults.make(), channel: .dev))
         view.frame = NSRect(x: 0, y: 0, width: Size.sidebarWidth, height: 600)
         let window = NSWindow(contentRect: view.frame, styleMask: [.borderless], backing: .buffered, defer: false)

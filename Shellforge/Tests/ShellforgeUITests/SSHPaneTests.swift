@@ -36,7 +36,7 @@ import Testing
     @Test func aNewTaskOpensTheHostBesideTheAgent() async throws {
         let (model, host, _, project) = try await model(host: "box")
         #expect(await eventually { model.sshHosts != nil })
-        #expect(model.makeNewTaskModel(for: project)?.kind.sshHost == "box")
+        #expect(model.makeNewTaskModel(for: project, jira: nil)?.kind.sshHost == "box")
         try await model.newTask(draft: draft(openSSH: true), in: project)
         #expect(host.opened.last?.beside == "ssh -o ClearAllForwardings=yes box")
     }
@@ -86,10 +86,10 @@ import Testing
     @Test func theChoiceIsRememberedPerProject() async throws {
         let (model, _, document, project) = try await model(host: "box")
         #expect(await eventually { model.sshHosts != nil })
-        #expect(model.makeNewTaskModel(for: project)?.draft.openSSH == true, "ticked the first time")
+        #expect(model.makeNewTaskModel(for: project, jira: nil)?.draft.openSSH == true, "ticked the first time")
         try await model.newTask(draft: draft(openSSH: false), in: project)
         #expect(document.workspace.lastOpenSSHByProject[project] == false)
-        #expect(model.makeNewTaskModel(for: project)?.draft.openSSH == false)
+        #expect(model.makeNewTaskModel(for: project, jira: nil)?.draft.openSSH == false)
     }
 
     /// The sheet opened before the config was read showed no box: the task opens alone, whatever
@@ -105,7 +105,7 @@ import Testing
     @Test func theSheetCarriesTheHostItOffered() async throws {
         let (model, _, _, project) = try await model(host: "box")
         #expect(await eventually { model.sshHosts != nil })
-        #expect(model.makeNewTaskModel(for: project)?.draft.paneHost == "box")
+        #expect(model.makeNewTaskModel(for: project, jira: nil)?.draft.paneHost == "box")
     }
 
     /// New Task opened right after launch reads the environment first off the main actor: its agent

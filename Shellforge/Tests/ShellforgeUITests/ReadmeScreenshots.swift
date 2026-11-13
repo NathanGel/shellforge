@@ -127,7 +127,7 @@ private struct DemoSidebar {
         let host = FakeTerminalHost(), feed = FakeFeed()
         let document = WorkspaceDocument(store: WorkspaceStore(folder: folder.appendingPathComponent("workspace")))
         let model = SidebarModel(host: host, document: document, launcher: launcher, feed: feed,
-                                 jiraSettings: { nil }, gitLabSettings: { nil }, gitHubSettings: { nil }, modelDefaults: { [:] },
+                                 jiraSettings: { nil }, gitLabSettings: { nil }, gitHubSettings: { nil }, modelDefaults: { _ in [:] },
                                  sshConfig: SSHConfigSource(file: sshConfig, home: home), secrets: MemorySecretStore(), home: home)
         // Each project's host, without git: set before the workspace has a project to read.
         model.repositoryFacts = RepositoryFacts { path in
@@ -162,7 +162,7 @@ private struct DemoSidebar {
         defer { if model.isRearranging { model.cancelRearrange() } }
         let view = SidebarView(model: model, activity: activity, chooseFolder: { nil }, hooks: hooks, machine: machine,
                                backpack: BackpackController(ports: .inert, settings: BackpackSettings(defaults: nil), toast: { _ in }),
-                               terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()), theme: ThemeSettings(defaults: ScratchDefaults.make()), terminalEditorDefaults: ScratchDefaults.make(),
+                               terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()), theme: ThemeSettings(defaults: ScratchDefaults.make()), appDefaults: ScratchDefaults.make(),
                                feedback: FeedbackPrompt(defaults: ScratchDefaults.make(), channel: .dev), chrome: SidebarChrome(),
                                showBackpack: { _ in }, showFeedback: { _ in }, hideSidebar: {}, agentTools: .none, agentsChanged: {})
             .interfaceScale(.standard)

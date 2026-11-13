@@ -53,6 +53,11 @@ TOP-LEVEL keys
   Coprocess MRU, NoSyncCoprocessCommandsToIgnoreErrorOutput,
     FileDropCoprocess, UrlHandlerCommand   user shell commands
   ShellforgeTerminalEditor ............... Shellforge's editor command (may hold arguments or paths)
+  jira.site, jira.email .................. Shellforge's Jira site URL and account email
+  gitlab.host ............................ Shellforge's GitLab host URL
+  backpack.network ....................... Shellforge Backpack Mode's hotspot name (often a person's name)
+  NoSyncShellforgeFilesExpanded .......... Shellforge Files panel's open folders: project UUID ->
+                                           array of folder paths (paths redacted, UUID keys kept)
   NoSyncKnownHosts ....................... user@host:port list
   NoSyncWorkgroupGitBaseRecents .......... git base/ref recents
   NoSyncRecentArchives ................... archive file paths
@@ -195,6 +200,11 @@ CONTENT_KEYS = {
     "FileDropCoprocess": REDACT_V,
     "UrlHandlerCommand": REDACT_V,
     "ShellforgeTerminalEditor": REDACT_V,
+    "jira.site": REDACT_V,
+    "jira.email": REDACT_V,
+    "gitlab.host": REDACT_V,
+    "backpack.network": REDACT_V,
+    "NoSyncShellforgeFilesExpanded": REDACT_V,  # {project UUID: [folder path]}; every path redacted
     "AlternateSSHIntegrationScript": REDACT_V,
     "SshSchemePath": REDACT_V,
     # text sent to the terminal / key-binding & action parameters

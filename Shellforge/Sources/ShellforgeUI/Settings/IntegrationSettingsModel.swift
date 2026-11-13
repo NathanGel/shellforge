@@ -174,7 +174,7 @@ final class IntegrationSettingsModel {
 
     /// `store` and `defaults` are where Save writes; the testers are the real clients unless a test
     /// stands in for them.
-    init(jira: JiraConfig?, gitLab: GitLabConfig?, gitHub: GitHubConfig? = nil, store: SecretStore = Keychain.shared, defaults: UserDefaults = .standard,
+    init(jira: JiraConfig?, gitLab: GitLabConfig?, gitHub: GitHubConfig? = nil, store: SecretStore = Keychain.shared, defaults: UserDefaults,
          record: ServiceTestRecord = ServiceTestRecord(), retestDelay: Duration = .seconds(1),
          testJira: @escaping @Sendable (JiraConfig) async throws -> String = { try await JiraClient(config: $0).testConnection() },
          testGitLab: @escaping @Sendable (GitLabConfig) async throws -> String = { try await GitLabClient(config: $0).testConnection() },
@@ -299,5 +299,20 @@ enum IntegrationCardPresentation {
         case .failed(let explanation): SettingsStatus(.attention, explanation)
         case nil: SettingsStatus(.idle, configured ? "Not tested yet" : "Not set up")
         }
+    }
+}
+
+extension SidebarModel {
+    /// Settings' Services cards over the saved connections, saved to `secrets` and to `defaults`, the
+    /// app's own suite.
+    /// The connections are read off the main actor: a Keychain read may wait for its prompt, and the
+    /// UI must not. Nil while an earlier opening is still reading, so a second click opens no second sheet.
+    func integrationSettings(defaults: UserDefaults) async -> IntegrationSettingsModel? {
+        guard !openingSettings else { return nil }
+        openingSettings = true
+        defer { openingSettings = false }
+        let jira = jiraSettings, gitLab = gitLabSettings, gitHub = gitHubSettings
+        let read = await BackgroundWork.run { (jira(), gitLab(), gitHub()) }
+        return IntegrationSettingsModel(jira: read.0, gitLab: read.1, gitHub: read.2, store: secrets, defaults: defaults)
     }
 }

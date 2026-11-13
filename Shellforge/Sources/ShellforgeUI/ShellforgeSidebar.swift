@@ -17,8 +17,8 @@ public enum ShellforgeSidebar {
     /// `backpack` is the app's one Backpack Mode; `showBackpack` hands back how this sidebar opens
     /// its sheet, for the View menu's ⌘B. `hideSidebar` is the header's Hide Sidebar button: ⌃⌘S.
     /// `zoom` is the app's one text size, which every window's sidebar draws at; its sheets, in
-    /// panels of their own, stay at `.standard`. `terminalEditorDefaults` is where the terminal
-    /// editor is saved: the app's own suite. `terminalMatch` is the app's one Settings › Core ›
+    /// panels of their own, stay at `.standard`. `appDefaults` is the app's own suite:
+    /// the terminal editor, the Jira and GitLab hosts and the agents' default models are saved there. `terminalMatch` is the app's one Settings › Core ›
     /// Terminal switch, and `theme` its one Theme choice. `feedback` is the app's one feedback prompt, and `showFeedback` hands back how
     /// this sidebar opens the feedback form, for the Help menu. `panelCornerRadius`, when given, draws
     /// the sidebar as a floating panel with those corners (macOS 26); nil draws the classic sidebar.
@@ -30,7 +30,7 @@ public enum ShellforgeSidebar {
     /// for the Git panel.
     public static func makeView(model: SidebarModel, chooseFolder: @escaping @MainActor () -> String?, hooks: AgentHooksModel,
                                 machine: MachineMonitor, backpack: BackpackController, zoom: SidebarZoom,
-                                terminalMatch: TerminalMatchSettings, theme: ThemeSettings, terminalEditorDefaults: UserDefaults, feedback: FeedbackPrompt,
+                                terminalMatch: TerminalMatchSettings, theme: ThemeSettings, appDefaults: UserDefaults, feedback: FeedbackPrompt,
                                 activityOrder: ActivityOrderSource = ActivityOrderSource(defaults: nil), files: FilesHolder? = nil,
                                 git: GitHolder? = nil, panelCornerRadius: CGFloat? = nil,
                                 agentTools: AgentTools = .none, agentsChanged: @escaping @MainActor () -> Void = {},
@@ -45,7 +45,7 @@ public enum ShellforgeSidebar {
         let feedbackPresenter = SheetPresenter()
         let activity = ActivityModel(source: activityOrder)
         let sidebar = SidebarView(model: model, activity: activity, chooseFolder: chooseFolder,
-                                  hooks: hooks, machine: machine, backpack: backpack, terminalMatch: terminalMatch, theme: theme, terminalEditorDefaults: terminalEditorDefaults, files: files,
+                                  hooks: hooks, machine: machine, backpack: backpack, terminalMatch: terminalMatch, theme: theme, appDefaults: appDefaults, files: files,
                                   git: git, feedback: feedback, chrome: chrome, showBackpack: { [weak presenter] present in
             guard let presenter else { return }
             presenter.present = present
@@ -409,8 +409,9 @@ struct SidebarView: View {
     let backpack: BackpackController
     let terminalMatch: TerminalMatchSettings
     let theme: ThemeSettings
-    /// Where the terminal editor is saved: the app's own suite.
-    let terminalEditorDefaults: UserDefaults
+    /// The app's own suite: the terminal editor, the Jira and GitLab hosts and the agents' default
+    /// models are saved there.
+    let appDefaults: UserDefaults
     /// The app's one Files panel model, made when the panel first shows in any window.
     var files: FilesHolder? = nil
     /// The app's one Git panel model, made when the panel first shows in any window.
@@ -546,7 +547,7 @@ struct SidebarView: View {
             if activity.layout.selected == .files {
                 if let filesModel {
                     FilesPanel(model: filesModel, sidebar: model, titled: chrome.windowControls == nil, providers: model.providers,
-                               opener: FileOpener(host: model.host, defaults: terminalEditorDefaults,
+                               opener: FileOpener(host: model.host, defaults: appDefaults,
                                                   environment: { [launcher = model.launcher] in launcher.environment.variables }))
                     // While no window shows the panel, its watchers only note what changed.
                     .modifier(PanelViewing(register: { [files] in files?.register() ?? PanelViewer {} }))
@@ -559,7 +560,7 @@ struct SidebarView: View {
             if activity.layout.selected == .git {
                 if let gitModel {
                     GitPanel(model: gitModel, sidebar: model, titled: chrome.windowControls == nil, providers: model.providers,
-                             actions: GitPanelActions(host: model.host, defaults: terminalEditorDefaults,
+                             actions: GitPanelActions(host: model.host, defaults: appDefaults,
                                                       environment: { [launcher = model.launcher] in launcher.environment.variables },
                                                       launcher: model.launcher, prompter: { [model] in model.prompter },
                                                       busyTask: { [model] project in model.projectFolderBusyTask(project) }))
@@ -725,19 +726,22 @@ struct SidebarView: View {
 
     /// The Mac card — what Backpack Mode needs from this Mac — in a panel of its own with Done, until
     /// Shellforge has a Settings window to hold it (AiTerm's Settings › Integrations › Mac).
+    /// The saved connections are read off the main actor first (`integrationSettings`), so a Keychain
+    /// prompt never holds the UI; the installed agents are looked for once the sheet is open.
     private func showMacSettings() {
-        let integrations = IntegrationSettingsModel(jira: model.jiraSettings(), gitLab: model.gitLabSettings(),
-                                                    gitHub: model.gitHubSettings())
-        let environment = model.environmentModel()
-        let agentDefaults = model.agentDefaultsModel()
-        // The agents' secrets live in the Keychain, and nowhere else.
-        let agents = AgentListModel(registry: AgentRegistry(folder: agentTools.agentsFolder, readyMade: agentTools.readyMade), secrets: Keychain.shared,
-                                    launcher: model.launcher, tasks: { [model] in model.document.workspace.tasks },
-                                    prompter: model.prompter, tools: agentTools, store: model.$sessions.eraseToAnyPublisher(),
-                                    changed: agentsChanged)
-        sheet.present(over: anchor.window) { dismiss in
-            SettingsPanel(backpack: backpack, integrations: integrations, environment: environment, terminalEditor: model.terminalEditorSettings(defaults: terminalEditorDefaults), terminalMatch: terminalMatch, theme: theme, feedback: feedback,
-                          agentDefaults: agentDefaults, agents: agents, close: dismiss)
+        Task { @MainActor in
+            guard let integrations = await model.integrationSettings(defaults: appDefaults) else { return }
+            let environment = model.environmentModel()
+            let agentDefaults = model.agentDefaultsModel(defaults: appDefaults)
+            // The agents' secrets live in the Keychain, and nowhere else.
+            let agents = AgentListModel(registry: AgentRegistry(folder: agentTools.agentsFolder, readyMade: agentTools.readyMade), secrets: Keychain.shared,
+                                        launcher: model.launcher, tasks: { [model] in model.document.workspace.tasks },
+                                        prompter: model.prompter, tools: agentTools, store: model.$sessions.eraseToAnyPublisher(),
+                                        changed: agentsChanged)
+            sheet.present(over: anchor.window) { dismiss in
+                SettingsPanel(backpack: backpack, integrations: integrations, environment: environment, terminalEditor: model.terminalEditorSettings(defaults: appDefaults), terminalMatch: terminalMatch, theme: theme, feedback: feedback,
+                              agentDefaults: agentDefaults, agents: agents, close: dismiss)
+            }
         }
     }
 

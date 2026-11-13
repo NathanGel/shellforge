@@ -1502,6 +1502,10 @@ void TurnOnDebugLoggingAutomatically(void) {
     // Shellforge: no tab inherits the markers of an agent session that started the app.
     [iTermShellforgeSidebar scrubInheritedEnvironment];
     DLog(@"Begin");
+    // Shellforge: settings an earlier version kept outside the app's suite move in, once, before anything reads them.
+    if (![NSApp isRunningUnitTests]) {
+        [iTermShellforgeSidebar moveSettingsIntoSuite];
+    }
     // Parallel test runs start several test hosts with the same suite on purpose. The modal warning
     // about another instance would stall each one after the first.
     if (![NSApp isRunningUnitTests]) {

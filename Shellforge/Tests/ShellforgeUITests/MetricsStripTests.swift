@@ -123,7 +123,7 @@ import Testing
         let view = SidebarView(model: sidebarModel(), activity: activity, chooseFolder: { nil }, hooks: hooks,
                                machine: MachineMonitor(sensor: InertMachineSensor(), power: InertPower()),
                                backpack: BackpackController(ports: .inert, settings: BackpackSettings(defaults: nil), toast: { _ in }),
-                               terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()), theme: ThemeSettings(defaults: ScratchDefaults.make()), terminalEditorDefaults: ScratchDefaults.make(),
+                               terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()), theme: ThemeSettings(defaults: ScratchDefaults.make()), appDefaults: ScratchDefaults.make(),
                                feedback: FeedbackPrompt(defaults: ScratchDefaults.make(), channel: .dev), chrome: chrome,
                                showBackpack: { _ in }, showFeedback: { _ in }, hideSidebar: {}, agentTools: .none, agentsChanged: {})
         let host = NSHostingView(rootView: AnyView(view))

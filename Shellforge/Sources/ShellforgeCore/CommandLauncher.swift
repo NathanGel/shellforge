@@ -9,6 +9,8 @@ import Foundation
 public final class CommandLauncher: @unchecked Sendable {
     private let resolve: @Sendable () -> ResolvedEnvironment
     private let lock = NSLock()
+    /// Held across the first read only, so two first uses run one login shell between them.
+    private let resolving = NSLock()
     private var cached: ResolvedEnvironment?
     private let clock: @Sendable () -> Date
     private var read: Date?
@@ -36,15 +38,32 @@ public final class CommandLauncher: @unchecked Sendable {
 
     /// The environment and when it was read, from the same read: a reload landing between two
     /// separate reads would pair one read's `PATH` with another's time.
+    ///
+    /// The login shell runs under `resolving`, not `lock`: callers wait for one first read rather than
+    /// each starting their own, while `environmentIfRead` still answers at once meanwhile.
     public var snapshot: (environment: ResolvedEnvironment, readAt: Date?) {
-        lock.withLock {
-            if let cached { return (cached, read) }
+        if let hit = cachedSnapshot { return hit }
+        return resolving.withLock {
+            if let hit = cachedSnapshot { return hit }
             let fresh = resolve()
-            cached = fresh
-            read = clock()
-            return (fresh, read)
+            let now = clock()
+            return lock.withLock {
+                // A reload published while this read ran: its read is as new.
+                if let cached { return (cached, read) }
+                cached = fresh
+                read = now
+                return (fresh, now)
+            }
         }
     }
+
+    private var cachedSnapshot: (environment: ResolvedEnvironment, readAt: Date?)? {
+        lock.withLock { cached.map { ($0, read) } }
+    }
+
+    /// The environment if it has been read, else nil — never waiting for the login shell, so the
+    /// main thread can ask while the first read is still running elsewhere.
+    public var environmentIfRead: ResolvedEnvironment? { lock.withLock { cached } }
 
     /// The user's `$SHELL`, or zsh, macOS's default, asked with what this process inherited.
     public static let loginShell: @Sendable () -> ResolvedEnvironment = {
@@ -76,6 +95,12 @@ public final class CommandLauncher: @unchecked Sendable {
     /// reaches it.
     public func locate(_ command: String) -> String? {
         Self.locate(command, in: environment.variables["PATH"] ?? "")
+    }
+
+    /// Whether `command` is installed, by the environment as read so far: nil while it has not been
+    /// read, so a caller on the main thread never waits for the login shell.
+    public func isInstalledIfKnown(_ command: String) -> Bool? {
+        environmentIfRead.map { Self.locate(command, in: $0.variables["PATH"] ?? "") != nil }
     }
 
     static func locate(_ command: String, in path: String) -> String? {

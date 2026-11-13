@@ -188,6 +188,39 @@ import Foundation
         #expect(!crashed.settings.engaged)
     }
 
+    /// The marker lives in the app's suite now; one an earlier version left in the bundle-id domain
+    /// is read at launch too, and cleared only once sleep is back. Until then it is carried in the
+    /// suite's marker, so the tick keeps trying; a later launch that succeeds clears both.
+    @Test func theEngagedMarkerIsRecoveredFromEitherPlace() {
+        let suite = MemoryDefaults.make()
+        let current = FakeBackpack(defaults: suite)
+        current.settings.engaged = true
+        #expect(suite.bool(forKey: "NoSyncShellforgeBackpackEngaged"))
+        #expect(suite.object(forKey: "backpack.engaged") == nil)
+        mode(current).recoverAtLaunch()
+        #expect(current.lid.calls == [false])
+        #expect(!current.settings.engaged)
+
+        let old = MemoryDefaults.make()
+        old.set(true, forKey: "backpack.engaged")
+        let failing = FakeBackpack(settings: BackpackSettings(defaults: MemoryDefaults.make(), legacy: old))
+        failing.lid.succeeds = false
+        mode(failing).recoverAtLaunch()
+        #expect(failing.lid.calls == [false])
+        #expect(old.bool(forKey: "backpack.engaged"), "kept until sleep is back")
+        #expect(failing.settings.engaged, "carried in the suite's marker, for the tick")
+
+        let recovered = FakeBackpack(settings: BackpackSettings(defaults: MemoryDefaults.make(), legacy: old))
+        mode(recovered).recoverAtLaunch()
+        #expect(recovered.lid.calls == [false])
+        #expect(old.object(forKey: "backpack.engaged") == nil)
+        #expect(!recovered.settings.engaged)
+
+        let clean = FakeBackpack(settings: BackpackSettings(defaults: MemoryDefaults.make(), legacy: MemoryDefaults.make()))
+        mode(clean).recoverAtLaunch()
+        #expect(clean.lid.calls.isEmpty, "no marker in either place: a disablesleep the person set is theirs")
+    }
+
     @Test func theTickTurnsItOffAtTheCutoffOnBattery() throws {
         let fake = FakeBackpack()
         fake.power.value = PowerReading(level: 50, onBattery: true)

@@ -107,10 +107,19 @@ public final class BackpackMode: Sendable {
         closed.withLock { $0 = true }
     }
 
-    /// A launch after a crash or a force quit: the marker says Shellforge left sleep disabled.
+    /// A launch after a crash or a force quit: the marker says Shellforge left sleep disabled. The
+    /// marker an earlier version kept in the bundle-id domain counts too, read here once per launch.
+    /// It is cleared only once sleep is back; until then this launch carries it in the app's own
+    /// marker, so the tick keeps trying as it would for its own.
     public func recoverAtLaunch() {
-        guard settings.engaged else { return }
-        if ports.lidSleep.setDisabled(false) { settings.engaged = false }
+        let legacy = settings.legacyEngaged
+        guard settings.engaged || legacy else { return }
+        if ports.lidSleep.setDisabled(false) {
+            settings.engaged = false
+            if legacy { settings.clearLegacyEngaged() }
+        } else if legacy {
+            settings.engaged = true
+        }
     }
 
     /// The 5 s check while on: the battery cutoff, then the work — an open lid counting as work —

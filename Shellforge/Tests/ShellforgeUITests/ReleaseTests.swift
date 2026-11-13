@@ -71,7 +71,7 @@ import Testing
             let model = SidebarModel(host: FakeTerminalHost(), document: document, launcher: launcher, jiraSettings: { nil })
             released = model
             window.contentView = ShellforgeSidebar.makeView(model: model, chooseFolder: { nil }, hooks: hooks, machine: machine,
-                                                            backpack: backpack, zoom: SidebarZoom(settings: SidebarLayoutSettings(defaults: ScratchDefaults.make())), terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()), theme: ThemeSettings(defaults: ScratchDefaults.make()), terminalEditorDefaults: ScratchDefaults.make(), feedback: FeedbackPrompt(defaults: ScratchDefaults.make(), channel: .dev),
+                                                            backpack: backpack, zoom: SidebarZoom(settings: SidebarLayoutSettings(defaults: ScratchDefaults.make())), terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()), theme: ThemeSettings(defaults: ScratchDefaults.make()), appDefaults: ScratchDefaults.make(), feedback: FeedbackPrompt(defaults: ScratchDefaults.make(), channel: .dev),
                                                             showBackpack: { [weak window] present in
                 if let window { sheets.register(window, present) }
             })
@@ -105,7 +105,7 @@ import Testing
                                       backing: .buffered, defer: false)
                 window.isReleasedWhenClosed = false
                 window.contentView = ShellforgeSidebar.makeView(model: model, chooseFolder: { nil }, hooks: hooks, machine: machine,
-                                                                backpack: backpack, zoom: SidebarZoom(settings: SidebarLayoutSettings(defaults: ScratchDefaults.make())), terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()), theme: ThemeSettings(defaults: ScratchDefaults.make()), terminalEditorDefaults: ScratchDefaults.make(), feedback: FeedbackPrompt(defaults: ScratchDefaults.make(), channel: .dev),
+                                                                backpack: backpack, zoom: SidebarZoom(settings: SidebarLayoutSettings(defaults: ScratchDefaults.make())), terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()), theme: ThemeSettings(defaults: ScratchDefaults.make()), appDefaults: ScratchDefaults.make(), feedback: FeedbackPrompt(defaults: ScratchDefaults.make(), channel: .dev),
                                                                 showBackpack: { [weak window] present in
                     if let window { sheets.register(window, present) }
                 })

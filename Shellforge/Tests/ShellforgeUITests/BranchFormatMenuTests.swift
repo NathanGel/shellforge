@@ -28,9 +28,9 @@ import Testing
 
     @Test func theSheetOpensWithTheProjectsFormat() throws {
         let (model, _, project, _) = try setup()
-        #expect(model.makeNewTaskModel(for: project.id)?.draft.branchFormat == .typeAndName)
+        #expect(model.makeNewTaskModel(for: project.id, jira: nil)?.draft.branchFormat == .typeAndName)
         model.setBranchFormat(.ticketKey, of: project.id)
-        #expect(model.makeNewTaskModel(for: project.id)?.draft.branchFormat == .ticketKey)
+        #expect(model.makeNewTaskModel(for: project.id, jira: nil)?.draft.branchFormat == .ticketKey)
     }
 
     @Test func theMenuOffersBothFormatsAndMarksTheCurrent() {

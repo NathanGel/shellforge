@@ -34,4 +34,12 @@ public final class MemoryDefaults: UserDefaults, @unchecked Sendable {
     public override func string(forKey defaultName: String) -> String? {
         object(forKey: defaultName) as? String
     }
+
+    public override func bool(forKey defaultName: String) -> Bool {
+        (object(forKey: defaultName) as? Bool) ?? false
+    }
+
+    public override func dictionaryRepresentation() -> [String: Any] {
+        lock.withLock { values }
+    }
 }

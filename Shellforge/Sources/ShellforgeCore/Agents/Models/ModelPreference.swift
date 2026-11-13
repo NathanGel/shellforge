@@ -54,22 +54,23 @@ public enum ModelPreferenceResolution: Equatable, Sendable {
 /// Settings › Agents: each agent's default model and reasoning level, app-wide. Kept apart from the
 /// last-used models in the workspace, so a one-off task never replaces a deliberate default.
 public enum ModelSettings {
-    static func key(for agentId: String) -> String { "ShellforgeModelDefaults.\(agentId)" }
+    static let keyPrefix = "ShellforgeModelDefaults."
+    static func key(for agentId: String) -> String { keyPrefix + agentId }
 
-    public static func load(for agentId: String, defaults: UserDefaults = .standard) -> ModelPreference? {
+    public static func load(for agentId: String, defaults: UserDefaults) -> ModelPreference? {
         guard let value = defaults.dictionary(forKey: key(for: agentId)),
               let model = value["model"] as? String, !model.isEmpty else { return nil }
         return ModelPreference(model: model, reasoning: value["reasoning"] as? String)
     }
 
     /// Every saved default among `agentIds`, by agent id.
-    public static func loadAll(for agentIds: [String], defaults: UserDefaults = .standard) -> [String: ModelPreference] {
+    public static func loadAll(for agentIds: [String], defaults: UserDefaults) -> [String: ModelPreference] {
         var all: [String: ModelPreference] = [:]
         for id in agentIds { all[id] = load(for: id, defaults: defaults) }
         return all
     }
 
-    public static func save(_ preference: ModelPreference, for agentId: String, defaults: UserDefaults = .standard) {
+    public static func save(_ preference: ModelPreference, for agentId: String, defaults: UserDefaults) {
         var value = ["model": preference.model]
         value["reasoning"] = preference.reasoning
         defaults.set(value, forKey: key(for: agentId))

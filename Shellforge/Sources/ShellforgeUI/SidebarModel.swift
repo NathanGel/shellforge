@@ -185,12 +185,14 @@ public final class SidebarModel: ObservableObject {
     let tools: AgentTools
     /// An agent's model list, read off the main actor.
     let catalogue: @Sendable (AgentDefinition) throws -> [AgentModel]
-    /// Read the saved Jira, GitLab and GitHub connections: the Keychain and the defaults. Tests hand
-    /// in their own.
+    /// Read the saved Jira, GitLab and GitHub connections: the Keychain and the defaults. Always off
+    /// the main actor: a Keychain read may wait for its prompt. The app hands in readers of its own
+    /// suite; without, there are none (tests hand in their own).
     let jiraSettings: @Sendable () -> JiraConfig?
     let gitLabSettings: @Sendable () -> GitLabConfig?
     let gitHubSettings: @Sendable () -> GitHubConfig?
-    /// Read Settings › Agents' saved defaults, for these agent ids; read as each sheet opens.
+    /// Read Settings › Agents' saved defaults, for these agent ids; read as each sheet opens. The app
+    /// reads its own suite; without, there are none.
     let readModelDefaults: @Sendable ([String]) -> [String: ModelPreference]
     /// The shown agents' saved defaults, by agent id.
     func modelDefaults() -> [String: ModelPreference] { readModelDefaults(agents.map(\.id)) }
@@ -206,6 +208,8 @@ public final class SidebarModel: ObservableObject {
         didSet { rebuildTree(document.workspace) }
     }
     var readingSSH = false
+    /// Settings is reading the saved connections before it opens (`integrationSettings`).
+    var openingSettings = false
     /// Config reads started, and the newest one whose hosts were kept (`beginSSHRead`).
     var sshReadsStarted = 0
     var sshReadApplied = 0
@@ -229,10 +233,10 @@ public final class SidebarModel: ObservableObject {
     public init(host: TerminalHost, document: WorkspaceDocument, launcher: CommandLauncher, feed: SessionFeed? = nil,
                 agents: [AgentDefinition] = AgentPresets.all,
                 catalogue: @escaping @Sendable (AgentDefinition) throws -> [AgentModel] = { _ in [] },
-                jiraSettings: @escaping @Sendable () -> JiraConfig? = { JiraSettings.load() },
-                gitLabSettings: @escaping @Sendable () -> GitLabConfig? = { GitLabSettings.load() },
+                jiraSettings: @escaping @Sendable () -> JiraConfig? = { nil },
+                gitLabSettings: @escaping @Sendable () -> GitLabConfig? = { nil },
                 gitHubSettings: @escaping @Sendable () -> GitHubConfig? = { GitHubSettings.load() },
-                modelDefaults: (@Sendable () -> [String: ModelPreference])? = nil,
+                modelDefaults: @escaping @Sendable ([String]) -> [String: ModelPreference] = { _ in [:] },
                 sshConfig: SSHConfigSource = .none, readyMade: Set<String> = [], secrets: any SecretStore & Sendable = MemorySecretStore(),
                 tools: AgentTools = .none, home: URL = FileManager.default.homeDirectoryForCurrentUser) {
         self.host = host
@@ -241,11 +245,7 @@ public final class SidebarModel: ObservableObject {
         self.jiraSettings = jiraSettings
         self.gitLabSettings = gitLabSettings
         self.gitHubSettings = gitHubSettings
-        if let modelDefaults {
-            readModelDefaults = { @Sendable _ in modelDefaults() }
-        } else {
-            readModelDefaults = { @Sendable ids in ModelSettings.loadAll(for: ids) }
-        }
+        readModelDefaults = modelDefaults
         removalBoard = RemovalBoard.shared(for: document)
         self.document = document
         self.launcher = launcher
@@ -408,15 +408,20 @@ public final class SidebarModel: ObservableObject {
     public func prepareNewTask(for projectId: UUID) async -> NewTaskModel? {
         // The sheet looks for each agent's CLI on PATH: read the environment here first, off the
         // main actor, so a New Task opened right after launch runs no login shell on it.
-        let launcher = self.launcher
-        _ = await BackgroundWork.run { launcher.environment }
+        // The Jira connection too: a Keychain read, which may wait for its prompt.
+        let launcher = self.launcher, readJira = jiraSettings
+        let jira = await BackgroundWork.run { () -> JiraConfig? in
+            _ = launcher.environment
+            return readJira()
+        }
         if project(projectId)?.sshHost != nil { _ = await loadSSHHosts() }
-        return makeNewTaskModel(for: projectId)
+        return makeNewTaskModel(for: projectId, jira: jira)
     }
 
     /// The New Task sheet for `projectId`: the agent last started there while its CLI is installed,
     /// else the first installed one; its last model; and the project's branches, read when shown.
-    public func makeNewTaskModel(for projectId: UUID) -> NewTaskModel? {
+    /// `jira` is the saved connection, read off the main actor (`prepareNewTask`).
+    public func makeNewTaskModel(for projectId: UUID, jira: JiraConfig?) -> NewTaskModel? {
         guard let project = document.workspace.projects.first(where: { $0.id == projectId }), !agents.isEmpty else { return nil }
         let launcher = self.launcher
         let available = Set(agents.filter { launcher.locate($0.command) != nil }.map(\.id))
@@ -433,7 +438,7 @@ public final class SidebarModel: ObservableObject {
                             branches: { Repository.branches(of: path, launcher: launcher) },
                             submit: { [weak self] draft in try await self?.newTask(draft: draft, in: projectId) },
                             // Read once, as the sheet opens: a Keychain read is too slow for every keystroke.
-                            searchIssues: NewTaskModel.jiraSearcher(for: project, jira: jiraSettings()),
+                            searchIssues: NewTaskModel.jiraSearcher(for: project, jira: jira),
                             sshHost: paneHost(of: project),
                             existingWorktrees: { [taken = document.workspace.tasks.map(\.worktreePath)] in
                                 (try? ExistingWorktrees.list(project: project, taken: taken, launcher: launcher)) ?? []

@@ -610,11 +610,11 @@ extension SidebarModel {
     @Test func theNextSheetOpensWithTheLastAgentWhileItIsInstalled() async throws {
         let (model, _, document, project) = try await modelWithProject(installed: ["claude", "codex"])
         try document.update { $0.lastAgentByProject[project] = "codex" }
-        let sheet = try #require(model.makeNewTaskModel(for: project))
+        let sheet = try #require(model.makeNewTaskModel(for: project, jira: nil))
         #expect(sheet.availableAgents == ["claude", "codex"])
         #expect(sheet.draft.agentId == "codex")
         try document.update { $0.lastAgentByProject[project] = "pi" }
-        #expect(model.makeNewTaskModel(for: project)?.draft.agentId == "claude", "an uninstalled last agent gives way to the first installed")
+        #expect(model.makeNewTaskModel(for: project, jira: nil)?.draft.agentId == "claude", "an uninstalled last agent gives way to the first installed")
     }
 
     @Test func aFailedCreateLeavesNoTaskAndThrows() async throws {
@@ -873,10 +873,10 @@ extension SidebarModel {
     /// Settings › Agents' changes reach the next New Task: an agent added since is offered and starts.
     @Test func reloadAgentsReachesNewTask() async throws {
         let (model, host, _, project) = try await modelWithProject(installed: ["claude", "gemini"], tools: tools)
-        #expect(model.makeNewTaskModel(for: project)?.agents.map(\.id) == AgentPresets.all.map(\.id))
+        #expect(model.makeNewTaskModel(for: project, jira: nil)?.agents.map(\.id) == AgentPresets.all.map(\.id))
         model.reloadAgents(AgentPresets.all + [gemini(secrets: [:])], readyMade: [])
         #expect(model.agents.map(\.id).last == "gemini")
-        #expect(model.makeNewTaskModel(for: project)?.availableAgents.contains("gemini") == true)
+        #expect(model.makeNewTaskModel(for: project, jira: nil)?.availableAgents.contains("gemini") == true)
         try await model.newTask(draft: geminiDraft("Login"), in: project)
         #expect(host.opened.last?.launch?.agentId == "gemini")
     }

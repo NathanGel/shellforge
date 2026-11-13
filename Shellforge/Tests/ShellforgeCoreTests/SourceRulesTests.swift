@@ -22,6 +22,29 @@ import Testing
         #expect(offenders.isEmpty, "Start children through CommandLauncher: \(offenders.map(\.lastPathComponent))")
     }
 
+    /// Shellforge always runs under a suite of its own (`-suite`), and `UserDefaults.standard` is the
+    /// bundle-id domain a dev build shares with the installed app: settings saved there leak between
+    /// them and miss the suite's plist. So nothing in the package defaults to it, and the host names
+    /// it only for what earlier versions left there: the migration's source and Backpack's old marker.
+    @Test func settingsUseTheAppsSuite() throws {
+        let files = try #require(FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil))
+            .compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" }
+        let standard = try Regex(#"UserDefaults\.standard|UserDefaults\??\s*=\s*\.standard|defaults:\s*\.standard"#)
+        let offenders = try files.filter { try String(contentsOf: $0, encoding: .utf8).contains(standard) }
+        #expect(offenders.isEmpty, "Take the app's suite from the host: \(offenders.map(\.lastPathComponent))")
+
+        let host = sources.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("sources/TerminalView")
+        let hostFiles = try FileManager.default.contentsOfDirectory(at: host, includingPropertiesForKeys: nil)
+            .filter { $0.lastPathComponent.hasPrefix("iTermShellforge") && $0.pathExtension == "swift" }
+        #expect(!hostFiles.isEmpty)
+        let hostLines = try hostFiles.flatMap { try String(contentsOf: $0, encoding: .utf8).split(separator: "\n").map(String.init) }
+        let stray = try hostLines.filter { line in
+            try line.contains(Regex(#"\.standard\b"#)) && line.contains("efaults")
+                && !line.contains("legacy: UserDefaults.standard") && !line.contains("from: UserDefaults.standard")
+        }
+        #expect(stray.isEmpty, "Pass iTermUserDefaults.userDefaults(): \(stray)")
+    }
+
     /// No test reaches the network, loopback included: a refused port behaves differently behind a
     /// sandbox, a proxy or a service that happens to listen there. Every session a test makes goes
     /// through a stub protocol; a plain one would dial. (Hook URLs written into config text are

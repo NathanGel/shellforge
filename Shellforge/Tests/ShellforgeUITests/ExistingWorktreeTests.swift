@@ -32,7 +32,7 @@ import Testing
         let (model, host, document, _) = model(repo, answers: [AlertAnswer(button: 1)])  // skip the import
         await model.addProject(folder: repo.path)
         let project = try #require(document.workspace.projects.first).id
-        let sheet = try #require(model.makeNewTaskModel(for: project))
+        let sheet = try #require(model.makeNewTaskModel(for: project, jira: nil))
         await sheet.loadExistingWorktrees()
         #expect(sheet.kind.existing.map(\.branch) == ["feat/resume"])
         var draft = TaskDraft(baseBranch: "main", agentId: "claude", model: "opus", reasoning: nil)
@@ -92,7 +92,7 @@ import Testing
         let (model, _, document, _) = model(repo, answers: [AlertAnswer(button: 1)])
         await model.addProject(folder: repo.path)
         let project = try #require(document.workspace.projects.first).id
-        let sheet = try #require(model.makeNewTaskModel(for: project))
+        let sheet = try #require(model.makeNewTaskModel(for: project, jira: nil))
         await sheet.loadExistingWorktrees()
         sheet.chooseWorktree(.existing)
         #expect(sheet.draft.existing?.branch == "feat/resume" && sheet.draft.title == "feat/resume")
@@ -140,7 +140,7 @@ import Testing
         let (model, _, document, _) = model(repo, answers: [AlertAnswer(button: 1)])
         await model.addProject(folder: repo.path)
         let project = try #require(document.workspace.projects.first)
-        let sheet = try #require(model.makeNewTaskModel(for: project.id))
+        let sheet = try #require(model.makeNewTaskModel(for: project.id, jira: nil))
         await sheet.loadExistingWorktrees()
         let picked = try #require(sheet.kind.existing.first)
         let resolved = URL(fileURLWithPath: picked.path).resolvingSymlinksInPath().path
@@ -176,7 +176,7 @@ import Testing
         let (model, host, document, _) = model(repo, answers: [AlertAnswer(button: 1)])
         await model.addProject(folder: repo.path)
         let project = try #require(document.workspace.projects.first)
-        let sheet = try #require(model.makeNewTaskModel(for: project.id))
+        let sheet = try #require(model.makeNewTaskModel(for: project.id, jira: nil))
         await sheet.loadExistingWorktrees()
         let picked = try #require(sheet.kind.existing.first)
         model.removalBoard.adopting.insert(ExistingWorktrees.resolved(picked.path))

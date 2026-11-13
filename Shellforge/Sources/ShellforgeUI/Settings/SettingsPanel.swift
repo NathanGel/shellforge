@@ -75,7 +75,10 @@ struct SettingsPanel: View {
                 SettingsSection("Agents") {
                     AgentsCard(model: agents, open: { agentForm = $0 })
                     SettingsRowDivider()
-                    if agentDefaults.rows.isEmpty {
+                    if agentDefaults.finding {
+                        HelpText("Looking for installed agents…")
+                            .padding(Space.block)
+                    } else if agentDefaults.rows.isEmpty {
                         HelpText("No agent is installed. Install Claude Code, Codex, Grok or PI to choose its defaults.")
                             .padding(Space.block)
                     }

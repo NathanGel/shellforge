@@ -71,18 +71,40 @@ public final class AgentListModel: ObservableObject {
         reload()
     }
 
-    /// Reads the agents again.
+    /// Reads the agents again. Whether each is installed comes from the environment as read so far:
+    /// before the login shell's first read is done, a row keeps what it showed (not installed when
+    /// new), the read finishes off the main actor, and the list is read again then.
     public func reload() {
+        var waiting = false
         do {
             let loaded = try registry.load()
+            let before = Dictionary(rows.map { ($0.id, $0.installed) }) { first, _ in first }
             rows = loaded.agents.map { agent in
                 let origin = loaded.origins[agent.id] ?? .own
+                let installed = launcher.isInstalledIfKnown(agent.command)
+                if installed == nil { waiting = true }
                 return Row(agent: agent, origin: origin, overridden: loaded.overridden.contains(agent.id),
-                           installed: launcher.locate(agent.command) != nil, detection: Self.detection(agent, origin: origin))
+                           installed: installed ?? before[agent.id] ?? false, detection: Self.detection(agent, origin: origin))
             }
             failure = AgentFiles.problemSentence(files: loaded.problems.map(\.file))
         } catch {
             failure = error.localizedDescription
+        }
+        if waiting { readEnvironment() }
+    }
+
+    /// The login shell's first read, running off the main actor; one at a time.
+    private var readingEnvironment = false
+
+    private func readEnvironment() {
+        guard !readingEnvironment else { return }
+        readingEnvironment = true
+        let launcher = self.launcher
+        Task { [weak self] in
+            _ = await BackgroundWork.run { launcher.environment }
+            guard let self else { return }
+            self.readingEnvironment = false
+            self.reload()
         }
     }
 
