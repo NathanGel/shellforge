@@ -229,7 +229,7 @@ final class iTermShellforgeSidebar: NSObject {
     /// iTerm2's interpolated-string evaluator (`TabCommand.initialText`).
     /// A profile key PTYSession reads: its initial text is sent once, then cleared from the
     /// session, so a split or a new tab copying the session's profile does not run the agent again.
-    @objc nonisolated static let initialTextOnceKey = "Shellforge Initial Text Once"
+    @objc nonisolated static let initialTextOnceKey = "Shellforge Initial Text Once"  // Localization unneeded
 
     nonisolated static func taskTabProfile(base: [AnyHashable: Any], directory: String, initialText: String? = nil) -> [AnyHashable: Any] {
         var profile = base
@@ -237,7 +237,7 @@ final class iTermShellforgeSidebar: NSObject {
             profile[KEY_INITIAL_TEXT] = initialText
             profile[initialTextOnceKey] = true
         }
-        profile[KEY_CUSTOM_COMMAND] = "No"
+        profile[KEY_CUSTOM_COMMAND] = "No"  // Localization unneeded
         profile[KEY_CUSTOM_DIRECTORY] = kProfilePreferenceInitialDirectoryCustomValue
         profile[KEY_WORKING_DIRECTORY] = directory
         return profile
@@ -783,18 +783,25 @@ extension iTermShellforgeSidebar {
     /// Empty under ModernTests: building it reads the user's own workspace, which a test run must
     /// not touch, as `startHelper` does not start the helper there.
     @objc static func tunnelsMenu() -> NSMenu {
-        guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return NSMenu(title: "Tunnels") }
+        guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return NSMenu(title: tunnelsMenuTitle) }
         return tunnelMenu.menu
     }
 
     /// The first window's sidebar: where a tunnel's start is checked and its keep-running read.
     /// The key window's sidebar, else the first: where a tunnel's start is checked and a problem said.
     fileprivate static var anySidebar: SidebarModel? { keySidebar ?? sidebars.allObjects.first }
+
+    /// The Tunnels menu's title.
+    fileprivate static var tunnelsMenuTitle: String {
+        String(localized: "Shellforge.TunnelsMenu",
+               defaultValue: "Tunnels",
+               comment: "Title of the menu that lists the SSH tunnels Shellforge can start and stop")
+    }
 }
 
 @MainActor
 private final class TunnelMenuController: NSObject, NSMenuItemValidation {
-    let menu = NSMenu(title: "Tunnels")
+    let menu = NSMenu(title: iTermShellforgeSidebar.tunnelsMenuTitle)
     private var subscription: AnyCancellable?
 
     override init() {
@@ -922,7 +929,9 @@ private final class PanelMenuController: NSObject, NSMenuItemValidation {
 
 @MainActor
 private final class TasksMenuController: NSObject, NSMenuItemValidation {
-    let menu = NSMenu(title: "Tasks")
+    let menu = NSMenu(title: String(localized: "Shellforge.TasksMenu",
+                                    defaultValue: "Tasks",
+                                    comment: "Title of the menu of Shellforge’s task commands (New Task, New Review and the like)"))
 
     override init() {
         super.init()
@@ -1082,16 +1091,28 @@ extension iTermShellforgeSidebar {
     /// whether the sidebar is open or closed: just after the window buttons, as Finder's; in full
     /// screen, at the top of the panel or of the rail left when it is closed.
     @objc static func makeToggleButton(target: AnyObject, action: Selector) -> NSButton {
-        let image = NSImage(systemSymbolName: SFSymbol.sidebarLeft.rawValue, accessibilityDescription: "Toggle Sidebar")
+        let label = String(localized: "Shellforge.ToggleSidebar",
+                           defaultValue: "Toggle Sidebar",
+                           comment: "VoiceOver label of the button beside the window buttons that shows or hides Shellforge’s sidebar")
+        let image = NSImage(systemSymbolName: SFSymbol.sidebarLeft.rawValue, accessibilityDescription: label)
         let button = NSButton(image: image ?? NSImage(), target: target, action: action)
         button.isBordered = false
         button.imageScaling = .scaleNone
-        button.setAccessibilityLabel("Toggle Sidebar")
+        button.setAccessibilityLabel(label)
         return button
     }
 
     /// The toggle's tooltip for a sidebar `hidden` or not.
-    @objc static func toggleTooltip(hidden: Bool) -> String { hidden ? "Show Sidebar (⌃⌘S)" : "Hide Sidebar (⌃⌘S)" }
+    @objc static func toggleTooltip(hidden: Bool) -> String {
+        if hidden {
+            return String(localized: "Shellforge.ShowSidebarTooltip",
+                          defaultValue: "Show Sidebar (⌃⌘S)",
+                          comment: "Tooltip of the sidebar toggle while Shellforge’s sidebar is hidden; ⌃⌘S is its keyboard shortcut")
+        }
+        return String(localized: "Shellforge.HideSidebarTooltip",
+                      defaultValue: "Hide Sidebar (⌃⌘S)",
+                      comment: "Tooltip of the sidebar toggle while Shellforge’s sidebar shows; ⌃⌘S is its keyboard shortcut")
+    }
 
     @objc static var toggleSize: NSSize { NSSize(width: 28, height: 22) }
 

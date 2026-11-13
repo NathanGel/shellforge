@@ -2,7 +2,7 @@
 import Foundation
 import os
 
-let daemonLog = Logger(subsystem: "io.github.nathangel.shellforge", category: "daemon")
+let daemonLog = PackageLogger(category: "daemon")
 #if canImport(Darwin)
 import Darwin
 #endif
@@ -314,7 +314,7 @@ public final class DaemonClient: Sendable {
             return true
         }
         guard due else { return }
-        daemonLog.error("Unreadable \(name, privacy: .public) from the helper, so reconnecting to a fresh snapshot (logged at most once a minute): \(String(describing: error), privacy: .public)")
+        daemonLog.error("Unreadable \(name) from the helper, so reconnecting to a fresh snapshot (logged at most once a minute): \(String(describing: error))")
         ErrorLogging.record("daemon", "Unreadable \(name) from the helper, so reconnecting to a fresh snapshot: \(error)")
     }
 
@@ -402,7 +402,7 @@ public final class DaemonClient: Sendable {
         catch let error as DaemonError { throw Self.logged(error, method) }
         catch let error as DecodingError {
             // A reply this app cannot read: the caller says only that the request failed.
-            daemonLog.error("\(method.rawValue, privacy: .public)'s reply could not be read: \(String(describing: error), privacy: .public)")
+            daemonLog.error("\(method.rawValue)'s reply could not be read: \(String(describing: error))")
             ErrorLogging.record("daemon", "\(method.rawValue)’s reply could not be read: \(error)")
             throw error
         }
@@ -413,7 +413,7 @@ public final class DaemonClient: Sendable {
     /// last poll — and only an info line.
     private static func logged(_ error: DaemonError, _ method: DaemonMethod) -> DaemonError {
         daemonLog.log(level: error.isNotFound ? .info : .error,
-                       "\(method.rawValue, privacy: .public) failed, \(error.code.rawValue, privacy: .public): \(error.message, privacy: .public)")
+                       "\(method.rawValue) failed, \(error.code.rawValue): \(error.message)")
         return error
     }
 

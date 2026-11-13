@@ -1,8 +1,7 @@
 import Foundation
-import os
 import ShellforgeCore
 
-private let folderLog = Logger(subsystem: "io.github.nathangel.shellforge", category: "projectFolder")
+private let folderLog = PackageLogger(category: "projectFolder")
 
 extension SidebarModel {
     /// A Project folder task on another branch: the folder is switched to it before the task is made,

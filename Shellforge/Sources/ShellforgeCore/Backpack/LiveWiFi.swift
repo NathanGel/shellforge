@@ -40,6 +40,8 @@ public struct CoreWLANWiFi: WiFiControl {
     /// One scan for every network in range; a scan straight after another fails with `EBUSY`, so it is tried once more.
     public func networksInRange() -> Set<String> {
         guard let interface else { return [] }
+        // Back-off, not synchronisation: CoreWLAN has nothing to wait on for “ready to scan again”,
+        // so the retry simply comes a second later.
         let found = (try? interface.scanForNetworks(withName: nil))
             ?? { Thread.sleep(forTimeInterval: 1)
                  return BackpackLog.attempt("Scanning for Wi-Fi networks", level: .info) { try interface.scanForNetworks(withName: nil) } ?? []
@@ -51,6 +53,7 @@ public struct CoreWLANWiFi: WiFiControl {
     private func scan(_ network: String) -> Set<CWNetwork> {
         guard let interface else { return [] }
         if let found = try? interface.scanForNetworks(withName: network) { return found }
+        // Back-off, not synchronisation: see `networksInRange`.
         Thread.sleep(forTimeInterval: 1)
         return BackpackLog.attempt("Scanning for \(network)", level: .info) { try interface.scanForNetworks(withName: network) } ?? []
     }
@@ -76,6 +79,9 @@ public struct CoreWLANWiFi: WiFiControl {
         return waitUntilJoined(network)
     }
 
+    /// Reads the joined network again until it is `network` or `joinWait` has passed. The pause
+    /// between reads is back-off against CoreWLAN, not synchronisation: nothing in this process
+    /// is being waited for.
     private func waitUntilJoined(_ network: String) -> Bool {
         let deadline = Date().addingTimeInterval(Self.joinWait)
         while Date() < deadline {

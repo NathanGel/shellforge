@@ -1,7 +1,6 @@
 import Foundation
-import os
 
-private let errorLogLog = Logger(subsystem: "io.github.nathangel.shellforge", category: "errorLog")
+private let errorLogLog = PackageLogger(category: "errorLog")
 
 /// The error log: one line for each real problem — a failed removal, a lost helper, an update that
 /// didn't install — in `errors.log`, for Help › Show Error Log and for whoever reports a bug. Local
@@ -92,7 +91,7 @@ public final class ErrorLog: Sendable {
     public func createIfMissing() {
         state.withLock { _ in
             do { try makeFile() } catch {
-                errorLogLog.error("Making the error log failed: \(String(describing: error), privacy: .public)")
+                errorLogLog.error("Making the error log failed: \(String(describing: error))")
             }
         }
     }
@@ -123,7 +122,7 @@ public final class ErrorLog: Sendable {
             try handle.seekToEnd()
             try handle.write(contentsOf: line)
         } catch {
-            errorLogLog.error("Writing the error log failed: \(String(describing: error), privacy: .public)")
+            errorLogLog.error("Writing the error log failed: \(String(describing: error))")
         }
     }
 

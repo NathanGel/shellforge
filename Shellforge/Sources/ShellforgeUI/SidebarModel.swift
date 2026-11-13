@@ -385,7 +385,10 @@ public final class SidebarModel: ObservableObject {
              Repository.defaultBranch(of: project.path, launcher: launcher))
         }
         guard !found.isEmpty else { return }
-        let answer = await prompter.ask(AlertPrompt(message: "Import \(found.count) worktree\(found.count == 1 ? "" : "s")?",
+        // Two whole sentences, not a suffix: the package's text is English-only for now (README),
+        // and a sentence per count is what a later catalog plural replaces.
+        let message = found.count == 1 ? "Import 1 worktree?" : "Import \(found.count) worktrees?"
+        let answer = await prompter.ask(AlertPrompt(message: message,
                                                     detail: "Adds existing worktrees as tasks without starting agents.",
                                                     buttons: ["Import", "Skip"], escape: 1))
         // Anything can run across the await: the project can have gone, a worktree been deleted, locked

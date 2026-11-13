@@ -1,10 +1,9 @@
 import Foundation
-import os
 import ShellforgeCore
 
 /// Each move and refusal in Rearrange mode, for finding where one goes wrong: `log stream --level info --predicate
 /// 'subsystem == "io.github.nathangel.shellforge" AND category == "rearrange"'`.
-let rearrangeLog = Logger(subsystem: "io.github.nathangel.shellforge", category: "rearrange")
+let rearrangeLog = PackageLogger(category: "rearrange")
 
 /// Rearrange mode: the sidebar's order is edited as a draft and written once, on Done.
 extension SidebarModel {
@@ -65,7 +64,7 @@ extension SidebarModel {
             return false
         }
         let moved = moveInDraft(landing.item, before: landing.before)
-        rearrangeLog.info("move of \(String(describing: landing.item), privacy: .public) before \(String(describing: landing.before), privacy: .public): \(moved ? "moved" : "refused", privacy: .public)")
+        rearrangeLog.info("move of \(String(describing: landing.item)) before \(String(describing: landing.before)): \(moved ? "moved" : "refused")")
         return moved
     }
 }

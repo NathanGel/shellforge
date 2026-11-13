@@ -22,6 +22,18 @@ import Testing
         #expect(offenders.isEmpty, "Start children through CommandLauncher: \(offenders.map(\.lastPathComponent))")
     }
 
+    /// Every package line reaches the host's debug log through `LogSink`, so nothing makes an os
+    /// `Logger` of its own: `PackageLogger` (and the design system's `DesignLog`) are the only ones.
+    @Test func everyLoggerGoesThroughTheSink() throws {
+        let files = try #require(FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil))
+            .compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" }
+        #expect(!files.isEmpty)
+        let offenders = try files.filter { !["PackageLog.swift", "DesignLog.swift"].contains($0.lastPathComponent) }.filter { file in
+            try String(contentsOf: file, encoding: .utf8).contains("Logger(subsystem:")
+        }
+        #expect(offenders.isEmpty, "Log through PackageLogger: \(offenders.map(\.lastPathComponent))")
+    }
+
     /// Shellforge always runs under a suite of its own (`-suite`), and `UserDefaults.standard` is the
     /// bundle-id domain a dev build shares with the installed app: settings saved there leak between
     /// them and miss the suite's plist. So nothing in the package defaults to it, and the host names

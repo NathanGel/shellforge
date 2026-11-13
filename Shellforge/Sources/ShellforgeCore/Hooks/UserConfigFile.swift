@@ -1,8 +1,7 @@
 // Ported from AiTerm (app/Sources/AiTermCore/Harnesses/UserConfigFile.swift), GPLv3, Laurens D'Hondt.
 import Foundation
-import os
 
-let hooksLog = Logger(subsystem: "io.github.nathangel.shellforge", category: "hooks")
+let hooksLog = PackageLogger(category: "hooks")
 
 /// Why a driver will not write: what the Settings card shows, through `localizedDescription`.
 enum HookInstallError: Error, Equatable, LocalizedError {
@@ -60,7 +59,7 @@ struct UserConfigFile: Sendable {
         guard !isDirectory.boolValue else { return .refused("cannot be read") }
         do { return .present(try Data(contentsOf: target)) }
         catch {
-            hooksLog.error("Reading \(displayPath, privacy: .public) failed: \(String(describing: error), privacy: .public)")
+            hooksLog.error("Reading \(displayPath) failed: \(String(describing: error))")
             return .refused("cannot be read")
         }
     }

@@ -130,6 +130,35 @@ private let neverAbandoned: TimeInterval = 3600
         #expect(kill(pid, 0) != 0, "stop() returned while the daemon process was still alive")
     }
 
+    // stop() is woken by the child's termination handler, not by polling: with an hour's grace, a
+    // daemon that acts on SIGTERM still lets it return at once, and gone.
+    @Test func stopReturnsAsSoonAsTheTerminationHandlerHearsTheExit() async {
+        let box = StateBox()
+        let sup = DaemonSupervisor(python: URL(fileURLWithPath: "/bin/sh"), daemonDir: URL(fileURLWithPath: "/tmp"),
+                                   socketPath: "/tmp/sem-\(UUID().uuidString.prefix(8)).sock", arguments: ["-c", "exec sleep 30"],
+                                   logURL: logURL, bindDeadline: neverAbandoned, stopGrace: 3600) { box.append($0) }
+        sup.start()
+        func runningPid() -> Int32? { box.states.lazy.compactMap { if case .running(let pid) = $0 { pid } else { nil } }.first }
+        await eventually { runningPid() != nil }
+        guard let pid = runningPid() else { Issue.record("supervisor never reported .running"); return }
+
+        let started = Date()
+        sup.stop()
+        #expect(Date().timeIntervalSince(started) < 600, "stop() waited out its grace instead of hearing the exit")
+        #expect(kill(pid, 0) != 0, "stop() returned while the daemon process was still alive")
+    }
+
+    /// The wait `stop()` uses: it ends when the termination handler hears the child end, and not
+    /// before; a child still running when its deadline passes is reported as such.
+    @Test func aChildsWaitEndsWithItsTerminationHandler() throws {
+        let child = try ChildProcess.launch("/bin/sleep", ["30"], environment: [:], directory: nil, output: nil) { _, _ in }
+        #expect(!child.waitForExit(until: .now() + 0.05), "a child that is still running was reported gone")
+        child.terminate()
+        #expect(child.waitForExit(until: .now() + 600))
+        #expect(!child.isRunning)
+        #expect(child.waitForExit(until: .now()), "a second wait ends at once")
+    }
+
     // The daemon runs from inside the signed app bundle (PYTHONPATH), so it must not be
     // allowed to write `__pycache__` there — that breaks `codesign --verify --deep --strict`.
     @Test func testSupervisorDisablesBytecodeWritingInTheDaemonEnvironment() async throws {

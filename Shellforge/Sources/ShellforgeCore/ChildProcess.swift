@@ -155,7 +155,10 @@ extension ChildProcess {
         process.standardOutput = output ?? FileHandle.nullDevice
         process.standardError = output ?? FileHandle.nullDevice
         let child = RunningChild(process)
-        process.terminationHandler = { onExit(child, $0.terminationStatus) }
+        process.terminationHandler = {
+            child.exited()
+            onExit(child, $0.terminationStatus)
+        }
         try process.run()
         return child
     }
@@ -182,8 +185,23 @@ extension ChildProcess {
 /// A child started by `ChildProcess.launch`, while it runs and after.
 public final class RunningChild: @unchecked Sendable {
     private let process: Process
+    /// Entered from the start, left once by the termination handler: a wait on it ends when the
+    /// child does, however many wait.
+    private let running = DispatchGroup()
 
-    init(_ process: Process) { self.process = process }
+    init(_ process: Process) {
+        self.process = process
+        running.enter()
+    }
+
+    /// Called once, by the termination handler.
+    func exited() { running.leave() }
+
+    /// Waits until the termination handler has heard the child end, or `deadline` passes; whether
+    /// it ended.
+    func waitForExit(until deadline: DispatchTime) -> Bool {
+        running.wait(timeout: deadline) == .success
+    }
 
     /// Its process id; 0 before it has started.
     public var pid: Int32 { process.processIdentifier }

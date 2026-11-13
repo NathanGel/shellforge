@@ -1,15 +1,14 @@
 // Ported from AiTerm (app/Sources/AiTermCore/Tasks/TaskWorkflow.swift, Git/Repository+Worktrees.swift and Git/Repository.swift), GPLv3, Laurens D'Hondt.
 import Foundation
-import os
 
-let removalLog = Logger(subsystem: "io.github.nathangel.shellforge", category: "removal")
+let removalLog = PackageLogger(category: "removal")
 
 /// Removes a task's worktree and, when asked, its branch: AiTerm's `TaskWorkflow.remove` and the
 /// `Repository` worktree helpers it runs, on Shellforge's `CommandLauncher` git. Blocking: callers
 /// run it off the main actor.
 public enum TaskRemoval {
     /// Lets the UI's removal write to the same log: `log show --predicate 'category == "removal"'`.
-    public static func log(_ message: String) { removalLog.notice("\(message, privacy: .public)") }
+    public static func log(_ message: String) { removalLog.notice("\(message)") }
 
     /// Why the branch stayed although its deletion was asked for.
     public enum BranchRefusal: Equatable, Sendable {
@@ -81,7 +80,7 @@ public enum TaskRemoval {
     static func remove(task: TaskItem, project: Project, deleteBranch: Bool, force: Bool,
                        sharedWithAnotherTask: Bool, launcher: CommandLauncher, deleteFolder: FolderDeletion) throws -> Removed {
         let owned = ownsWorktree(of: task, in: project)
-        removalLog.notice("remove task=\(task.id.uuidString, privacy: .public) worktree=\(task.worktreePath, privacy: .public) branch=\(task.branch, privacy: .public) base=\(task.baseBranch, privacy: .public) deleteBranch=\(deleteBranch, privacy: .public) force=\(force, privacy: .public) owned=\(owned, privacy: .public)")
+        removalLog.notice("remove task=\(task.id.uuidString) worktree=\(task.worktreePath) branch=\(task.branch) base=\(task.baseBranch) deleteBranch=\(deleteBranch) force=\(force) owned=\(owned)")
         // Not Shellforge's worktree: the task goes, the checkout and its branch stay.
         guard owned else { return Removed(branchRefusal: nil) }
         var switchedBranch: String?
@@ -100,13 +99,13 @@ public enum TaskRemoval {
         if task.kind == .review {
             guard case .kept(let why) = GitRepository(project.path, launcher: launcher)
                 .releaseReviewBranch(task.branch, target: task.baseBranch) else { return Removed(branchRefusal: nil, switchedBranch: switchedBranch) }
-            removalLog.notice("review branch \(task.branch, privacy: .public) kept: \(String(describing: why), privacy: .public)")
+            removalLog.notice("review branch \(task.branch) kept: \(String(describing: why))")
             ErrorLogging.record("removal", "Review removed. " + why.note(branch: task.branch))
             return Removed(branchRefusal: nil, keptBranch: why, switchedBranch: switchedBranch)
         }
         guard deleteBranch else { return Removed(branchRefusal: nil, switchedBranch: switchedBranch) }
         if let refusal = refusal(toDelete: task) {
-            removalLog.notice("branch \(task.branch, privacy: .public) kept, refused: \(refusal, privacy: .public)")
+            removalLog.notice("branch \(task.branch) kept, refused: \(refusal)")
             ErrorLogging.record("removal", "Branch \(task.branch) kept, refused: \(refusal)")
             return Removed(branchRefusal: .other(reason: refusal), switchedBranch: switchedBranch)
         }
@@ -124,11 +123,11 @@ public enum TaskRemoval {
             }
             return Removed(branchRefusal: nil, switchedBranch: switchedBranch)
         } catch let failure as GitFailure where failure.message.contains("not fully merged") {
-            removalLog.notice("branch \(task.branch, privacy: .public) kept: notMerged into \(task.baseBranch, privacy: .public)")
+            removalLog.notice("branch \(task.branch) kept: notMerged into \(task.baseBranch)")
             ErrorLogging.record("removal", "Branch \(task.branch) kept: not merged into \(task.baseBranch)")
             return Removed(branchRefusal: .notMerged(base: task.baseBranch), switchedBranch: switchedBranch)
         } catch let failure as GitFailure {
-            removalLog.notice("branch \(task.branch, privacy: .public) kept: other: \(failure.message, privacy: .public)")
+            removalLog.notice("branch \(task.branch) kept: other: \(failure.message)")
             ErrorLogging.record("removal", "Branch \(task.branch) kept: \(failure.message)")
             return Removed(branchRefusal: .other(reason: firstLine(of: failure.message)), switchedBranch: switchedBranch)
         }
@@ -167,7 +166,7 @@ public enum TaskRemoval {
                                      message: "\(worktreePath) has \(name) checked out, not \(branch).")
                 }
                 switchedBranch = name
-                removalLog.notice("worktree \(worktreePath, privacy: .public) has \(name, privacy: .public) checked out instead of \(branch, privacy: .public): switchedBranch")
+                removalLog.notice("worktree \(worktreePath) has \(name) checked out instead of \(branch): switchedBranch")
                 ErrorLogging.record("removal", "Branch \(name) kept: \(worktreePath) had it checked out instead of \(branch)")
             }
             try removeRegistered(worktreePath, lockedWith: worktree.lockReason, in: projectPath, force: force,
@@ -177,7 +176,7 @@ public enum TaskRemoval {
             // git not listing the folder is no proof of that — a listing misread, or a folder that
             // was never a worktree — so it goes only when it shows it was one.
             guard isAbandonedWorktree(worktreePath) else {
-                removalLog.notice("worktree \(worktreePath, privacy: .public) not listed by git and not an abandoned worktree: kept")
+                removalLog.notice("worktree \(worktreePath) not listed by git and not an abandoned worktree: kept")
                 ErrorLogging.record("removal", "\(worktreePath) kept: git doesn’t list it and nothing shows a removal left it")
                 throw GitFailure(command: "remove \(worktreePath)",
                                  message: "\(worktreePath) isn’t a worktree git knows, so it was left in place. Delete it yourself if you don’t need it.")
@@ -255,7 +254,7 @@ public enum TaskRemoval {
         guard FileManager.default.fileExists(atPath: worktreePath), refillsWhileDeleted(error) else { return nil }
         let users = FolderUsers.processes(using: worktreePath, launcher: launcher)
         let holders = users.isEmpty ? "no program found with its folder there" : FolderUsers.describe(users)
-        removalLog.notice("worktree \(worktreePath, privacy: .public) still in use: \(holders, privacy: .public)")
+        removalLog.notice("worktree \(worktreePath) still in use: \(holders)")
         ErrorLogging.record("removal", "Worktree \(worktreePath) not removed, still in use: \(holders)")
         return .folderInUse(users)
     }
@@ -305,7 +304,7 @@ public enum TaskRemoval {
         let out = try launcher.run("git", ["-C", directory] + args)
         guard out.status == 0 else {
             let command = "git " + args.joined(separator: " ")
-            removalLog.notice("\(command, privacy: .public) in \(directory, privacy: .public) failed, status \(out.status, privacy: .public): \(out.stderr, privacy: .public)")
+            removalLog.notice("\(command) in \(directory) failed, status \(out.status): \(out.stderr)")
             if record { ErrorLogging.record("removal", "\(command) in \(directory) failed, status \(out.status): \(out.stderr)") }
             throw GitFailure(command: command, message: out.stderr)
         }

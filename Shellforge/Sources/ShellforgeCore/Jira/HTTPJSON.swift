@@ -158,12 +158,11 @@ extension URL {
     }
 }
 
-import os
 
 /// AiTerm's `Log.network`: one line for a response that could not be read.
 enum HTTPLog {
-    static let logger = Logger(subsystem: "io.github.nathangel.shellforge", category: "network")
+    static let logger = PackageLogger(category: "network")
     static func failed(_ what: String, _ error: Error) {
-        logger.error("\(what, privacy: .public) failed: \(String(describing: error), privacy: .public)")
+        logger.error("\(what) failed: \(String(describing: error))")
     }
 }

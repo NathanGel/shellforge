@@ -1,10 +1,9 @@
 // Ported from AiTerm (app/Sources/AiTerm/MachineMonitor.swift), GPLv3, Laurens D'Hondt.
 import Combine
 import Foundation
-import os
 import ShellforgeCore
 
-private let machineLog = Logger(subsystem: "io.github.nathangel.shellforge", category: "machine")
+private let machineLog = PackageLogger(category: "machine")
 
 /// The Mac's readings under `ctx` (proposal 1A, 6 Oct 2026): its CPU, its memory and, on battery,
 /// its charge, sampled off the main actor and published here for the footer. An owner of the

@@ -1,9 +1,8 @@
 import Combine
 import Foundation
-import os
 import ShellforgeCore
 
-private let activityLog = Logger(subsystem: "io.github.nathangel.shellforge", category: "activity")
+private let activityLog = PackageLogger(category: "activity")
 
 /// The activity bar's order and the panels it leaves out, one for the whole app: every window's bar
 /// follows them, and a change is saved for the next launch. `defaults` nil keeps them in memory only.
@@ -29,7 +28,7 @@ public final class ActivityOrderSource: ObservableObject {
         var layout = self.layout
         layout.move(panel, before: before)
         guard layout.order != order else { return }
-        activityLog.info("activity bar order \(layout.savedValue, privacy: .public)")
+        activityLog.info("activity bar order \(layout.savedValue)")
         order = layout.order
         if let defaults { ActivityOrderStore.save(layout.savedValue, to: defaults) }
     }
@@ -40,7 +39,7 @@ public final class ActivityOrderSource: ObservableObject {
         var layout = self.layout
         guard layout.setHidden(panel, hide) else { return false }
         guard layout.hidden != hidden else { return true }
-        activityLog.info("activity bar hides \(layout.savedHidden, privacy: .public)")
+        activityLog.info("activity bar hides \(layout.savedHidden)")
         hidden = layout.hidden
         if let defaults { ActivityHiddenStore.save(layout.savedHidden, to: defaults) }
         return true

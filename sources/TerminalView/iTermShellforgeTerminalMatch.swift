@@ -92,7 +92,7 @@ final class iTermShellforgeTerminalMatch: NSObject {
         case .cursorText: KEY_CURSOR_TEXT_COLOR
         case .selection: KEY_SELECTION_COLOR
         case .selectedText: KEY_SELECTED_TEXT_COLOR
-        case .ansi(let index): "Ansi \(index) Color"
+        case .ansi(let index): "Ansi \(index) Color"  // Localization unneeded
         }
     }
 

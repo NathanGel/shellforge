@@ -95,7 +95,7 @@ final class iTermShellforgeThemes: NSObject {
     // MARK: - For host tests, which cannot import ShellforgeUI
 
     /// Saves a choice and applies it at once.
-    static func save(followsMac: Bool, light: String = "shellforge", dark: String = "shellforge", single: String = "shellforge") {
+    static func save(followsMac: Bool, light: String = "shellforge", dark: String = "shellforge", single: String = "shellforge") {  // Localization unneeded
         settings.save(ThemeChoice(followsMac: followsMac, light: light, dark: dark, single: single))
     }
 

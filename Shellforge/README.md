@@ -40,6 +40,22 @@ Settings they open. The window code reaches it through
 `sources/TerminalView/iTermShellforgeSidebar.swift`. Everything it does, and how to reach it, is
 in [FEATURES.md](../FEATURES.md).
 
+**English only, for now.** The package's user-visible text is written in English and not
+localized: the package has no string catalog of its own, and iTerm2's
+(`xcstrings/Localizable.xcstrings`) does not reach it. A count is still written as one whole
+sentence per form (“Import 1 worktree?”, “Import 2 worktrees?”), never a suffix added to a word,
+so a later catalog plural can replace it. The host's own Shellforge files
+(`sources/TerminalView/iTermShellforge*.swift`) are in the iTerm2 target and are localized as
+`docs/localization.md` describes.
+
+## Logging
+
+The package logs through `PackageLogger` (ShellforgeCore) and `DesignLog` (ShellforgeDesign), never
+an os `Logger` of its own. Each line goes to the unified log under `io.github.nathangel.shellforge`,
+and to the receiver the app installs at launch (`iTermShellforgeErrorLog.configure`): debug, info
+and notice lines to iTerm2's debug log (DLog), errors to its retrospective log (RLog) as well.
+Tokens and passwords are blanked first, as in the error log.
+
 ## shellforged
 
 The daemon that tracks agents' status and usage from their hooks, in `daemon/`, with the hook shims

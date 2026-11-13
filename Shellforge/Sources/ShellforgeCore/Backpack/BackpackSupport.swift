@@ -16,14 +16,14 @@ enum BackpackProcess {
 /// AiTerm's `Log.backpack.attempt`: runs `work`, and logs its failure in one line instead of
 /// throwing it.
 enum BackpackLog {
-    static let logger = Logger(subsystem: "io.github.nathangel.shellforge", category: "backpack")
+    static let logger = PackageLogger(category: "backpack")
 
     @discardableResult
     static func attempt<Value>(_ what: @autoclosure () -> String, level: OSLogType = .error,
                                _ work: () throws -> Value) -> Value? {
         do { return try work() } catch {
             let description = what()
-            logger.log(level: level, "\(description, privacy: .public) failed: \(String(describing: error), privacy: .public)")
+            logger.log(level: level, "\(description) failed: \(String(describing: error))")
             // Only what is logged as an error: lower levels are expected, such as a setting not yet made.
             if level == .error || level == .fault { ErrorLogging.record("backpack", "\(description) failed: \(error)") }
             return nil

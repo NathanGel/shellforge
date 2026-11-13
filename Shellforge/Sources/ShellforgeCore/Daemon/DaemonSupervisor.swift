@@ -32,6 +32,7 @@ public final class DaemonSupervisor: Sendable {
     private let logURL: URL
     private let adoptedProbeInterval: TimeInterval
     private let bindDeadline: TimeInterval
+    private let stopGrace: TimeInterval
     private let backoff: @Sendable (_ attempt: Int) -> TimeInterval
     /// Where a failure goes in the error log: `ErrorLogging`, or a test's own list.
     private let recordError: @Sendable (_ message: String) -> Void
@@ -51,8 +52,8 @@ public final class DaemonSupervisor: Sendable {
     private let state = Locked(Supervision())
     private let queue = DispatchQueue(label: "shellforge.supervisor")
 
-    public init(python: URL, daemonDir: URL, support: ShellforgeSupport = ShellforgePaths.current, socketPath: String? = nil, hookPort: Int? = nil, arguments: [String]? = nil, logURL: URL? = nil, adoptedProbeInterval: TimeInterval = 5, bindDeadline: TimeInterval = DaemonSupervisor.bindDeadline, backoff: @escaping @Sendable (_ attempt: Int) -> TimeInterval = { Backoff.delay(attempt: $0) }, recordError: @escaping @Sendable (_ message: String) -> Void = { ErrorLogging.record("daemon", $0) }, onStateChange: @escaping @Sendable (State) -> Void) {
-        self.python = python; self.daemonDir = daemonDir; self.supportDirectory = support.folder; self.socketPath = socketPath ?? support.socketPath; self.hookPort = hookPort ?? support.hookPort; self.arguments = arguments; self.logURL = logURL ?? support.daemonLogURL; self.adoptedProbeInterval = adoptedProbeInterval; self.bindDeadline = bindDeadline; self.backoff = backoff; self.recordError = recordError; self.onStateChange = onStateChange
+    public init(python: URL, daemonDir: URL, support: ShellforgeSupport = ShellforgePaths.current, socketPath: String? = nil, hookPort: Int? = nil, arguments: [String]? = nil, logURL: URL? = nil, adoptedProbeInterval: TimeInterval = 5, bindDeadline: TimeInterval = DaemonSupervisor.bindDeadline, stopGrace: TimeInterval = DaemonSupervisor.stopGracePeriod, backoff: @escaping @Sendable (_ attempt: Int) -> TimeInterval = { Backoff.delay(attempt: $0) }, recordError: @escaping @Sendable (_ message: String) -> Void = { ErrorLogging.record("daemon", $0) }, onStateChange: @escaping @Sendable (State) -> Void) {
+        self.python = python; self.daemonDir = daemonDir; self.supportDirectory = support.folder; self.socketPath = socketPath ?? support.socketPath; self.hookPort = hookPort ?? support.hookPort; self.arguments = arguments; self.logURL = logURL ?? support.daemonLogURL; self.adoptedProbeInterval = adoptedProbeInterval; self.bindDeadline = bindDeadline; self.stopGrace = stopGrace; self.backoff = backoff; self.recordError = recordError; self.onStateChange = onStateChange
     }
 
     public func start() {
@@ -79,7 +80,7 @@ public final class DaemonSupervisor: Sendable {
         do {
             try FileManager.default.createDirectory(at: logURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         } catch {
-            daemonLog.error("Making the helper's log folder failed: \(String(describing: error), privacy: .public)")
+            daemonLog.error("Making the helper's log folder failed: \(String(describing: error))")
         }
     }
 
@@ -118,17 +119,19 @@ public final class DaemonSupervisor: Sendable {
         let running = victims.filter(\.isRunning)
         guard !running.isEmpty else { return }
         running.forEach { $0.terminate() }
-        // Poll rather than block in `waitUntilExit()`: a daemon that ignored SIGTERM would
-        // otherwise hang the quit forever. After the grace period it gets SIGKILL, which the
-        // kernel always delivers.
-        let deadline = Date().addingTimeInterval(Self.stopGracePeriod)
-        while running.contains(where: \.isRunning), Date() < deadline { usleep(20_000) }
-        let stuck = running.filter(\.isRunning)
+        // Each child's termination handler ends its wait, with a deadline rather than
+        // `waitUntilExit()`: a daemon that ignored SIGTERM would otherwise hang the quit forever.
+        // After the grace period it gets SIGKILL, which the kernel always delivers.
+        let deadline = DispatchTime.now() + stopGrace
+        let stuck = running.filter { !$0.waitForExit(until: deadline) }
         guard !stuck.isEmpty else { return }
         stuck.forEach { $0.kill() }
-        let killDeadline = Date().addingTimeInterval(0.5)
-        while stuck.contains(where: \.isRunning), Date() < killDeadline { usleep(20_000) }
+        let killDeadline = DispatchTime.now() + Self.killGracePeriod
+        for child in stuck { _ = child.waitForExit(until: killDeadline) }
     }
+
+    /// How long `stop()` waits after SIGKILL for the kernel to report the exit.
+    static let killGracePeriod: TimeInterval = 0.5
 
     /// Sessions come from the app (`sessions.update`), so no iTerm2 cookie is asked for.
     /// The helper keeps its own files (`daemon.json`, `helper-python`) in `supportDirectory`.
@@ -196,7 +199,7 @@ public final class DaemonSupervisor: Sendable {
         state.withLock { $0.process = nil; $0.abandoned.append(child) }
         child.terminate()
         // One stuck where SIGTERM is not acted on gets SIGKILL after the grace `stop()` gives.
-        queue.asyncAfter(deadline: .now() + Self.stopGracePeriod) {
+        queue.asyncAfter(deadline: .now() + stopGrace) {
             if child.isRunning { child.kill() }
         }
         recordFailure(message: "did not open its socket within \(Int(bindDeadline.rounded())) s")

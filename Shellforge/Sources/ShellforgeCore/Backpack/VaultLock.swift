@@ -1,7 +1,6 @@
 import Foundation
-import os
 
-private let vaultLockLog = Logger(subsystem: "io.github.nathangel.shellforge", category: "keychain")
+private let vaultLockLog = PackageLogger(category: "keychain")
 
 /// A lock across processes on one file, taken with `flock`. Every Shellforge process that writes
 /// the vault (a release build and a dev build running together) holds it around checking and
@@ -41,7 +40,7 @@ struct VaultLock: Sendable {
             defer { said = true }
             return !said
         }
-        if first { vaultLockLog.error("Writing the vault without the lock across processes: \(why, privacy: .public)") }
+        if first { vaultLockLog.error("Writing the vault without the lock across processes: \(why)") }
     }
 
     /// Runs `body` holding the lock, or without it when the lock is unavailable or another process

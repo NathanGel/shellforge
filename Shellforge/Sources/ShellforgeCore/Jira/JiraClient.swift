@@ -164,6 +164,8 @@ public struct JiraClient: Sendable {
     static func inOrder<Item: Sendable, Output: Sendable>(
         _ items: [Item], width: Int = fanOut, _ body: @escaping @Sendable (Item) async throws -> Output
     ) async throws -> [Output] {
+        // `precondition`, not `it_assert`: the package cannot see the host's assertion helpers. Like
+        // them it holds in release builds.
         precondition(width > 0, "a fan-out of no width never starts")
         return try await withThrowingTaskGroup(of: (Int, Output).self) { group in
             var pending = items.enumerated().makeIterator()

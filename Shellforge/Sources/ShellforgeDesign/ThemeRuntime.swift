@@ -3,7 +3,6 @@ import AppKit
 import os
 import SwiftUI
 
-private let themeLog = Logger(subsystem: "io.github.nathangel.shellforge", category: "theme")
 
 /// The theme Shellforge draws in, read by every `Palette` token and the terminal palette each time
 /// they resolve. Thread-safe: a colour resolves wherever AppKit draws it, so reading never waits on
@@ -130,7 +129,7 @@ final class ThemeRedrawView: NSView {
         guard let host = hostingView else {
             if !Self.reportedNoHost {
                 Self.reportedNoHost = true
-                themeLog.debug(".themed() found no NSHostingView above it; its colours keep the old theme")
+                DesignLog.debug(".themed() found no NSHostingView above it; its colours keep the old theme")
             }
             return
         }

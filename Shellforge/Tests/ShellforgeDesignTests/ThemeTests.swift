@@ -6,6 +6,16 @@ import Testing
 
 /// The ten themes, which one applies for a choice, and that every theme reads.
 @Suite struct ThemeTests {
+    /// The design system's lines reach the host's debug log through the receiver it installs.
+    @Test func aDesignLineReachesTheHost() {
+        let marker = UUID().uuidString
+        let heard = LockedLines()
+        DesignLog.install { heard.append($0) }
+        defer { DesignLog.install(nil) }
+        DesignLog.debug("theme \(marker)")
+        #expect(heard.lines.filter { $0.contains(marker) } == ["theme \(marker)"])
+    }
+
     @Test func theCatalogIsTheTenThemesInOrder() {
         #expect(ThemeCatalog.all.map(\.name) == [
             "Shellforge", "Dark Modern", "Light Modern", "One Dark", "Dracula",
@@ -561,4 +571,11 @@ extension ThemeTests {
         NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil)
         #expect(probe.redraws > afterAccent, "Increase Contrast")
     }
+}
+
+private final class LockedLines: @unchecked Sendable {
+    private let lock = NSLock()
+    private var all: [String] = []
+    func append(_ line: String) { lock.withLock { all.append(line) } }
+    var lines: [String] { lock.withLock { all } }
 }

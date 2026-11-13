@@ -1,8 +1,7 @@
 // Ported from AiTerm (app/Sources/AiTermCore/Updates/UpdateInstaller.swift), GPLv3, Laurens D'Hondt.
 import Foundation
-import os
 
-let updatesLog = Logger(subsystem: "io.github.nathangel.shellforge", category: "updates")
+let updatesLog = PackageLogger(category: "updates")
 
 /// Replaces the running app with a staged one. A running bundle cannot replace itself, so a small
 /// zsh helper does it: started detached, it waits for Shellforge to quit, moves the old app aside
@@ -81,7 +80,7 @@ public enum UpdateInstaller {
 
     private static func attempt(_ what: String, _ body: () throws -> Void) {
         do { try body() } catch {
-            updatesLog.error("\(what, privacy: .public) failed: \(String(describing: error), privacy: .public)")
+            updatesLog.error("\(what) failed: \(String(describing: error))")
             ErrorLogging.record("updates", "\(what) failed: \(error)")
         }
     }
