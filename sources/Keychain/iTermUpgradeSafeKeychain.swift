@@ -43,9 +43,18 @@
 //  builds): reads, writes and deletes use the VAULT instead, one entry each in Shellforge's
 //  one Keychain item (ShellforgeCore's Keychain.shared), which is read once per process, so
 //  an update prompts once rather than once per secret. A vault miss reads the per-item login
-//  copy once, moves it in, confirms the read-back, and only then deletes the login copy; a
-//  refused read (vault or login) changes nothing and reports the refused status. A write
-//  goes to the vault and then reaps any leftover login copy. See "The vault" below.
+//  copy once, moves it in (only if the entry is still missing), confirms the read-back from
+//  the Keychain itself, and only then deletes the login copy; a refused read (vault or login)
+//  changes nothing and reports the refused status. A write goes to the vault and then reaps
+//  any leftover login copy. A vault hit deletes a login copy only when this build moved it in
+//  and had not yet deleted it; any other login copy was written later, by an older build, and
+//  is left alone. See "The vault" below.
+//
+//  A BUILD WITH THE ENTITLEMENT (a future Developer ID build) still finds the secrets an
+//  ad-hoc build kept in the vault: on a data-protection miss it reads the vault before the
+//  login copy, and moves a vault entry into the data-protection keychain under the same rules
+//  (write, read back, and only then remove the vault entry). That costs at most one vault
+//  prompt, once.
 //
 //  Clearing a secret must be an explicit `deleteGenericPassword`, NOT a write of empty
 //  Data: an empty kSecValueData does not round-trip reliably. deleteGenericPassword
@@ -94,7 +103,21 @@ enum iTermUpgradeSafeKeychain {
                 DLog("UpgradeSafeKeychain: \(redactedItemLabel(service, account)) - data-protection keychain unavailable (errSecMissingEntitlement); reading the vault. Expected on unsigned/ad-hoc builds; on a signed build the entitlement is missing.")
                 return vaultCopy(service: service, account: account)
             }
-            break
+            // An ad-hoc build may have kept this secret in the vault. Look there, read-only,
+            // before the login copy, and move what is found into the data-protection keychain.
+            switch stores.vaultRead(service, account) {
+            case .found(let vaultValue):
+                RLog("UpgradeSafeKeychain: \(redactedItemLabel(service, account)) found in the vault (\(vaultValue.count) bytes); migrating to data-protection keychain")
+                migrate(data: vaultValue, service: service, account: account, accessible: accessible, from: .vault)
+                return (errSecSuccess, vaultValue)
+            case .unavailable:
+                // A refused vault is not an empty one: it may hold a newer value than the login
+                // copy, so nothing is moved and the item reads as unreadable, not absent.
+                RLog("UpgradeSafeKeychain: vault read of \(redactedItemLabel(service, account)) refused or unreadable; item not served, nothing migrated")
+                return (vaultRefusedStatus, nil)
+            case .missing:
+                break
+            }
         }
         let (legacyStatus, legacyData) = legacyCopy(service: service, account: account)
         switch planAfterLegacyRead(status: legacyStatus) {
@@ -114,7 +137,8 @@ enum iTermUpgradeSafeKeychain {
             migrate(data: legacyValue,
                     service: service,
                     account: account,
-                    accessible: accessible)
+                    accessible: accessible,
+                    from: .login)
             return (errSecSuccess, legacyValue)
         case .reportAbsent:
             // Genuinely absent from both stores (an unconfigured item, or one already
@@ -132,7 +156,7 @@ enum iTermUpgradeSafeKeychain {
     /// keychain; on success it also reaps any lingering login-keychain copy so a
     /// rotate/clear erases the old secret. If the data-protection keychain is
     /// unusable (errSecMissingEntitlement, e.g. an unsigned/dev build) the value is
-    /// written to the login keychain instead so nothing is silently dropped. Returns
+    /// written to the vault instead so nothing is silently dropped. Returns
     /// errSecSuccess when the value was persisted somewhere, otherwise the failing
     /// status. NOT for clearing a value: pass through `deleteGenericPassword` for that
     /// (an empty write does not round-trip and can resurrect via migration).
@@ -183,10 +207,10 @@ enum iTermUpgradeSafeKeychain {
         }
     }
 
-    /// Remove the item from BOTH stores. Used for deliberate user actions (unpair,
-    /// clear key) where fully erasing the secret matters; the legacy delete may prompt,
-    /// but the user is present and acting intentionally. Returns true only if the item is
-    /// genuinely gone from both stores; a false return means a copy may survive and the
+    /// Remove the item from ALL THREE stores (login, data-protection, vault). Used for
+    /// deliberate user actions (unpair, clear key) where fully erasing the secret matters; the
+    /// legacy delete may prompt, but the user is present and acting intentionally. Returns true
+    /// only if the item is genuinely gone from every store; a false return means a copy may survive and the
     /// caller should treat the clear as not fully done (and can retry).
     ///
     /// ORDER MATTERS: the LOGIN copy is deleted FIRST, and the data-protection copy only
@@ -213,7 +237,7 @@ enum iTermUpgradeSafeKeychain {
         // the vault entry. It goes last, after the login copy, for the same reason as above:
         // a surviving login copy beside an empty vault entry would move back in.
         if dpStatus == errSecMissingEntitlement {
-            guard stores.vaultWrite(nil, service, account) else {
+            guard stores.vaultWrite(nil, service, account) == .written else {
                 RLog("UpgradeSafeKeychain: \(redactedItemLabel(service, account)) - vault delete failed (the item could not be read or written). The vault copy may survive; clear did not fully take.")
                 return false
             }
@@ -222,8 +246,15 @@ enum iTermUpgradeSafeKeychain {
         let dpOK = (dpStatus == errSecSuccess || dpStatus == errSecItemNotFound)
         if !dpOK {
             RLog("UpgradeSafeKeychain: \(redactedItemLabel(service, account)) - data-protection delete failed: \(describe(dpStatus)). A data-protection copy may survive; the item will still read as present (clear did not fully take).")
+            return false
         }
-        return dpOK
+        // An entitled build reads the vault on a data-protection miss, so a vault copy an
+        // ad-hoc build left behind would bring the cleared secret back. It goes too.
+        guard stores.vaultWrite(nil, service, account) == .written else {
+            RLog("UpgradeSafeKeychain: \(redactedItemLabel(service, account)) - vault delete failed after the data-protection delete. A vault copy may survive; clear did not fully take.")
+            return false
+        }
+        return true
     }
 
     // MARK: - The vault (no data-protection keychain)
@@ -243,9 +274,7 @@ enum iTermUpgradeSafeKeychain {
     private static func vaultCopy(service: String, account: String) -> (OSStatus, Data?) {
         switch stores.vaultRead(service, account) {
         case .found(let data):
-            // An earlier launch may have moved the value in but stopped before deleting the
-            // login copy. The vault is authoritative; delete the leftover (once per process).
-            reapLegacyOnce(service: service, account: account)
+            reapAfterAMove(service: service, account: account)
             return (errSecSuccess, data)
         case .unavailable:
             RLog("UpgradeSafeKeychain: vault read of \(redactedItemLabel(service, account)) refused or unreadable; item not served, nothing moved")
@@ -267,8 +296,7 @@ enum iTermUpgradeSafeKeychain {
                 return (errSecItemNotFound, nil)
             }
             RLog("UpgradeSafeKeychain: \(redactedItemLabel(service, account)) found in login keychain (\(legacyValue.count) bytes); moving it into the vault")
-            moveIntoVault(legacyValue, service: service, account: account)
-            return (errSecSuccess, legacyValue)
+            return (errSecSuccess, moveIntoVault(legacyValue, service: service, account: account))
         case .reportAbsent:
             DLog("UpgradeSafeKeychain: \(redactedItemLabel(service, account)) absent from both the vault and the login keychain")
             markLegacyCopyGone(service: service, account: account)
@@ -279,34 +307,67 @@ enum iTermUpgradeSafeKeychain {
         }
     }
 
-    private static func moveIntoVault(_ data: Data, service: String, account: String) {
-        guard stores.vaultWrite(data, service, account) else {
-            RLog("UpgradeSafeKeychain: MOVE of \(redactedItemLabel(service, account)) into the vault FAILED at the write. Login-keychain copy kept; will retry next read.")
+    /// A vault hit deletes the login copy only when a move into the vault left that delete
+    /// pending (an earlier launch stopped between the two). Any other login copy was written
+    /// after the move, by an older or branch build, and may be newer than the vault: it is left
+    /// in place, unread.
+    private static func reapAfterAMove(service: String, account: String) {
+        let key = legacyGoneKey(service, account)
+        guard !legacyCopyGone.access({ $0.contains(key) }) else { return }
+        guard stores.vaultReapPending(service, account) else {
+            if !newerLoginCopyNoted.getAndSet(true) {
+                RLog("UpgradeSafeKeychain: vault hit with no pending reap; any login copy is newer than the move and was left in place")
+            }
             return
         }
-        guard case .found(let readback) = stores.vaultRead(service, account), readback == data else {
+        reapLegacyOnce(service: service, account: account)
+    }
+
+    /// Moves a login value in and returns the value the caller should use: the login value, or
+    /// the vault's own if another thread stored one meanwhile (that one is newer, and the move
+    /// is skipped).
+    private static func moveIntoVault(_ data: Data, service: String, account: String) -> Data {
+        switch stores.vaultInsert(data, service, account) {
+        case .inserted:
+            break
+        case .present(let newer):
+            RLog("UpgradeSafeKeychain: \(redactedItemLabel(service, account)) - the vault gained a value while the login copy was read; keeping it, login copy left in place")
+            return newer
+        case .unavailable, .failed:
+            RLog("UpgradeSafeKeychain: MOVE of \(redactedItemLabel(service, account)) into the vault FAILED at the write. Login-keychain copy kept; will retry next read.")
+            return data
+        }
+        // Read back from the Keychain itself, not the vault's memory, before deleting anything.
+        guard stores.vaultConfirm(data, service, account) else {
             RLog("UpgradeSafeKeychain: MOVE of \(redactedItemLabel(service, account)) into the vault wrote but readback did not confirm. Login-keychain copy kept.")
-            return
+            return data
         }
         let reapStatus = reapLegacyReportingStatus(service: service, account: account)
         if reapStatus == errSecSuccess || reapStatus == errSecItemNotFound {
             markLegacyCopyGone(service: service, account: account)
+            stores.vaultClearReapPending(service, account)
         }
         RLog("UpgradeSafeKeychain: moved \(redactedItemLabel(service, account)) into the vault (readback confirmed); login reap: \(describe(reapStatus))")
+        return data
     }
 
     private static func vaultSet(_ data: Data, service: String, account: String) -> OSStatus {
-        guard stores.vaultWrite(data, service, account) else {
-            // Nothing changed: no login write either, which a vault entry would shadow.
-            // The caller's in-memory cache holds the value for this session.
-            let refused = (stores.vaultRead(service, account) == .unavailable)
-            let status = refused ? vaultRefusedStatus : errSecIO
-            RLog("UpgradeSafeKeychain: \(redactedItemLabel(service, account)) - vault write failed (\(refused ? "refused" : "write error")); not persisted")
-            return status
+        let status: OSStatus
+        switch stores.vaultWrite(data, service, account) {
+        case .written:
+            // This write is newer than any login copy, so a leftover goes.
+            reapLegacyOnce(service: service, account: account)
+            DLog("UpgradeSafeKeychain: \(redactedItemLabel(service, account)) - wrote to the vault")
+            return errSecSuccess
+        case .unavailable:
+            status = vaultRefusedStatus
+        case .failed:
+            status = errSecIO
         }
-        reapLegacyOnce(service: service, account: account)
-        DLog("UpgradeSafeKeychain: \(redactedItemLabel(service, account)) - wrote to the vault")
-        return errSecSuccess
+        // Nothing changed: no login write either, which a vault entry would shadow. The
+        // caller's in-memory cache holds the value for this session.
+        RLog("UpgradeSafeKeychain: \(redactedItemLabel(service, account)) - vault write failed (\(describe(status))); not persisted")
+        return status
     }
 
     private static func legacyGoneKey(_ service: String, _ account: String) -> String {
@@ -326,6 +387,9 @@ enum iTermUpgradeSafeKeychain {
         let status = reapLegacyReportingStatus(service: service, account: account)
         if status == errSecSuccess || status == errSecItemNotFound {
             markLegacyCopyGone(service: service, account: account)
+            if stores.vaultReapPending(service, account) {
+                stores.vaultClearReapPending(service, account)
+            }
         }
         if status == errSecSuccess {
             RLog("UpgradeSafeKeychain: \(redactedItemLabel(service, account)) - deleted a leftover login-keychain copy; the vault holds the value")
@@ -344,12 +408,12 @@ enum iTermUpgradeSafeKeychain {
     }
 
     /// Given the data-protection read status, decide whether we already have an
-    /// answer or must consult the legacy keychain. A genuine not-found sends us to
-    /// legacy. So does errSecMissingEntitlement: it means this build cannot use the
-    /// data-protection keychain at all (the keychain-access-groups entitlement is
-    /// absent or unsigned, e.g. a misconfigured/ad-hoc build), so the login keychain
-    /// is still the real store and we must fall back to it, degrading to the old
-    /// (prompting) behavior rather than reporting every secret unreadable. A success
+    /// answer or must look elsewhere. A genuine not-found sends us to the vault and then
+    /// the legacy keychain. So does errSecMissingEntitlement: it means this build cannot use
+    /// the data-protection keychain at all (the keychain-access-groups entitlement is
+    /// absent or unsigned, e.g. an ad-hoc build), so the vault is the real store and the
+    /// login keychain holds what older builds left, rather than reporting every secret
+    /// unreadable. A success
     /// is returned as-is, and any other hard error is surfaced rather than masked by
     /// a legacy read (so a locked keychain isn't wrongly reported as absent).
     static func planAfterDataProtectionRead(status: OSStatus) -> DataProtectionReadPlan {
@@ -405,8 +469,14 @@ enum iTermUpgradeSafeKeychain {
         var legacyUpsert: (_ data: Data, _ service: String, _ account: String, _ accessible: CFString) -> OSStatus
         var legacyDelete: (_ service: String, _ account: String) -> OSStatus
         var vaultRead: (_ service: String, _ account: String) -> Keychain.VaultRead
-        /// `nil` removes the entry. `false` when nothing changed.
-        var vaultWrite: (_ data: Data?, _ service: String, _ account: String) -> Bool
+        /// `nil` removes the entry. Anything but `written` changed nothing.
+        var vaultWrite: (_ data: Data?, _ service: String, _ account: String) -> Keychain.VaultWrite
+        /// A move in: writes only if the entry is missing, and marks the login copy's reap pending.
+        var vaultInsert: (_ data: Data, _ service: String, _ account: String) -> Keychain.VaultInsert
+        /// Reads the Keychain itself, not the vault's memory.
+        var vaultConfirm: (_ data: Data, _ service: String, _ account: String) -> Bool
+        var vaultReapPending: (_ service: String, _ account: String) -> Bool
+        var vaultClearReapPending: (_ service: String, _ account: String) -> Void
 
         static let system = Stores(
             dataProtectionCopy: { systemDataProtectionCopy(service: $0, account: $1) },
@@ -416,7 +486,11 @@ enum iTermUpgradeSafeKeychain {
             legacyUpsert: { systemLegacyUpsert($0, service: $1, account: $2, accessible: $3) },
             legacyDelete: { SecItemDelete(legacyQuery(service: $0, account: $1) as CFDictionary) },
             vaultRead: { Keychain.shared.data(service: $0, account: $1) },
-            vaultWrite: { Keychain.shared.setData($0, service: $1, account: $2) })
+            vaultWrite: { Keychain.shared.setData($0, service: $1, account: $2) },
+            vaultInsert: { Keychain.shared.setDataIfMissing($0, service: $1, account: $2, reapPending: true) },
+            vaultConfirm: { Keychain.shared.confirmStored($0, service: $1, account: $2) },
+            vaultReapPending: { Keychain.shared.reapPending(service: $0, account: $1) },
+            vaultClearReapPending: { Keychain.shared.clearReapPending(service: $0, account: $1) })
     }
 
     private static let installedStores = MutableAtomicObject<Stores>(.system)
@@ -424,14 +498,20 @@ enum iTermUpgradeSafeKeychain {
     /// leftover once rather than every time.
     private static let legacyCopyGone = MutableAtomicObject<Set<String>>([])
 
-    /// Replacing the stores (tests only) also forgets which login copies were seen gone.
-    static var stores: Stores {
-        get { installedStores.value }
-        set {
-            installedStores.value = newValue
-            legacyCopyGone.value = []
-        }
+    /// RLogs once per process that a vault hit left a newer login copy alone.
+    private static let newerLoginCopyNoted = MutableAtomicObject<Bool>(false)
+
+    static var stores: Stores { installedStores.value }
+
+#if ITERM_DEBUG
+    /// Tests only: replaces the stores and forgets which login copies were seen gone, as a new
+    /// process would. Not in release builds, so nothing there can swap the Keychain out.
+    static func installStoresForTesting(_ newStores: Stores) {
+        installedStores.value = newStores
+        legacyCopyGone.value = []
+        newerLoginCopyNoted.value = false
     }
+#endif
 
     private static func dataProtectionCopy(service: String, account: String) -> (OSStatus, Data?) {
         stores.dataProtectionCopy(service, account)
@@ -455,7 +535,7 @@ enum iTermUpgradeSafeKeychain {
     /// keychain-access-groups entitlement so it is never hardcoded (it resolves to the
     /// team-prefixed value, e.g. "TEAMID.com.googlecode.iterm2"). nil on a build with no
     /// such entitlement (unsigned/dev), where callers then omit the group and the
-    /// data-protection write fails cleanly, falling back to the login keychain. Cached:
+    /// data-protection write fails cleanly, falling back to the vault. Cached:
     /// the signature can't change while the process runs.
     static let accessGroup: String? = {
         guard let task = SecTaskCreateFromSelf(nil),
@@ -619,19 +699,27 @@ enum iTermUpgradeSafeKeychain {
 
     // MARK: - Migration
 
+    /// Where a migrated value came from, and so which copy goes once the data-protection
+    /// keychain holds it.
+    private enum MigrationSource {
+        case login
+        case vault
+    }
+
     private static func migrate(data: Data,
                                 service: String,
                                 account: String,
-                                accessible: CFString) {
+                                accessible: CFString,
+                                from source: MigrationSource) {
         let writeStatus = dataProtectionUpsert(data,
                                                service: service,
                                                account: account,
                                                accessible: accessible)
         guard writeStatus == errSecSuccess else {
-            // Keep the legacy copy: the value is still returned to the caller and the
-            // migration retries next launch. This is the ad-hoc/dev-build case where
-            // the signature carries no usable access group.
-            RLog("UpgradeSafeKeychain: MIGRATION of \(redactedItemLabel(service, account)) FAILED at the data-protection write: \(describe(writeStatus)). Login-keychain copy kept; will retry next read.")
+            // Keep the source copy: the value is still returned to the caller and the
+            // migration retries next launch (a locked keychain, say). An ad-hoc build never
+            // gets here: it has no data-protection keychain and uses the vault instead.
+            RLog("UpgradeSafeKeychain: MIGRATION of \(redactedItemLabel(service, account)) FAILED at the data-protection write: \(describe(writeStatus)). Source copy kept; will retry next read.")
             return
         }
         let (readbackStatus, readbackData) = dataProtectionCopy(service: service, account: account)
@@ -639,7 +727,13 @@ enum iTermUpgradeSafeKeychain {
             // Wrote but can't confirm it read back identically: do NOT reap, or we could
             // lose the only good copy. Log byte counts (never the bytes) so a size
             // mismatch is diagnosable.
-            RLog("UpgradeSafeKeychain: MIGRATION of \(redactedItemLabel(service, account)) wrote but readback did not confirm (status \(describe(readbackStatus)); \(readbackData?.count ?? -1) vs \(data.count) bytes). Login-keychain copy kept.")
+            RLog("UpgradeSafeKeychain: MIGRATION of \(redactedItemLabel(service, account)) wrote but readback did not confirm (status \(describe(readbackStatus)); \(readbackData?.count ?? -1) vs \(data.count) bytes). Source copy kept.")
+            return
+        }
+        if source == .vault {
+            // The vault entry goes only now that the data-protection copy reads back the same.
+            let removed = stores.vaultWrite(nil, service, account)
+            RLog("UpgradeSafeKeychain: migrated \(redactedItemLabel(service, account)) from the vault into the data-protection keychain (group \(accessGroup ?? "<none>"), readback confirmed); vault entry removed: \(removed == .written)")
             return
         }
         // The data-protection copy is written and confirmed readable, and it is pinned to

@@ -29,10 +29,25 @@ enum KeychainRead: Equatable {
     case refused
 }
 
+/// What tells one version of an item from the next without reading its secret: macOS shows no
+/// prompt for an item's attributes. `modified` is the Keychain's modification date, which the login
+/// keychain keeps in whole seconds; `writeID` is a fresh value every write stores beside the data, so
+/// two writes within one second still differ.
+struct KeychainStamp: Equatable, Sendable {
+    var modified: Date?
+    var writeID: Data?
+    var exists = true
+
+    static let absent = KeychainStamp(modified: nil, writeID: nil, exists: false)
+}
+
 /// The Keychain's generic-password items under one service, one per account. A stand-in replaces
 /// it in tests, which never touch the real Keychain.
 protocol KeychainItems: Sendable {
     func read(_ account: String) -> KeychainRead
+    /// The item's stamp, from an attributes-only query that shows no prompt. `.absent` when there
+    /// is no item, `nil` when its attributes could not be read.
+    func stamp(_ account: String) -> KeychainStamp?
     func write(_ account: String, _ data: Data) -> Bool
     func delete(_ account: String) -> Bool
 }
@@ -51,13 +66,28 @@ struct SystemKeychainItems: KeychainItems {
         }
     }
 
+    /// Asks for attributes only, never the data, so it shows no prompt.
+    func stamp(_ account: String) -> KeychainStamp? {
+        var q = query(account); q[kSecReturnAttributes as String] = true; q[kSecMatchLimit as String] = kSecMatchLimitOne
+        var out: CFTypeRef?
+        switch SecItemCopyMatching(q as CFDictionary, &out) {
+        case errSecSuccess:
+            guard let attributes = out as? [String: Any] else { return nil }
+            return KeychainStamp(modified: attributes[kSecAttrModificationDate as String] as? Date,
+                                 writeID: attributes[kSecAttrGeneric as String] as? Data)
+        case errSecItemNotFound: return .absent
+        default: return nil
+        }
+    }
+
     /// Updates in place when the item exists and adds it otherwise, rather than deleting first: a
     /// delete that succeeds followed by an add that fails would throw the secret away.
     func write(_ account: String, _ data: Data) -> Bool {
-        let update = SecItemUpdate(query(account) as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        let writeID = withUnsafeBytes(of: UUID().uuid) { Data($0) }
+        let update = SecItemUpdate(query(account) as CFDictionary, [kSecValueData as String: data, kSecAttrGeneric as String: writeID] as CFDictionary)
         if update == errSecSuccess { return true }
         guard update == errSecItemNotFound else { return false }
-        var q = query(account); q[kSecValueData as String] = data
+        var q = query(account); q[kSecValueData as String] = data; q[kSecAttrGeneric as String] = writeID
         return SecItemAdd(q as CFDictionary, nil) == errSecSuccess
     }
 
@@ -72,6 +102,11 @@ struct SystemKeychainItems: KeychainItems {
 /// process and kept: `shared` is the one the app uses, so every reader after the first, on any
 /// thread, is answered from memory, and readers that arrive together wait for that first read
 /// instead of each asking.
+///
+/// Other processes share the item (a release build and a dev build running together). Before each
+/// write the item's stamp, which shows no prompt, says whether one of them wrote since this process
+/// read it; if so the item is read again and only this change is applied on top, so their entries
+/// survive.
 public final class Keychain: SecretStore, Sendable {
     public static let shared = Keychain()
     static let account = "secrets"
@@ -79,32 +114,33 @@ public final class Keychain: SecretStore, Sendable {
     /// first time it is missing, and go once it holds them.
     static let separateAccounts = ["jira.token", "gitlab.token", "github.token", "backpack.password"]
 
+    private struct Loaded {
+        var secrets: [String: String]
+        /// The item's stamp when `secrets` was read or last written. `nil` is unknown, which counts
+        /// as changed.
+        var stamp: KeychainStamp?
+    }
+
     private let items: any KeychainItems
     /// `nil` until the item has been read. A refused read leaves it `nil`, so a later call asks again.
-    private let secrets = Locked<[String: String]?>(nil)
+    private let state = Locked<Loaded?>(nil)
 
     public convenience init(service: String = "io.github.nathangel.shellforge") { self.init(items: SystemKeychainItems(service: service)) }
     init(items: any KeychainItems) { self.items = items }
 
     public func get(_ key: String) -> String? {
-        secrets.withLock { load(&$0)?[key] }
+        state.withLock { load(&$0)?[key] }
     }
 
     @discardableResult
     public func set(_ key: String, _ value: String?) -> Bool {
-        secrets.withLock { cached in
-            guard var next = load(&cached) else { return false }
-            next[key] = value
-            guard store(next) else { return false }
-            cached = next
-            return true
-        }
+        mutate { $0[key] = value } == .written
     }
 
     /// Reads the item now if it has not been read yet, so the one Keychain prompt comes at launch
     /// rather than at whatever moment the first secret is needed.
     public func warm() {
-        secrets.withLock { _ = load(&$0) }
+        state.withLock { _ = load(&$0) }
     }
 
     // MARK: Binary entries
@@ -117,40 +153,137 @@ public final class Keychain: SecretStore, Sendable {
         case unavailable
     }
 
+    /// What a write came to. `unavailable`: the item could not be read (the person clicked Deny),
+    /// so nothing was written. `failed`: the Keychain refused the write. Either way the Keychain
+    /// is unchanged.
+    public enum VaultWrite: Equatable {
+        case written
+        case unavailable
+        case failed
+    }
+
+    /// What `setDataIfMissing` came to. `present` holds the value the entry already had, which was
+    /// left alone.
+    public enum VaultInsert: Equatable {
+        case inserted
+        case present(Data)
+        case unavailable
+        case failed
+    }
+
     /// Binary entries live in the same JSON object as the string secrets, under a prefixed key with
     /// a base64 value, so the item stays `[String: String]` and earlier builds ignore them.
     static func vaultKey(service: String, account: String) -> String { "upgradeSafe:\(service):\(account)" }
+    /// Set beside an entry moved in from an item of its own, until that item is deleted. Only then
+    /// may a later read delete the old item: any other copy there was written after the move, by an
+    /// older build, and may be newer than the entry.
+    static func reapKey(service: String, account: String) -> String { "upgradeSafeReap:\(service):\(account)" }
 
     public func data(service: String, account: String) -> VaultRead {
-        secrets.withLock { cached in
-            guard let all = load(&cached) else { return .unavailable }
-            guard let encoded = all[Self.vaultKey(service: service, account: account)],
-                  let data = Data(base64Encoded: encoded) else { return .missing }
-            return .found(data)
+        state.withLock { loaded in
+            guard let all = load(&loaded) else { return .unavailable }
+            return Self.decode(all, service: service, account: account).map(VaultRead.found) ?? .missing
         }
     }
 
-    /// `nil` removes the entry. `false` when the item could not be read or written, in which case
-    /// nothing in the Keychain changed.
+    /// `nil` removes the entry. A write also clears the entry's pending reap: it is newer than any
+    /// old copy. Anything but `written` leaves the Keychain unchanged.
     @discardableResult
-    public func setData(_ data: Data?, service: String, account: String) -> Bool {
-        set(Self.vaultKey(service: service, account: account), data?.base64EncodedString())
+    public func setData(_ data: Data?, service: String, account: String) -> VaultWrite {
+        mutate { secrets in
+            secrets[Self.vaultKey(service: service, account: account)] = data?.base64EncodedString()
+            secrets[Self.reapKey(service: service, account: account)] = nil
+        }
     }
 
-    private func load(_ cached: inout [String: String]?) -> [String: String]? {
-        if let cached { return cached }
+    /// Stores `data` only if the entry is still missing, checked and written under the one lock, so
+    /// a value another thread stored meanwhile is never overwritten by an older one. `reapPending`
+    /// marks, in the same write, that an old copy elsewhere is still to be deleted.
+    public func setDataIfMissing(_ data: Data, service: String, account: String, reapPending: Bool) -> VaultInsert {
+        var present: Data?
+        let result = mutate { secrets in
+            present = Self.decode(secrets, service: service, account: account)
+            guard present == nil else { return }
+            secrets[Self.vaultKey(service: service, account: account)] = data.base64EncodedString()
+            if reapPending { secrets[Self.reapKey(service: service, account: account)] = "1" }
+        }
+        switch result {
+        case .written: return present.map(VaultInsert.present) ?? .inserted
+        case .unavailable: return .unavailable
+        case .failed: return .failed
+        }
+    }
+
+    /// Whether the entry was moved in and its old copy is still to be deleted. Answered from memory
+    /// once the item has been read.
+    public func reapPending(service: String, account: String) -> Bool {
+        state.withLock { loaded in
+            load(&loaded)?[Self.reapKey(service: service, account: account)] != nil
+        }
+    }
+
+    @discardableResult
+    public func clearReapPending(service: String, account: String) -> VaultWrite {
+        mutate { $0[Self.reapKey(service: service, account: account)] = nil }
+    }
+
+    /// Reads the item from the Keychain itself, not the cache, and says whether its entry holds
+    /// `data`. The migration calls it before deleting an old copy, once per moved item. It may
+    /// prompt if the person chose Allow rather than Always Allow, which is acceptable for a one-time
+    /// move. The cache is left as it was.
+    public func confirmStored(_ data: Data, service: String, account: String) -> Bool {
+        state.withLock { _ in
+            guard case .found(let raw) = items.read(Self.account),
+                  let all = try? JSONDecoder().decode([String: String].self, from: raw) else { return false }
+            return Self.decode(all, service: service, account: account) == data
+        }
+    }
+
+    private static func decode(_ secrets: [String: String], service: String, account: String) -> Data? {
+        secrets[vaultKey(service: service, account: account)].flatMap { Data(base64Encoded: $0) }
+    }
+
+    // MARK: Reading and writing the item
+
+    /// Applies `change` to the secrets and stores the result. When another process wrote the item
+    /// since this one read it, the change goes on top of what the item holds now, not the copy in
+    /// memory. A change that changes nothing writes nothing.
+    private func mutate(_ change: (inout [String: String]) -> Void) -> VaultWrite {
+        state.withLock { loaded in
+            guard load(&loaded) != nil else { return .unavailable }
+            if loaded?.stamp == nil || items.stamp(Self.account) != loaded?.stamp {
+                loaded = nil
+                guard load(&loaded) != nil else { return .unavailable }
+            }
+            guard let current = loaded?.secrets else { return .unavailable }
+            var next = current
+            change(&next)
+            if next == current { return .written }
+            guard store(next) else { return .failed }
+            loaded = Loaded(secrets: next, stamp: items.stamp(Self.account))
+            return .written
+        }
+    }
+
+    /// The stamp is taken before the data: a write that lands between the two then looks like a
+    /// change, and the next write reads again, rather than the other way round.
+    private func load(_ loaded: inout Loaded?) -> [String: String]? {
+        if let loaded { return loaded.secrets }
+        let stamp = items.stamp(Self.account)
         switch items.read(Self.account) {
         case .found(let data):
-            cached = try? JSONDecoder().decode([String: String].self, from: data)
+            guard let secrets = try? JSONDecoder().decode([String: String].self, from: data) else { return nil }
+            loaded = Loaded(secrets: secrets, stamp: stamp)
         case .missing:
-            cached = moveSeparateItems()
+            guard let moved = moveSeparateItems() else { return nil }
+            loaded = Loaded(secrets: moved.secrets, stamp: moved.stored ? items.stamp(Self.account) : stamp)
         case .refused:
-            break
+            return nil
         }
-        return cached
+        return loaded?.secrets
     }
 
-    private func moveSeparateItems() -> [String: String]? {
+    private func moveSeparateItems() -> (secrets: [String: String], stored: Bool)? {
         var moved: [String: String] = [:]
         for account in Self.separateAccounts {
             switch items.read(account) {
@@ -159,10 +292,9 @@ public final class Keychain: SecretStore, Sendable {
             case .refused: return nil
             }
         }
-        if !moved.isEmpty, store(moved) {
-            for account in moved.keys { _ = items.delete(account) }
-        }
-        return moved
+        guard !moved.isEmpty, store(moved) else { return (moved, false) }
+        for account in moved.keys { _ = items.delete(account) }
+        return (moved, true)
     }
 
     /// No secrets left is no item at all.

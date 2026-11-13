@@ -398,7 +398,7 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
   - Disconnect takes effect on Save.
 - **One Keychain item.** Every secret Shellforge keeps (Jira, GitLab and GitHub tokens, the Backpack hotspot password, agents' secrets, iTerm2 Buddy's pairing keys and the AI API keys) is one entry in a single Keychain item. It is read once, as the app starts, so after an update macOS asks for your Keychain password once rather than once per secret.
   - Secrets an older version kept in items of their own move in the first time they are needed, one prompt each that one time; an old item is deleted only after the new copy reads back the same.
-  - Clicking Deny changes nothing: the secrets stay where they were, and the next launch asks again.
+  - Clicking Deny changes nothing: the secrets stay where they were, unread, and the next secret Shellforge needs in that session (a Jira refresh, an iTerm2 Buddy push) asks again.
 - **Agent hooks (the bolt)** have one row per agent, with its state and one button: Install, Repair or Reinstall. ⌘↩ or ⎋ closes the sheet.
   - Files change only when you click, and each is backed up once as `.shellforge-backup`.
   - The files are `~/.claude/settings.json`, `~/.codex/config.toml`, `~/.grok/config.toml` and `~/.pi/agent/extensions/shellforge-status.ts`.

@@ -81,18 +81,31 @@ import Foundation
         let items = FakeKeychainItems()
         let bytes = Data([0x00, 0xFF, 0x10, 0x80, 0x7F])
         #expect(Keychain(items: items).data(service: "example.service", account: "example-account") == .missing)
-        #expect(Keychain(items: items).setData(bytes, service: "example.service", account: "example-account"))
+        #expect(Keychain(items: items).setData(bytes, service: "example.service", account: "example-account") == .written)
         #expect(Keychain(items: items).data(service: "example.service", account: "example-account") == .found(bytes))
-        #expect(Keychain(items: items).setData(nil, service: "example.service", account: "example-account"))
+        #expect(Keychain(items: items).setData(nil, service: "example.service", account: "example-account") == .written)
         #expect(Keychain(items: items).data(service: "example.service", account: "example-account") == .missing)
         #expect(items.accounts.isEmpty)
+    }
+
+    @Test func removingABinaryEntryKeepsTheOthers() {
+        let items = FakeKeychainItems()
+        let keychain = Keychain(items: items)
+        #expect(keychain.set("jira.token", "j"))
+        #expect(keychain.setData(Data("a".utf8), service: "example.service", account: "one") == .written)
+        #expect(keychain.setData(Data("b".utf8), service: "example.service", account: "two") == .written)
+        #expect(keychain.setData(nil, service: "example.service", account: "one") == .written)
+        let fresh = Keychain(items: items)
+        #expect(fresh.get("jira.token") == "j")
+        #expect(fresh.data(service: "example.service", account: "one") == .missing)
+        #expect(fresh.data(service: "example.service", account: "two") == .found(Data("b".utf8)))
     }
 
     @Test func stringAndBinaryEntriesShareOneItem() throws {
         let items = FakeKeychainItems()
         let keychain = Keychain(items: items)
         #expect(keychain.set("jira.token", "j"))
-        #expect(keychain.setData(Data("x".utf8), service: "example.service", account: "example-account"))
+        #expect(keychain.setData(Data("x".utf8), service: "example.service", account: "example-account") == .written)
         #expect(items.accounts == [Keychain.account])
         let stored = try #require(items.values.withLock { $0[Keychain.account] })
         let json = try JSONDecoder().decode([String: String].self, from: stored)
@@ -112,8 +125,8 @@ import Foundation
         let items = FakeKeychainItems([Keychain.account: original], refusesReads: true)
         let keychain = Keychain(items: items)
         #expect(keychain.data(service: "example.service", account: "example-account") == .unavailable)
-        #expect(!keychain.setData(Data("x".utf8), service: "example.service", account: "example-account"))
-        #expect(!keychain.setData(nil, service: "example.service", account: "example-account"))
+        #expect(keychain.setData(Data("x".utf8), service: "example.service", account: "example-account") == .unavailable)
+        #expect(keychain.setData(nil, service: "example.service", account: "example-account") == .unavailable)
         #expect(items.writes.withLock { $0 } == 0)
         #expect(items.values.withLock { $0[Keychain.account] } == Data(original.utf8))
         // A refusal is not remembered: once access is granted, the same instance reads again.
@@ -122,27 +135,124 @@ import Foundation
     }
 
     /// Readers that arrive while the first read is still waiting on the Keychain wait for it
-    /// rather than each asking. The fake holds the first read open until both readers are running.
+    /// rather than each asking. The fake holds the first read open until the second reader is
+    /// about to ask; a second read while the first is open answers at once and is recorded, so a
+    /// broken lock fails the test rather than hanging it. A second reader that only arrives once
+    /// the first read is done would pass either way; no test can rule that out without a hook in
+    /// the lock itself.
     @Test func concurrentReadersReadOnce() {
         let items = FakeKeychainItems([Keychain.account: #"{"jira.token":"j"}"#])
         let started = DispatchSemaphore(value: 0)
+        let secondEntered = DispatchSemaphore(value: 0)
         let gate = DispatchSemaphore(value: 0)
-        items.onRead.withLock { $0 = { started.signal(); gate.wait() } }
+        let open = Locked(false)
+        let overlapped = Locked(false)
+        items.onRead.withLock {
+            $0 = {
+                let alreadyOpen = open.withLock { isOpen in
+                    defer { isOpen = true }
+                    return isOpen
+                }
+                if alreadyOpen {
+                    overlapped.withLock { $0 = true }
+                    return
+                }
+                started.signal()
+                gate.wait()
+                open.withLock { $0 = false }
+            }
+        }
         let keychain = Keychain(items: items)
         let results = Locked<[String?]>([])
         let group = DispatchGroup()
-        for _ in 0..<2 {
-            DispatchQueue.global().async(group: group) {
-                let value = keychain.get("jira.token")
-                results.withLock { $0.append(value) }
-            }
+        DispatchQueue.global().async(group: group) {
+            let value = keychain.get("jira.token")
+            results.withLock { $0.append(value) }
         }
         started.wait()
-        items.onRead.withLock { $0 = nil }
+        DispatchQueue.global().async(group: group) {
+            secondEntered.signal()
+            let value = keychain.get("jira.token")
+            results.withLock { $0.append(value) }
+        }
+        secondEntered.wait()
         gate.signal()
         group.wait()
+        #expect(!overlapped.withLock { $0 })
         #expect(results.withLock { $0 } == ["j", "j"])
         #expect(items.reads.withLock { $0 } == 1)
+    }
+
+    // MARK: Writes from other processes, read-backs and moves
+
+    /// Two processes share the item. The second one's entries survive the first one's write,
+    /// although the first read the item before they were there.
+    @Test func aSecondProcessesEntriesSurviveAWrite() {
+        let items = FakeKeychainItems([Keychain.account: #"{"jira.token":"j"}"#])
+        let first = Keychain(items: items)
+        let second = Keychain(items: items)
+        first.warm()
+        #expect(second.set("x", "1"))
+        #expect(first.set("y", "2"))
+        let fresh = Keychain(items: items)
+        #expect(fresh.get("jira.token") == "j")
+        #expect(fresh.get("x") == "1")
+        #expect(fresh.get("y") == "2")
+    }
+
+    /// The stamp shows no prompt, so a write with no other writer reads the item only once.
+    @Test func aWriteWithNoOtherWriterDoesNotReadAgain() {
+        let items = FakeKeychainItems([Keychain.account: #"{"jira.token":"j"}"#])
+        let keychain = Keychain(items: items)
+        #expect(keychain.set("x", "1"))
+        #expect(keychain.set("y", "2"))
+        #expect(items.reads.withLock { $0 } == 1)
+    }
+
+    @Test func confirmStoredReadsTheItemNotTheCache() throws {
+        let items = FakeKeychainItems()
+        let keychain = Keychain(items: items)
+        let bytes = Data("invented".utf8)
+        #expect(keychain.setData(bytes, service: "example.service", account: "example-account") == .written)
+        #expect(keychain.confirmStored(bytes, service: "example.service", account: "example-account"))
+        items.values.withLock { $0[Keychain.account] = Data(#"{"jira.token":"j"}"#.utf8) }
+        let before = items.reads.withLock { $0 }
+        #expect(!keychain.confirmStored(bytes, service: "example.service", account: "example-account"))
+        #expect(items.reads.withLock { $0 } == before + 1)
+        #expect(keychain.data(service: "example.service", account: "example-account") == .found(bytes), "the cache is left alone")
+    }
+
+    @Test func setDataIfMissingNeverOverwrites() {
+        let items = FakeKeychainItems()
+        let keychain = Keychain(items: items)
+        let newer = Data("newer".utf8)
+        #expect(keychain.setData(newer, service: "example.service", account: "example-account") == .written)
+        #expect(keychain.setDataIfMissing(Data("older".utf8), service: "example.service", account: "example-account", reapPending: true) == .present(newer))
+        #expect(!keychain.reapPending(service: "example.service", account: "example-account"))
+        #expect(Keychain(items: items).data(service: "example.service", account: "example-account") == .found(newer))
+    }
+
+    /// The move and its pending reap land in one write; a later write clears the mark.
+    @Test func aMoveMarksItsReapUntilCleared() {
+        let items = FakeKeychainItems()
+        let keychain = Keychain(items: items)
+        let bytes = Data("moved".utf8)
+        #expect(keychain.setDataIfMissing(bytes, service: "example.service", account: "example-account", reapPending: true) == .inserted)
+        #expect(items.writes.withLock { $0 } == 1)
+        #expect(Keychain(items: items).reapPending(service: "example.service", account: "example-account"))
+        #expect(keychain.clearReapPending(service: "example.service", account: "example-account") == .written)
+        #expect(!Keychain(items: items).reapPending(service: "example.service", account: "example-account"))
+        #expect(keychain.setDataIfMissing(Data("other".utf8), service: "example.service", account: "other", reapPending: true) == .inserted)
+        #expect(keychain.setData(Data("newer".utf8), service: "example.service", account: "other") == .written)
+        #expect(!Keychain(items: items).reapPending(service: "example.service", account: "other"))
+    }
+
+    @Test func aFailedWriteSaysWhy() {
+        let items = FakeKeychainItems([Keychain.account: #"{"jira.token":"j"}"#])
+        let keychain = Keychain(items: items)
+        items.refusesWrites.withLock { $0 = true }
+        #expect(keychain.setData(Data("x".utf8), service: "example.service", account: "example-account") == .failed)
+        #expect(keychain.data(service: "example.service", account: "example-account") == .missing)
     }
 
     @Test func warmReadsOnce() {
@@ -166,6 +276,8 @@ private final class FakeKeychainItems: KeychainItems {
     let onRead = Locked<(@Sendable () -> Void)?>(nil)
     let refusesReads: Locked<Bool>
     let refusesWrites: Locked<Bool>
+    /// Bumped by every write and delete; the stamp's date, as the Keychain's modification date would.
+    private let version = Locked(0)
 
     init(_ values: [String: String] = [:], refusesReads: Bool = false, refusesWrites: Bool = false) {
         self.values = Locked(values.mapValues { Data($0.utf8) })
@@ -182,10 +294,16 @@ private final class FakeKeychainItems: KeychainItems {
         return values.withLock { $0[account] }.map(KeychainRead.found) ?? .missing
     }
 
+    func stamp(_ account: String) -> KeychainStamp? {
+        guard values.withLock({ $0[account] }) != nil else { return .absent }
+        return KeychainStamp(modified: Date(timeIntervalSinceReferenceDate: Double(version.withLock { $0 })), writeID: nil)
+    }
+
     func write(_ account: String, _ data: Data) -> Bool {
         writes.withLock { $0 += 1 }
         if refusesWrites.withLock({ $0 }) { return false }
         values.withLock { $0[account] = data }
+        version.withLock { $0 += 1 }
         return true
     }
 
@@ -193,6 +311,7 @@ private final class FakeKeychainItems: KeychainItems {
         writes.withLock { $0 += 1 }
         if refusesWrites.withLock({ $0 }) { return false }
         values.withLock { $0[account] = nil }
+        version.withLock { $0 += 1 }
         return true
     }
 }

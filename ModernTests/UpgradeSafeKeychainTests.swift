@@ -29,10 +29,10 @@ final class UpgradeSafeKeychainTests: XCTestCase {
             .consultLegacy)
     }
 
-    func testMissingEntitlementFallsBackToLegacy() {
+    func testMissingEntitlementLeavesTheDataProtectionKeychain() {
         // A build without a usable keychain-access-groups entitlement can't touch the
-        // data-protection keychain, so the login keychain is still the real store and
-        // we must fall back to it (degrade to old behavior), not surface an error.
+        // data-protection keychain, so it looks elsewhere (the vault, then the login copy
+        // older builds left) rather than surfacing an error.
         XCTAssertEqual(
             iTermUpgradeSafeKeychain.planAfterDataProtectionRead(status: errSecMissingEntitlement),
             .consultLegacy)
@@ -106,7 +106,7 @@ final class UpgradeSafeKeychainTests: XCTestCase {
 
     override func tearDown() {
         if let restore {
-            iTermUpgradeSafeKeychain.stores = restore
+            iTermUpgradeSafeKeychain.installStoresForTesting(restore)
         }
         super.tearDown()
     }
@@ -178,6 +178,7 @@ final class UpgradeSafeKeychainTests: XCTestCase {
         // The last launch moved the secret in but stopped before deleting the login copy.
         fakes.dataProtectionUnavailable = true
         fakes.vault[key] = secret
+        fakes.vaultReapPending = [key]
         fakes.legacy[key] = Data("invented-old-secret".utf8)
         relaunch()
 
@@ -187,10 +188,75 @@ final class UpgradeSafeKeychainTests: XCTestCase {
         XCTAssertNil(fakes.legacy[key])
         XCTAssertEqual(fakes.legacyReads[key, default: 0], 0)
 
+        XCTAssertTrue(fakes.vaultReapPending.isEmpty, "the reap is done")
+
         // Once per process: later reads and writes do not delete again.
         _ = readItem()
         XCTAssertEqual(writeItem(Data("invented-secret-2".utf8)), errSecSuccess)
         XCTAssertEqual(fakes.legacyDeletes[key], 1)
+    }
+
+    func testALoginCopyWrittenAfterTheMoveIsKept() {
+        // An older build wrote a login copy after the move; it may be newer than the vault.
+        fakes.dataProtectionUnavailable = true
+        fakes.vault[key] = secret
+        let newer = Data("invented-newer-secret".utf8)
+        fakes.legacy[key] = newer
+        relaunch()
+
+        let (status, data) = readItem()
+        XCTAssertEqual(status, errSecSuccess)
+        XCTAssertEqual(data, secret)
+        XCTAssertEqual(fakes.legacy[key], newer)
+        XCTAssertEqual(fakes.legacyDeletes[key, default: 0], 0)
+        XCTAssertEqual(fakes.legacyReads[key, default: 0], 0, "left unread")
+    }
+
+    func testAMoveMarksItsReapAndClearsItOnceTheLoginCopyIsGone() {
+        fakes.dataProtectionUnavailable = true
+        fakes.legacy[key] = secret
+        fakes.legacyDeleteFails[key] = errSecAuthFailed
+
+        XCTAssertEqual(readItem().1, secret)
+        XCTAssertEqual(fakes.vault[key], secret)
+        XCTAssertEqual(fakes.vaultReapPending, [key], "the delete failed, so it stays pending")
+        XCTAssertEqual(fakes.legacy[key], secret)
+
+        fakes.legacyDeleteFails = [:]
+        relaunch()
+        XCTAssertEqual(readItem().1, secret)
+        XCTAssertNil(fakes.legacy[key])
+        XCTAssertTrue(fakes.vaultReapPending.isEmpty)
+    }
+
+    func testAMoveWhoseReadBackFailsKeepsTheLoginCopy() {
+        fakes.dataProtectionUnavailable = true
+        fakes.vaultLosesWrites = true
+        fakes.legacy[key] = secret
+
+        let (status, data) = readItem()
+        XCTAssertEqual(status, errSecSuccess)
+        XCTAssertEqual(data, secret)
+        XCTAssertEqual(fakes.legacy[key], secret)
+        XCTAssertEqual(fakes.legacyDeletes[key, default: 0], 0)
+        XCTAssertEqual(fakes.vaultConfirmReads, 1)
+    }
+
+    func testAMoveNeverOverwritesAValueStoredDuringTheLoginRead() {
+        fakes.dataProtectionUnavailable = true
+        let older = Data("invented-older-secret".utf8)
+        let newer = Data("invented-newer-secret".utf8)
+        fakes.legacy[key] = older
+        // Another thread stores a newer value while this one waits on the login prompt.
+        let fakes = self.fakes, key = self.key
+        fakes.legacyReadHook = { [weak fakes] in fakes?.vault[key] = newer }
+
+        let (status, data) = readItem()
+        XCTAssertEqual(status, errSecSuccess)
+        XCTAssertEqual(data, newer)
+        XCTAssertEqual(fakes.vault[key], newer)
+        XCTAssertEqual(fakes.legacy[key], older, "not moved, so not deleted")
+        XCTAssertTrue(fakes.vaultReapPending.isEmpty)
     }
 
     func testAWriteReapsALeftoverLegacyCopy() {
@@ -224,8 +290,17 @@ final class UpgradeSafeKeychainTests: XCTestCase {
         XCTAssertNil(data)
         XCTAssertEqual(fakes.legacy[key], secret)
         XCTAssertEqual(fakes.legacyReads[key, default: 0], 0, "a refused vault is not a missing entry")
-        XCTAssertNotEqual(writeItem(secret), errSecSuccess)
+        let reads = fakes.vaultReads
+        XCTAssertEqual(writeItem(secret), errSecAuthFailed)
+        XCTAssertEqual(fakes.vaultReads, reads, "a refused write does not read again, which would prompt again")
         XCTAssertEqual(fakes.legacy[key], secret)
+    }
+
+    func testAVaultWriteErrorIsAnIOErrorWithoutAnotherRead() {
+        fakes.dataProtectionUnavailable = true
+        fakes.vaultWriteFails = true
+        XCTAssertEqual(writeItem(secret), errSecIO)
+        XCTAssertEqual(fakes.vaultReads, 0)
     }
 
     func testDataProtectionIsUsedWhenAvailable() {
@@ -245,7 +320,55 @@ final class UpgradeSafeKeychainTests: XCTestCase {
         XCTAssertTrue(iTermUpgradeSafeKeychain.deleteGenericPassword(service: service, account: account))
         XCTAssertNil(fakes.dataProtection[key])
         XCTAssertTrue(fakes.vault.isEmpty)
-        XCTAssertEqual(fakes.vaultReads, 0, "the vault is only the fallback")
+        XCTAssertEqual(fakes.vaultReads, 1, "the vault is only checked on a data-protection miss")
+        XCTAssertEqual(fakes.legacyReads[otherKey], 1)
+    }
+
+    // MARK: - A build with the entitlement finds what an ad-hoc build kept in the vault
+
+    func testAnEntitledBuildMovesAVaultEntryIntoDataProtection() {
+        fakes.vault[key] = secret
+        fakes.legacy[key] = Data("invented-old-secret".utf8)
+
+        let (status, data) = readItem()
+        XCTAssertEqual(status, errSecSuccess)
+        XCTAssertEqual(data, secret, "the vault comes before the login copy")
+        XCTAssertEqual(fakes.dataProtection[key], secret)
+        XCTAssertNil(fakes.vault[key], "removed only after the data-protection copy read back")
+        XCTAssertEqual(fakes.legacyReads[key, default: 0], 0)
+
+        let reads = fakes.vaultReads
+        XCTAssertEqual(readItem().1, secret)
+        XCTAssertEqual(fakes.vaultReads, reads, "a data-protection hit never reads the vault")
+    }
+
+    func testAnEntitledBuildKeepsTheVaultEntryWhenDataProtectionCannotTakeIt() {
+        fakes.vault[key] = secret
+        fakes.dataProtectionWriteFails = errSecInteractionNotAllowed
+
+        XCTAssertEqual(readItem().1, secret)
+        XCTAssertEqual(fakes.vault[key], secret)
+        XCTAssertNil(fakes.dataProtection[key])
+    }
+
+    func testAnEntitledBuildDoesNotMoveAnythingPastARefusedVault() {
+        fakes.vaultUnavailable = true
+        fakes.legacy[key] = secret
+
+        let (status, data) = readItem()
+        XCTAssertEqual(status, errSecAuthFailed)
+        XCTAssertNil(data)
+        XCTAssertNil(fakes.dataProtection[key])
+        XCTAssertEqual(fakes.legacy[key], secret)
+        XCTAssertEqual(fakes.legacyReads[key, default: 0], 0)
+    }
+
+    func testAnEntitledDeleteAlsoClearsTheVault() {
+        fakes.dataProtection[key] = secret
+        fakes.vault[key] = secret
+        XCTAssertTrue(iTermUpgradeSafeKeychain.deleteGenericPassword(service: service, account: account))
+        XCTAssertNil(fakes.vault[key])
+        XCTAssertEqual(readItem().0, errSecItemNotFound, "nothing comes back from the vault")
     }
 
     func testDeleteRemovesEveryCopy() {

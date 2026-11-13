@@ -1737,7 +1737,8 @@ void TurnOnDebugLoggingAutomatically(void) {
     RLog(@"Previous shutdown was clean: %@", [iTermUserDefaults lastShutdownWasClean] ? @"YES" : @"NO");
 
     // Test-only: if launched with the purge flag, wipe the app's data-protection
-    // keychain items and quit BEFORE any keychain read. Gated to Development builds via
+    // keychain items and quit BEFORE any data-protection keychain read (the launch's
+    // warm read of Shellforge's one login-keychain item may already be under way). Gated to Development builds via
     // ITERM_DEBUG (defined only in the Development configuration), so the call does not
     // exist at all in Beta/Nightly/Deployment. See `make purge-keychain-test`.
 #ifdef ITERM_DEBUG

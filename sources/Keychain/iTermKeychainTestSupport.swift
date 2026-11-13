@@ -47,6 +47,8 @@ final class iTermFakeKeychains {
     var dataProtection: [String: Data] = [:]
     var legacy: [String: Data] = [:]
     var vault: [String: Data] = [:]
+    /// Entries a move put in whose login copy is still to be deleted.
+    var vaultReapPending: Set<String> = []
 
     /// `true` is a build without the keychain-access-groups entitlement.
     var dataProtectionUnavailable = false
@@ -55,11 +57,19 @@ final class iTermFakeKeychains {
     var legacyReadFails: [String: OSStatus] = [:]
     var legacyDeleteFails: [String: OSStatus] = [:]
     var vaultWriteFails = false
+    /// The vault says it wrote but keeps nothing, so a read-back from the Keychain itself fails.
+    var vaultLosesWrites = false
+    /// Runs inside `legacyCopy` before it answers, as another thread could while the login
+    /// keychain's prompt is up.
+    var legacyReadHook: (() -> Void)?
+    /// The data-protection keychain refuses writes with this status, as a locked keychain would.
+    var dataProtectionWriteFails: OSStatus?
 
     private(set) var legacyReads: [String: Int] = [:]
     private(set) var legacyDeletes: [String: Int] = [:]
     private(set) var legacyWrites: [String: Int] = [:]
     private(set) var vaultReads = 0
+    private(set) var vaultConfirmReads = 0
     /// The app may reach the keychain from another thread while a test runs.
     private let lock = NSRecursiveLock()
 
@@ -67,7 +77,7 @@ final class iTermFakeKeychains {
 
     func install() -> iTermUpgradeSafeKeychain.Stores {
         let previous = iTermUpgradeSafeKeychain.stores
-        iTermUpgradeSafeKeychain.stores = stores
+        iTermUpgradeSafeKeychain.installStoresForTesting(stores)
         return previous
     }
 
@@ -80,6 +90,7 @@ final class iTermFakeKeychains {
             } },
             dataProtectionUpsert: { [self] data, service, account, _ in lock.withLock {
                 if dataProtectionUnavailable { return errSecMissingEntitlement }
+                if let dataProtectionWriteFails { return dataProtectionWriteFails }
                 dataProtection[Self.key(service, account)] = data
                 return errSecSuccess
             } },
@@ -90,6 +101,7 @@ final class iTermFakeKeychains {
             legacyCopy: { [self] service, account in lock.withLock {
                 let key = Self.key(service, account)
                 legacyReads[key, default: 0] += 1
+                legacyReadHook?()
                 if let status = legacyReadFails[key] { return (status, nil) }
                 guard let data = legacy[key] else { return (errSecItemNotFound, nil) }
                 return (errSecSuccess, data)
@@ -112,9 +124,31 @@ final class iTermFakeKeychains {
                 return vault[Self.key(service, account)].map { .found($0) } ?? .missing
             } },
             vaultWrite: { [self] data, service, account in lock.withLock {
-                if vaultUnavailable || vaultWriteFails { return false }
-                vault[Self.key(service, account)] = data
-                return true
+                if vaultUnavailable { return .unavailable }
+                if vaultWriteFails { return .failed }
+                let key = Self.key(service, account)
+                vaultReapPending.remove(key)
+                if !vaultLosesWrites { vault[key] = data }
+                return .written
+            } },
+            vaultInsert: { [self] data, service, account in lock.withLock {
+                if vaultUnavailable { return .unavailable }
+                if vaultWriteFails { return .failed }
+                let key = Self.key(service, account)
+                if let present = vault[key] { return .present(present) }
+                vaultReapPending.insert(key)
+                if !vaultLosesWrites { vault[key] = data }
+                return .inserted
+            } },
+            vaultConfirm: { [self] data, service, account in lock.withLock {
+                vaultConfirmReads += 1
+                return vault[Self.key(service, account)] == data
+            } },
+            vaultReapPending: { [self] service, account in lock.withLock {
+                vaultReapPending.contains(Self.key(service, account))
+            } },
+            vaultClearReapPending: { [self] service, account in lock.withLock {
+                _ = vaultReapPending.remove(Self.key(service, account))
             } })
     }
 }
