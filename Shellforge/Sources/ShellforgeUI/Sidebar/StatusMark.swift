@@ -107,7 +107,7 @@ private struct SpinnerArc: View {
 private struct TurningArc: View {
     let size: CGFloat
     let color: Color
-    var _start = State(initialValue: StatusMark.spinnerRotation(at: Date()))
+    var _start = State(initialValue: StatusMark.spinnerRotation(at: StatusMark.now()))
     var _turning = State(initialValue: false)
     private var start: Double { _start.wrappedValue }
     private var turning: Bool {
@@ -134,5 +134,20 @@ extension StatusMark {
     /// How many times a spinning arc's `body` has run, which a test reads to show that the turn is
     /// SwiftUI's to interpolate rather than a body re-run per frame. Debug builds only.
     @MainActor static var arcEvaluations = 0
+
+    /// The time an arc seeds its phase from, when a test drives the host's animation clock by hand
+    /// rather than with real frames: it sets this to the same time, so the arc's phase can be read
+    /// against it. Nil is the wall clock. Debug builds only.
+    nonisolated static let testClock = Locked<(@Sendable () -> Date)?>(nil)
 }
 #endif
+
+extension StatusMark {
+    /// What an arc's turn starts from: the wall clock, or in a debug build a test's own.
+    nonisolated static func now() -> Date {
+        #if DEBUG
+        if let clock = testClock.withLock({ $0 }) { return clock() }
+        #endif
+        return Date()
+    }
+}
