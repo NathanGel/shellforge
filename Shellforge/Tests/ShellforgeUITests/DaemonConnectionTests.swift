@@ -20,7 +20,7 @@ while True:
   f=c.makefile('rb')
   for line in f:
    m=json.loads(line)
-   result={'protocolVersion':2,'connected':True,'sessions':[],'usage':{'claude':None,'codex':None}}
+   result={'protocolVersion':3,'connected':True,'sessions':[],'usage':{'claude':None,'codex':None}}
    c.sendall((json.dumps({'id':m['id'],'result':result})+'\\n').encode())
    if count==1: break
   f.close()
@@ -124,7 +124,7 @@ while True:
   f=c.makefile('rb')
   for line in f:
    m=json.loads(line)
-   result={'protocolVersion':2,'connected':True,'sessions':[],'usage':{'claude':None,'codex':None}}
+   result={'protocolVersion':3,'connected':True,'sessions':[],'usage':{'claude':None,'codex':None}}
    c.sendall((json.dumps({'id':m['id'],'result':result})+'\\n').encode())
    # session.changed without the session it is about: a shape this app cannot read.
    if count<=unreadable: c.sendall((json.dumps({'event':'session.changed','payload':{'sessionId':'s1'}})+'\\n').encode())
@@ -175,7 +175,7 @@ with c:
  f=c.makefile('rb')
  line=f.readline()
  m=json.loads(line)
- result={'protocolVersion':2,'connected':True,'sessions':[],'usage':{'claude':None,'codex':None}}
+ result={'protocolVersion':3,'connected':True,'sessions':[],'usage':{'claude':None,'codex':None}}
  c.sendall((json.dumps({'id':m['id'],'result':result})+'\\n').encode())
 """, arguments: [path])
             defer { server.stop() }
@@ -201,7 +201,7 @@ with c:
  for line in f:
   m=json.loads(line)
   c.sendall((json.dumps({'event':'session.closed','payload':{'sessionId':'early'}})+'\\n').encode())
-  result={'protocolVersion':2,'connected':True,'sessions':[],'usage':{'claude':None,'codex':None}}
+  result={'protocolVersion':3,'connected':True,'sessions':[],'usage':{'claude':None,'codex':None}}
   c.sendall((json.dumps({'id':m['id'],'result':result})+'\\n').encode())
   c.sendall((json.dumps({'event':'session.closed','payload':{'sessionId':'late'}})+'\\n').encode())
 """)

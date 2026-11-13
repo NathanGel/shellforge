@@ -88,11 +88,21 @@ struct UserConfigFile: Sendable {
     }
 
     /// Atomically, through the link, creating the directory it goes in.
-    func write(_ data: Data) throws {
+    /// `private`: the file holds the helper's token, so it is made readable by its owner only.
+    func write(_ data: Data, private: Bool = false) throws {
         if let target = Self.danglingLinkTarget(url) { throw refusal("links to \(target), which does not exist") }
         let file = target
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         try data.write(to: file, options: .atomic)
+        if `private` { try makePrivate() }
+    }
+
+    /// Readable and writable by its owner only, through the link: another account on the Mac can
+    /// read most of a home folder, and this file holds the helper's token. Nothing when it is missing.
+    func makePrivate() throws {
+        let file = target
+        guard FileManager.default.fileExists(atPath: file.path) else { return }
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
     }
 
     /// Where `url` points when it is a symlink that leads nowhere. `fileExists` follows the link

@@ -8,7 +8,7 @@ import Foundation
 public enum DaemonProtocol {
     /// The version `workspace.snapshot` reports. A helper that reports another is one this app
     /// cannot speak (`DaemonError.Code.incompatible`).
-    public static let version = 2
+    public static let version = 3
     /// The longest line either side reads: the daemon's request reader is limited to it, and a
     /// longer line from the daemon ends this app's connection.
     public static let maximumFrameBytes = 1 << 20
@@ -17,6 +17,9 @@ public enum DaemonProtocol {
 /// A request the daemon answers. Only those Shellforge sends: the daemon also serves the iTerm2
 /// bridge's (`--session-source iterm`), which the app never uses.
 public enum DaemonMethod: String, CaseIterable, Sendable {
+    /// The helper's token (`HookToken`), first on every connection: until it is shown, every other
+    /// method but `agents.takeLaunch` is refused (`unauthorized`).
+    case appHello = "app.hello"
     case workspaceSnapshot = "workspace.snapshot"
     /// Not sent by the app: `shellforged ctl`'s.
     case sessionsList = "sessions.list"
@@ -36,6 +39,9 @@ public enum DaemonMethod: String, CaseIterable, Sendable {
     case agentsArmLaunch = "agents.armLaunch"
     /// Not sent by the app: shellforge-run's.
     case agentsTakeLaunch = "agents.takeLaunch"
+    /// Whether a hook post without the token is still taken: true while one of this build's installs
+    /// was written before hooks carried it.
+    case hooksAllowTokenless = "hooks.allowTokenless"
 }
 
 /// An event the daemon broadcasts that Shellforge reads. Any other name — the iTerm2 bridge's, or a
@@ -71,8 +77,10 @@ extension DaemonError {
         public static let `internal`: Code = "internal"
         /// The daemon has no handler for this request name — an older helper out of sync with a newer app.
         public static let unknownMethod: Code = "unknown_method"
+        /// A method only the app may call, on a connection that has not shown the helper's token.
+        public static let unauthorized: Code = "unauthorized"
         /// Every code the daemon answers with.
-        public static let daemonCodes: [Code] = [.badParams, .notFound, .itermUnavailable, .protocol, .internal, .unknownMethod]
+        public static let daemonCodes: [Code] = [.badParams, .notFound, .itermUnavailable, .protocol, .internal, .unknownMethod, .unauthorized]
 
         // This client's own.
         /// `DaemonClient.snapshot()`'s guard: a helper whose protocol version this app cannot speak.

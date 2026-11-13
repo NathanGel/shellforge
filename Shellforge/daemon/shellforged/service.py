@@ -223,7 +223,10 @@ class Service:
         r("tunnels.list", self._h_tunnels_list)
         r("tunnels.hold", self._h_tunnels_hold)
         r("agents.armLaunch", self._h_arm_launch)
-        self.rpc.register_with_caller("agents.takeLaunch", self._h_take_launch)
+        r("hooks.allowTokenless", self._h_allow_tokenless)
+        # shellforge-run's, from the agent's tab: the only method a connection may call without the
+        # token, since the tab's own process proves itself by its terminal (`_take_allowed`).
+        self.rpc.register_with_caller("agents.takeLaunch", self._h_take_launch, public=True)
 
     async def _h_snapshot(self, _p: Any) -> dict[str, Any]:
         try:
@@ -332,6 +335,12 @@ class Service:
             return None
         # Asked again after the await: a caller that left meanwhile mustn't spend the arm.
         return tab_tty == caller_tty and not caller.gone()
+
+    async def _h_allow_tokenless(self, p: Any) -> dict[str, Any]:
+        """`{allowed}`: whether hooks installed before they carried the token still reach the helper.
+        The app says false once none of this build's installs lacks it (`HookServer.accept_tokenless`)."""
+        self.hooks.accept_tokenless = param(p, "allowed", bool)
+        return {"ok": True}
 
     async def _h_tunnels_list(self, _p: Any) -> list[dict[str, Any]]:
         return self.tunnels.list()

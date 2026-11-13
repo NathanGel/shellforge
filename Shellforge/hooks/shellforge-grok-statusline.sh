@@ -24,9 +24,13 @@ INSTALLED="$HOME/Library/Application Support/Shellforge"
 SUPPORT="${SHELLFORGE_SUPPORT:-$INSTALLED}"
 PORT=""
 [ -f "$SUPPORT/hook-port" ] && { PORT="$(<"$SUPPORT/hook-port")" 2>/dev/null; }
+# The helper's token (`hook-token`, 0600, the header line itself), sent with `-H @file` so it never
+# shows in a command line; with no file, none is sent, which a helper takes only from old installs.
+TOKEN=()
+[[ -f "$SUPPORT/hook-token" && ! -L "$SUPPORT/hook-token" ]] && TOKEN=(-H "@$SUPPORT/hook-token")
 # Only a port, 1-65535 in digits, goes into the URL: a zsh pattern, so the check forks nothing.
 if [[ $PORT == <1-65535> ]]; then
-  { printf '%s' "$INPUT" | curl -s -m 0.3 -X POST -H 'Content-Type: application/json' -H 'X-Shellforge-Hook: 1' -H "X-Shellforge-iTerm-Session: ${ITERM_SESSION_ID-}" -H 'Expect:' --data-binary @- "http://127.0.0.1:$PORT/statusline/grok"; } >/dev/null 2>&1 &
+  { printf '%s' "$INPUT" | curl -s -m 0.3 -X POST -H 'Content-Type: application/json' -H 'X-Shellforge-Hook: 1' "${TOKEN[@]}" -H "X-Shellforge-iTerm-Session: ${ITERM_SESSION_ID-}" -H 'Expect:' --data-binary @- "http://127.0.0.1:$PORT/statusline/grok"; } >/dev/null 2>&1 &
 fi
 ORIG_FILE="$INSTALLED/grok-statusline-original.cmd"
 if [ -f "$ORIG_FILE" ]; then

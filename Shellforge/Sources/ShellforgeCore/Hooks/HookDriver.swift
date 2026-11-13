@@ -27,6 +27,13 @@ protocol HookDriver: Sendable {
     /// Writes the hooks, or throws `HookInstallError` having written nothing: a file Shellforge
     /// must not replace, or cannot read, stops the whole install before any file is touched.
     func install() throws
+    /// Whether the hooks are exactly what an install for this port wrote before hooks carried the
+    /// helper's token: what the launch rewrites unasked (`HookIntegrations.upgradeTokenlessInstalls`).
+    /// Hooks pointed at another port, a dev build's, are not.
+    func holdsTokenlessInstall() -> Bool
+    /// Whether any of Shellforge's hooks for this port post without the helper's token, however
+    /// they came to: while one does, the helper is told to take such posts (`hooks.allowTokenless`).
+    func postsWithoutToken() -> Bool
 }
 
 public struct HookProbe: Equatable, Sendable {

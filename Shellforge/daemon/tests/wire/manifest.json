@@ -5,6 +5,7 @@
     "iterm_unavailable",
     "not_found",
     "protocol",
+    "unauthorized",
     "unknown_method"
   ],
   "events": [
@@ -27,6 +28,7 @@
       "iterm_unavailable": "error.iterm_unavailable.json",
       "not_found": "error.not_found.json",
       "protocol": "error.protocol.json",
+      "unauthorized": "error.unauthorized.json",
       "unknown_method": "error.unknown_method.json"
     },
     "events": {
@@ -48,6 +50,12 @@
       ],
       "agents.takeLaunch": [
         "reply.agents.takeLaunch.json"
+      ],
+      "app.hello": [
+        "reply.app.hello.json"
+      ],
+      "hooks.allowTokenless": [
+        "reply.hooks.allowTokenless.json"
       ],
       "interface.setMatchItermBackground": [
         "reply.interface.setMatchItermBackground.json"
@@ -113,6 +121,8 @@
   "methods": [
     "agents.armLaunch",
     "agents.takeLaunch",
+    "app.hello",
+    "hooks.allowTokenless",
     "interface.setMatchItermBackground",
     "iterm.provideCookie",
     "iterm.status",
@@ -133,7 +143,7 @@
     "window.setFrame",
     "workspace.snapshot"
   ],
-  "protocolVersion": 2,
+  "protocolVersion": 3,
   "sessionAgents": [
     "claude",
     "codex",

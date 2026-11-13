@@ -1,8 +1,27 @@
-// Shellforge PI extension schema: 5
+// Shellforge PI extension schema: 6
+import { closeSync, constants, openSync, readFileSync } from "node:fs";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 // The port is ShellforgePaths.hookPort, which PiDriver writes in place of the placeholder.
 const endpoint = "http://127.0.0.1:__SHELLFORGE_HOOK_PORT__/hook/pi";
+// The helper's token file in the support folder whose port that is (`hook-token`, 0600), which
+// PiDriver writes in place of the placeholder as a string literal. Read at each post, never copied
+// here: this file is not private, and the token may be made after it is installed.
+const tokenFile = "__SHELLFORGE_TOKEN_FILE__";
+
+// The token as the helper checks it, or none: a link, or anything but the one line, is no token.
+function tokenHeader(): Record<string, string> {
+	let fd: number | undefined;
+	try {
+		fd = openSync(tokenFile, constants.O_RDONLY | constants.O_NOFOLLOW);
+		const match = /^X-Shellforge-Token: ([0-9a-f]{64})\n?$/.exec(readFileSync(fd, "utf8"));
+		return match ? { "X-Shellforge-Token": match[1] } : {};
+	} catch {
+		return {};
+	} finally {
+		if (fd !== undefined) closeSync(fd);
+	}
+}
 
 // PI may wait on what a handler returns, and reporting must never hold PI up: a daemon that accepts
 // the connection and stalls would cost every turn the request's whole timeout. Handlers hand back
@@ -85,6 +104,7 @@ async function report(event: string, ctx: ExtensionContext, overrides: Record<st
 			headers: {
 				"Content-Type": "application/json",
 				"X-Shellforge-Hook": "1",
+				...tokenHeader(),
 				...(process.env.ITERM_SESSION_ID ? { "X-Shellforge-iTerm-Session": process.env.ITERM_SESSION_ID } : {}),
 			},
 			body: JSON.stringify(body),

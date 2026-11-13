@@ -17,7 +17,18 @@ struct ClaudeHooks: HookDriver {
 
     var settings: UserConfigFile { UserConfigFile(home: home, Self.settingsPath) }
 
-    func probe() -> HookProbe {
+    func probe() -> HookProbe { probe(auth: HookAuth.existing(in: support)) }
+
+    /// Claude's hooks exactly as an install made before hooks carried the token wrote them, for this port.
+    func holdsTokenlessInstall() -> Bool { probe(auth: nil).state == .current }
+
+    func postsWithoutToken() -> Bool {
+        guard case .present(let data) = settings.read(), let object = try? ClaudeSettings.mergeable(data) else { return false }
+        return ClaudeSettings.hasTokenlessHook(object, hookURL: "http://127.0.0.1:\(port)" + Self.endpoint)
+    }
+
+    /// The probe against entries that carry `auth`, or none.
+    private func probe(auth: HookAuth?) -> HookProbe {
         let file = settings
         switch file.read() {
         case .missing: return HookProbe(.missing)
@@ -27,7 +38,7 @@ struct ClaudeHooks: HookDriver {
             do { object = try ClaudeSettings.mergeable(data) } catch { return .refused(file, error.reason) }
             // The status-line shim posts to the port in its file, so settings that are current beside
             // another port, or none, are outdated: Repair writes it.
-            if ClaudeSettings.isInstalled(object, daemonPort: port, shimPath: shimPath),
+            if ClaudeSettings.isInstalled(object, daemonPort: port, shimPath: shimPath, auth: auth),
                ShimPort.isRecorded(port, in: support) {
                 return HookProbe(.current)
             }
@@ -43,9 +54,10 @@ struct ClaudeHooks: HookDriver {
         case .refused(let reason): throw file.refusal(reason)
         case .present(let contents): data = contents
         }
+        let auth = try HookAuth.made(in: support)
         let result: (Data, originalStatusLine: [String: Any]?)
         do {
-            result = try ClaudeSettings.merge(data, hookURL: "http://127.0.0.1:\(port)" + Self.endpoint, shimPath: shimPath)
+            result = try ClaudeSettings.merge(data, hookURL: "http://127.0.0.1:\(port)" + Self.endpoint, shimPath: shimPath, auth: auth)
         } catch let refusal as ClaudeSettings.Unmergeable {
             throw file.refusal(refusal.reason)
         }
@@ -57,9 +69,10 @@ struct ClaudeHooks: HookDriver {
         try StatusLineOriginal.record(StatusLineOriginal.handedOver(before(original: original, data: data), home: home,
                                                                  aitermShim: "claude-statusline-shim.sh", aitermRecord: "statusline-original.cmd"),
                                       command: ShellforgeSupport.default(home: home).statusLineOriginalURL)
-        guard !ClaudeSettings.same(data, merged) else { return }
+        // The file holds the token: readable by its owner only, whether or not this merge changed it.
+        guard !ClaudeSettings.same(data, merged) else { return try file.makePrivate() }
         try file.backUp()
-        try file.write(merged)
+        try file.write(merged, private: true)
     }
 
     /// The status line the file had: the user's own command when the merge set one aside, ours when

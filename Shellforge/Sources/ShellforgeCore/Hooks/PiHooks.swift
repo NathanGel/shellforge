@@ -5,20 +5,44 @@ import Foundation
 /// tool's. It is Shellforge's when its first line carries the schema marker.
 struct PiHooks: HookDriver {
     static let path = ".pi/agent/extensions/shellforge-status.ts"
-    static let schemaVersion = 5
+    static let schemaVersion = 6
+    /// The last schema whose extension posted without the helper's token.
+    static let tokenlessSchemaVersion = 5
     private static let markerPrefix = "// Shellforge PI extension schema: "
     /// Where the bundled extension names the hook port, which Install fills in: a copy of the file
     /// in PI's home cannot read the app's constant, and one that named another port than the
     /// daemon's would post to nothing.
     static let portPlaceholder = "__SHELLFORGE_HOOK_PORT__"
+    /// Where it names the helper's token file, quotes and all, which Install fills in as a string
+    /// literal: the extension reads the token from it at each post, so the token is never in this
+    /// file, which is not private.
+    static let tokenFilePlaceholder = "\"__SHELLFORGE_TOKEN_FILE__\""
 
     let home: URL
     let port: Int
     /// The bundled extension, with `portPlaceholder` where its port goes.
     let source: String
+    /// The support folder whose helper listens on `port`, whose token file the extension reads.
+    let support: ShellforgeSupport
+
+    init(home: URL, port: Int, source: String, support: ShellforgeSupport? = nil) {
+        self.home = home
+        self.port = port
+        self.source = source
+        self.support = support ?? .default(home: home)
+    }
 
     /// What Install writes, and a current file matches exactly.
-    private var installed: String { source.replacingOccurrences(of: Self.portPlaceholder, with: String(port)) }
+    private var installed: String {
+        source.replacingOccurrences(of: Self.portPlaceholder, with: String(port))
+            .replacingOccurrences(of: Self.tokenFilePlaceholder, with: Self.literal(HookToken.url(in: support).path))
+    }
+
+    /// `text` as a JavaScript string literal: JSON's string syntax is a subset of it.
+    static func literal(_ text: String) -> String {
+        let data = (try? JSONSerialization.data(withJSONObject: [text], options: [.withoutEscapingSlashes])) ?? Data("[\"\"]".utf8)
+        return String(decoding: data.dropFirst().dropLast(), as: UTF8.self)
+    }
 
     var file: UserConfigFile { UserConfigFile(home: home, Self.path) }
 
@@ -48,13 +72,27 @@ struct PiHooks: HookDriver {
     }
 
     /// Whether `text` is what Install writes, with some port's digits where `source` has its
-    /// placeholder.
+    /// placeholder, and some token file where it has that one.
     private func isInstalled(forSomePort text: String) -> Bool {
-        let pattern = #"\A"# + source.components(separatedBy: Self.portPlaceholder)
-            .map(NSRegularExpression.escapedPattern(for:)).joined(separator: "[0-9]{1,5}") + #"\z"#
+        let pattern = #"\A"# + source.components(separatedBy: Self.portPlaceholder).map { part in
+            part.components(separatedBy: Self.tokenFilePlaceholder).map(NSRegularExpression.escapedPattern(for:))
+                .joined(separator: #""(?:[^"\\]|\\.)*""#)
+        }.joined(separator: "[0-9]{1,5}") + #"\z"#
         // Every part of `source` is escaped, so the pattern always compiles.
         guard let expression = try? NSRegularExpression(pattern: pattern) else { return false }
         return expression.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
+    }
+
+    /// The extension an install before tokens wrote, for this port: wholly Shellforge's, so it is
+    /// replaced as it stands.
+    func holdsTokenlessInstall() -> Bool {
+        guard case .present(let text) = file.readText() else { return false }
+        return text.hasPrefix(Self.markerPrefix + String(Self.tokenlessSchemaVersion) + "\n") && text.contains("127.0.0.1:\(port)/hook/pi")
+    }
+
+    func postsWithoutToken() -> Bool {
+        guard case .present(let text) = file.readText(), Self.state(of: text, expected: nil) != .foreign else { return false }
+        return text.contains("127.0.0.1:\(port)/hook/pi") && !text.contains(HookToken.header)
     }
 
     func install() throws {

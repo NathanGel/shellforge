@@ -8,7 +8,7 @@ from typing import Any
 # module and the registered methods, beside a golden frame of every event and reply.
 
 # The version of this protocol, as the `workspace.snapshot` bootstrap reports it.
-VERSION = 2
+VERSION = 3
 # The longest request line the server reads, and the longest line the app reads from it.
 MAX_FRAME_BYTES = 1 << 20
 
@@ -35,7 +35,12 @@ ITERM_UNAVAILABLE = "iterm_unavailable"
 PROTOCOL = "protocol"
 INTERNAL = "internal"
 UNKNOWN_METHOD = "unknown_method"
-ERROR_CODES = (BAD_PARAMS, NOT_FOUND, ITERM_UNAVAILABLE, PROTOCOL, INTERNAL, UNKNOWN_METHOD)
+# A method only the app may call, asked on a connection that has not shown the token (`app.hello`).
+UNAUTHORIZED = "unauthorized"
+ERROR_CODES = (BAD_PARAMS, NOT_FOUND, ITERM_UNAVAILABLE, PROTOCOL, INTERNAL, UNKNOWN_METHOD, UNAUTHORIZED)
+
+# The request that shows the token, `{"token": …}`: the connection may then call every method.
+APP_HELLO = "app.hello"
 
 
 class ProtocolError(ValueError):

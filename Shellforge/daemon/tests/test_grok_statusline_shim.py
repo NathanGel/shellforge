@@ -126,3 +126,10 @@ def test_shim_posts_to_the_folder_the_app_set_and_runs_the_installed_apps_origin
     result = run_shim(home, extra_env={"SHELLFORGE_SUPPORT": str(dev)})
     assert (result.returncode, result.stdout) == (0, "mine")
     assert wait_for(daemon)[0][0] == "/statusline/grok"
+
+
+def test_shim_sends_the_helpers_token_from_its_file(home, daemon):
+    from shellforged import hook_token
+    token = hook_token.read_or_create(home / "Library" / "Application Support" / "Shellforge")
+    run_shim(home)
+    assert wait_for(daemon)[0][1]["X-Shellforge-Token"] == token

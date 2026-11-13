@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from .hook_events import HOOK_PARSERS, STATUS_ROUTE, STATUSLINE_PARSERS
+from .hook_token import HookToken
 from .models import ITERM_SESSION_FIELD
 
 log = logging.getLogger(__name__)
@@ -32,9 +33,17 @@ class _Misdirected(Exception):
 
 class HookServer:
     def __init__(self, on_post: Callable[[str, dict[str, Any]], Awaitable[dict[str, Any] | None]] | None = None,
-                 host: str = "127.0.0.1", port: int = 47831, read_timeout: float = READ_TIMEOUT_SECONDS):
+                 host: str = "127.0.0.1", port: int = 47831, read_timeout: float = READ_TIMEOUT_SECONDS,
+                 token: HookToken | None = None):
         self.host, self.port, self.on_post = host, port, on_post
         self.read_timeout = read_timeout
+        # The per-user token every post must carry in `X-Shellforge-Token`; None takes the marker
+        # header alone, as in most tests.
+        self.token = token
+        # Whether a post with the marker but no token is taken: hooks installed before they carried
+        # one. True until the app says none of its installs lacks it (`hooks.allowTokenless`), so an
+        # upgrade never cuts off hooks the app has not yet rewritten. A wrong token is never taken.
+        self.accept_tokenless = True
         self._server: asyncio.AbstractServer | None = None
 
     async def start(self) -> None:
@@ -99,7 +108,7 @@ class HookServer:
             # Never reveal that a route exists to a caller that doesn't send
             # our marker header - any local process or a browser page (CORS
             # simple POST) can otherwise reach these routes.
-            if headers.get("x-shellforge-hook") != "1":
+            if headers.get("x-shellforge-hook") != "1" or not self._carries_token(headers):
                 await self._reply(writer, 404, "not found")
                 return
 
@@ -127,6 +136,15 @@ class HookServer:
             pass
         finally:
             writer.close()
+
+    def _carries_token(self, headers: dict[str, str]) -> bool:
+        """Whether the post shows this user's token, or may go without while `accept_tokenless`.
+        Another account on the Mac can reach the port, but cannot read the token's file."""
+        if self.token is None:
+            return True
+        if (presented := headers.get("x-shellforge-token")) is None:
+            return self.accept_tokenless
+        return self.token.matches(presented)
 
     def _addressed_to_us(self, host: str | None) -> bool:
         """Whether `Host` names this port on loopback, as every hook does (`http://127.0.0.1:<port>`).

@@ -14,6 +14,10 @@ SUPPORT="${SHELLFORGE_SUPPORT:-$HOME/Library/Application Support/Shellforge}"
 [ -f "$SUPPORT/hook-port" ] && { PORT="$(<"$SUPPORT/hook-port")" 2>/dev/null; }
 # Only a port, 1-65535 in digits, goes into the URL: a zsh pattern, so the check forks nothing.
 [[ $PORT == <1-65535> ]] || exit 0
+# The helper's token (`hook-token`, 0600, the header line itself), sent with `-H @file` so it never
+# shows in a command line; with no file, none is sent, which a helper takes only from old installs.
+TOKEN=()
+[[ -f "$SUPPORT/hook-token" && ! -L "$SUPPORT/hook-token" ]] && TOKEN=(-H "@$SUPPORT/hook-token")
 AGENT="${SHELLFORGE_AGENT_ID-}"
 # The session id goes into a header: anything but a plain id (a CR/LF could add a header) is sent as empty.
 SID="${ITERM_SESSION_ID-}"
@@ -23,5 +27,5 @@ if [[ $AGENT =~ '^[A-Za-z0-9_-]{1,64}$' ]]; then
   BODY="{\"state\": \"$STATE\", \"agent\": \"$AGENT\"}"
 fi
 # curl -q first: ignore ~/.curlrc; --noproxy '*': the report goes to 127.0.0.1, never a proxy.
-curl -q -s --noproxy '*' --connect-timeout 0.3 -m 0.8 -X POST -H 'Content-Type: application/json' -H 'X-Shellforge-Hook: 1' -H "X-Shellforge-iTerm-Session: $SID" -H 'Expect:' --data-binary "$BODY" "http://127.0.0.1:$PORT/status" >/dev/null 2>&1
+curl -q -s --noproxy '*' --connect-timeout 0.3 -m 0.8 -X POST -H 'Content-Type: application/json' -H 'X-Shellforge-Hook: 1' "${TOKEN[@]}" -H "X-Shellforge-iTerm-Session: $SID" -H 'Expect:' --data-binary "$BODY" "http://127.0.0.1:$PORT/status" >/dev/null 2>&1
 exit 0

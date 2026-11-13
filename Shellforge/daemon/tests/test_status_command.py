@@ -120,3 +120,13 @@ def test_proxy_variables_and_curlrc_are_ignored(home, daemon):
                                                     "ALL_PROXY": proxy})
     assert result.returncode == 0
     assert wait_for(daemon)[0][2] == {"state": "working"}
+
+
+def test_sends_the_helpers_token_from_its_file_and_none_without(home, daemon):
+    from shellforged import hook_token
+    support = home / "Library" / "Application Support" / "Shellforge"
+    run_status(home, "done")
+    assert "X-Shellforge-Token" not in wait_for(daemon)[0][1]
+    token = hook_token.read_or_create(support)
+    run_status(home, "done")
+    assert wait_for(daemon, 2)[1][1]["X-Shellforge-Token"] == token

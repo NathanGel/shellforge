@@ -13,7 +13,12 @@ extension GrokHooksFile {
         switch UserConfigFile(home: home, path).read() {
         case .missing: return .missing
         case .refused: return .unreadable
-        case .present(let data): return state(of: data, port: port)
+        case .present(let data): return state(of: data, port: port, auth: HookAuth.existing(in: .default(home: home)))
         }
     }
+}
+
+extension HookAuth {
+    /// The token of the installed app's folder under a scratch `home`, made as an install makes it.
+    static func made(home: URL) throws -> HookAuth { try made(in: .default(home: home)) }
 }

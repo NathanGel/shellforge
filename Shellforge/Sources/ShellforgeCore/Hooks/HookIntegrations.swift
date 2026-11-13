@@ -90,10 +90,10 @@ public struct HookIntegrations: Sendable {
         }
         var drivers: [String: any HookDriver] = [:]
         if let shim = file("shellforge-claude-statusline.sh") { drivers["claude"] = ClaudeHooks(home: home, port: port, shimPath: shim, support: support) }
-        drivers["codex"] = CodexHooks(home: home, port: port)
+        drivers["codex"] = CodexHooks(home: home, port: port, support: support)
         if let shim = file("shellforge-grok-statusline.sh") { drivers["grok"] = GrokHooks(home: home, port: port, shimPath: shim, support: support) }
         if let path = file("pi-shellforge-status.ts"), let source = try? String(contentsOfFile: path, encoding: .utf8) {
-            drivers["pi"] = PiHooks(home: home, port: port, source: source)
+            drivers["pi"] = PiHooks(home: home, port: port, source: source, support: support)
         }
         return drivers
     }
@@ -111,6 +111,25 @@ public struct HookIntegrations: Sendable {
     public func probe(_ agent: String) -> HookProbe {
         drivers[agent]?.probe() ?? unavailable
     }
+
+    /// This build's own: what posts to its helper, and what it may rewrite unasked.
+    private var ownDrivers: [String: any HookDriver] { buildDrivers ?? drivers }
+
+    /// Rewrites, unasked, this build's hooks that an install made before hooks carried the helper's
+    /// token, exactly as it wrote them; nothing else is touched. Then whether any of this build's
+    /// hooks still post without the token, which the helper is told (`hooks.allowTokenless`): it
+    /// takes such posts until none is left. Reads and writes files; call it off the main actor.
+    public func upgradeTokenlessInstalls() -> Bool {
+        for (agent, driver) in ownDrivers.sorted(by: { $0.key < $1.key }) where driver.holdsTokenlessInstall() {
+            do { try driver.install() } catch {
+                hooksLog.error("Adding the token to \(agent, privacy: .public)’s hooks failed: \(String(describing: error), privacy: .public)")
+            }
+        }
+        return postsWithoutToken()
+    }
+
+    /// Whether any of this build's hooks post without the helper's token. Reads files.
+    public func postsWithoutToken() -> Bool { ownDrivers.values.contains { $0.postsWithoutToken() } }
 
     /// Installs the installed app's hooks. A development build refuses (`sharedWithInstalledApp`)
     /// unless `forThisBuild`, which points them at its own port: the installed app then shows no

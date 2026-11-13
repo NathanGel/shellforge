@@ -18,13 +18,16 @@ public enum ClaudeSettings {
         (entry["hooks"] as? [[String: Any]])?.contains(where: isOurHook) == true
     }
 
-    private static func hook(hookURL: String) -> [String: Any] {
-        ["type": "http", "url": hookURL, "headers": ["X-Shellforge-Hook": "1"],
-         "timeout": 3, "async": true, marker: true]
+    /// With `auth`, the helper's token in its header: Claude Code's HTTP hooks can send only what
+    /// the entry names, so the token is written into `settings.json`, which the install makes private.
+    private static func hook(hookURL: String, auth: HookAuth?) -> [String: Any] {
+        var headers = ["X-Shellforge-Hook": "1"]
+        if let auth { headers[HookToken.header] = auth.token }
+        return ["type": "http", "url": hookURL, "headers": headers, "timeout": 3, "async": true, marker: true]
     }
 
-    private static func entry(hookURL: String) -> [String: Any] {
-        ["matcher": "", "hooks": [hook(hookURL: hookURL)]]
+    private static func entry(hookURL: String, auth: HookAuth?) -> [String: Any] {
+        ["matcher": "", "hooks": [hook(hookURL: hookURL, auth: auth)]]
     }
 
     /// Our shim, recognised by filename as well as by exact path: a moved app bundle
@@ -83,7 +86,7 @@ public enum ClaudeSettings {
     }
 
     /// Throws `Unmergeable` for a file it must not rewrite.
-    static func merge(_ json: Data?, hookURL: String, shimPath: String) throws -> (Data, originalStatusLine: [String: Any]?) {
+    static func merge(_ json: Data?, hookURL: String, shimPath: String, auth: HookAuth? = nil) throws -> (Data, originalStatusLine: [String: Any]?) {
         var obj = try mergeable(json)
         var hooks = obj["hooks"] as? [String: Any] ?? [:]
         for event in retiredEvents {
@@ -105,7 +108,7 @@ public enum ClaudeSettings {
                 }
                 // Replace our first occurrence in place; keep foreign hooks and their matcher.
                 if !inserted {
-                    entries.append(entry(hookURL: hookURL))
+                    entries.append(entry(hookURL: hookURL, auth: auth))
                     inserted = true
                 }
                 let foreign = installed.filter { !isOurHook($0) }
@@ -113,7 +116,7 @@ public enum ClaudeSettings {
                     var kept = existing; kept["hooks"] = foreign; entries.append(kept)
                 }
             }
-            if !inserted { entries.append(entry(hookURL: hookURL)) }
+            if !inserted { entries.append(entry(hookURL: hookURL, auth: auth)) }
             hooks[event] = entries
         }
         obj["hooks"] = hooks
@@ -174,7 +177,7 @@ public enum ClaudeSettings {
     /// it — and, with another Shellforge build such as a worktree's running beside this one, offer a
     /// Repair each would undo for the other. Nothing else judges Grok's line, so its card asks
     /// for exactly what Install writes.
-    static func isInstalled(_ settings: [String: Any], daemonPort: Int, shimPath: String,
+    static func isInstalled(_ settings: [String: Any], daemonPort: Int, shimPath: String, auth: HookAuth? = nil,
                             isRunnable: (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) }) -> Bool {
         guard let hooks = settings["hooks"] as? [String: Any],
               let command = statusLineCommand(settings),
@@ -189,7 +192,17 @@ public enum ClaudeSettings {
                   entry["matcher"] as? String == "" else { return false }
             let owned = (entry["hooks"] as? [[String: Any]] ?? []).filter(isOurHook)
             guard owned.count == 1, let hook = owned.first else { return false }
-            return (hook as NSDictionary) == (Self.hook(hookURL: hookURL) as NSDictionary)
+            return (hook as NSDictionary) == (Self.hook(hookURL: hookURL, auth: auth) as NSDictionary)
+        }
+    }
+
+    /// Whether one of Shellforge's hooks posts to `hookURL` without the helper's token.
+    static func hasTokenlessHook(_ settings: [String: Any], hookURL: String) -> Bool {
+        guard let hooks = settings["hooks"] as? [String: Any] else { return false }
+        return hooks.values.contains { value in
+            ((value as? [[String: Any]]) ?? []).flatMap { ($0["hooks"] as? [[String: Any]]) ?? [] }.contains { hook in
+                isOurHook(hook) && hook["url"] as? String == hookURL && (hook["headers"] as? [String: Any])?[HookToken.header] == nil
+            }
         }
     }
 

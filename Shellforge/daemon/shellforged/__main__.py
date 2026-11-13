@@ -11,7 +11,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
-from . import __version__, protocol
+from . import __version__, hook_token, protocol
 from .rpc_server import AlreadyRunning
 from .log_repeats import RepeatFilter
 
@@ -118,9 +118,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return ns
 
 
-async def ctl_request(socket_path: str, method: str, params: Any) -> dict[str, Any]:
+async def ctl_request(socket_path: str, method: str, params: Any, token: str | None = None) -> dict[str, Any]:
+    """One request, after `app.hello` with `token` when there is one: ctl may call what the app may."""
     reader, writer = await asyncio.open_unix_connection(socket_path)
-    writer.write((json.dumps({"id": 1, "method": method, "params": params}) + "\n").encode())
+    requests = ([(0, protocol.APP_HELLO, {"token": token})] if token else []) + [(1, method, params)]
+    for request_id, name, request_params in requests:
+        writer.write((json.dumps({"id": request_id, "method": name, "params": request_params}) + "\n").encode())
     await writer.drain()
     try:
         while line := await asyncio.wait_for(reader.readline(), 10):
@@ -151,11 +154,13 @@ async def run_daemon(ns: argparse.Namespace) -> None:
     else:
         from .app_sessions import AppSessions
         iterm = AppSessions()
-    rpc = RpcServer(ns.socket)
+    # Before anything listens: the app shows it to call app-only methods, and every hook sends it.
+    token = hook_token.HookToken(ns.support_dir)
+    rpc = RpcServer(ns.socket, token=token)
     # A cookie is for iTerm2's Python API: with the app as the source there is none to ask for.
     supervisor = ItermSupervisor(iterm, rpc.broadcast, lambda: rpc.client_count,
                                  cookies_from_app=ns.cookies_from_app and ns.session_source == "iterm")
-    svc = Service(iterm=iterm, rpc=rpc, hooks=HookServer(port=ns.hook_port),
+    svc = Service(iterm=iterm, rpc=rpc, hooks=HookServer(port=ns.hook_port, token=token),
                   claude_files=ClaudeSessionFiles(), codex_files=CodexSessionFiles(),
                   clock=time.time, supervisor=supervisor, tunnel_ledger=Path(ns.socket).parent / "tunnels.json")
     await svc.start()
@@ -205,7 +210,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"error": {"code": protocol.BAD_PARAMS, "message": str(exc)}}), file=sys.stderr)
         return 1
     try:
-        resp = asyncio.run(ctl_request(ns.socket, ns.method, params))
+        resp = asyncio.run(ctl_request(ns.socket, ns.method, params, hook_token.read(ns.support_dir)))
     except (OSError, RuntimeError) as exc:
         print(json.dumps({"error": {"code": "unreachable", "message": str(exc)}}), file=sys.stderr)
         return 1

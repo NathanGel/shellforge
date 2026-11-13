@@ -28,7 +28,14 @@ running iTerm2: `SHELLFORGED_LIVE=1 .venv/bin/pytest tests/integration -q`.
 
 ## App connection
 
-`workspace.snapshot` returns protocol version 2, iTerm2 availability, tagged sessions, and
+**The token.** At start the daemon makes a random token in `hook-token` in its support folder
+(0600, made whole and linked into place, never through a symlink; the app makes it instead when it
+comes first). The file holds the header line `X-Shellforge-Token: <hex>`. The app shows it in
+`app.hello` before anything else on its connection; until then every method but
+`agents.takeLaunch` (shellforge-run's, which checks its caller's terminal) is refused with
+`unauthorized`. `shellforged ctl` reads the file and does the same.
+
+`workspace.snapshot` returns protocol version 3, iTerm2 availability, tagged sessions, and
 usage. The server writes this response before yielding; the Swift client places it in its
 event stream as a bootstrap barrier. Events before the barrier are discarded. A disconnected
 snapshot does not prove any window closed. Event overflow or malformed framing closes the
@@ -75,6 +82,14 @@ the PI extension, the two statusline shims and `shellforge-status`:
   touches the `UsageStore`).
 - `POST /status` — `shellforge-status working|needs-input|done`, the exact
   status any other agent's own hooks report (`hook_events.STATUS_ROUTE`).
+
+Every post carries `X-Shellforge-Hook: 1` and the token in `X-Shellforge-Token`, so another account
+on the Mac cannot post to the port. Curl sends it with `-H @<support>/hook-token`, keeping it out of
+any command line; Claude Code's and Codex's MCP hooks carry it in the entry the app writes, in a
+file the app makes private; the PI extension reads the file. A post without the token is taken
+only while the app says some hook it installed before tokens still lacks one
+(`hooks.allowTokenless`); the app rewrites those at launch and then says so. A wrong token is
+never taken.
 
 Grok's own command hooks are the one transport in this list that spawns a
 process in the session's cwd, so they are also the one that goes silent when

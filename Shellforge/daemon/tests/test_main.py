@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from shellforged import hook_token
 from shellforged.__main__ import EXIT_ALREADY_RUNNING, IDLE_EXIT_SECONDS, IdleWatchdog, ctl_request, main, parse_args
 from tests.conftest import wait_until
 
@@ -225,6 +226,51 @@ async def test_run_daemon_quits_once_its_last_app_has_left(monkeypatch, tmp_path
             asyncio.get_running_loop().remove_signal_handler(sig)
 
 
+async def test_the_running_helper_takes_app_methods_only_after_the_token(monkeypatch, tmp_path, sock_dir):
+    """V6: the helper makes its token at start, 0600, and a connection that has not shown it in
+    app.hello cannot replace the app's sessions or arm a launch; shellforge-run's take stays open."""
+    import shellforged.__main__ as entry
+    from shellforged import service
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(service, "TAKE_WAIT_SECONDS", 0.05)  # nothing is armed: not_found, soon
+    support = tmp_path / "Library/Application Support/Shellforge"
+    sock = os.path.join(sock_dir, "t.sock")
+    daemon = asyncio.create_task(entry.run_daemon(parse_args(["run", "--socket", sock, "--hook-port", "0"])))
+    try:
+        await wait_until(lambda: os.path.exists(support / "daemon.json"))
+        assert os.stat(support / "hook-token").st_mode & 0o777 == 0o600
+        token = hook_token.read(support)
+        assert token is not None
+
+        async def ask(*requests):
+            r, w = await asyncio.open_unix_connection(sock)
+            for i, (method, params) in enumerate(requests):
+                w.write(json.dumps({"id": i, "method": method, "params": params}).encode() + b"\n")
+            await w.drain()
+            replies = {}
+            while len(replies) < len(requests):
+                reply = json.loads(await asyncio.wait_for(r.readline(), 5))
+                if "id" in reply:
+                    replies[reply["id"]] = reply
+            w.close()
+            return [replies[i] for i in range(len(requests))]
+
+        forged = {"sessions": [{"sessionId": "w0t0p0:FORGED", "windowId": "w0", "tabIndex": 0, "jobPid": os.getpid()}]}
+        for method, params in (("sessions.update", forged), ("agents.armLaunch", {"sessionId": "s", "agentId": "a", "environment": {}}),
+                               ("hooks.allowTokenless", {"allowed": True}), ("workspace.snapshot", None)):
+            assert (await ask((method, params)))[0]["error"]["code"] == "unauthorized"
+        assert (await ask(("app.hello", {"token": "0" * 64})))[0]["error"]["code"] == "unauthorized"
+        assert (await ask(("agents.takeLaunch", {"session": "s", "agentId": "a"})))[0]["error"]["code"] != "unauthorized"
+        hello, update = await ask(("app.hello", {"token": token}), ("sessions.update", {"sessions": []}))
+        assert hello["result"] == {"ok": True} and update["result"] == {"ok": True}
+    finally:
+        daemon.cancel()
+        await asyncio.gather(daemon, return_exceptions=True)
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            asyncio.get_running_loop().remove_signal_handler(sig)
+
+
 async def test_with_sessions_from_the_app_no_iterm2_cookie_is_asked_for(monkeypatch, tmp_path, sock_dir):
     """--cookies-from-app is for reading sessions from iTerm2. With the app as the source there is
     no cookie to ask for: asking would send the app to iTerm2 for one (an automation prompt), and
@@ -238,6 +284,8 @@ async def test_with_sessions_from_the_app_no_iterm2_cookie_is_asked_for(monkeypa
     try:
         await wait_until(lambda: os.path.exists(tmp_path / "Library/Application Support/Shellforge/daemon.json"))
         r, w = await asyncio.open_unix_connection(sock)
+        token = hook_token.read(tmp_path / "Library/Application Support/Shellforge")
+        w.write(json.dumps({"id": 0, "method": "app.hello", "params": {"token": token}}).encode() + b"\n")
         w.write(b'{"id": 1, "method": "workspace.snapshot", "params": null}\n')
         await w.drain()
         lines = []

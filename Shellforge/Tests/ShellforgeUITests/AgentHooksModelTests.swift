@@ -24,6 +24,23 @@ import Testing
         #expect(model.lastError == nil)
     }
 
+    /// The launch's pass, then each install, says whether hooks without the helper's token are left.
+    @Test func theLaunchAndEachInstallSayWhetherHooksWithoutTheTokenAreLeft() async throws {
+        let (model, home) = try model()
+        var said: [Bool] = []
+        model.onTokenless = { said.append($0) }
+        let codex = home.appendingPathComponent(".codex/config.toml")
+        try FileManager.default.createDirectory(at: codex.deletingLastPathComponent(), withIntermediateDirectories: true)
+        // Codex's hooks as a build before tokens wrote them, under a Codex block of another shape:
+        // owned, for this port, but not exactly an install, so the launch leaves them.
+        try (CodexHookConfig.merge(nil, hookURL: "http://127.0.0.1:\(ShellforgeSupport.defaultHookPort)") + "\n[mcp_servers.shellforge_hooks.env]\nX = \"1\"\n")
+            .write(to: codex, atomically: true, encoding: .utf8)
+        await model.upgradeTokenlessInstalls()
+        #expect(said == [true])
+        await model.install("codex")
+        #expect(said == [true, false])
+    }
+
     @Test func aRefusedInstallIsSaidAndTheRowKeepsItsState() async throws {
         let (model, home) = try model()
         let settings = home.appendingPathComponent(".claude/settings.json")

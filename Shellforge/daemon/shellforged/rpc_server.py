@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from . import protocol
+from .hook_token import HookToken
 
 log = logging.getLogger(__name__)
 Handler = Callable[[Any], Awaitable[Any]]
@@ -46,9 +47,23 @@ class RpcError(Exception):
         self.message = message
 
 
+class _Connection:
+    """What one connection has shown: whether it is the app's."""
+    __slots__ = ("app",)
+
+    def __init__(self, app: bool):
+        self.app = app
+
+
 class RpcServer:
-    def __init__(self, path: str):
+    """`token`: what a connection shows in `app.hello` to call any method; without it, only those
+    registered `public`. With no token every connection is the app's, as in most tests."""
+
+    def __init__(self, path: str, token: HookToken | None = None):
         self.path = path
+        self.token = token
+        # The methods a connection may call without the token: shellforge-run's.
+        self.open_methods: set[str] = set()
         self._handlers: dict[str, CallerHandler] = {}
         self._server: asyncio.AbstractServer | None = None
         self._clients: set[asyncio.StreamWriter] = set()
@@ -66,14 +81,17 @@ class RpcServer:
     def register(self, method: str, handler: Handler) -> None:
         self._handlers[method] = lambda params, _caller: handler(params)
 
-    def register_with_caller(self, method: str, handler: CallerHandler) -> None:
-        """A handler that is also told who is asking (`Caller`)."""
+    def register_with_caller(self, method: str, handler: CallerHandler, public: bool = False) -> None:
+        """A handler that is also told who is asking (`Caller`). `open`: any connection may call it,
+        not only one that has shown the token; the handler checks the caller itself."""
         self._handlers[method] = handler
+        if public:
+            self.open_methods.add(method)
 
     @property
     def methods(self) -> list[str]:
         """The names a request may have, in order: the wire contract's list of them."""
-        return sorted(self._handlers)
+        return sorted([*self._handlers, protocol.APP_HELLO])
 
     async def start(self) -> None:
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
@@ -158,13 +176,14 @@ class RpcServer:
     async def _serve(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         self._clients.add(writer)
         caller = Caller(peer_pid(writer), writer.is_closing)
+        connection = _Connection(app=self.token is None)
         try:
             while line := await reader.readline():
                 if self._stopping:
                     break  # stop() has cancelled what was running; nothing may start after it
                 # Each request is answered on its own, so a slow one -- a createTask waiting on
                 # iTerm2 -- does not hold up, and time out, the ones sent after it.
-                task = asyncio.get_running_loop().create_task(self._answer(line, writer, caller))
+                task = asyncio.get_running_loop().create_task(self._answer(line, writer, caller, connection))
                 self._requests.add(task)
                 task.add_done_callback(self._answered)
         except (ConnectionError, RuntimeError, ValueError):
@@ -178,8 +197,8 @@ class RpcServer:
             self._clients.discard(writer)
             writer.close()
 
-    async def _answer(self, line: bytes, writer: asyncio.StreamWriter, caller: Caller) -> None:
-        reply = await self._handle_line(line, caller)
+    async def _answer(self, line: bytes, writer: asyncio.StreamWriter, caller: Caller, connection: _Connection) -> None:
+        reply = await self._handle_line(line, caller, connection)
         # Written in the step the handler returned in, before anything else can run: a reply is
         # one write, so two can't interleave, and the workspace.snapshot reply goes out ahead of
         # every event broadcast after its handler read the state it reports.
@@ -193,7 +212,17 @@ class RpcServer:
         if not task.cancelled() and (exc := task.exception()) is not None:
             log.error("answering a request failed", exc_info=exc)
 
-    async def _handle_line(self, line: bytes, caller: Caller) -> dict[str, Any]:
+    def _hello(self, request_id: Any, params: Any, connection: _Connection) -> dict[str, Any]:
+        """`{token}`: the app's proof, from the 0600 file only this user can read. Never logged."""
+        token = params.get("token") if isinstance(params, dict) else None
+        if not isinstance(token, str):
+            return protocol.error(request_id, protocol.BAD_PARAMS, "token must be a string")
+        if self.token is not None and not self.token.matches(token):
+            return protocol.error(request_id, protocol.UNAUTHORIZED, "that is not this helper's token")
+        connection.app = True
+        return protocol.response(request_id, {"ok": True})
+
+    async def _handle_line(self, line: bytes, caller: Caller, connection: _Connection) -> dict[str, Any]:
         try:
             msg = protocol.decode(line)
         except protocol.ProtocolError as exc:
@@ -202,9 +231,13 @@ class RpcServer:
         method = msg.get("method")
         if not isinstance(method, str):
             return protocol.error(request_id, protocol.PROTOCOL, "method must be a string")
+        if method == protocol.APP_HELLO:
+            return self._hello(request_id, msg.get("params"), connection)
         handler = self._handlers.get(method)
         if handler is None:
             return protocol.error(request_id, protocol.UNKNOWN_METHOD, str(method))
+        if not connection.app and method not in self.open_methods:
+            return protocol.error(request_id, protocol.UNAUTHORIZED, f"{method} is the app's: send app.hello first")
         try:
             result = await handler(msg.get("params"), caller)
         except RpcError as exc:

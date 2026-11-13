@@ -106,6 +106,12 @@ it and refuses to release a version that has none.
   in, with one last prompt, the first time it is needed.** Every secret, iTerm2 Buddy's pairing
   keys and the AI API keys included, now lives in Shellforge's one Keychain item, read once as the
   app starts. Deleting an old item once it has moved in may ask too.
+- **Agent hooks carry a private token, so another account on the Mac can’t send status
+  updates.** The helper keeps a random token in a file only you can read; Shellforge’s hooks,
+  status lines and `shellforge-status` send it, and the helper ignores posts without it. At
+  launch Shellforge adds the token to the hooks it installed before, changing nothing else in
+  those files, and makes `~/.claude/settings.json` and `~/.codex/config.toml` readable by you
+  only. Hooks it can’t update keep working until you repair them in Agent hooks.
 
 ## 0.10.0 — 2026-11-10
 
