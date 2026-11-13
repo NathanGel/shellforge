@@ -41,29 +41,41 @@ kept apart in `Shellforge/` so these merges stay small.
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="Shellforge/docs/images/sessions-dark.png">
   <source media="(prefers-color-scheme: light)" srcset="Shellforge/docs/images/sessions-light.png">
-  <img src="Shellforge/docs/images/sessions-light.png" width="464" alt="The Shellforge sidebar’s Sessions panel: the projects acme-web, demo-api and docs-site with their tasks, each with its agent, status, Jira ticket, diff count and branch; a running SSH tunnel to staging; a zsh terminal; and the metrics strip with CPU, memory and each agent’s 5-hour and weekly usage">
+  <img src="Shellforge/docs/images/sessions-light.png" width="464" alt="The Shellforge sidebar’s Sessions panel, with the activity bar of panels down its left edge: the projects acme-web, demo-api and docs-site with their tasks, each with its agent, status, Jira ticket, diff count and branch; a running SSH tunnel to staging; a zsh terminal; and the metrics strip with CPU, memory and each agent’s 5-hour and weekly usage">
 </picture>
 </p>
 
 <table>
   <tr>
     <th>Metrics</th>
-    <th>Rearrange</th>
-    <th>New Task</th>
+    <th>SSH</th>
   </tr>
   <tr>
     <td valign="top">
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="Shellforge/docs/images/metrics-dark.png">
   <source media="(prefers-color-scheme: light)" srcset="Shellforge/docs/images/metrics-light.png">
-  <img src="Shellforge/docs/images/metrics-light.png" width="260" alt="The Metrics panel: the selected task’s context and tokens, the Mac’s CPU and memory, and Claude Code’s and Codex’s weekly and 5-hour usage with their reset times">
+  <img src="Shellforge/docs/images/metrics-light.png" width="300" alt="The Metrics panel: the selected task’s context and tokens, the Mac’s CPU and memory, and Claude Code’s and Codex’s weekly and 5-hour usage with their reset times">
 </picture>
     </td>
     <td valign="top">
 <picture>
+  <source media="(prefers-color-scheme: dark)" srcset="Shellforge/docs/images/ssh-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="Shellforge/docs/images/ssh-light.png">
+  <img src="Shellforge/docs/images/ssh-light.png" width="300" alt="The SSH panel: acme-web’s running tunnel to staging, and the other hosts in ~/.ssh/config, build-box and db-replica, each with Open in Terminal">
+</picture>
+    </td>
+  </tr>
+  <tr>
+    <th>Rearrange</th>
+    <th>New Task</th>
+  </tr>
+  <tr>
+    <td valign="top">
+<picture>
   <source media="(prefers-color-scheme: dark)" srcset="Shellforge/docs/images/rearrange-dark.png">
   <source media="(prefers-color-scheme: light)" srcset="Shellforge/docs/images/rearrange-light.png">
-  <img src="Shellforge/docs/images/rearrange-light.png" width="260" alt="Rearrange mode: a drag handle on every project, task, tunnel and terminal, with Cancel and Done in the bar at the top">
+  <img src="Shellforge/docs/images/rearrange-light.png" width="300" alt="Rearrange mode: a drag handle on every project, task, tunnel and terminal, with Cancel and Done in the bar at the top">
 </picture>
     </td>
     <td valign="top">

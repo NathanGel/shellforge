@@ -2,7 +2,7 @@
 # Draws the README's screenshots from code, with made-up projects, tasks and readings
 # (Tests/ShellforgeUITests/ReadmeScreenshots.swift), into docs/images/. Nothing of the machine it
 # runs on — its projects, defaults, Keychain or ~/.ssh/config — is read. Run it after a change to
-# the sidebar, the Metrics panel, Rearrange mode or the New Task sheet, then commit the PNGs.
+# the sidebar, the Metrics or SSH panel, Rearrange mode or the New Task sheet, then commit the PNGs.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

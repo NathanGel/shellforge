@@ -21,7 +21,7 @@ struct ReadmeScreenshots {
         let folder = Self.outputFolder
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         for appearance in DemoAppearance.allCases {
-            for scene in [DemoScene.sessions, .metrics, .rearrange] {
+            for scene in [DemoScene.sessions, .metrics, .rearrange, .ssh] {
                 let demo = try await DemoSidebar.make()
                 let bitmap = try await demo.render(scene, appearance: appearance)
                 try Self.write(bitmap, scene: scene, appearance: appearance, to: folder)
@@ -46,11 +46,14 @@ struct ReadmeScreenshots {
 }
 
 private enum DemoScene: String {
-    case sessions, metrics, rearrange, newTask = "new-task"
+    case sessions, metrics, rearrange, ssh, newTask = "new-task"
 
-    /// The sidebar's height in the picture, at its default width: the Metrics panel is short, and
-    /// the rest of a full-height one would be empty.
-    var sidebarHeight: CGFloat { self == .metrics ? 480 : 760 }
+    /// The sidebar's height in the picture, at its default width: the Metrics and SSH panels are
+    /// short, and the rest of a full-height one would be empty.
+    var sidebarHeight: CGFloat { self == .metrics || self == .ssh ? 480 : 760 }
+
+    /// Whether the scene draws the Sessions list, which fills between turns of the main actor.
+    var showsSessions: Bool { self == .sessions || self == .rearrange }
 }
 
 private enum DemoAppearance: String, CaseIterable {
@@ -110,7 +113,8 @@ private struct DemoSidebar {
     let model: SidebarModel, activity: ActivityModel, hooks: AgentHooksModel, machine: MachineMonitor, folder: URL
 
     /// Everything under one scratch folder: the workspace, an empty home, a `PATH` holding only empty
-    /// stand-ins for `claude` and `codex` (never run: only found), and an SSH config naming `staging`.
+    /// stand-ins for `claude` and `codex` (never run: only found), and an SSH config naming `staging`,
+    /// the project's tunnel, and two other hosts for the SSH panel.
     static func make() async throws -> DemoSidebar {
         let folder = TestScratch.root.appendingPathComponent("readme-\(UUID().uuidString)")
         let home = folder.appendingPathComponent("home"), bin = folder.appendingPathComponent("bin")
@@ -122,7 +126,16 @@ private struct DemoSidebar {
             #expect(fm.createFile(atPath: path, contents: Data("#!/bin/sh\nexit 0\n".utf8), attributes: [.posixPermissions: 0o755]))
         }
         let sshConfig = folder.appendingPathComponent("ssh_config")
-        try Data("Host staging\n  HostName staging.example.invalid\n  LocalForward 5433 localhost:5432\n".utf8).write(to: sshConfig)
+        try Data("""
+            Host staging
+              HostName staging.example.invalid
+              LocalForward 5433 localhost:5432
+            Host build-box
+              HostName build.example.invalid
+            Host db-replica
+              HostName db.example.invalid
+
+            """.utf8).write(to: sshConfig)
         let launcher = CommandLauncher(resolve: { ResolvedEnvironment(variables: ["PATH": bin.path], source: .loginShell("/bin/zsh")) })
         let host = FakeTerminalHost(), feed = FakeFeed()
         let document = WorkspaceDocument(store: WorkspaceStore(folder: folder.appendingPathComponent("workspace")))
@@ -156,6 +169,7 @@ private struct DemoSidebar {
         switch scene {
         case .metrics: activity.select(.metrics)
         case .rearrange: model.beginRearrange()
+        case .ssh: activity.select(.ssh)
         case .sessions, .newTask: break
         }
         // The lock is one for every window: let it go whatever the drawing does.
@@ -170,7 +184,7 @@ private struct DemoSidebar {
         let rows = model.rows.count
         return try await snapshot(view, size: NSSize(width: Size.sidebarWidth, height: scene.sidebarHeight), appearance: appearance) { host in
             // The Sessions list has a row for each of the model's, plus its header outside Rearrange mode.
-            scene == .metrics || Self.tables(in: host).contains { $0.numberOfRows >= rows }
+            !scene.showsSessions || Self.tables(in: host).contains { $0.numberOfRows >= rows }
         }
     }
 
