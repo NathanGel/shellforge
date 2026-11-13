@@ -1671,6 +1671,19 @@ async def test_a_session_that_cannot_be_forgotten_is_still_announced_closed(stac
     assert (await next_event(r, "session.closed"))["sessionId"] == second
 
 
+async def test_a_session_closed_unannounced_is_forgotten_by_the_session_source_too(stack):
+    # M3: closed while the bridge was disconnected, no notification dropped its saved profile.
+    svc, it, files, r, w = stack
+    wid = (await call(r, w, "window.createTask", {"taskId": "t1", "cwd": "/wt", "title": "x", "frame": FRAME}))["result"]["windowId"]
+    second = (await call(r, w, "tab.create", {"windowId": wid}, id_=2))["result"]["sessionId"]
+    await it.settle()
+    await svc.tick()
+    it.windows[wid]["sessions"].remove(second)
+    del it.sessions[second]  # gone without a notification
+    await svc.tick()
+    assert it.forgotten == [second]
+
+
 @pytest.mark.parametrize("part,method", [("windows", "forget_session"), ("status", "reset_turn"), ("resolver", "forget")])
 async def test_a_part_that_cannot_forget_a_closed_session_does_not_keep_the_others_from_it(stack, monkeypatch, caplog, part, method):
     svc, it, files, r, w = stack

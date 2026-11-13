@@ -30,6 +30,8 @@ class FakeIterm:
         self.titles: dict[str, str] = {}
         self.title_calls = 0
         self.background_requests: list[tuple[list[str], bool]] = []
+        # The sessions the service told to forget, in order (`forget_session`).
+        self.forgotten: list[str] = []
         # Set to make every snapshot, or every send_text, fail as iTerm2 can mid-call.
         self.snapshot_error: Exception | None = None
         self.send_error: Exception | None = None
@@ -116,6 +118,9 @@ class FakeIterm:
 
     async def session_info(self, session_id: str) -> RawSession | None:
         return self._raw(self.sessions[session_id]) if session_id in self.sessions else None
+
+    def forget_session(self, session_id: str) -> None:
+        self.forgotten.append(session_id)
 
     def _raw(self, s: RawSession) -> RawSession:
         r = RawSession(**vars(s))

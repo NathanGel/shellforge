@@ -531,6 +531,14 @@ async def test_a_closed_sessions_restore_profile_is_dropped():
     assert bridge._background_restore_profiles == {}
 
 
+def test_a_session_the_service_forgets_drops_its_restore_profile():
+    bridge = ItermBridge()
+    bridge._background_restore_profiles["s1"] = object()
+    bridge._background_restore_profiles["s2"] = object()
+    bridge.forget_session("s1")
+    assert list(bridge._background_restore_profiles) == ["s2"]
+
+
 async def test_session_title_is_a_literal_tab_override_not_a_session_name(monkeypatch):
     app = _CountingApp({"s1": _TitledSession()})
     monkeypatch.setattr(iterm2, "async_get_app", app.get)

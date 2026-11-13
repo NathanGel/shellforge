@@ -368,8 +368,13 @@ class ItermBridge:
         for cb in self._new_cbs:
             await cb(notif.session_id)
 
+    def forget_session(self, session_id: str) -> None:
+        # The service's tick calls this for a session gone from the list, closed perhaps while the
+        # connection was down, when no notification came to drop its saved profile.
+        self._background_restore_profiles.pop(session_id, None)
+
     async def _on_closed(self, _conn, notif) -> None:
-        self._background_restore_profiles.pop(notif.session_id, None)
+        self.forget_session(notif.session_id)
         for cb in self._closed_cbs:
             await cb(notif.session_id)
 

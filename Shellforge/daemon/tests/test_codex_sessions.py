@@ -253,6 +253,20 @@ def test_matching_lines_are_found_whichever_block_they_straddle(tmp_path, block_
         assert found == [lines[6], lines[4], lines[1]]
 
 
+@pytest.mark.parametrize("block_size", [1, 5, 16, 64])
+def test_a_record_spanning_several_blocks_is_read_whole(tmp_path, block_size):
+    # A long tool output between two token counts, many blocks long, and one that starts the file.
+    long_record = b'{"type": "response_item", "output": "' + b"y" * 1000 + b'"}'
+    long_count = b'{"token_count": "' + b"z" * 300 + b'"}'
+    lines = [long_count, b'{"token_count": 1}', long_record, b'{"token_count": 2}', long_record]
+    for ending in (b"\n", b""):
+        path = tmp_path / f"rollout-long-{block_size}-{len(ending)}.jsonl"
+        path.write_bytes(b"\n".join(lines) + ending)
+
+        assert list(CodexSessionFiles._lines_reverse(path, b'"token_count"', block_size)) == [lines[3], lines[1], lines[0]]
+        assert list(CodexSessionFiles._lines_reverse(path, b"", block_size)) == list(reversed(lines))
+
+
 def test_a_threads_tally_is_its_newest_total(tmp_path):
     root = tmp_path / "sessions"
     write_rollout(root, "t1", [meta("t1"), totals(100, 60, 5), totals(3_283_279, 3_093_248, 18_391)])

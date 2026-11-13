@@ -283,29 +283,38 @@ class CodexSessionFiles:
     @staticmethod
     def _lines_reverse(path: Path, containing: bytes = b"", block_size: int = 64 * 1024) -> Iterator[bytes]:
         """The lines of `path` that contain `containing`, last first. A block holding none is not
-        even split into lines."""
+        even split into lines. A line longer than a block is kept as its blocks, newest read first,
+        and joined once its start is found: only each new block is searched for a newline, so one
+        long record costs its length, not its length squared."""
         try:
             with path.open("rb") as stream:
                 stream.seek(0, 2)
                 position = stream.tell()
-                remainder = b""
+                # The line being read, which began in a block not read yet: its pieces, last first.
+                pending: list[bytes] = []
                 while position > 0:
                     size = min(block_size, position)
                     position -= size
                     stream.seek(position)
-                    block = stream.read(size) + remainder
-                    start = block.find(b"\n") + 1  # the first line may continue into the block before
-                    if start == 0:
-                        remainder = block
+                    block = stream.read(size)
+                    last = block.rfind(b"\n")
+                    if last < 0:
+                        pending.append(block)
                         continue
-                    remainder = block[:start - 1]
-                    if containing not in block[start:]:
+                    pending.append(block[last + 1:])
+                    line = b"".join(reversed(pending))
+                    if line and containing in line:
+                        yield line
+                    first = block.find(b"\n")  # the first line may continue into the block before
+                    pending = [block[:first]]
+                    middle = block[first + 1:last]
+                    if first == last or containing not in middle:
                         continue
-                    for line in reversed(block[start:].split(b"\n")):
+                    for line in reversed(middle.split(b"\n")):
                         if line and containing in line:
                             yield line
-                if remainder and containing in remainder:
-                    yield remainder
+                if (line := b"".join(reversed(pending))) and containing in line:
+                    yield line
         except OSError:
             return
 

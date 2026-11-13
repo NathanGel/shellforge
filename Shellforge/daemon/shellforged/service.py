@@ -660,7 +660,8 @@ class Service:
         """Drops what each part keeps of a closed session, each on its own: one that raises keeps
         only its own state, not the others'."""
         for what, forget in (("window state", self.windows.forget_session), ("turn", self.status.reset_turn),
-                             ("bindings", self.resolver.forget), ("terminal signals", self.auto_status.forget)):
+                             ("bindings", self.resolver.forget), ("terminal signals", self.auto_status.forget),
+                             ("saved background", self.iterm.forget_session)):
             with _logged(f"forgetting the {what} of closed session {session_id}"):
                 forget(session_id)
 

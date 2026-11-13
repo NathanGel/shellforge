@@ -93,6 +93,9 @@ class AppSessions:
     create_window = create_tab = activate_window = set_frame = close_window = _refuse
     send_text = set_session_tags = set_session_titles = set_shellforge_background = _refuse
 
+    def forget_session(self, session_id: str) -> None:
+        return None  # nothing is kept per session beyond the app's list
+
     def on_new_session(self, cb: Callable[[str], Awaitable[None]]) -> None:
         return None
 

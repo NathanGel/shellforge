@@ -2,7 +2,6 @@
 every tick would otherwise write the same line all day into a log only the app's launch empties."""
 from __future__ import annotations
 
-import copy
 import logging
 import threading
 import time
@@ -24,7 +23,7 @@ class RepeatFilter(logging.Filter):
         # key -> (when it was last let through, how many held back since)
         self._seen: dict[tuple[str, int, str, str], tuple[float, int]] = {}
 
-    def filter(self, record: logging.LogRecord) -> bool | logging.LogRecord:
+    def filter(self, record: logging.LogRecord) -> bool:
         kind = record.exc_info[0].__name__ if record.exc_info and record.exc_info[0] else ""
         key = (record.name, record.levelno, record.getMessage(), kind)
         with self._lock:
@@ -39,7 +38,8 @@ class RepeatFilter(logging.Filter):
                 del self._seen[next(iter(self._seen))]
         if last is None or not last[1]:
             return True
-        # A copy carries the count: other handlers see the record as it was logged.
-        said = copy.copy(record)
-        said.msg, said.args = f"{record.getMessage()} (repeated {last[1]} more times in the last {now - last[0]:.0f} s)", None
-        return said
+        # Changed in place: before 3.12 a filter's returned record is read only as true or false, so
+        # a copy would carry the count nowhere. The filter is on the helper's one handler, so no other
+        # handler sees the record changed.
+        record.msg, record.args = f"{record.getMessage()} (repeated {last[1]} more times in the last {now - last[0]:.0f} s)", None
+        return True
