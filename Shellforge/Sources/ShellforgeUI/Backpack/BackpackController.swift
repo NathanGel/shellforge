@@ -47,6 +47,8 @@ public final class BackpackController: ObservableObject {
     private let toast: @MainActor (String) -> Void
     /// Opens Location in System Settings: where Allow… sends the person once macOS will not ask.
     private let openLocationSettings: @MainActor () -> Void
+    /// Whether another Shellforge process runs: an earlier version's marker is then its own.
+    private let othersRunning: @Sendable () -> Bool
     private let tickInterval: Duration
     /// A thread of its own, not a Dispatch queue: a join blocks for up to a minute (see `SerialThread`).
     private let worker = SerialThread(name: "io.github.nathangel.shellforge.backpack")
@@ -69,8 +71,10 @@ public final class BackpackController: ObservableObject {
          retryDelays: [Duration] = [.seconds(5), .seconds(10), .seconds(20), .seconds(30)],
          now: @escaping @Sendable () -> Date = Date.init, agentsWorking: @escaping @MainActor () -> Bool = { false },
          openLocationSettings: @escaping @MainActor () -> Void = {},
+         othersRunning: @escaping @Sendable () -> Bool = { false },
          toast: @escaping @MainActor (String) -> Void) {
         self.openLocationSettings = openLocationSettings
+        self.othersRunning = othersRunning
         self.ports = ports
         mode = BackpackMode(ports: ports, settings: settings, now: now)
         self.tickInterval = tickInterval
@@ -335,8 +339,8 @@ public final class BackpackController: ObservableObject {
 
     /// At launch, before anything else: a marker left by a crash puts sleep back.
     public func recoverAtLaunch() {
-        let mode = self.mode
-        worker.sync { mode.recoverAtLaunch() }
+        let mode = self.mode, othersRunning = self.othersRunning
+        worker.sync { mode.recoverAtLaunch(othersRunning: othersRunning) }
     }
 
     /// Launch: put sleep back if a crash left it off, then read setup, so the header's menu knows.

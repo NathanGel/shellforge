@@ -57,6 +57,43 @@ import Testing
         #expect(!ran(), "branch and worktree lists")
     }
 
+    /// A filter driver the repository's config defines, named by an attribute, is a command
+    /// `git status` and `git diff` run on file contents. The automatic reads switch it off.
+    @Test func aHostileCleanFilterIsNotRun() throws {
+        let (repo, worktree, _) = try hostileRepo()
+        try repo.git("config", "--unset", "core.fsmonitor")
+        let marker = (repo.path as NSString).deletingLastPathComponent + "/filter-ran"
+        try repo.git("config", "filter.evil.clean", "touch '\(marker)'; cat")
+        try repo.git("config", "filter.evil.process", "sh -c \"touch '\(marker)'\"")
+        for folder in [repo.path, worktree] {
+            try "*.txt filter=evil\n".write(toFile: folder + "/.gitattributes", atomically: true, encoding: .utf8)
+        }
+        let ran = { FileManager.default.fileExists(atPath: marker) }
+        _ = try? repo.launcher.run("git", ["-C", worktree, "diff", "--numstat", "main"])
+        #expect(ran(), "plain git diff runs the repository's filter")
+        try FileManager.default.removeItem(atPath: marker)
+
+        _ = try GitStatus.read(repo.path, launcher: repo.launcher)
+        _ = try GitStatus.read(worktree, launcher: repo.launcher)
+        #expect(!ran(), "the Git panel's status")
+        #expect(DiffStats(launcher: repo.launcher).diff(for: worktree, base: "main") != nil)
+        #expect(!ran(), "a task's diff badge")
+        let task = TaskItem(projectId: repo.project.id, title: "feat", branch: "feat/x", worktreePath: worktree, baseBranch: "main")
+        #expect(try TaskRemoval.hasUnsavedWork(task: task, project: repo.project, launcher: repo.launcher))
+        #expect(!ran(), "Remove's unsaved-work question")
+    }
+
+    /// Only the repository's own drivers are switched off, and not one that runs git-lfs.
+    @Test func gitLfsAndThePersonsOwnDriversKeepRunning() throws {
+        let repo = try GitRepoFixture()
+        try repo.git("config", "filter.lfs.process", "git-lfs filter-process")
+        try repo.git("config", "filter.lfs.clean", "git-lfs clean -- %f")
+        #expect(AutomaticGitRead.filterOverrides(repo.path, launcher: repo.launcher).isEmpty)
+        try repo.git("config", "filter.my.tool.clean", "cat")
+        #expect(AutomaticGitRead.filterOverrides(repo.path, launcher: repo.launcher)
+            == ["-c", "filter.my.tool.clean=", "-c", "filter.my.tool.smudge=", "-c", "filter.my.tool.process=", "-c", "filter.my.tool.required=false"])
+    }
+
     /// Every automatic read's options turn off fsmonitor and hooks, before the subcommand.
     @Test func automaticReadsTurnOffFsmonitorAndHooks() {
         #expect(AutomaticGitRead.arguments(["status"], in: "/tmp/demo")

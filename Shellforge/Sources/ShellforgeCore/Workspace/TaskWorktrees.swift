@@ -111,7 +111,7 @@ public enum TaskWorktrees {
         // What was there before this create: a cancel takes back only what it made.
         let branchWasThere = (try? launcher.run("git", ["-C", project.path, "show-ref", "--verify", "--quiet",
                                                          "refs/heads/\(draft.branch)"]))?.status == 0
-        let pathWasThere = FileManager.default.fileExists(atPath: path)
+        let pathWasThere = worktreeWasThere(path, project: project, launcher: launcher)
         do {
             // As long as a review's add: the repository's checkout hook runs inside it, and a first
             // `uv sync` or `npm install` can take minutes.
@@ -149,6 +149,15 @@ public enum TaskWorktrees {
                 || ExistingWorktrees.resolved(dir).hasPrefix(ExistingWorktrees.resolved(project.path) + "/") else {
             throw Refusal.symlink(dir)
         }
+    }
+
+    /// Whether `path` was there before a create: its folder, or a record git still keeps for it
+    /// with the folder gone. An undo removes neither, or `worktree remove` would take the earlier
+    /// record. A listing git could not give counts as there.
+    static func worktreeWasThere(_ path: String, project: Project, launcher: CommandLauncher) -> Bool {
+        if FileManager.default.fileExists(atPath: path) { return true }
+        do { return try TaskRemoval.registered(path, in: project.path, launcher: launcher) != nil }
+        catch { return true }
     }
 
     /// Whether the repository runs a post-checkout hook of its own — a pre-commit `uv sync`, say — which

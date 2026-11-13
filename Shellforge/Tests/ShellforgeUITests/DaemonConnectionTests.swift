@@ -93,7 +93,7 @@ while True:
         var states: [HelperStatus] = []
         let connection = DaemonConnection(socketPath: server.path, onClient: { _ in },
                                           onStatus: { if states.last != $0 { states.append($0) } }, onEvent: { _ in },
-                                          backoff: { _ in 0.01 }, refusalGrace: .milliseconds(300))
+                                          backoff: { _ in 0.01 }, refusalGrace: .seconds(3))
         connection.start()
         defer { connection.stop() }
         await eventually { states.contains(.helperMismatch) }

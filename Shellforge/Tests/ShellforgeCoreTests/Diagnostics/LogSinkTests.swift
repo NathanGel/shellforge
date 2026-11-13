@@ -15,7 +15,7 @@ import Testing
 
     private func listening(_ body: (Heard) throws -> Void) rethrows {
         let heard = Heard()
-        LogSink.install { heard.append($0, $1) }
+        LogSink.install { heard.append($0, $1()) }
         defer { LogSink.install(nil) }
         try body(heard)
     }
@@ -51,6 +51,23 @@ import Testing
         }
     }
 
+    /// The same error again within a few minutes goes to the debug log only: the release log is
+    /// kept small, and a helper that is down says the same thing every few seconds.
+    @Test func aRepeatedErrorGoesToTheReleaseLogOnce() {
+        let marker = UUID().uuidString
+        let logger = PackageLogger(category: "test")
+        listening { heard in
+            logger.error("the helper is down \(marker)")
+            logger.error("the helper is down \(marker)")
+            logger.error("another failure \(marker)")
+            #expect(heard.lines(with: marker).map(\.0) == [.release, .debug, .release])
+        }
+        let start = Date()
+        #expect(PackageLogger.releases("spaced \(marker)", at: start))
+        #expect(!PackageLogger.releases("spaced \(marker)", at: start + PackageLogger.releaseSpacing - 1))
+        #expect(PackageLogger.releases("spaced \(marker)", at: start + PackageLogger.releaseSpacing + 1))
+    }
+
     @Test func aTokenNeverReachesTheHost() {
         let marker = UUID().uuidString
         listening { heard in
@@ -64,7 +81,7 @@ import Testing
     @Test func nothingIsSentOnceTheSinkIsRemoved() {
         let marker = UUID().uuidString
         let heard = Heard()
-        LogSink.install { heard.append($0, $1) }
+        LogSink.install { heard.append($0, $1()) }
         LogSink.install(nil)
         TaskRemoval.log("after \(marker)")
         #expect(heard.lines(with: marker).isEmpty)

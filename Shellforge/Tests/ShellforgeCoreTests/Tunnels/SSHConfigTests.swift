@@ -27,6 +27,34 @@ import Testing
         #expect(found == [SSHWildcardDefault(keyword: "User", block: "Host *"), SSHWildcardDefault(keyword: "Port", block: "Host *")])
     }
 
+    /// Settings before the first Host line apply to every host, and an Include inside a `Host *`
+    /// block reads its file in that block.
+    @Test func theTopOfTheFileAndAnIncludeInsideHostStarCount() throws {
+        _ = try write("Port 2222\n", to: "inside.conf")
+        let config = try write("User ops\nHost *\n  Include inside.conf\n  HostName example.com\nHost staging\n  Port 22\n")
+        let found = SSHConfig.wildcardDefaults(in: config, home: home)
+        #expect(found == [SSHWildcardDefault(keyword: "User", block: SSHWildcardDefault.topOfFile),
+                          SSHWildcardDefault(keyword: "Port", block: "Host *"),
+                          SSHWildcardDefault(keyword: "HostName", block: "Host *")])
+    }
+
+    /// `Match all` with `canonical` or `final` before it still matches every host.
+    @Test func matchAllAfterCanonicalOrFinalCounts() throws {
+        let config = try write("Match canonical all\n  User a\nMatch final all\n  Port 1\nMatch host x all\n  HostName y\n")
+        let found = SSHConfig.wildcardDefaults(in: config, home: home)
+        #expect(found == [SSHWildcardDefault(keyword: "User", block: "Match canonical all"),
+                          SSHWildcardDefault(keyword: "Port", block: "Match final all")])
+    }
+
+    /// The top of the file gets a sentence of its own.
+    @Test func theWarningSaysTheTopOfTheFileInItsOwnSentence() {
+        let host = NewSSHHost(alias: "web", hostName: "web.example.com", user: "deploy", port: "2200")
+        let warning = SSHConfig.wildcardWarning(for: host, earlier: [SSHWildcardDefault(keyword: "User", block: SSHWildcardDefault.topOfFile),
+                                                                     SSHWildcardDefault(keyword: "Port", block: "Host *")])
+        #expect(warning == "Your SSH config sets User before its first Host line, so it applies before this host’s own. "
+                + "An earlier Host * block in your SSH config sets Port, so it applies before this host’s own.")
+    }
+
     @Test func aliasesWithForwardsAndTheirPorts() throws {
         let config = try write("""
         # staging
@@ -99,6 +127,16 @@ import Testing
     @Test func anAliasATerminalWouldActOnIsNotAHost() throws {
         let config = try write("Host ok\nHost bad\u{15}touch${IFS}/tmp/x\nHost -oProxyCommand=x\nHost tab\u{7f}x\nHost also-ok\n")
         #expect(SSHConfig.hosts(in: config, home: home).map(\.alias) == ["ok", "also-ok"])
+    }
+
+    /// A byte at 0x80 or above can be a Meta key to a shell in a non-UTF-8 locale, and a
+    /// backslash an escape to its line editor: neither is typed.
+    @Test func anAliasWithNonASCIIOrABackslashIsNotAHost() {
+        #expect(SSHConfig.isTypable("web-01.example.com"))
+        #expect(!SSHConfig.isTypable("café"))
+        #expect(!SSHConfig.isTypable("box\u{00E9}"))
+        #expect(!SSHConfig.isTypable("a\\nb"))
+        #expect(!SSHConfig.isTypable("host\u{2028}x"))
     }
 
     /// OpenSSH 8.7 and later accept a comment at the end of a line, and `/` in place of `:` — the

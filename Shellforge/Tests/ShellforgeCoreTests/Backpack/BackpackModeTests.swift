@@ -226,6 +226,23 @@ import Foundation
         #expect(clean.lid.calls.isEmpty, "no marker in either place: a disablesleep the person set is theirs")
     }
 
+    /// An earlier version's marker is left alone while another Shellforge runs: that one may be the
+    /// earlier version, with Backpack Mode on, and its sleep must stay off.
+    @Test func theEarlierMarkerIsLeftToAnotherRunningShellforge() {
+        let old = MemoryDefaults.make()
+        old.set(true, forKey: "backpack.engaged")
+        let beside = FakeBackpack(settings: BackpackSettings(defaults: MemoryDefaults.make(), legacy: old))
+        mode(beside).recoverAtLaunch(othersRunning: { true })
+        #expect(beside.lid.calls.isEmpty)
+        #expect(old.bool(forKey: "backpack.engaged"))
+        #expect(!beside.settings.engaged)
+
+        let alone = FakeBackpack(settings: BackpackSettings(defaults: MemoryDefaults.make(), legacy: old))
+        mode(alone).recoverAtLaunch(othersRunning: { false })
+        #expect(alone.lid.calls == [false])
+        #expect(old.object(forKey: "backpack.engaged") == nil)
+    }
+
     @Test func theTickTurnsItOffAtTheCutoffOnBattery() throws {
         let fake = FakeBackpack()
         fake.power.value = PowerReading(level: 50, onBattery: true)

@@ -266,12 +266,25 @@ public final class Keychain: SecretStore, Sendable {
 
     /// Applies `change` to the secrets and stores the result. When another process wrote the item
     /// since this one read it, the change goes on top of what the item holds now, not the copy in
-    /// memory. A change that changes nothing writes nothing. The first read, which may show a
-    /// Keychain prompt, comes before the lock across processes, so no prompt holds it; checking and
-    /// writing run under it.
+    /// memory. A change that changes nothing writes nothing. The first read of the item, which may
+    /// show a Keychain prompt, comes before the lock across processes, so that prompt does not hold
+    /// it; checking and writing run under it, taken once. A prompt can still come while it is held:
+    /// the read again after another writer's stamp, and the one-time move of the earlier items.
     private func mutate(_ change: (inout [String: String]) -> Void) -> VaultWrite {
         state.withLock { loaded in
-            guard load(&loaded, holdingLock: false) != nil else { return .unavailable }
+            if loaded == nil {
+                let stamp = items.stamp(Self.account)
+                switch items.read(Self.account) {
+                case .found(let data):
+                    guard let secrets = try? JSONDecoder().decode([String: String].self, from: data) else { return .unavailable }
+                    loaded = Loaded(secrets: secrets, stamp: stamp)
+                case .refused:
+                    return .unavailable
+                case .missing:
+                    // The earlier items are moved under the lock, by `mutateLocked`'s load.
+                    break
+                }
+            }
             return exclusive(holdingLock: false) { mutateLocked(change, &loaded) }
         }
     }

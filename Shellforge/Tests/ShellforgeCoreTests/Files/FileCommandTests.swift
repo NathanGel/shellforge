@@ -87,12 +87,41 @@ import Testing
         #expect(edit.argv(shell: "/bin/zsh") == ["/bin/zsh", "-l", "-i", "-c", #"exec vim -- "$1""#, "shellforge-open", "./ň$(x).md"])
         #expect(edit.argv(shell: "/opt/homebrew/bin/fish") == ["/opt/homebrew/bin/fish", "-l", "-i", "-c", #"exec vim -- "$argv[1]""#, "./ň$(x).md"])
         #expect(edit.argv(shell: "/bin/tcsh") == ["/bin/zsh", "-l", "-i", "-c", #"exec vim -- "$1""#, "shellforge-open", "./ň$(x).md"],
-                "tcsh rejects -l with -c")
+                "tcsh rejects -l with -c; with no ShellLauncher, zsh runs it")
+        #expect(edit.argv(shell: "/bin/tcsh", shellLauncher: "/Apps/Demo.app/Contents/MacOS/ShellLauncher")
+                == ["/Apps/Demo.app/Contents/MacOS/ShellLauncher", "--launch_shell", "SHELL=/bin/tcsh", "-i", "-c", "exec vim -- $argv[1]:q", "./ň$(x).md"],
+                "tcsh logs in by its argv[0], as iTerm2 starts it")
         let rename = try GitActions.diffCommand(for: GitChange(path: "b.md", originalPath: "a.md", letter: .renamed), staged: true)
         #expect(rename.argv(shell: "/bin/bash") == ["/bin/bash", "-l", "-i", "-c", #"git diff --staged -M -- "$1" "$2"; exec /bin/bash -l"#,
                                                     "shellforge-open", ":(literal)./a.md", ":(literal)./b.md"])
         #expect(rename.argv(shell: "/usr/local/bin/fish")[4] == #"git diff --staged -M -- "$argv[1]" "$argv[2]"; exec /usr/local/bin/fish -l"#)
-        #expect(rename.argv(shell: "/bin/tcsh")[4].hasSuffix("; exec /bin/tcsh -l"), "the diff's tab goes on in the account's own shell")
+        #expect(rename.argv(shell: "/bin/tcsh")[4].hasSuffix("; exec /bin/tcsh"), "the diff's tab goes on in the account's own shell")
+        #expect(rename.argv(shell: "/usr/local/bin/elvish")[4].hasSuffix("; exec /usr/local/bin/elvish"), "with no -l, which elvish lacks")
+    }
+
+    /// tcsh, as ShellLauncher starts it but without the login (the test must not read this Mac's
+    /// dotfiles), hands the program exactly `-- ./<name>` for every hostile name.
+    @Test func hostileNamesReachTheEditorIntactUnderTcsh() throws {
+        let folder = TestScratch.root.appendingPathComponent("shellforge-open-\(UUID().uuidString)")
+        let bin = folder.appendingPathComponent("bin")
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        let out = folder.appendingPathComponent("argv").path
+        let vim = bin.appendingPathComponent("vim")
+        try "#!/bin/sh\nprintf '%s\\0' \"$@\" > \"$ARGV_OUT\"\n".write(to: vim, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: vim.path)
+        for name in Self.hostile {
+            let argv = try EditorCommand.command(editor: "vim", file: name).argv(shell: "/bin/tcsh", shellLauncher: "/unused")
+            let script = argv[5], paths = Array(argv[6...])
+            try? FileManager.default.removeItem(atPath: out)
+            let run = try ChildProcess.run("/bin/tcsh", ["-f", "-c", script] + paths,
+                                           environment: ["PATH": bin.path + ":/usr/bin:/bin", "ARGV_OUT": out, "LC_ALL": "en_US.UTF-8"],
+                                           directory: folder.path, timeout: 10)
+            #expect(run.status == 0, "tcsh \(name): \(run.stderr)")
+            let bytes = (try? Data(contentsOf: URL(fileURLWithPath: out))) ?? Data()
+            let received = bytes.split(separator: 0, omittingEmptySubsequences: false).dropLast().map { String(decoding: $0, as: UTF8.self) }
+            #expect(received == ["--", "./" + name], "tcsh \(name)")
+        }
+        #expect(!FileManager.default.fileExists(atPath: folder.appendingPathComponent("PWNED").path))
     }
 
     /// Each POSIX shell here, under the C locale and UTF-8, hands the program exactly `-- ./<name>`

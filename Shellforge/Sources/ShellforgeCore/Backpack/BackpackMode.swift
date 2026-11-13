@@ -110,11 +110,13 @@ public final class BackpackMode: Sendable {
     }
 
     /// A launch after a crash or a force quit: the marker says Shellforge left sleep disabled. The
-    /// marker an earlier version kept in the bundle-id domain counts too, read here once per launch.
-    /// It is cleared only once sleep is back; until then this launch carries it in the app's own
-    /// marker, so the tick keeps trying as it would for its own.
-    public func recoverAtLaunch() {
-        let legacy = settings.legacyEngaged
+    /// marker an earlier version kept in the bundle-id domain counts too, read here once per launch,
+    /// but only when no other Shellforge runs (`othersRunning`): an earlier version still running
+    /// with Backpack Mode on wrote it, and its sleep must stay off. It is cleared only once sleep is
+    /// back; until then this launch carries it in the app's own marker, so the tick keeps trying as
+    /// it would for its own.
+    public func recoverAtLaunch(othersRunning: () -> Bool = { false }) {
+        let legacy = settings.legacyEngaged && !othersRunning()
         guard settings.engaged || legacy else { return }
         if ports.lidSleep.setDisabled(false) {
             settings.engaged = false

@@ -83,9 +83,41 @@ final class ShellforgeHostTest: XCTestCase {
         XCTAssertEqual(profile[KEY_RUN_COMMAND_IN_LOGIN_SHELL] as? Bool, false)
         XCTAssertEqual(profile[KEY_INITIAL_TEXT] as? String, "")
         XCTAssertEqual(profile[KEY_WORKING_DIRECTORY] as? String, "/tmp/demo")
-        let name = profile[KEY_NAME] as? String ?? ""
-        XCTAssertEqual((name as NSString).performingSubstitutions(["$$$$": "$$"]), "$$a$$.md")
-        XCTAssertTrue(((name as NSString).doubleDollarVariables() as? Set<String> ?? []).isSubset(of: ["$$$$"]))
+        XCTAssertEqual(titleITerm2Shows(profile[KEY_NAME] as? String ?? ""), "$$a$$.md")
+    }
+
+    /// What iTerm2 makes of a profile's name as a tab's title: it asks for any `$$NAME$$` and turns
+    /// `$$$$` into `$$` (`iTermSessionFactory`), then evaluates the result as the title's
+    /// interpolated string, where `\(…)` is a variable. nil when it would ask for a parameter.
+    private func titleITerm2Shows(_ name: String) -> String? {
+        let asked = (name as NSString).doubleDollarVariables() as? Set<String> ?? []
+        guard asked.isSubset(of: ["$$$$"]) else { return nil }
+        let substituted = (name as NSString).performingSubstitutions(["$$$$": "$$"])
+        var value: String?
+        let evaluator = iTermExpressionEvaluator(interpolatedString: substituted, scope: iTermVariableScope())
+        evaluator.evaluate(withTimeout: 0, sideEffectsAllowed: true) { value = $0.value as? String }
+        return value
+    }
+
+    /// A file, terminal or host's name shows as it is: neither a `$$…$$` parameter nor a `\(…)`
+    /// variable in it is taken for iTerm2's.
+    func testANameShowsAsItIs() {
+        for name in [#"\(user.x).md"#, #"a\b"#, #"\\(x)"#, "$$HOME$$", "$$$$", "a$$$b", #"x\"#, "plain.md", "café"] {
+            XCTAssertEqual(titleITerm2Shows(iTermShellforgeSidebar.literalName(name)), name, name)
+        }
+    }
+
+    /// A task's title and prompt reach iTerm2 only as the tab's initial text and a variable, which
+    /// it never scans for `$$…$$`: the profile's name, command and folder, which it does, hold
+    /// neither, so a task named or prompted with `$$x$$` asks for no parameter.
+    func testATaskTabAsksForNoParameter() {
+        let text = TabCommand.initialText(#"claude "fix $$x$$ and \(y)""#)
+        let profile = iTermShellforgeSidebar.taskTabProfile(base: [KEY_NAME: "Default"], directory: "/tmp/demo/.worktrees/fix-x",
+                                                            initialText: text)
+        for key in [KEY_NAME, KEY_COMMAND_LINE, KEY_WORKING_DIRECTORY] {
+            let value = profile[key] as? String ?? ""
+            XCTAssertTrue(((value as NSString).doubleDollarVariables() as? Set<String> ?? []).isEmpty, "\(key): \(value)")
+        }
     }
 
     /// A reopened task's tab is a shell: no initial text is added.

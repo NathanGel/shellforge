@@ -100,7 +100,8 @@ public enum AgentCommand {
         return plan
     }
 
-    private static let promptFileExpansion = "\"$(cat .shellforge/first-prompt.md)\""
+    /// The prompt's file, read once and then removed: it stays on disk only until the agent starts.
+    private static let promptFileExpansion = "\"$(cat .shellforge/first-prompt.md; rm -f .shellforge/first-prompt.md)\""
 
     /// `words` as the line a shell reads them from. `inline` is the prompt typed in the line, or nil
     /// for the file's expansion. Plain text is left bare when the shell would read it back unchanged;
@@ -158,9 +159,41 @@ public enum AgentCommand {
         try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         // A committed link at the file itself is refused too, rather than written over.
         try refuseSymlink(at: path)
-        try file.write(toFile: path, atomically: true, encoding: .utf8)
+        try writePrivately(file, named: "first-prompt.md", in: dir)
         excludeShellforgeDirectory(worktreePath: worktreePath, launcher: launcher)
         return plan
+    }
+
+    /// Writes `text` as `name` in `dir`, readable by its owner only (0600): to a temporary name
+    /// first, then renamed into place. `dir` is opened without following a symlink and the write
+    /// goes through that descriptor, so a link put in its place after the check above cannot
+    /// carry the write elsewhere.
+    static func writePrivately(_ text: String, named name: String, in dir: String) throws {
+        let folder = open(dir, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard folder >= 0 else {
+            if errno == ELOOP || errno == ENOTDIR { throw SymlinkRefused(path: dir) }
+            throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: dir])
+        }
+        defer { close(folder) }
+        let temporary = ".\(name).\(UUID().uuidString).tmp"
+        let fd = openat(folder, temporary, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        guard fd >= 0 else { throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: dir + "/" + temporary]) }
+        let data = Data(text.utf8)
+        let written = data.withUnsafeBytes { bytes -> Bool in
+            var offset = 0
+            while offset < bytes.count {
+                let n = write(fd, bytes.baseAddress! + offset, bytes.count - offset)
+                if n < 0, errno == EINTR { continue }
+                guard n > 0 else { return false }
+                offset += n
+            }
+            return true
+        }
+        close(fd)
+        guard written, renameat(folder, temporary, folder, name) == 0 else {
+            unlinkat(folder, temporary, 0)
+            throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: dir + "/" + name])
+        }
     }
 
     private static func refuseSymlink(at path: String) throws {

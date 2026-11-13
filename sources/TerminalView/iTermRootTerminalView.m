@@ -1941,10 +1941,12 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
     const BOOL wanted = ![_delegate rootTerminalViewShellforgeWindowFloats] && _shellforgeSidebarHidden &&
         (window.styleMask & NSWindowStyleMaskTitled);
     if (wanted && !_shellforgeShowSidebarAccessory) {
-        NSImage *image = [NSImage imageWithSystemSymbolName:@"sidebar.left" accessibilityDescription:@"Show Sidebar"];
+        NSString *label = NSLocalizedStringWithDefaultValue(@"Shellforge.ShowSidebar", nil, [NSBundle mainBundle], @"Show Sidebar",
+                                                            @"VoiceOver label of the title-bar button that shows Shellforge’s hidden sidebar");
+        NSImage *image = [NSImage imageWithSystemSymbolName:SFSymbolGetString(SFSymbolSidebarLeft) accessibilityDescription:label];
         NSButton *button = [NSButton buttonWithImage:image target:self action:@selector(toggleShellforgeSidebar)];
         button.bordered = NO;
-        button.toolTip = @"Show Sidebar (⌃⌘S)";
+        button.toolTip = [iTermShellforgeSidebar toggleTooltipWithHidden:YES];
         NSView *holder = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 36, 22)];
         button.frame = NSMakeRect(4, 0, 28, 22);
         [holder addSubview:button];

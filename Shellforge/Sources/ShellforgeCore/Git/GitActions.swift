@@ -259,7 +259,7 @@ public enum GitActions {
         if remote { extra["GIT_TERMINAL_PROMPT"] = "0" }
         let out: ChildOutput
         do {
-            out = try launcher.run("git", automatic ? AutomaticGitRead.arguments(args, in: repo) : ["-C", repo] + args, extra: extra, timeout: timeout ?? (remote ? remoteTimeout : localTimeout))
+            out = try launcher.run("git", automatic ? AutomaticGitRead.arguments(args, in: repo, launcher: launcher) : ["-C", repo] + args, extra: extra, timeout: timeout ?? (remote ? remoteTimeout : localTimeout))
         } catch {
             logFailure(args, error.localizedDescription)
             throw GitFailure(message: "git: \(error.localizedDescription)")

@@ -338,6 +338,45 @@ import Foundation
         #expect(Keychain(items: items).get("y") == "2")
     }
 
+    /// After a wait ran out, the next writes for a while try the lock once and go ahead without it,
+    /// rather than each waiting the whole bound again while every Keychain call here waits on them.
+    @Test func aWaitThatRanOutIsNotRepeatedForAWhile() throws {
+        let other = try #require(OtherProcessHoldingTheLock())
+        defer { other.release() }
+        let waits = Locked(0)
+        let clock = Locked(Date(timeIntervalSince1970: 1_000_000))
+        let lock = VaultLock(url: other.lockURL, timeout: 0.2, waiting: { waits.withLock { $0 += 1 } },
+                             now: { clock.withLock { $0 } })
+        #expect(lock.withLock { 1 } == 1)
+        #expect(waits.withLock { $0 } == 1)
+        clock.withLock { $0 += VaultLock.quietPeriod - 1 }
+        #expect(lock.withLock { 2 } == 2)
+        #expect(lock.withLock { 3 } == 3)
+        #expect(waits.withLock { $0 } == 1, "no wait within the quiet period")
+        clock.withLock { $0 += 2 }
+        #expect(lock.withLock { 4 } == 4)
+        #expect(waits.withLock { $0 } == 2, "past it, the bound is waited again")
+    }
+
+    /// A write that first moves the earlier items takes the lock once: every read after the first
+    /// (which may prompt, so it comes before) is made under it, with no gap between the move and
+    /// the change.
+    @Test func aWriteThatMovesTheEarlierItemsTakesTheLockOnce() throws {
+        let lockURL = TestScratch.root.appendingPathComponent("vault-\(UUID().uuidString).lock")
+        try FileManager.default.createDirectory(at: TestScratch.root, withIntermediateDirectories: true)
+        let items = FakeKeychainItems(["jira.token": "j"])
+        let freeAtReads = Locked<[Bool]>([])
+        items.onRead.withLock {
+            $0 = { freeAtReads.withLock { $0.append(Self.isFree(lockURL)) } }
+        }
+        let keychain = Keychain(items: items, lock: VaultLock(url: lockURL, timeout: 600))
+        #expect(keychain.set("y", "2"))
+        let reads = freeAtReads.withLock { $0 }
+        #expect(reads.first == true && reads.count >= 3 && !reads.dropFirst().contains(true), "got \(reads)")
+        #expect(Keychain(items: items).get("jira.token") == "j")
+        #expect(Keychain(items: items).get("y") == "2")
+    }
+
     /// The first read may show a Keychain prompt, so it happens before the lock is taken.
     @Test func theFirstReadComesBeforeTheLock() throws {
         let lockURL = TestScratch.root.appendingPathComponent("vault-\(UUID().uuidString).lock")

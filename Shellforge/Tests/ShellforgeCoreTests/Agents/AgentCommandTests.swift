@@ -56,8 +56,23 @@ import Foundation
         try FileManager.default.createDirectory(atPath: wt, withIntermediateDirectories: true)
         let long = String(repeating: "x", count: 9000)
         let cmd = try AgentCommand.build(agent: AgentPresets.claude, model: "opus", reasoning: nil, prompt: long, worktreePath: wt, launcher: launcher)
-        #expect(cmd == "claude --model opus \"$(cat .shellforge/first-prompt.md)\"")
+        #expect(cmd == "claude --model opus \"$(cat .shellforge/first-prompt.md; rm -f .shellforge/first-prompt.md)\"")
         #expect(try String(contentsOfFile: wt + "/.shellforge/first-prompt.md", encoding: .utf8) == long)
+    }
+
+    /// The prompt's file is its owner's alone, and the command that reads it removes it.
+    @Test func thePromptFileIsPrivateAndGoesOnceRead() throws {
+        try FileManager.default.createDirectory(atPath: wt, withIntermediateDirectories: true)
+        let long = String(repeating: "y", count: 9000)
+        let cmd = try AgentCommand.build(agent: AgentPresets.claude, model: "opus", reasoning: nil, prompt: long, worktreePath: wt, launcher: launcher)
+        let path = wt + "/.shellforge/first-prompt.md"
+        let mode = try FileManager.default.attributesOfItem(atPath: path)[.posixPermissions] as? Int
+        #expect(mode == 0o600)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: wt + "/.shellforge") == ["first-prompt.md"], "no temporary left")
+        let line = cmd.replacingOccurrences(of: "claude --model opus ", with: "printf %s ")
+        let out = try launcher.run("/bin/sh", ["-c", line], directory: wt)
+        #expect(out.stdout == long)
+        #expect(!FileManager.default.fileExists(atPath: path))
     }
 
     /// A branch under review can commit `.shellforge` as a symlink, or the prompt file in it: the
@@ -100,7 +115,7 @@ import Foundation
         // Short as text, but each `'` is typed as four bytes once it is quoted.
         for prompt in [String(repeating: "x", count: 1100), String(repeating: "it's ", count: 150)] {
             let cmd = try AgentCommand.build(agent: AgentPresets.claude, model: "opus", reasoning: nil, prompt: prompt, worktreePath: wt, launcher: launcher)
-            #expect(cmd == "claude --model opus \"$(cat .shellforge/first-prompt.md)\"")
+            #expect(cmd == "claude --model opus \"$(cat .shellforge/first-prompt.md; rm -f .shellforge/first-prompt.md)\"")
             #expect(try String(contentsOfFile: wt + "/.shellforge/first-prompt.md", encoding: .utf8) == prompt)
             #expect(AgentCommand.previewCommand(agent: AgentPresets.claude, model: "opus", reasoning: nil, prompt: prompt) == cmd)
         }
@@ -113,7 +128,7 @@ import Foundation
         try FileManager.default.createDirectory(atPath: wt, withIntermediateDirectories: true)
         for prompt in ["fix\tit", "one\rtwo", "stop\u{1B}here", "x\u{03}y", "x\u{7F}y"] {
             let cmd = try AgentCommand.build(agent: AgentPresets.claude, model: "opus", reasoning: nil, prompt: prompt, worktreePath: wt, launcher: launcher)
-            #expect(cmd == "claude --model opus \"$(cat .shellforge/first-prompt.md)\"", "\(prompt.debugDescription)")
+            #expect(cmd == "claude --model opus \"$(cat .shellforge/first-prompt.md; rm -f .shellforge/first-prompt.md)\"", "\(prompt.debugDescription)")
             #expect(try String(contentsOfFile: wt + "/.shellforge/first-prompt.md", encoding: .utf8) == prompt)
             #expect(AgentCommand.previewCommand(agent: AgentPresets.claude, model: "opus", reasoning: nil, prompt: prompt) == cmd)
         }
@@ -129,7 +144,7 @@ import Foundation
         try FileManager.default.createDirectory(atPath: wt, withIntermediateDirectories: true)
         for prompt in ["fix the café menu", "ň$(touch PWNED);#", "x\u{85}y"] {
             let cmd = try AgentCommand.build(agent: AgentPresets.claude, model: "opus", reasoning: nil, prompt: prompt, worktreePath: wt, launcher: launcher)
-            #expect(cmd == "claude --model opus \"$(cat .shellforge/first-prompt.md)\"", "\(prompt.debugDescription)")
+            #expect(cmd == "claude --model opus \"$(cat .shellforge/first-prompt.md; rm -f .shellforge/first-prompt.md)\"", "\(prompt.debugDescription)")
             #expect(try String(contentsOfFile: wt + "/.shellforge/first-prompt.md", encoding: .utf8) == prompt)
         }
     }
@@ -175,7 +190,7 @@ import Foundation
         #expect(AgentCommand.previewCommand(agent: AgentPresets.codex, model: "gpt-5.6", reasoning: nil, prompt: nil) == "codex --dangerously-bypass-approvals-and-sandbox -m gpt-5.6")
 
         let long = String(repeating: "x", count: 9000)
-        #expect(AgentCommand.previewCommand(agent: AgentPresets.claude, model: "opus", reasoning: nil, prompt: long) == "claude --model opus \"$(cat .shellforge/first-prompt.md)\"")
+        #expect(AgentCommand.previewCommand(agent: AgentPresets.claude, model: "opus", reasoning: nil, prompt: long) == "claude --model opus \"$(cat .shellforge/first-prompt.md; rm -f .shellforge/first-prompt.md)\"")
         #expect(!FileManager.default.fileExists(atPath: wt), "the preview must not create a worktree directory")
     }
 
@@ -194,7 +209,7 @@ import Foundation
         let prompt = AgentCommand.composePrompt(userText: "do it", ticket: ticket, appendTicket: true)
         let command = try AgentCommand.build(agent: AgentPresets.claude, model: "opus", reasoning: nil, prompt: prompt,
                                              worktreePath: worktree, launcher: launcher)
-        #expect(command.hasSuffix("\"$(cat .shellforge/first-prompt.md)\""))
+        #expect(command.hasSuffix("\"$(cat .shellforge/first-prompt.md; rm -f .shellforge/first-prompt.md)\""))
     }
 
     @Test func aPromptWithEveryHazardIsTypedVerbatim() throws {
@@ -212,7 +227,7 @@ import Foundation
         let worktree = try GitRepoFixture().path
         let command = try AgentCommand.build(agent: AgentPresets.codex, model: "gpt-5.7", reasoning: nil, prompt: "a\tb\u{1B}c",
                                              worktreePath: worktree, launcher: launcher)
-        #expect(command.hasSuffix("\"$(cat .shellforge/first-prompt.md)\""))
+        #expect(command.hasSuffix("\"$(cat .shellforge/first-prompt.md; rm -f .shellforge/first-prompt.md)\""))
         #expect(try String(contentsOfFile: worktree + "/.shellforge/first-prompt.md", encoding: .utf8) == "a\tb\u{1B}c")
     }
 
@@ -243,7 +258,7 @@ import Foundation
         let prompt = #"a\'; echo pwned #"#
         let command = try AgentCommand.build(agent: AgentPresets.claude, model: "opus", reasoning: nil, prompt: prompt,
                                              worktreePath: worktree, launcher: launcher)
-        #expect(command == "claude --model opus \"$(cat .shellforge/first-prompt.md)\"")
+        #expect(command == "claude --model opus \"$(cat .shellforge/first-prompt.md; rm -f .shellforge/first-prompt.md)\"")
         #expect(try String(contentsOfFile: worktree + "/.shellforge/first-prompt.md", encoding: .utf8) == prompt)
         #expect(AgentCommand.previewCommand(agent: AgentPresets.claude, model: "opus", reasoning: nil, prompt: prompt) == command)
     }
@@ -272,7 +287,7 @@ import Foundation
         try FileManager.default.createDirectory(atPath: wt, withIntermediateDirectories: true)
         let long = String(repeating: "x", count: 2000)
         #expect(try AgentCommand.build(agent: a, model: "m", reasoning: nil, prompt: long, worktreePath: wt, launcher: launcher)
-                == "gemini --prompt=\"$(cat .shellforge/first-prompt.md)\"")
+                == "gemini --prompt=\"$(cat .shellforge/first-prompt.md; rm -f .shellforge/first-prompt.md)\"")
     }
 
     @Test func longPromptUsesTheFileAtThePlaceholder() throws {
@@ -280,7 +295,7 @@ import Foundation
         let a = agent(.argument, [["-p", "{prompt}"], ["--yolo"]])
         let long = String(repeating: "y", count: 2000)
         let built = try AgentCommand.build(agent: a, model: "m", reasoning: nil, prompt: long, worktreePath: wt, launcher: launcher)
-        #expect(built == "gemini -p \"$(cat .shellforge/first-prompt.md)\" --yolo")
+        #expect(built == "gemini -p \"$(cat .shellforge/first-prompt.md; rm -f .shellforge/first-prompt.md)\" --yolo")
         #expect(AgentCommand.previewCommand(agent: a, model: "m", reasoning: nil, prompt: long) == built)
         #expect(try String(contentsOfFile: wt + "/.shellforge/first-prompt.md", encoding: .utf8) == long)
     }

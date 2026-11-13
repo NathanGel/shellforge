@@ -211,7 +211,7 @@ public enum ReviewWorktrees {
         // One slug for the create and its undo; and an undo takes back only a worktree this made.
         let slug = BranchNaming.unused(BranchNaming.reviewSlug(branch: draft.branch), in: project.path)
         let path = "\(project.path)/.worktrees/\(slug)"
-        let pathWasThere = FileManager.default.fileExists(atPath: path)
+        let pathWasThere = TaskWorktrees.worktreeWasThere(path, project: project, launcher: launcher)
         do {
             return try create(draft: draft, in: project, slug: slug,
                               git: LauncherGit(launcher: launcher, cancellation: cancellation), launcher: launcher, modelRequired: modelRequired)

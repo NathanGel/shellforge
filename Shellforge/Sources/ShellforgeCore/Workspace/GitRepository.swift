@@ -23,7 +23,7 @@ public struct LauncherGit: GitCommands {
     }
 
     public func git(_ args: [String], in directory: String, remote: Bool, timeout: TimeInterval?) throws -> ChildOutput {
-        let full = automatic ? AutomaticGitRead.arguments(args, in: directory) : ["-C", directory] + args
+        let full = automatic ? AutomaticGitRead.arguments(args, in: directory, launcher: launcher) : ["-C", directory] + args
         let out = try launcher.run("git", full, extra: remote ? ["GIT_TERMINAL_PROMPT": "0"] : [:],
                                    timeout: timeout ?? (remote ? 30 : 60), cancellation: cancellation)
         if cancellation?.isCancelled == true { throw CreationCancelled() }

@@ -28,10 +28,11 @@ final class iTermShellforgeErrorLog: NSObject {
     /// The package's log lines in iTerm2's own logs: its debug lines in the debug log, its errors in
     /// the retrospective log as well. Under unit tests too, where the debug log is just as useful.
     private static func installLogSinks() {
+        // `line()` cleans the text: DLog's autoclosure runs it only while debug logging is on.
         LogSink.install { level, line in
             switch level {
-            case .debug: DLog("Shellforge: \(line)")
-            case .release: RLog("Shellforge: \(line)")
+            case .debug: DLog("Shellforge: \(line())")
+            case .release: RLog("Shellforge: \(line())")
             }
         }
         DesignLog.install { line in DLog("Shellforge: \(line)") }

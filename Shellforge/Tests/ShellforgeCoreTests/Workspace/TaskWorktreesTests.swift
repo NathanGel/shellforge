@@ -126,4 +126,17 @@ import Testing
         #expect(throws: GitFailure.self) { try TaskWorktrees.create(draft: draft, in: repo.project, launcher: repo.launcher) }
         #expect(try repo.git("rev-parse", draft.branch) == before)
     }
+
+    /// A worktree whose folder is gone but whose record git keeps is not this create's: a failed
+    /// add at that path leaves the earlier record as it was.
+    @Test func aFailedCreateKeepsAStaleRecordAtItsPath() throws {
+        let repo = try GitRepoFixture()
+        let draft = draft("Fix login")
+        let path = "\(repo.path)/.worktrees/\(draft.worktreeSlug)"
+        try repo.git("worktree", "add", "-q", "-b", "earlier", path)
+        try FileManager.default.removeItem(atPath: path)
+
+        #expect(throws: GitFailure.self) { try TaskWorktrees.create(draft: draft, in: repo.project, launcher: repo.launcher) }
+        #expect(try repo.git("worktree", "list", "--porcelain").contains("branch refs/heads/earlier"), "the earlier record survives")
+    }
 }

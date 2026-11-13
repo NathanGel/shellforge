@@ -54,7 +54,7 @@ public enum TaskRemoval {
               try registered(task.worktreePath, in: project.path, launcher: launcher) != nil else { return false }
         // Asked before anything is removed, by Shellforge rather than the person: the worktree's
         // fsmonitor and hooks run nothing.
-        return try !git(AutomaticGitRead.options + ["status", "--porcelain", "--ignore-submodules=none"], in: task.worktreePath, launcher).isEmpty
+        return try !git(AutomaticGitRead.options + AutomaticGitRead.filterOverrides(task.worktreePath, launcher: launcher) + ["status", "--porcelain", "--ignore-submodules=none"], in: task.worktreePath, launcher).isEmpty
     }
 
     /// The worktree — or what a removal git gave up on left of it, or git's record of a folder
@@ -179,7 +179,7 @@ public enum TaskRemoval {
                 removalLog.notice("worktree \(worktreePath) not listed by git and not an abandoned worktree: kept")
                 ErrorLogging.record("removal", "\(worktreePath) kept: git doesn’t list it and nothing shows a removal left it")
                 throw GitFailure(command: "remove \(worktreePath)",
-                                 message: "\(worktreePath) isn’t a worktree git knows, so it was left in place. Delete it yourself if you don’t need it.")
+                                 message: "\(worktreePath) isn’t a worktree git knows, so it was left in place. Delete it yourself if you don’t need it, then remove the task again.")
             }
             try deleteLeftover(worktreePath, in: projectPath, launcher: launcher, deleteFolder: deleteFolder)
         }
@@ -311,8 +311,18 @@ public enum TaskRemoval {
         return out.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Symlinks resolved through the deepest part of `path` that exists: Foundation leaves a path
+    /// that is not there as it is (`/var/…` stays short of `/private/var/…`), and a worktree whose
+    /// folder is gone is still compared with git's record of it.
     private static func resolved(_ path: String) -> String {
-        URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
+        var existing = URL(fileURLWithPath: path).standardizedFileURL
+        var missing: [String] = []
+        while !FileManager.default.fileExists(atPath: existing.path), existing.path != "/" {
+            missing.insert(existing.lastPathComponent, at: 0)
+            existing.deleteLastPathComponent()
+        }
+        let base = existing.resolvingSymlinksInPath().standardizedFileURL
+        return missing.reduce(base) { $0.appendingPathComponent($1) }.path
     }
 
     private static func firstLine(of message: String) -> String {

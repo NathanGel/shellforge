@@ -109311,7 +109311,7 @@
     },
     "InstanceLock.Heading" : {
       "comment" : "Heading of the warning shown when launching a second copy of iTerm2",
-      "extractionState" : "extracted_with_value",
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -109407,7 +109407,7 @@
     },
     "InstanceLock.Message" : {
       "comment" : "Shown at launch when another instance of iTerm2 is already running. %d is a process ID.",
-      "extractionState" : "extracted_with_value",
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -109503,7 +109503,7 @@
     },
     "InstanceLock.SuiteMessage" : {
       "comment" : "Shown at launch when another instance uses the same -suite. %1$d is a process ID; %2$@ is the suite name.",
-      "extractionState" : "extracted_with_value",
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -207866,6 +207866,138 @@
         }
       }
     },
+    "Shellforge.Feedback.Heading" : {
+      "comment" : "Heading of the warning shown by Help › Send Feedback… when no window can show the feedback sheet",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Send Feedback"
+          }
+        }
+      }
+    },
+    "Shellforge.Feedback.OpenInGitHub" : {
+      "comment" : "Button in the Send Feedback warning, shown when no window can show the feedback sheet: opens Shellforge’s feedback form on GitHub",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Open in GitHub"
+          }
+        }
+      }
+    },
+    "Shellforge.HideSidebarTooltip" : {
+      "comment" : "Tooltip of the sidebar toggle while Shellforge’s sidebar shows; ⌃⌘S is its keyboard shortcut",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Hide Sidebar (⌃⌘S)"
+          }
+        }
+      }
+    },
+    "Shellforge.InstanceLock.Heading" : {
+      "comment" : "Heading of the warning shown when launching a second copy of Shellforge",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Shellforge Is Already Running"
+          }
+        }
+      }
+    },
+    "Shellforge.InstanceLock.Message" : {
+      "comment" : "Shown at launch when another instance of Shellforge is already running. %d is a process ID.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Another copy of Shellforge (process ID %d) is already running. If two copies use the same settings at once, they can overwrite each other’s preferences and saved windows."
+          }
+        }
+      }
+    },
+    "Shellforge.InstanceLock.SuiteMessage" : {
+      "comment" : "Shown at launch when another instance uses the same -suite. %1$d is a process ID; %2$@ is the suite name.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Another copy of Shellforge (process ID %1$d) is already running with the settings suite “%2$@”. If two copies use the same settings at once, they can overwrite each other’s preferences and saved windows."
+          }
+        }
+      }
+    },
+    "Shellforge.ShowSidebar" : {
+      "comment" : "VoiceOver label of the title-bar button that shows Shellforge’s hidden sidebar",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Show Sidebar"
+          }
+        }
+      }
+    },
+    "Shellforge.ShowSidebarTooltip" : {
+      "comment" : "Tooltip of the sidebar toggle while Shellforge’s sidebar is hidden; ⌃⌘S is its keyboard shortcut",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Show Sidebar (⌃⌘S)"
+          }
+        }
+      }
+    },
+    "Shellforge.TasksMenu" : {
+      "comment" : "Title of the menu of Shellforge’s task commands (New Task, New Review and the like)",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Tasks"
+          }
+        }
+      }
+    },
+    "Shellforge.ToggleSidebar" : {
+      "comment" : "VoiceOver label of the button beside the window buttons that shows or hides Shellforge’s sidebar",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Toggle Sidebar"
+          }
+        }
+      }
+    },
+    "Shellforge.TunnelsMenu" : {
+      "comment" : "Title of the menu that lists the SSH tunnels Shellforge can start and stop",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Tunnels"
+          }
+        }
+      }
+    },
     "ShortcutInput.AccidentalConfirmHotkey" : {
       "comment" : "Confirmation when a chosen hotkey looks like a common keystroke; the placeholder is the shortcut",
       "extractionState" : "extracted_with_value",
@@ -257910,7 +258042,7 @@
     },
     "WorkgroupUsage.ReportTruncated" : {
       "comment" : "Appended to a pre-filled bug report body when it was shortened to fit the URL",
-      "extractionState" : "extracted_with_value",
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {

@@ -383,8 +383,6 @@ public final class GitModel: ObservableObject {
 
     // -- reading --------------------------------------------------------------------------
 
-    /// Reads the repository again, after what is queued for it; when it returns the section shows
-    /// what was read.
     /// A change outside what is ignored may be a folder that appeared since the list was read (a
     /// first build's output): the read it causes lists the ignored paths again too, at most every
     /// `relearnSpacing` seconds per repository. Git's own folder is never listed, so it never asks.
@@ -399,6 +397,8 @@ public final class GitModel: ObservableObject {
     /// The least time between two listings of a repository's ignored paths for changes outside them.
     static let relearnSpacing: TimeInterval = 30
 
+    /// Reads the repository again, after what is queued for it; when it returns the section shows
+    /// what was read.
     public func refresh(_ repo: GitRepoID) async {
         await refreshSoon(repo)?.value
     }
@@ -521,6 +521,8 @@ public final class GitModel: ObservableObject {
         let problem = await work(repo)
         guard epochs[id] == epoch, repos[id] != nil else { return }
         repos[id]?.actionProblem = problem
+        // A problem reported while it ran is replaced: opening a diff must not clear this one.
+        reported.remove(id)
         done(problem)
         publish()
         await load(id, epoch: epoch, afterAction: true)

@@ -209,7 +209,7 @@ import Testing
     }
 }
 
-@Suite struct SidebarFooterWindowOrderTests {
+@MainActor @Suite struct SidebarFooterWindowOrderTests {
     @Test func thePanelListsFiveHourBeforeWeek() {
         let week = UsageLine(window: .weekly, percent: 73, reset: "Mon 21:00", warning: false)
         let hours = UsageLine(window: .fiveHour, percent: 42, reset: "16:40", warning: false)

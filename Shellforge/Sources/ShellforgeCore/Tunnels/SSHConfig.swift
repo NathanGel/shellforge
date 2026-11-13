@@ -26,6 +26,8 @@ public struct LocalForward: Equatable, Sendable {
 
 /// A User, Port or HostName set by a `Host *` or `Match all` block, and which block.
 public struct SSHWildcardDefault: Equatable, Sendable {
+    /// The `block` of a setting made before the config's first `Host` or `Match` line.
+    public static let topOfFile = "top of the file"
     public var keyword: String
     public var block: String
     public init(keyword: String, block: String) { self.keyword = keyword; self.block = block }
@@ -80,12 +82,14 @@ public final class SSHConfigCache: Sendable {
 }
 
 public enum SSHConfig {
-    /// Whether `alias` can be typed into a terminal and handed to ssh as a destination: no control
-    /// character, which a terminal acts on before the shell sees any quoting, and no leading `-`,
-    /// which ssh reads as an option. An alias that fails is never offered.
+    /// Whether `alias` can be typed into a terminal and handed to ssh as a destination: printable
+    /// ASCII only, with no space, no backslash and no leading `-`. A control character is acted on
+    /// by the terminal before the shell sees any quoting; a byte at 0x80 or above can be read as a
+    /// Meta key by a shell in a non-UTF-8 locale; a backslash is an escape to the line editor; and
+    /// ssh reads a leading `-` as an option. An alias that fails is never offered.
     static func isTypable(_ alias: String) -> Bool {
         !alias.isEmpty && !alias.hasPrefix("-")
-            && alias.unicodeScalars.allSatisfy { !CharacterSet.controlCharacters.contains($0) && !CharacterSet.whitespaces.contains($0) }
+            && alias.unicodeScalars.allSatisfy { $0.isASCII && $0.value > 0x20 && $0.value != 0x7F && $0 != "\\" }
     }
 
     /// What the pane beside a task's agent runs for a project's host: `ssh <alias>` without the
@@ -125,13 +129,23 @@ public enum SSHConfig {
         let sets: [String: Bool] = ["User": !typed.user.isEmpty, "Port": !typed.port.isEmpty, "HostName": !typed.hostName.isEmpty]
         let clashing = earlier.filter { sets[$0.keyword] == true }
         guard !clashing.isEmpty else { return nil }
-        var keywords: [String] = []
-        for entry in clashing where !keywords.contains(entry.keyword) { keywords.append(entry.keyword) }
-        var blocks: [String] = []
-        for entry in clashing where !blocks.contains(entry.block) { blocks.append(entry.block) }
-        let list = keywords.count > 1 ? keywords.dropLast().joined(separator: ", ") + " and " + keywords[keywords.count - 1] : keywords[0]
-        let block = blocks.joined(separator: " or ")
-        return "An earlier \(block) block in your SSH config sets \(list), so it applies before this host’s own."
+        func list(_ entries: [SSHWildcardDefault]) -> String {
+            var keywords: [String] = []
+            for entry in entries where !keywords.contains(entry.keyword) { keywords.append(entry.keyword) }
+            return keywords.count > 1 ? keywords.dropLast().joined(separator: ", ") + " and " + keywords[keywords.count - 1] : keywords[0]
+        }
+        let top = clashing.filter { $0.block == SSHWildcardDefault.topOfFile }
+        let inBlocks = clashing.filter { $0.block != SSHWildcardDefault.topOfFile }
+        var sentences: [String] = []
+        if !top.isEmpty {
+            sentences.append("Your SSH config sets \(list(top)) before its first Host line, so it applies before this host’s own.")
+        }
+        if !inBlocks.isEmpty {
+            var blocks: [String] = []
+            for entry in inBlocks where !blocks.contains(entry.block) { blocks.append(entry.block) }
+            sentences.append("An earlier \(blocks.joined(separator: " or ")) block in your SSH config sets \(list(inBlocks)), so it applies before this host’s own.")
+        }
+        return sentences.joined(separator: " ")
     }
 
     private struct Reader {
@@ -140,8 +154,13 @@ public enum SSHConfig {
         var forwards: [String: [LocalForward]] = [:]
         var visited: Set<String> = []
         var stamped: [(String, FileStamps.Stamp?)] = []
-        /// User, Port and HostName set in a `Host *` or `Match all` block: keyword, then the block.
+        /// User, Port and HostName set in a `Host *` or `Match all` block, or before the first
+        /// `Host` or `Match` line: keyword, then the block.
         var wildcard: [SSHWildcardDefault] = []
+        /// The block the line being read is in, when it applies to every host: the top of the file
+        /// until the first `Host` or `Match` line. An included file starts in the block of the
+        /// `Include` line, as ssh reads it, and that block is back once the file is read.
+        var wildcardBlock: String? = SSHWildcardDefault.topOfFile
 
         init(home: URL) { self.home = home }
 
@@ -157,7 +176,6 @@ public enum SSHConfig {
             guard visited.insert(path).inserted, visited.count <= 64,
                   let text = try? String(contentsOf: file, encoding: .utf8) else { return }
             var current: [String] = []
-            var wildcardBlock: String?
             for raw in text.split(whereSeparator: \.isNewline) {
                 let line = raw.trimmingCharacters(in: .whitespaces)
                 guard !line.isEmpty, !line.hasPrefix("#"), let (keyword, value) = Self.split(line) else { continue }
@@ -169,9 +187,12 @@ public enum SSHConfig {
                     for alias in current where forwards[alias] == nil { order.append(alias); forwards[alias] = [] }
                 case "match":
                     current = []
-                    wildcardBlock = Self.tokens(value).map { $0.lowercased() } == ["all"] ? "Match all" : nil
+                    let criteria = Self.tokens(value).map { $0.lowercased() }
+                    wildcardBlock = Self.matchesAll(criteria) ? "Match " + criteria.joined(separator: " ") : nil
                 case "include":
+                    let enclosing = wildcardBlock
                     for pattern in Self.tokens(value) { for url in expand(pattern) { read(url) } }
+                    wildcardBlock = enclosing
                 case "localforward":
                     guard let forward = Self.forward(value) else { continue }
                     for alias in current { forwards[alias, default: []].append(forward) }
@@ -201,6 +222,11 @@ public enum SSHConfig {
             defer { globfree(&matches) }
             guard glob(path, 0, nil, &matches) == 0 else { return [] }
             return (0..<Int(matches.gl_pathc)).compactMap { matches.gl_pathv[$0].map { URL(fileURLWithPath: String(cString: $0)) } }.sorted { $0.path < $1.path }
+        }
+
+        /// `Match all`, alone or after `canonical` or `final`, which only say when it is evaluated.
+        static func matchesAll(_ criteria: [String]) -> Bool {
+            criteria.last == "all" && criteria.dropLast().allSatisfy { $0 == "canonical" || $0 == "final" } && criteria.count <= 3
         }
 
         /// `Keyword value` or `Keyword=value`, the keyword lower-cased.

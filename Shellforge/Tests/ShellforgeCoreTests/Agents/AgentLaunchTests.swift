@@ -145,7 +145,7 @@ import Testing
         try FileManager.default.createDirectory(atPath: wt, withIntermediateDirectories: true)
         let long = String(repeating: "x", count: 2000)
         let launch = try make(gemini([["--p={prompt}"]]), prompt: long)
-        #expect(launch.command == "'\(runner.path)' gemini -- 'gemini' '--p='\"$(cat .shellforge/first-prompt.md)\"")
+        #expect(launch.command == "'\(runner.path)' gemini -- 'gemini' '--p='\"$(cat .shellforge/first-prompt.md; rm -f .shellforge/first-prompt.md)\"")
     }
 
     @Test func previewIsTheCommandThatRuns() throws {
@@ -198,7 +198,7 @@ import Testing
         let prompt = String(repeating: "p", count: 950)
         let agent = gemini([["-i", "{prompt}"]])
         let launch = try make(agent, prompt: prompt)
-        #expect(launch.command.hasSuffix("'-i' \"$(cat .shellforge/first-prompt.md)\""))
+        #expect(launch.command.hasSuffix("'-i' \"$(cat .shellforge/first-prompt.md; rm -f .shellforge/first-prompt.md)\""))
         #expect(try String(contentsOfFile: wt + "/.shellforge/first-prompt.md", encoding: .utf8) == prompt)
         #expect(launch.command.utf8.count <= AgentCommand.inlineLimit)
         // The same prompt for a built-in stays inline.

@@ -50,7 +50,7 @@ public struct GitStatus: Equatable, Sendable {
     /// stops status from rewriting the index, which the Git panel watches: a read must not cause
     /// the event that reads again.
     public static func read(_ path: String, launcher: CommandLauncher) throws -> GitStatus {
-        let args = AutomaticGitRead.arguments(["status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all"], in: path)
+        let args = AutomaticGitRead.arguments(["status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all"], in: path, launcher: launcher)
         let out: ChildOutput
         do {
             out = try launcher.run("git", args, extra: ["LC_ALL": "C", "GIT_OPTIONAL_LOCKS": "0"], timeout: gitTimeout)

@@ -12,7 +12,9 @@ public enum LogSink {
         case debug, release
     }
 
-    public typealias Receiver = @Sendable (Level, String) -> Void
+    /// The line comes as a closure, cleaned only when called: a receiver whose debug log is off
+    /// never runs the cleaning.
+    public typealias Receiver = @Sendable (Level, @escaping @Sendable () -> String) -> Void
 
     private static let receiver = Locked<Receiver?>(nil)
 
@@ -25,14 +27,34 @@ public enum LogSink {
     /// home folder as `~` — since git's stderr, which some lines quote, can echo a token.
     static func send(_ level: Level, _ message: String) {
         guard let receiver = receiver.withLock({ $0 }) else { return }
-        receiver(level, ErrorLog.cleaned(message))
+        receiver(level, { ErrorLog.cleaned(message) })
     }
 }
 
 /// The package's one way to log: an os `Logger` line, every value public as the package always
 /// wrote them, and the same text to `LogSink`. Debug, info and notice lines go to the sink's
-/// `.debug`; errors and faults to its `.release`.
+/// `.debug`; errors and faults to its `.release`, at most once per `releaseSpacing` for the same
+/// text, the repeats to `.debug`: a helper that is down fails the same way every few seconds, and
+/// the host's release log keeps only its last few megabytes.
 public struct PackageLogger: Sendable {
+    static let releaseSpacing: TimeInterval = 5 * 60
+    /// When each error text last went to `.release`. Capped, so varied texts cannot grow it for good.
+    private static let lastReleased = Locked<[String: Date]>([:])
+    private static let lastReleasedCap = 256
+
+    /// Whether `text` goes to `.release` now: not when it went within `releaseSpacing`.
+    static func releases(_ text: String, at now: Date = Date()) -> Bool {
+        lastReleased.withLock { last in
+            if let then = last[text], now.timeIntervalSince(then) < releaseSpacing { return false }
+            if last.count >= lastReleasedCap {
+                last = last.filter { now.timeIntervalSince($0.value) < releaseSpacing }
+                if last.count >= lastReleasedCap { last.removeAll() }
+            }
+            last[text] = now
+            return true
+        }
+    }
+
     private let logger: Logger
 
     public init(category: String) {
@@ -47,6 +69,7 @@ public struct PackageLogger: Sendable {
     public func log(level: OSLogType, _ message: @autoclosure () -> String) {
         let text = message()
         logger.log(level: level, "\(text, privacy: .public)")
-        LogSink.send(level == .error || level == .fault ? .release : .debug, text)
+        let isError = level == .error || level == .fault
+        LogSink.send(isError && Self.releases(text) ? .release : .debug, text)
     }
 }

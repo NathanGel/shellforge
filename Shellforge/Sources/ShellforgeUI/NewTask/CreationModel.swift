@@ -285,8 +285,8 @@ public final class CreationModel<Kind: CreationKind>: ObservableObject, Identifi
         self.cancellation = cancellation
         defer { creating = false; progress = nil; cancelling = false; self.cancellation = nil }
         // The work runs off the main actor; its steps come back to it, and only while it runs.
-        let report: @Sendable (CreationStep) -> Void = { step in
-            Task { @MainActor [weak self] in if self?.creating == true { self?.progress = step } }
+        let report: @Sendable (CreationStep) -> Void = { [weak self] step in
+            Task { @MainActor in if self?.creating == true { self?.progress = step } }
         }
         do {
             try await CreationContext.$cancellation.withValue(cancellation) {

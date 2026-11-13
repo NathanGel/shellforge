@@ -389,6 +389,7 @@ public final class SidebarModel: ObservableObject {
         guard !found.isEmpty else { return }
         // Two whole sentences, not a suffix: the package's text is English-only for now (README),
         // and a sentence per count is what a later catalog plural replaces.
+        // TODO(l10n): a catalog plural replaces this
         let message = found.count == 1 ? "Import 1 worktree?" : "Import \(found.count) worktrees?"
         let answer = await prompter.ask(AlertPrompt(message: message,
                                                     detail: "Adds existing worktrees as tasks without starting agents.",

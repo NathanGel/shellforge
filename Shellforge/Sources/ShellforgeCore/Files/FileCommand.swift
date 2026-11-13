@@ -41,7 +41,12 @@ public struct FileCommand: Equatable, Sendable {
     /// Shells that take `-l -i -c <script> <$0> <args…>` and read `"$1"`.
     private static let posixShells: Set<String> = ["sh", "bash", "zsh", "ksh", "mksh", "dash", "yash"]
 
-    /// Used to run the script when the login shell takes neither form (tcsh rejects `-l` with `-c`).
+    /// Shells of the csh family: they reject `-l` with `-c`, and log in when their argv[0] starts
+    /// with `-`, which iTerm2's ShellLauncher (`--launch_shell`) gives them.
+    private static let cshShells: Set<String> = ["csh", "tcsh"]
+
+    /// Used to run the script when the login shell takes none of these forms (nu, elvish, xonsh),
+    /// or a csh-family shell when no ShellLauncher is at hand.
     static let fallbackShell = "/bin/zsh"
 
     public init(parts: [Part], paths: [String], keepsShell: Bool) {
@@ -70,16 +75,21 @@ public struct FileCommand: Equatable, Sendable {
         return endOfOptionsEditors.contains((String(program) as NSString).lastPathComponent)
     }
 
-    enum Family { case posix, fish }
+    enum Family { case posix, fish, csh }
 
     /// The tab's command: `shell`, the account's login shell, as a login, interactive shell (its
     /// `PATH` and aliases, as a typed line had) running the script, the paths its arguments. fish
-    /// sets `$argv` from what follows the script; a POSIX shell takes `$0` first. Any other shell
-    /// runs the script under `fallbackShell`, and is the shell a diff's tab goes on in.
-    public func argv(shell: String) -> [String] {
+    /// sets `$argv` from what follows the script; a POSIX shell takes `$0` first. tcsh and csh are
+    /// started through `shellLauncher` (iTerm2's ShellLauncher), which logs them in by argv[0] as
+    /// it does for a profile's login shell; they set `$argv` from what follows the script. Any
+    /// other shell runs the script under `fallbackShell`, and is the shell a diff's tab goes on in.
+    public func argv(shell: String, shellLauncher: String? = nil) -> [String] {
         let name = (shell as NSString).lastPathComponent
         if name == "fish" {
             return [shell, "-l", "-i", "-c", script(.fish, then: shell)] + paths
+        }
+        if Self.cshShells.contains(name), let shellLauncher {
+            return [shellLauncher, "--launch_shell", "SHELL=" + shell, "-i", "-c", script(.csh, then: shell)] + paths
         }
         let runner = Self.posixShells.contains(name) ? shell : Self.fallbackShell
         return [runner, "-l", "-i", "-c", script(.posix, then: shell), Self.scriptName] + paths
@@ -89,18 +99,28 @@ public struct FileCommand: Equatable, Sendable {
         let body = parts.map { part -> String in
             switch part {
             case .text(let text): return text
-            case .path(let index): return family == .fish ? "\"$argv[\(index + 1)]\"" : "\"$\(index + 1)\""
+            case .path(let index):
+                switch family {
+                case .fish: return "\"$argv[\(index + 1)]\""
+                // `:q` keeps the value one word with nothing in it substituted again.
+                case .csh: return "$argv[\(index + 1)]:q"
+                case .posix: return "\"$\(index + 1)\""
+                }
             }
         }.joined()
         guard keepsShell else { return "exec " + body }
-        return body + "; exec " + Self.word(shell, family) + " -l"
+        // `-l` only where the shell takes it after `exec`: a POSIX shell or fish. Any other goes on
+        // as a plain interactive shell.
+        let name = (shell as NSString).lastPathComponent
+        let login = name == "fish" || Self.posixShells.contains(name)
+        return body + "; exec " + Self.word(shell, family) + (login ? " -l" : "")
     }
 
     /// A trusted word (the shell's own path) for `family`: bare when nothing in it is special.
     private static func word(_ s: String, _ family: Family) -> String {
         if s.range(of: "^[A-Za-z0-9_@%+:,./-]+$", options: .regularExpression) != nil { return s }
         switch family {
-        case .posix: return AgentCommand.shellQuote(s)
+        case .posix, .csh: return AgentCommand.shellQuote(s)
         case .fish: return "'" + s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'") + "'"
         }
     }

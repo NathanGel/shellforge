@@ -10,20 +10,30 @@ private let vaultLockLog = PackageLogger(category: "keychain")
 /// The wait is bounded: another process may hold the lock while it shows a Keychain prompt or sits
 /// at a breakpoint, and the caller holds the vault's in-process lock, which every Keychain call in
 /// this process waits on. Past the bound, or when the lock file cannot be used, `body` runs
-/// without it; the read-back after each write still catches another writer.
+/// without it; the read-back after each write still catches another writer. For `quietPeriod`
+/// after a wait ran out, the lock is tried once without waiting, so a process holding it for long
+/// does not make every later write here wait the whole bound again.
 struct VaultLock: Sendable {
     static let defaultTimeout: TimeInterval = 3
+    static let quietPeriod: TimeInterval = 60
 
     let url: URL
     let timeout: TimeInterval
     /// Called when another process holds the lock and this one is about to wait for it.
     let waiting: (@Sendable () -> Void)?
+    /// The time, for `quietPeriod`; a test passes its own.
+    let now: @Sendable () -> Date
 
-    init(url: URL, timeout: TimeInterval = VaultLock.defaultTimeout, waiting: (@Sendable () -> Void)? = nil) {
+    init(url: URL, timeout: TimeInterval = VaultLock.defaultTimeout, waiting: (@Sendable () -> Void)? = nil,
+         now: @escaping @Sendable () -> Date = { Date() }) {
         self.url = url
         self.timeout = timeout
         self.waiting = waiting
+        self.now = now
     }
+
+    /// When a wait for each lock file last ran out.
+    private static let lastTimeout = Locked<[String: Date]>([:])
 
     /// In the installed app's support folder, not the running build's: a dev build has a folder of
     /// its own but shares the one Keychain item with the installed app.
@@ -75,6 +85,10 @@ struct VaultLock: Sendable {
     /// the waiting thread once its `flock` returns.
     private func acquire(_ fd: Int32) -> Bool {
         if flock(fd, LOCK_EX | LOCK_NB) == 0 { return true }
+        if let last = Self.lastTimeout.withLock({ $0[url.path] }), now().timeIntervalSince(last) < Self.quietPeriod {
+            close(fd)
+            return false
+        }
         waiting?()
         let wait = BlockingWait()
         let thread = Thread {
@@ -91,6 +105,8 @@ struct VaultLock: Sendable {
             Self.unavailable("taking the lock failed")
             return false
         case .abandoned:
+            let when = now()
+            Self.lastTimeout.withLock { $0[url.path] = when }
             Self.unavailable("another process held the lock for more than \(timeout) seconds")
             return false
         }

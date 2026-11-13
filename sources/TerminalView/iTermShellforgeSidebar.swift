@@ -45,6 +45,13 @@ final class iTermShellforgeSidebar: NSObject {
                 NSWorkspace.shared.open(url)
             }
         },
+        // Another copy of this app (an installed earlier version beside a dev build) owns the
+        // bundle-id domain's crash marker while it runs.
+        othersRunning: {
+            guard let identifier = Bundle.main.bundleIdentifier else { return false }
+            let me = ProcessInfo.processInfo.processIdentifier
+            return NSRunningApplication.runningApplications(withBundleIdentifier: identifier).contains { $0.processIdentifier != me }
+        },
         toast: { message in for model in sidebars.allObjects { model.lastError = message } })
 
     /// Before anything reads them: the settings earlier versions kept in the bundle-id domain are
@@ -281,9 +288,11 @@ final class iTermShellforgeSidebar: NSObject {
     }
 
     /// `name` as a profile's name that shows as it is: iTerm2 reads `$$NAME$$` in it as a parameter
-    /// to ask for, and `$$$$` as `$$`.
+    /// to ask for, and `$$$$` as `$$`; and the name becomes the tab's title format, an interpolated
+    /// string, where `\(…)` is a variable and `\\` a backslash. A file, host or terminal name can
+    /// hold either.
     nonisolated static func literalName(_ name: String) -> String {
-        name.replacingOccurrences(of: "$$", with: "$$$$")
+        name.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "$$", with: "$$$$")
     }
 }
 
@@ -385,7 +394,7 @@ final class iTermShellforgeHost: TerminalHost {
     func openTab(in directory: String, terminalId: UUID, projectId: UUID, title: String) {
         guard let windowController, let base = ProfileModel.sharedInstance()?.defaultBookmark() else { return }
         var profile = iTermShellforgeSidebar.taskTabProfile(base: base, directory: directory)
-        profile[KEY_NAME] = title
+        profile[KEY_NAME] = iTermShellforgeSidebar.literalName(title)
         iTermSessionLauncher.launchBookmark(profile, in: windowController, style: .tab, withURL: nil,
                                             hotkeyWindowType: .none, makeKey: true, canActivate: true,
                                             respectTabbingMode: false, index: nil, command: nil,
@@ -503,7 +512,7 @@ final class iTermShellforgeHost: TerminalHost {
         guard let windowController, let base = ProfileModel.sharedInstance()?.defaultBookmark() else { return }
         var profile = iTermShellforgeSidebar.taskTabProfile(base: base, directory: directory,
                                                             initialText: TabCommand.initialText(command))
-        profile[KEY_NAME] = title
+        profile[KEY_NAME] = iTermShellforgeSidebar.literalName(title)
         iTermSessionLauncher.launchBookmark(profile, in: windowController, style: .tab, withURL: nil,
                                             hotkeyWindowType: .none, makeKey: true, canActivate: true,
                                             respectTabbingMode: false, index: nil, command: nil,
@@ -518,7 +527,9 @@ final class iTermShellforgeHost: TerminalHost {
     /// is `command` run by the account's login shell: the file's path is an argument, never typed.
     func openTab(in directory: String, title: String, running command: FileCommand, panel: PanelTab) {
         guard let windowController, let base = ProfileModel.sharedInstance()?.defaultBookmark() else { return }
-        let argv = command.argv(shell: iTermOpenDirectory.userShell() ?? "/bin/zsh")
+        // tcsh and csh log in through iTerm2's ShellLauncher, as a profile's login shell does.
+        let argv = command.argv(shell: iTermOpenDirectory.userShell() ?? "/bin/zsh",
+                                shellLauncher: Bundle.main.path(forAuxiliaryExecutable: "ShellLauncher"))
         DLog("Shellforge: opening a file tab running \(argv)")
         let profile = iTermShellforgeSidebar.fileTabProfile(base: base, directory: directory, argv: argv, title: title)
         iTermSessionLauncher.launchBookmark(profile, in: windowController, style: .tab, withURL: nil,

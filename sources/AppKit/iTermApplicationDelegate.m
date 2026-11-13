@@ -416,9 +416,11 @@ static NSModalResponse iTermCompareRenderingRunModal(id self, SEL _cmd) {
     }
 
     // Shellforge: the Tasks menu after View, its keys all ⌃⌘ ones iTerm2 leaves free.
-    NSMenuItem *tasksItem = [[[NSMenuItem alloc] initWithTitle:@"Tasks" action:nil keyEquivalent:@""] autorelease];
+    NSString *tasksTitle = NSLocalizedStringWithDefaultValue(@"Shellforge.TasksMenu", nil, [NSBundle mainBundle], @"Tasks",
+                                                             @"Title of the menu of Shellforge’s task commands (New Task, New Review and the like)");
+    NSMenuItem *tasksItem = [[[NSMenuItem alloc] initWithTitle:tasksTitle action:nil keyEquivalent:@""] autorelease];
     tasksItem.submenu = [iTermShellforgeSidebar tasksMenu];
-    tasksItem.submenu.title = @"Tasks";
+    tasksItem.submenu.title = tasksTitle;
     const NSInteger viewIndex = [[NSApp mainMenu] indexOfItemWithSubmenu:viewMenu];
     if (viewIndex >= 0) {
         [[NSApp mainMenu] insertItem:tasksItem atIndex:viewIndex + 1];

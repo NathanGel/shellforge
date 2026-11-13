@@ -76,14 +76,20 @@ public struct WorkspaceStore: Sendable {
     }
 
     /// A temporary backup is left only by a crash between its copy and its rename. Only regular
-    /// files named like one are removed.
+    /// files named exactly like one, a UUID between the prefix and the suffix, are removed.
     private func removeStaleTemporaries() {
         let names = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
-        for name in names where name.hasPrefix(Self.temporaryPrefix) && name.hasSuffix(Self.temporarySuffix) {
+        for name in names where Self.isTemporaryName(name) {
             let url = folder.appendingPathComponent(name)
             guard (try? FileManager.default.attributesOfItem(atPath: url.path))?[.type] as? FileAttributeType == .typeRegular else { continue }
             _ = try? FileManager.default.removeItem(at: url)
         }
+    }
+
+    static func isTemporaryName(_ name: String) -> Bool {
+        guard name.hasPrefix(temporaryPrefix), name.hasSuffix(temporarySuffix),
+              name.count > temporaryPrefix.count + temporarySuffix.count else { return false }
+        return UUID(uuidString: String(name.dropFirst(temporaryPrefix.count).dropLast(temporarySuffix.count))) != nil
     }
 
     private static let temporaryPrefix = "workspace.json.backup-"

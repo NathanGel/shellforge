@@ -24,6 +24,9 @@ struct JiraProjectSheet: View {
     let loadProjects: () async throws -> [JiraProjectRef]
     let submit: ([JiraProjectRef]) -> Void
     let dismiss: @MainActor () -> Void
+    /// Told the keys of the rows the list draws, each time they change: a test waits on it before
+    /// ⏎, which picks from the rows last drawn.
+    private var drawn: ((_ keys: [String]) -> Void)?
 
     // `@State` is a macro in the macOS 26 SDK and its SwiftUIMacros plugin ships only with Xcode;
     // these are the storage and accessors the macro would generate.
@@ -90,6 +93,8 @@ struct JiraProjectSheet: View {
                              toggleHelp: { $0 ? "Hide Jira projects" : "Show Jira projects" })
                     // Over the status line after it, as AiTerm's FormField orders its content front to back.
                     .zIndex(1)
+                    .onAppear { drawn?(matches.map(\.key)) }
+                    .onChange(of: matches.map(\.key)) { keys in drawn?(keys) }
                 status
             }
         } footer: {
@@ -179,6 +184,13 @@ extension JiraProjectSheet {
             sheet._loading = State(initialValue: false)
         }
         sheet._open = State(initialValue: open)
+        return sheet
+    }
+
+    /// The sheet telling `drawn` the keys of the rows its list draws, as they change.
+    func reportingRows(_ drawn: @escaping ([String]) -> Void) -> Self {
+        var sheet = self
+        sheet.drawn = drawn
         return sheet
     }
 }

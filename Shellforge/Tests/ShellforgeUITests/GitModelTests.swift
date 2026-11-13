@@ -400,6 +400,27 @@ final class GitModelTests: XCTestCase {
         XCTAssertEqual(git.sections.first?.busy, false)
     }
 
+    /// A diff's problem reported while an action runs is replaced by the action's own, and
+    /// opening a diff later does not clear that.
+    func testAReportDuringAnActionDoesNotLaterClearTheActionsProblem() async throws {
+        let scratch = try Scratch()
+        let demo = try scratch.project("demo")
+        let gate = Gate()
+        let git = model(scratch, [demo], act: { action, _, _, _ in
+            gate.act(action)
+            throw GitFailure(message: "push was refused")
+        })
+        await git.settled()
+        let action = Task { await git.perform(.push, in: .project(demo.id)) }
+        await gate.waitUntilHeld()
+        git.report("couldn’t open the diff", in: .project(demo.id))
+        gate.release()
+        await action.value
+        XCTAssertEqual(git.sections.first?.problem, "push was refused")
+        git.clearReport(in: .project(demo.id))
+        XCTAssertEqual(git.sections.first?.problem, "push was refused", "the action’s problem stays")
+    }
+
     func testEventsDuringAnActionMakeOneRefreshAfterIt() async throws {
         let scratch = try Scratch()
         let demo = try scratch.project("demo")

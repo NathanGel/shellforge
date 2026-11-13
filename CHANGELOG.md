@@ -119,6 +119,27 @@ it and refuses to release a version that has none.
   Settings and New Task read their saved connections in the background, so the app keeps
   responding while a Keychain prompt is up.
 
+### Fixed
+
+- **New Task no longer follows a `.worktrees` link out of the project.** A repository that
+  commits `.worktrees` as a link to another folder is refused instead of having the task's
+  checkout made wherever the link leads. A New Task or New Review that fails or is cancelled
+  halfway takes back the folder and branch it made, so trying again with the same name works.
+- **Stash and Switch puts back only its own stash.** Switching branches no longer pops a stash
+  you made yourself.
+- **Removing a task keeps a folder git doesn't list.** If git has no record of the task's
+  folder and nothing shows it was a worktree, Remove leaves it in place and says so, rather
+  than deleting it.
+- **A workspace file that can't be read is no longer replaced.** If `workspace.json` is there
+  but unreadable (its permissions, a disk error), Shellforge no longer starts with no projects and
+  saves that over it. The backup is replaced in one step, so a save that fails never loses it.
+- **Secrets are kept when two copies of Shellforge are open.** With an installed and a
+  development build open at once, saving a token or password in one no longer drops one the
+  other had just saved.
+- **The helper answers only the Shellforge that started it.** Another program of your account
+  can no longer send it a tab list or arm an agent's launch; when Shellforge finds a helper
+  from an earlier version still running after an update, it replaces it with its own.
+
 ## 0.10.0 — 2026-11-10
 
 ### Added

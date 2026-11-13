@@ -24,6 +24,8 @@ import Testing
     /// so the count matters as much as the value.
     final class Submissions {
         var calls: [[JiraProjectRef]] = []
+        /// The keys of the rows the list last drew.
+        var rows: [String]?
     }
 
     struct Harness {
@@ -44,6 +46,7 @@ import Testing
                                      loadProjects: load,
                                      submit: { submissions.calls.append($0) }, dismiss: {})
             .seeded(projects: seedProjects ? projects : nil, open: listOpen)
+            .reportingRows { submissions.rows = $0 }
         let host = NSHostingView(rootView: sheet)
         host.frame = NSRect(x: 0, y: 0, width: Sheet.width, height: Sheet.height)
         let window = NSWindow(contentRect: host.frame, styleMask: [], backing: .buffered, defer: false)
@@ -54,11 +57,12 @@ import Testing
         return Harness(host: host, window: window, submissions: submissions)
     }
 
-    /// A turn for SwiftUI to apply what the field's delegate just changed. The picker's query and
-    /// highlight are the sheet's own `@State`, which nothing outside the view can read, so there is
-    /// no state to wait on: this one stays a short fixed wait.
-    private func pause() async throws {
-        try await Task.sleep(for: .milliseconds(150))
+    /// Waits until SwiftUI has drawn the rows typing narrowed the list to, in order: ⏎ picks from
+    /// the rows last drawn, so the pick waits for these, not for a fixed time.
+    private func waitForRows(_ h: Harness, _ keys: [String]) async {
+        await eventually(describing: "the list narrowed to \(keys)") { h.submissions.rows == keys }
+        // The pass that drew them hands the field its new keys too; one more turn lets it finish.
+        await Task.yield()
     }
 
     private func field(in host: NSView) -> NSTextField? {
@@ -89,9 +93,9 @@ import Testing
 
         // "webx" matches one of the three projects; ⏎ takes the row the narrowed list highlights.
         type("webx", into: field)
-        try await pause()
+        await waitForRows(h, ["WEBX"])
         #expect(send(#selector(NSResponder.insertNewline(_:)), to: field))
-        try await pause()
+        await eventually(describing: "the list closed by the pick") { !listIsOpen(in: h.host) }
 
         // A pick joins the list above the field, and the field stays for the next one.
         #expect(self.field(in: h.host) != nil)
@@ -106,9 +110,9 @@ import Testing
         let field = try #require(self.field(in: h.host))
 
         type("web", into: field)
-        try await pause()
+        await waitForRows(h, ["WEB", "WEBX"])
         #expect(send(#selector(NSResponder.insertNewline(_:)), to: field))
-        try await pause()
+        await eventually(describing: "the list closed by the pick") { !listIsOpen(in: h.host) }
         try await pressCommandReturn(h)
 
         #expect(h.submissions.calls == [[Self.projects[0], Self.projects[1]]])

@@ -66,7 +66,10 @@ jobs:
 
       - name: Run the helper's tests
         working-directory: Shellforge/daemon
-        run: python -m pytest -q
+        # As test-all.sh runs them: no bytecode and no pytest cache in the helper's folder.
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python -m pytest -q -p no:cacheprovider
 
   # The Swift package suite: Core, Design and UI. `swift.sh` insists on the Swift that
   # `Shellforge/.swift-version` pins, from swiftly, as a release build does.

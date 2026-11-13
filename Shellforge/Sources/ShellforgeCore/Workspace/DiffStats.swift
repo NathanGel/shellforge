@@ -141,7 +141,7 @@ public final class DiffStats: Sendable {
     /// Throws when git ran out of time; any other failure is nil, no answer.
     private func read(_ worktree: String, base: String, key: String) throws -> DiffStat? {
         guard let from = try mergeBase(worktree, base: base, key: key),
-              let numstat = try ask(["diff", "--numstat", from], in: worktree) else { return nil }
+              let numstat = try ask(["diff", "--no-ext-diff", "--no-textconv", "--numstat", from], in: worktree) else { return nil }
         var stat = DiffStat(added: 0, removed: 0)
         for line in numstat.split(separator: "\n") {
             let fields = line.split(separator: "\t", maxSplits: 2)

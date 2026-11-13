@@ -139,8 +139,10 @@ import Testing
     /// Only regular files with exactly that name are removed.
     @Test func aLeftoverTemporaryBackupIsRemovedAtLoad() throws {
         try store.save(sample())
-        let leftover = folder.appendingPathComponent("workspace.json.backup-0F1E2D3C.tmp")
+        let leftover = folder.appendingPathComponent("workspace.json.backup-0F1E2D3C-4B5A-4978-8695-A4B3C2D1E0F9.tmp")
         try "{}".write(to: leftover, atomically: true, encoding: .utf8)
+        let notAUUID = folder.appendingPathComponent("workspace.json.backup-mine.tmp")
+        try "invented".write(to: notAUUID, atomically: true, encoding: .utf8)
         let folderNamedLikeOne = folder.appendingPathComponent("workspace.json.backup-folder.tmp")
         try FileManager.default.createDirectory(at: folderNamedLikeOne, withIntermediateDirectories: true)
         let other = folder.appendingPathComponent("notes.tmp")
@@ -149,5 +151,6 @@ import Testing
         #expect(!FileManager.default.fileExists(atPath: leftover.path))
         #expect(FileManager.default.fileExists(atPath: folderNamedLikeOne.path))
         #expect(FileManager.default.fileExists(atPath: other.path))
+        #expect(FileManager.default.fileExists(atPath: notAUUID.path), "only a UUID-named one is a temporary")
     }
 }
