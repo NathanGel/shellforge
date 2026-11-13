@@ -65,7 +65,8 @@ import Testing
         let before = try repo.git("worktree", "list", "--porcelain"), branches = try repo.git("branch", "--list")
         var draft = TaskDraft(baseBranch: "main", agentId: "claude", model: "opus", reasoning: nil)
         draft.choose(.existing)
-        draft.pick(existing: try #require(try list(repo).first { $0.branch == "feat/newer" }))
+        let newerWorktree = try #require(try list(repo).first { $0.branch == "feat/newer" })
+        draft.pick(existing: newerWorktree)
         let task = try ExistingWorktrees.adopt(draft: draft, in: repo.project, launcher: repo.launcher)
         #expect(task.branch == "feat/newer" && task.title == "feat/newer" && task.baseBranch == "main")
         #expect(URL(fileURLWithPath: task.worktreePath).resolvingSymlinksInPath().path == URL(fileURLWithPath: newer).resolvingSymlinksInPath().path)
@@ -79,12 +80,14 @@ import Testing
         let offered = try list(repo)
         var draft = TaskDraft(baseBranch: "main", agentId: "claude", model: "opus", reasoning: nil)
         draft.choose(.existing)
-        draft.pick(existing: try #require(offered.first { $0.branch == "feat/newer" }))
+        let newerWorktree = try #require(offered.first { $0.branch == "feat/newer" })
+        draft.pick(existing: newerWorktree)
         try FileManager.default.removeItem(atPath: newer)
         #expect(throws: ExistingWorktrees.Refusal.gone("feat/newer")) {
             try ExistingWorktrees.adopt(draft: draft, in: repo.project, launcher: repo.launcher)
         }
-        draft.pick(existing: try #require(offered.first { $0.branch == "feat/older" }))
+        let olderWorktree = try #require(offered.first { $0.branch == "feat/older" })
+        draft.pick(existing: olderWorktree)
         #expect(throws: ExistingWorktrees.Refusal.taken("feat/older")) {
             try ExistingWorktrees.adopt(draft: draft, in: repo.project, taken: [older], launcher: repo.launcher)
         }
