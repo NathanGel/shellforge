@@ -101,6 +101,42 @@ public final class Keychain: SecretStore, Sendable {
         }
     }
 
+    /// Reads the item now if it has not been read yet, so the one Keychain prompt comes at launch
+    /// rather than at whatever moment the first secret is needed.
+    public func warm() {
+        secrets.withLock { _ = load(&$0) }
+    }
+
+    // MARK: Binary entries
+
+    /// What reading a binary entry came to. `unavailable` is not `missing`: the item could not be
+    /// read (the person clicked Deny), and treating that as empty would invite a write over it.
+    public enum VaultRead: Equatable {
+        case found(Data)
+        case missing
+        case unavailable
+    }
+
+    /// Binary entries live in the same JSON object as the string secrets, under a prefixed key with
+    /// a base64 value, so the item stays `[String: String]` and earlier builds ignore them.
+    static func vaultKey(service: String, account: String) -> String { "upgradeSafe:\(service):\(account)" }
+
+    public func data(service: String, account: String) -> VaultRead {
+        secrets.withLock { cached in
+            guard let all = load(&cached) else { return .unavailable }
+            guard let encoded = all[Self.vaultKey(service: service, account: account)],
+                  let data = Data(base64Encoded: encoded) else { return .missing }
+            return .found(data)
+        }
+    }
+
+    /// `nil` removes the entry. `false` when the item could not be read or written, in which case
+    /// nothing in the Keychain changed.
+    @discardableResult
+    public func setData(_ data: Data?, service: String, account: String) -> Bool {
+        set(Self.vaultKey(service: service, account: account), data?.base64EncodedString())
+    }
+
     private func load(_ cached: inout [String: String]?) -> [String: String]? {
         if let cached { return cached }
         switch items.read(Self.account) {
