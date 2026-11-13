@@ -11,15 +11,11 @@ from pathlib import Path
 
 import pytest
 
-from shellforged import hook_token
-
 HERE = Path(__file__).resolve().parent
 EXTENSION = HERE.parents[1] / "hooks" / "pi-shellforge-status.ts"
 PLACEHOLDER = "__SHELLFORGE_HOOK_PORT__"  # PiDriver.portPlaceholder
-TOKEN_PLACEHOLDER = '"__SHELLFORGE_TOKEN_FILE__"'  # PiDriver.tokenFilePlaceholder, quotes and all
 PORT = 50123  # not the app's own, so a literal left in the file shows
 NODE = shutil.which("node")
-TOKEN: list[str] = []  # the one the fixture made
 
 
 def _strips_types(node: str) -> bool:
@@ -35,12 +31,8 @@ pytestmark = pytest.mark.skipif(not NODE or not _strips_types(NODE), reason="nee
 @pytest.fixture(scope="module")
 def phases(tmp_path_factory):
     # What PiDriver installs: the bundled file with the daemon's port in place of the placeholder.
-    folder = tmp_path_factory.mktemp("pi")
-    installed = folder / "shellforge-status.ts"
-    support = folder / "Application Support" / "Shellforge"
-    TOKEN.append(hook_token.read_or_create(support))
-    installed.write_text(EXTENSION.read_text().replace(PLACEHOLDER, str(PORT))
-                         .replace(TOKEN_PLACEHOLDER, json.dumps(str(support / "hook-token"))))
+    installed = tmp_path_factory.mktemp("pi") / "shellforge-status.ts"
+    installed.write_text(EXTENSION.read_text().replace(PLACEHOLDER, str(PORT)))
     out = subprocess.run([NODE, str(HERE / "pi_extension_driver.mjs"), str(installed)],
                          capture_output=True, text=True, timeout=20, check=True)
     return json.loads(out.stdout)
@@ -118,12 +110,3 @@ def test_handlers_do_not_hand_pi_the_network_promise(phases):
 
 def test_the_driver_test_still_gets_the_promise_it_waits_on(phases):
     assert phases["returned_under_test"] == ["pending"]
-
-
-def test_every_report_carries_the_token_read_from_the_helpers_file(phases):
-    posts = [post for phase in ("startup", "background", "after_shutdown") for post in phases[phase]]
-    assert posts and {post["_token"] for post in posts} == {TOKEN[0]}
-
-
-def test_the_bundled_extension_names_the_token_file_only_as_the_placeholder():
-    assert EXTENSION.read_text().count(TOKEN_PLACEHOLDER) == 1

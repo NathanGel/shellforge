@@ -21,13 +21,13 @@ struct GrokHooks: HookDriver {
         var config: UserConfigFile.Contents<String>
     }
 
-    private func read(auth: HookAuth?) -> Reading {
+    private func read() -> Reading {
         let contents = hooks.read()
         let state: HookState
         switch contents {
         case .missing: state = .missing
         case .refused: state = .unreadable
-        case .present(let data): state = GrokHooksFile.state(of: data, port: port, auth: auth)
+        case .present(let data): state = GrokHooksFile.state(of: data, port: port)
         }
         var text = config.readText()
         // A stray bracket would let the editor read the rest of the file as one statement, and
@@ -38,19 +38,8 @@ struct GrokHooks: HookDriver {
 
     /// A hooks file Shellforge must not touch, or a config it cannot read, comes first — Install
     /// could only refuse — and the hooks file wins when both are unreadable.
-    func probe() -> HookProbe { probe(auth: HookAuth.existing(in: support)) }
-
-    func holdsTokenlessInstall() -> Bool { probe(auth: nil).state == .current }
-
-    func postsWithoutToken() -> Bool {
-        guard case .present(let data) = hooks.read(), let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              GrokHooksFile.isOwned(object) else { return false }
-        let text = String(decoding: data, as: UTF8.self)
-        return text.contains("127.0.0.1:\(port)/hook/grok") && !text.contains(HookToken.fileName)
-    }
-
-    private func probe(auth: HookAuth?) -> HookProbe {
-        let reading = read(auth: auth)
+    func probe() -> HookProbe {
+        let reading = read()
         if case .refused(let reason) = reading.hooks { return .refused(hooks, reason) }
         if reading.hooksState == .foreign { return .foreign(hooks) }
         if case .refused(let reason) = reading.config { return .refused(config, reason) }
@@ -70,12 +59,11 @@ struct GrokHooks: HookDriver {
     /// Validates both halves before writing either: never the hooks file written with the status
     /// line refused afterwards.
     func install() throws {
-        let auth = try HookAuth.made(in: support)
-        let reading = read(auth: auth)
+        let reading = read()
         if case .refused(let reason) = reading.hooks { throw hooks.refusal(reason) }
         if reading.hooksState == .foreign { throw HookInstallError.foreign(path: hooks.displayPath) }
         if case .refused(let reason) = reading.config { throw config.refusal(reason) }
-        if reading.hooksState != .current { try hooks.write(GrokHooksFile.contents(port: port, auth: auth)) }
+        if reading.hooksState != .current { try hooks.write(GrokHooksFile.contents(port: port)) }
         try ShimPort.record(port, in: support)
         try GrokStatusLineConfig.install(reading.config.value, into: config,
                                          original: ShellforgeSupport.default(home: home).grokStatusLineOriginalURL, shimPath: shimPath, home: home)

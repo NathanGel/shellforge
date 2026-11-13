@@ -488,20 +488,6 @@ public final class DaemonClient: Sendable {
     struct TunnelHoldParams: Encodable { var alias: String, port: Int, bind: String? }
     struct OkResult: Decodable { var ok: Bool }
     struct ArmLaunchParams: Encodable { var sessionId: String, agentId: String, environment: [String: String] }
-    struct HelloParams: Encodable { var token: String }
-    struct AllowedParams: Encodable { var allowed: Bool }
-
-    /// Shows the helper its token, before any other request on this connection: the helper refuses
-    /// the app's methods to a connection that has not. Never logged.
-    public func hello(token: String) async throws {
-        _ = try await request(.appHello, params: HelloParams(token: token), as: OkResult.self)
-    }
-
-    /// Whether the helper still takes hook posts without the token: true while one of this build's
-    /// installs was written before hooks carried it.
-    public func allowTokenless(_ allowed: Bool) async throws {
-        _ = try await request(.hooksAllowTokenless, params: AllowedParams(allowed: allowed), as: OkResult.self)
-    }
 
     /// The daemon's state, which is also yielded as `.snapshot` in the event stream: the daemon
     /// writes it with no pause after reading its state, so it is a barrier between the events

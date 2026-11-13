@@ -6,7 +6,7 @@ import { EventEmitter } from "node:events";
 let posts = [];
 let stalled = false;
 globalThis.fetch = async (url, init) => {
-	posts.push({ ...JSON.parse(init.body), _url: url, _token: init.headers["X-Shellforge-Token"] ?? null });
+	posts.push({ ...JSON.parse(init.body), _url: url });
 	// A daemon that accepts the connection and never answers.
 	if (stalled) await new Promise(() => {});
 	return { json: async () => ({}) };

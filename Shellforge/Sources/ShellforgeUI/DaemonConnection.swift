@@ -7,9 +7,6 @@ import ShellforgeCore
 @MainActor
 final class DaemonConnection {
     private let socketPath: String
-    /// The helper's token (`HookToken`), shown first on every connection; nil shows none, as a test's
-    /// fake helper needs none. Read off the main thread.
-    private let token: (@Sendable () -> String?)?
     private let onClient: @MainActor (DaemonClient?) -> Void
     private let onStatus: @MainActor (HelperStatus) -> Void
     private let onEvent: @MainActor (DaemonEvent) -> Void
@@ -21,12 +18,11 @@ final class DaemonConnection {
     private var lifetime: Task<Void, Never>?
     private var client: DaemonClient?
 
-    init(socketPath: String, token: (@Sendable () -> String?)? = nil, onClient: @escaping @MainActor (DaemonClient?) -> Void,
+    init(socketPath: String, onClient: @escaping @MainActor (DaemonClient?) -> Void,
          onStatus: @escaping @MainActor (HelperStatus) -> Void, onEvent: @escaping @MainActor (DaemonEvent) -> Void,
          backoff: @escaping @Sendable (_ attempt: Int) -> TimeInterval = { Backoff.delay(attempt: $0) },
          steadyAfter: Duration = .seconds(5)) {
         self.socketPath = socketPath
-        self.token = token
         self.onClient = onClient
         self.onStatus = onStatus
         self.onEvent = onEvent
@@ -75,10 +71,6 @@ final class DaemonConnection {
             }
             do {
                 try await BackgroundWork.run { try connection.connect() }
-                // Before the snapshot: the helper answers nothing else to a connection without it.
-                if let token = self.token, let value = await BackgroundWork.run(token) {
-                    try await connection.hello(token: value)
-                }
                 let snapshot = try await connection.snapshot()
                 try Task.checkCancellation()
                 onClient(connection)

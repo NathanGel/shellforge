@@ -7,28 +7,17 @@ struct CodexHooks: HookDriver {
     static let configPath = ".codex/config.toml"
 
     let home: URL, port: Int
-    /// The support folder whose helper listens on `port`: its token goes into the hooks.
-    let support: ShellforgeSupport
 
     var config: UserConfigFile { UserConfigFile(home: home, Self.configPath) }
 
-    func probe() -> HookProbe { probe(auth: HookAuth.existing(in: support)) }
-
-    func holdsTokenlessInstall() -> Bool { probe(auth: nil).state == .current }
-
-    func postsWithoutToken() -> Bool {
-        guard case .present(let text) = config.readText() else { return false }
-        return CodexHookConfig.hasTokenlessHook(text, port: port)
-    }
-
-    private func probe(auth: HookAuth?) -> HookProbe {
+    func probe() -> HookProbe {
         let file = config
         switch file.readText() {
         case .missing: return HookProbe(.missing)
         case .refused(let reason): return .refused(file, reason)
         case .present(let text):
             if let reason = Self.unmergeable(text) { return .refused(file, reason) }
-            if CodexHookConfig.isInstalled(text, daemonPort: port, auth: auth) { return HookProbe(.current) }
+            if CodexHookConfig.isInstalled(text, daemonPort: port) { return HookProbe(.current) }
             return HookProbe(CodexHookConfig.isOwned(text) ? .outdated : .missing)
         }
     }
@@ -42,11 +31,10 @@ struct CodexHooks: HookDriver {
         case .present(let contents): text = contents
         }
         if let text, let reason = Self.unmergeable(text) { throw file.refusal(reason) }
-        let merged = CodexHookConfig.merge(text, hookURL: "http://127.0.0.1:\(port)", auth: try HookAuth.made(in: support))
-        // The file holds the token: readable by its owner only, whether or not this merge changed it.
-        guard merged != text else { return try file.makePrivate() }
+        let merged = CodexHookConfig.merge(text, hookURL: "http://127.0.0.1:\(port)")
+        guard merged != text else { return }
         try file.backUp()
-        try file.write(Data(merged.utf8), private: true)
+        try file.write(Data(merged.utf8))
     }
 
 
@@ -54,12 +42,5 @@ struct CodexHooks: HookDriver {
     private static func unmergeable(_ text: String) -> String? {
         if !TOMLStatements.isBalanced(text) { return "cannot be parsed" }
         return CodexHookConfig.conflict(in: text).map { "sets \($0) in a form Shellforge cannot merge" }
-    }
-}
-
-extension CodexHooks {
-    /// The installed app's support folder under `home`, as the tests' scratch homes have it.
-    init(home: URL, port: Int) {
-        self.init(home: home, port: port, support: .default(home: home))
     }
 }

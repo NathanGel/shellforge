@@ -282,8 +282,7 @@ import Testing
     @Test func codexContentAfterTheBlockNeitherOutdatesNorMovesIt() throws {
         let home = try temporaryHome(); defer { try? FileManager.default.removeItem(at: home) }
         let config = home.appendingPathComponent(".codex/config.toml")
-        let auth = try HookAuth.made(home: home)
-        let installed = CodexHookConfig.merge("model = \"gpt-5.6\"\n", hookURL: "http://127.0.0.1:47831", auth: auth)
+        let installed = CodexHookConfig.merge("model = \"gpt-5.6\"\n", hookURL: "http://127.0.0.1:47831")
         let text = installed + "\n[profiles.fast]\nmodel = \"gpt-5.6-mini\"\n"
         try text.write(to: config, atomically: true, encoding: .utf8)
 
@@ -292,7 +291,7 @@ import Testing
         #expect(try String(contentsOf: config, encoding: .utf8) == text)
 
         #expect(CodexHooks(home: home, port: 9999).state != .current)
-        let repaired = CodexHookConfig.merge(text, hookURL: "http://127.0.0.1:9999", auth: auth)
+        let repaired = CodexHookConfig.merge(text, hookURL: "http://127.0.0.1:9999")
         #expect(repaired == text.replacingOccurrences(of: "127.0.0.1:47831", with: "127.0.0.1:9999"))
     }
 

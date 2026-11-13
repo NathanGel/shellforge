@@ -185,10 +185,3 @@ def test_a_release_terminal_runs_the_original_a_dev_build_recorded(home, daemon,
     terminal (no SHELLFORGE_SUPPORT) still shows it."""
     (support_of(home) / "statusline-original.cmd").write_text("cat >/dev/null; printf 'mine'")
     assert run_shim(home).stdout == "mine"
-
-
-def test_sends_the_helpers_token_from_its_file(home, daemon):
-    from shellforged import hook_token
-    token = hook_token.read_or_create(support_of(home))
-    run_shim(home)
-    assert forwarded(daemon)[0][1]["X-Shellforge-Token"] == token

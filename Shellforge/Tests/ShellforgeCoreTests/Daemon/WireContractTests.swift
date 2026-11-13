@@ -83,7 +83,7 @@ import Testing
             // ctl's, and usage.get also the liveness check: read as the models the app shares with it.
             case .sessionsList: try Self.expectSame(read([SessionInfo].self), #require(result["result"]))
             case .usageGet: try Self.expectSame(read(UsageSnapshot.self), #require(result["result"]))
-            case .agentsArmLaunch, .appHello, .hooksAllowTokenless: #expect(try read(DaemonClient.OkResult.self).ok == field("ok") as? Bool)
+            case .agentsArmLaunch: #expect(try read(DaemonClient.OkResult.self).ok == field("ok") as? Bool)
             // shellforge-run's: the environment the runner execs the agent with.
             case .agentsTakeLaunch: #expect(try field("environment") as? [String: String] == ["GEMINI_API_KEY": "placeholder"])
             case .tunnelsStart, .tunnelsStop, .tunnelsHold: #expect(try read(DaemonClient.OkResult.self).ok == field("ok") as? Bool)

@@ -126,25 +126,6 @@ import Testing
         #expect(await eventually(timeout: 30) { updates(second) == [["A"]] })
     }
 
-    /// S-V6: the token goes first on every connection, before the snapshot; whether hooks without it
-    /// are still taken goes once the app has worked it out, and again to each new helper.
-    @Test func theTokenIsShownFirstAndTheTokenlessAnswerFollows() async throws {
-        let server = server()
-        let link = DaemonLink(socketPath: server.path, daemonDir: nil, findPython: { nil }, reports: { [] },
-                              token: { "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" })
-        defer { link.shutdown(); server.stop() }
-        link.allowTokenless(false)
-        link.supervisorChanged(.listening(pid: 1))
-        #expect(await eventually { link.status == .connected })
-        func methods() -> [String] { server.received.compactMap { $0["method"] as? String } }
-        #expect(await eventually { methods().contains("hooks.allowTokenless") })
-        #expect(Array(methods().prefix(2)) == ["app.hello", "workspace.snapshot"])
-        let hello = try #require(server.received.first?["params"] as? [String: Any])
-        #expect(hello["token"] as? String == "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
-        let tokenless = server.received.first { $0["method"] as? String == "hooks.allowTokenless" }?["params"] as? [String: Any]
-        #expect(tokenless?["allowed"] as? Bool == false)
-    }
-
     @Test func aMismatchedHelperFillsNoDots() async throws {
         let server = FakeSocketServer(path: "/tmp/sf-link-\(UUID().uuidString.prefix(8)).sock")
         nonisolated(unsafe) let session = Self.session

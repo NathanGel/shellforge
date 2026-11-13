@@ -37,9 +37,8 @@ import Testing
         let home = try tempHome(); defer { try? FileManager.default.removeItem(at: home) }
         let url = GrokHooksFile.url(home: home)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let auth = try HookAuth.made(home: home)
-        let compact = try JSONSerialization.data(withJSONObject: GrokHooksFile.object(port: port, auth: auth))
-        #expect(compact != GrokHooksFile.contents(port: port, auth: auth))
+        let compact = try JSONSerialization.data(withJSONObject: GrokHooksFile.object(port: port))
+        #expect(compact != GrokHooksFile.contents(port: port))
         try compact.write(to: url)
 
         #expect(GrokHooksFile.state(home: home, port: port) == .current)
@@ -111,7 +110,7 @@ import Testing
         try GrokHooks(home: home, port: port, shimPath: shim).install()
 
         #expect(try FileManager.default.destinationOfSymbolicLink(atPath: link.path) == elsewhere.path)
-        #expect(try Data(contentsOf: elsewhere) == GrokHooksFile.contents(port: port, auth: HookAuth.made(home: home)))
+        #expect(try Data(contentsOf: elsewhere) == GrokHooksFile.contents(port: port))
         #expect(GrokHooksFile.state(home: home, port: port) == .current)
     }
 

@@ -18,13 +18,11 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import tempfile
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, get_args
 
-from shellforged import hook_token, protocol, service
-from shellforged.hook_token import HookToken
+from shellforged import protocol, service
 from shellforged.models import AgentKind, State
 from tests.conftest import wait_until
 from tests.fake_iterm import FakeIterm
@@ -215,24 +213,17 @@ async def emitted(make_service, monkeypatch) -> dict[str, str]:
         await iterm.disconnect()
         events[protocol.ITERM_DISCONNECTED] = await app.event(protocol.ITERM_DISCONNECTED, mark)
 
-        # Shellforge's own source: the app sends its tabs instead of the daemon reading iTerm2. Its
-        # helper has a token, as a running one does: the app shows it before anything else.
+        # Shellforge's own source: the app sends its tabs instead of the daemon reading iTerm2.
         app_svc = make_service(iterm=AppSessions())
-        token_folder = tempfile.TemporaryDirectory()
-        app_svc.rpc.token = HookToken(Path(token_folder.name))
         await app_svc.start()
         shellforge = App(*await asyncio.open_unix_connection(app_svc.rpc.path))
         try:
-            errors[protocol.UNAUTHORIZED] = await shellforge.call("sessions.update", {"sessions": []})
-            replies[protocol.APP_HELLO] = await shellforge.call(protocol.APP_HELLO, {"token": hook_token.read(Path(token_folder.name))})
-            replies["hooks.allowTokenless"] = await shellforge.call("hooks.allowTokenless", {"allowed": False})
             replies["sessions.update"] = await shellforge.call("sessions.update", {"sessions": [{
                 "sessionId": "SESSION-GUID", "windowId": "w1", "tabIndex": 0, "commandLine": "pi", "jobPid": 4242,
                 "title": "pi", "cwd": WORKTREE, "active": True, "taskId": TASK_ID, "projectId": PROJECT_ID,
                 "agentId": "gemini", "outputBytes": 1024, "attention": 2}]})
         finally:
             await shellforge.close()
-            token_folder.cleanup()
         methods = svc.rpc.methods
     finally:
         await app.close()

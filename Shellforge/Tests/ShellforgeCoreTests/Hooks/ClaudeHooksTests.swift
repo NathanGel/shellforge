@@ -277,8 +277,7 @@ import Testing
         let home = try temporaryHome(); defer { try? FileManager.default.removeItem(at: home) }
         let shim = "/Applications/Shellforge.app/shim.sh"
         let settings = home.appendingPathComponent(".claude/settings.json")
-        let (merged, _) = try ClaudeSettings.merge(nil, hookURL: "http://127.0.0.1:47831/hook/claude", shimPath: shim,
-                                                   auth: HookAuth.made(home: home))
+        let (merged, _) = try ClaudeSettings.merge(nil, hookURL: "http://127.0.0.1:47831/hook/claude", shimPath: shim)
         var obj = try JSONSerialization.jsonObject(with: merged) as! [String: Any]
         obj["model"] = "opus"
         let compact = try JSONSerialization.data(withJSONObject: obj)

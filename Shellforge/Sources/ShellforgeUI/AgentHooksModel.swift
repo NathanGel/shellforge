@@ -26,10 +26,6 @@ public final class AgentHooksModel: ObservableObject {
     /// Asks a development build's person before an install for this build; the app sets the modal one.
     public var prompter: Prompter = NullPrompter()
 
-    /// Told whether any of this build's hooks still post without the helper's token: after the
-    /// launch's upgrade and after each install. The app passes it on to the helper.
-    public var onTokenless: (@MainActor (Bool) -> Void)?
-
     /// A development build's sheet: it shows the installed app's hooks, and installs only for this
     /// build, once confirmed.
     public var isSharedWithInstalledApp: Bool { integrations.isSharedWithInstalledApp }
@@ -49,15 +45,6 @@ public final class AgentHooksModel: ObservableObject {
         if claudeStatusLineInstalled != statusLine { claudeStatusLineInstalled = statusLine }
     }
 
-    /// The launch's pass: rewrites the hooks an install made before they carried the helper's token,
-    /// exactly as they were otherwise (`HookIntegrations.upgradeTokenlessInstalls`), then probes.
-    public func upgradeTokenlessInstalls() async {
-        let integrations = self.integrations
-        let remain = await BackgroundWork.run { integrations.upgradeTokenlessInstalls() }
-        await refresh()
-        onTokenless?(remain)
-    }
-
     /// Installs or repairs one agent's hooks, then reads them again. A development build asks first,
     /// and installs for this build only on a yes.
     public func install(_ agent: String) async {
@@ -69,11 +56,10 @@ public final class AgentHooksModel: ObservableObject {
         }
         update(agent) { $0.working = true }
         let integrations = self.integrations
-        let outcome = await BackgroundWork.run { () -> (Result<Void, Error>, HookProbe, Bool, Bool) in
+        let outcome = await BackgroundWork.run { () -> (Result<Void, Error>, HookProbe, Bool) in
             let result = Result { try integrations.install(agent, forThisBuild: forThisBuild) }
-            return (result, integrations.probe(agent), integrations.claudeStatusLineIsInstalled(), integrations.postsWithoutToken())
+            return (result, integrations.probe(agent), integrations.claudeStatusLineIsInstalled())
         }
-        onTokenless?(outcome.3)
         update(agent) { $0.working = false; $0.probe = outcome.1 }
         if claudeStatusLineInstalled != outcome.2 { claudeStatusLineInstalled = outcome.2 }
         switch outcome.0 {

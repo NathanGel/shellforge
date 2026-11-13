@@ -13,20 +13,15 @@ enum CodexHookConfig {
     static let events = ["SessionStart", "UserPromptSubmit", "SubagentStart", "SubagentStop", "Stop", "PermissionRequest"]
     static let begin = "# >>> shellforge hooks >>>", end = "# <<< shellforge hooks <<<"
 
-    /// The canonical driver tables, with markers for humans reading the file. With `auth`, the MCP
-    /// server sends the helper's token from the entry (the install makes `config.toml` private) and
-    /// each command reads it from its file, so it never shows in curl's command line.
-    static func block(hookURL: String, auth: HookAuth? = nil) -> String {
+    /// The canonical driver tables, with markers for humans reading the file.
+    static func block(hookURL: String) -> String {
         var block = begin + "\n"
         // Codex starts command hooks in the session cwd. A merge workflow can remove that cwd
         // before Stop fires, making curl fail to spawn with ENOENT. Keep the final lifecycle event
         // on a persistent MCP connection instead; the other events remain lightweight async posts.
         block += "[mcp_servers.shellforge_hooks]\n"
         block += "url = \"\(hookURL)/mcp\"\nenabled = true\nrequired = false\nenabled_tools = [\"post_codex_hook\"]\n\n"
-        block += "[mcp_servers.shellforge_hooks.http_headers]\nX-Shellforge-Hook = \"1\"\n"
-        if let auth { block += "\(HookToken.header) = \"\(auth.token)\"\n" }
-        block += "\n"
-        let token = auth?.curlHeaderArgument.map { "-H \($0) " } ?? ""
+        block += "[mcp_servers.shellforge_hooks.http_headers]\nX-Shellforge-Hook = \"1\"\n\n"
         block += "[mcp_servers.shellforge_hooks.env_http_headers]\nX-Shellforge-iTerm-Session = \"ITERM_SESSION_ID\"\n\n"
         for event in events {
             block += "[[hooks.\(event)]]\nmatcher = \"\"\n[[hooks.\(event).hooks]]\n"
@@ -35,29 +30,15 @@ enum CodexHookConfig {
                 block += "input = { session_id = \"${session_id}\", cwd = \"${cwd}\", hook_event_name = \"${hook_event_name}\", model = \"${model}\", turn_id = \"${turn_id}\", stop_hook_active = \"${stop_hook_active}\", last_assistant_message = \"${last_assistant_message}\" }\n"
                 block += "timeout = 5\n\n"
             } else {
-                block += "type = \"command\"\ncommand = 'curl -s -m 2 -X POST -H \"Content-Type: application/json\" -H \"X-Shellforge-Hook: 1\" \(token)-H \"X-Shellforge-iTerm-Session: $ITERM_SESSION_ID\" -H \"Expect:\" --data-binary @- \(hookURL)/hook/codex'\ntimeout = 5\nasync = true\n\n"
+                block += "type = \"command\"\ncommand = 'curl -s -m 2 -X POST -H \"Content-Type: application/json\" -H \"X-Shellforge-Hook: 1\" -H \"X-Shellforge-iTerm-Session: $ITERM_SESSION_ID\" -H \"Expect:\" --data-binary @- \(hookURL)/hook/codex'\ntimeout = 5\nasync = true\n\n"
             }
         }
         return block + end
     }
 
     /// Exactly the tables a merge writes, so a merge would change nothing.
-    static func isInstalled(_ text: String, daemonPort: Int, auth: HookAuth? = nil) -> Bool {
-        merge(text, hookURL: "http://127.0.0.1:\(daemonPort)", auth: auth) == text
-    }
-
-    /// Whether one of Shellforge's tables posts to `port` without the helper's token: a command that
-    /// does not read its file, or the MCP server without its header.
-    static func hasTokenlessHook(_ text: String, port: Int) -> Bool {
-        let prefix = "http://127.0.0.1:\(port)/"
-        let owned = TOMLStatements.tables(text).filter(\.owned)
-        let server = owned.first { $0.path == ["mcp_servers", "shellforge_hooks"] }
-        let headers = owned.first { $0.path == ["mcp_servers", "shellforge_hooks", "http_headers"] }
-        if server?.values["url"]?.contains(prefix) == true, headers?.values[HookToken.header] == nil { return true }
-        return owned.contains { table in
-            guard let command = table.values["command"] else { return false }
-            return command.contains(prefix) && !command.contains(HookToken.fileName)
-        }
+    static func isInstalled(_ text: String, daemonPort: Int) -> Bool {
+        merge(text, hookURL: "http://127.0.0.1:\(daemonPort)") == text
     }
 
     /// Recognise owned tables even after Codex moves them away from the marker comments.
@@ -92,18 +73,17 @@ enum CodexHookConfig {
 
     /// Codex rewrites TOML tables independently of comments, so markers alone cannot delimit
     /// ownership. Reconcile the actual hook tables, including entries moved outside the markers.
-    static func merge(_ toml: String?, hookURL: String, auth: HookAuth? = nil) -> String {
+    static func merge(_ toml: String?, hookURL: String) -> String {
         let text = toml ?? ""
         let parsed = TOMLStatements.tables(text)
-        let block = Self.block(hookURL: hookURL, auth: auth)
+        let block = Self.block(hookURL: hookURL)
         let markers = parsed.flatMap(\.statements).filter(\.marker)
         // Keep a pristine managed block in place, including on a port change. Do not use this
         // shortcut when there are moved/duplicated hooks or foreign content inside the markers.
         if markers.count == 2, let range = blockRange(in: text),
            let oldURL = parsed.first(where: { $0.path == ["mcp_servers", "shellforge_hooks"] })?.values["url"],
            oldURL.hasSuffix("/mcp"),
-           // This build's block for any port, or one written before blocks carried the token.
-           [auth, nil].contains(where: { text[range] == Self.block(hookURL: String(oldURL.dropLast(4)), auth: $0) }) {
+           text[range] == Self.block(hookURL: String(oldURL.dropLast(4))) {
             let outside = String(text[..<range.lowerBound]) + String(text[range.upperBound...])
             if !TOMLStatements.tables(outside).contains(where: \.owned) {
                 var result = text; result.replaceSubrange(range, with: block); return result

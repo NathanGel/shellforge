@@ -1,7 +1,0 @@
-{
-  "error": {
-    "code": "unauthorized",
-    "message": "sessions.update is the app's: send app.hello first"
-  },
-  "id": 1
-}

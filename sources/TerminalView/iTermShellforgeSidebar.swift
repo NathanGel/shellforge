@@ -26,9 +26,6 @@ final class iTermShellforgeSidebar: NSObject {
                                     names: Dictionary(uniqueKeysWithValues: AgentPresets.all.map { ($0.id, $0.name) }))
         // A dev build asks before installing over the installed app's hooks.
         model.prompter = WarningPrompter()
-        // The helper takes hook posts without its token only while one of this build's hooks still
-        // posts without it (S-V11).
-        model.onTokenless = { link.allowTokenless($0) }
         return model
     }()
 
@@ -591,13 +588,7 @@ extension iTermShellforgeSidebar {
     static let link = DaemonLink(support: support, daemonDir: Bundle.main.resourceURL?.appendingPathComponent("daemon"),
                                  findPython: { PythonFinder.find(launcher: launcher).map(URL.init(fileURLWithPath:)) },
                                  reports: { allReports() },
-                                 environment: { launcher.environment.variables },
-                                 token: { [support] in
-                                     do { return try HookToken.readOrCreate(in: support) } catch {
-                                         DLog("Shellforge: couldn’t read or make the helper’s token: \(error)")
-                                         return nil
-                                     }
-                                 })
+                                 environment: { launcher.environment.variables })
     private static var tick: Timer?
     private static var rcCheck: Timer?
     /// The login shell's rc files, as last seen: a change reads the environment again (PRD E9).
@@ -665,9 +656,8 @@ extension iTermShellforgeSidebar {
         // A launch after a crash with lid sleep left off turns it back on first, then reads setup.
         Task { await backpack.launch() }
         // The footer says "Usage disconnected" from this check, so it runs at launch, not only when
-        // the Agent hooks sheet is opened. First, hooks an install wrote before they carried the
-        // helper's token are rewritten with it, exactly as they were otherwise.
-        Task { await hooks.upgradeTokenlessInstalls() }
+        // the Agent hooks sheet is opened.
+        Task { await hooks.refresh() }
         // jobPid and commandLine change with no notification; the tick reads them, and only a
         // changed list is sent. In the common modes, so it keeps firing while a menu is open or a
         // window is dragged or resized.

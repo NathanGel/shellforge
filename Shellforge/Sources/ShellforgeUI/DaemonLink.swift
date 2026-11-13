@@ -19,11 +19,6 @@ public final class DaemonLink: ObservableObject {
 
     private let support: ShellforgeSupport
     private let socketPath: String
-    /// The helper's token, shown on each connection (`DaemonConnection`).
-    private let token: (@Sendable () -> String?)?
-    /// Whether the helper should still take hook posts without the token, as the app last worked it
-    /// out (`allowTokenless`); nil until it has, and the helper takes them meanwhile.
-    private var tokenlessAllowed: Bool?
     private let daemonDir: URL?
     private let findPython: @Sendable () -> URL?
     private let reports: @MainActor () -> [SessionReport]
@@ -41,14 +36,11 @@ public final class DaemonLink: ObservableObject {
     private weak var refused: DaemonClient?
 
     /// `support` is the helper's folder, socket and port: the app's own (`ShellforgePaths.current`)
-    /// unless given; `socketPath`, a test's socket in place of the folder's. `token` reads the
-    /// helper's token (`HookToken.readOrCreate`), which the app passes; a test's fake helper needs none.
+    /// unless given; `socketPath`, a test's socket in place of the folder's.
     public init(support: ShellforgeSupport = ShellforgePaths.current, socketPath: String? = nil, daemonDir: URL?,
                 findPython: @escaping @Sendable () -> URL?, reports: @escaping @MainActor () -> [SessionReport],
-                environment: @escaping @Sendable () -> [String: String] = { [:] },
-                token: (@Sendable () -> String?)? = nil) {
+                environment: @escaping @Sendable () -> [String: String] = { [:] }) {
         self.support = support
-        self.token = token
         self.socketPath = socketPath ?? support.socketPath
         self.daemonDir = daemonDir
         self.findPython = findPython
@@ -221,7 +213,7 @@ public final class DaemonLink: ObservableObject {
         switch state {
         case .listening, .adopted:
             if connection == nil {
-                connection = DaemonConnection(socketPath: socketPath, token: token,
+                connection = DaemonConnection(socketPath: socketPath,
                     onClient: { [weak self] in self?.attached($0) },
                     onStatus: { [weak self] in self?.connectionSaid($0) },
                     onEvent: { [weak self] in self?.store.apply($0) })
@@ -245,23 +237,7 @@ public final class DaemonLink: ObservableObject {
     private func attached(_ client: DaemonClient?) {
         self.client = client
         lastSent = nil
-        if client == nil { store = SessionStore() } else {
-            reportsMayHaveChanged()
-            sendTokenless()
-        }
-    }
-
-    /// Tells the helper whether hook posts without the token are still taken: `allowed` while one of
-    /// this build's installs was written before hooks carried it. Said again to each new helper.
-    public func allowTokenless(_ allowed: Bool) {
-        tokenlessAllowed = allowed
-        sendTokenless()
-    }
-
-    private func sendTokenless() {
-        guard let client, let allowed = tokenlessAllowed else { return }
-        // A failure is logged by the client; the next connection says it again.
-        Task { try? await client.allowTokenless(allowed) }
+        if client == nil { store = SessionStore() } else { reportsMayHaveChanged() }
     }
 }
 
