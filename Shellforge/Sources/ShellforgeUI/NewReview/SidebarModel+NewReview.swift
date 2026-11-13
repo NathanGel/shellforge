@@ -12,7 +12,7 @@ extension SidebarModel {
         let launcher = self.launcher, path = project.path
         let readGitLab = gitLabSettings, readGitHub = gitHubSettings
         let read = await BackgroundWork.run { () -> (RemoteInfo, GitLabConfig?, GitHubConfig?) in
-            let url = try? launcher.run("git", ["-C", path, "remote", "get-url", "origin"])
+            let url = try? launcher.run("git", AutomaticGitRead.arguments(["remote", "get-url", "origin"], in: path))
             let remote = ProviderDetector.detect(remoteUrl: url?.status == 0 ? url?.stdout : nil, repoPath: path)
             return (remote, readGitLab(), readGitHub())
         }
@@ -68,10 +68,17 @@ extension SidebarModel {
                 await BackgroundWork.run { TaskWorktrees.undo(worktree: path, branch: nil, project: project, launcher: launcher) }
                 throw CreationCancelled()
             }
-            try document.update { workspace in
-                workspace.addTask(made.0)
-                workspace.remember(draft, projectId: projectId)
-                if let i = workspace.projects.firstIndex(where: { $0.id == projectId }) { workspace.projects[i].collapsed = false }
+            do {
+                try document.update { workspace in
+                    workspace.addTask(made.0)
+                    workspace.remember(draft, projectId: projectId)
+                    if let i = workspace.projects.firstIndex(where: { $0.id == projectId }) { workspace.projects[i].collapsed = false }
+                }
+            } catch {
+                // Not saved: the worktree goes, as on a cancel, and the branch stays.
+                let path = made.0.worktreePath
+                await BackgroundWork.run { TaskWorktrees.undo(worktree: path, branch: nil, project: project, launcher: launcher) }
+                throw error
             }
             return made
         }

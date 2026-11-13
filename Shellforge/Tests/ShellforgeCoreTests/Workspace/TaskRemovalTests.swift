@@ -67,8 +67,11 @@ import Testing
     @Test func aRemovalGitGaveUpOnHalfwayIsFinishedByTheNext() throws {
         let repo = try GitRepoFixture()
         let task = try task(repo)
+        let dotGit = try String(contentsOfFile: task.worktreePath + "/.git", encoding: .utf8)
         try repo.git("worktree", "remove", task.worktreePath)
+        // What git left: files it could not delete, and the `.git` file naming its gitdir, now gone.
         try FileManager.default.createDirectory(atPath: task.worktreePath + "/app/node_modules/.cache", withIntermediateDirectories: true)
+        try dotGit.write(toFile: task.worktreePath + "/.git", atomically: true, encoding: .utf8)
 
         let result = try TaskRemoval.remove(task: task, project: repo.project, deleteBranch: true, force: false, sharedWithAnotherTask: false, launcher: repo.launcher)
 
@@ -397,6 +400,56 @@ import Testing
 
         _ = try TaskRemoval.remove(task: stray, project: repo.project, deleteBranch: false, force: true, sharedWithAnotherTask: false, launcher: repo.launcher)
         #expect(FileManager.default.fileExists(atPath: folder))
+    }
+
+    /// A folder in `.worktrees/` git does not list is deleted only when it shows it was a worktree
+    /// whose removal git gave up on: a `.git` file naming a gitdir that is gone. git not listing
+    /// it is no such proof.
+    @Test func aLeftoverNeedsEvidenceBeforeDeletion() throws {
+        let repo = try GitRepoFixture()
+        let task = try task(repo)
+        let dotGit = try String(contentsOfFile: task.worktreePath + "/.git", encoding: .utf8)
+        try repo.git("worktree", "remove", task.worktreePath)
+        let file = task.worktreePath + "/notes.txt"
+        try FileManager.default.createDirectory(atPath: task.worktreePath, withIntermediateDirectories: true)
+        try "only copy".write(toFile: file, atomically: true, encoding: .utf8)
+
+        // No `.git` at all: kept, and the removal says so.
+        #expect(throws: GitFailure.self) {
+            _ = try TaskRemoval.remove(task: task, project: repo.project, deleteBranch: false, force: true, sharedWithAnotherTask: false, launcher: repo.launcher)
+        }
+        #expect(FileManager.default.fileExists(atPath: file))
+
+        // A `.git` naming a gitdir that exists: not an abandoned worktree either.
+        try "gitdir: \(repo.path)/.git\n".write(toFile: task.worktreePath + "/.git", atomically: true, encoding: .utf8)
+        #expect(throws: GitFailure.self) {
+            _ = try TaskRemoval.remove(task: task, project: repo.project, deleteBranch: false, force: true, sharedWithAnotherTask: false, launcher: repo.launcher)
+        }
+        #expect(FileManager.default.fileExists(atPath: file))
+
+        // Its own `.git` file, naming the gitdir git removed: the leftover goes.
+        try dotGit.write(toFile: task.worktreePath + "/.git", atomically: true, encoding: .utf8)
+        _ = try TaskRemoval.remove(task: task, project: repo.project, deleteBranch: false, force: true, sharedWithAnotherTask: false, launcher: repo.launcher)
+        #expect(!FileManager.default.fileExists(atPath: task.worktreePath))
+    }
+
+    /// git prints a newline in a path as it is in `worktree list --porcelain`: a project folder
+    /// with one in its name must still find its task's worktree, so its unsaved work is asked
+    /// about and never deleted as a leftover.
+    @Test func aNewlineInTheProjectPathStillFindsTheWorktree() throws {
+        let repo = try GitRepoFixture(folder: "client\nportal")
+        let task = try task(repo)
+        try "draft".write(toFile: task.worktreePath + "/notes.txt", atomically: true, encoding: .utf8)
+
+        #expect(try TaskRemoval.registered(task.worktreePath, in: repo.path, launcher: repo.launcher) != nil)
+        #expect(try GitRepository(repo.path, launcher: repo.launcher).worktrees()
+            .contains { ExistingWorktrees.resolved($0.path) == ExistingWorktrees.resolved(task.worktreePath) && $0.branch == task.branch })
+        #expect(try TaskRemoval.hasUnsavedWork(task: task, project: repo.project, launcher: repo.launcher))
+        // Without force, git refuses the dirty worktree, and nothing is deleted.
+        #expect(throws: (any Error).self) {
+            _ = try TaskRemoval.remove(task: task, project: repo.project, deleteBranch: false, force: false, sharedWithAnotherTask: false, launcher: repo.launcher)
+        }
+        #expect(try String(contentsOfFile: task.worktreePath + "/notes.txt", encoding: .utf8) == "draft")
     }
 
     /// Unsaved work is what `git worktree remove` refuses without `--force` — and never asked of a

@@ -33,7 +33,9 @@ public enum ExistingWorktrees {
     /// Blocks on git: call it off the main actor.
     public static func list(project: Project, taken: [String], launcher: CommandLauncher) throws -> [ExistingWorktree] {
         let excluded = Set((taken + [project.path]).map(resolved))
-        let candidates = try GitRepository(project.path, launcher: launcher).worktrees().filter { worktree in
+        // A list the sheet reads on its own: `AutomaticGitRead`.
+        let repository = GitRepository(project.path, git: LauncherGit(launcher: launcher, automatic: true))
+        let candidates = try repository.worktrees().filter { worktree in
             worktree.branch != nil && !worktree.prunable && !excluded.contains(resolved(worktree.path))
                 && FileManager.default.fileExists(atPath: worktree.path)
         }
@@ -80,7 +82,7 @@ public enum ExistingWorktrees {
     }
 
     private static func lastCommit(in path: String, launcher: CommandLauncher) -> Date? {
-        guard let out = try? launcher.run("git", ["-C", path, "log", "-1", "--format=%ct"]), out.status == 0,
+        guard let out = try? launcher.run("git", AutomaticGitRead.arguments(["log", "-1", "--format=%ct"], in: path)), out.status == 0,
               let seconds = TimeInterval(out.stdout.trimmingCharacters(in: .whitespacesAndNewlines)) else { return nil }
         return Date(timeIntervalSince1970: seconds)
     }

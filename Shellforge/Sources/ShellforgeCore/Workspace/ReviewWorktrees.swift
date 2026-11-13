@@ -8,7 +8,6 @@ public enum ReviewRefusal: Error, Equatable, LocalizedError {
     /// A local branch with commits origin lacks while origin has commits it lacks.
     case branchDiverged(String)
     case branchNotOnOrigin(String)
-    case symlinkRefused(String)
 
     public var errorDescription: String? {
         switch self {
@@ -18,7 +17,6 @@ public enum ReviewRefusal: Error, Equatable, LocalizedError {
             "Your local “\(branch)” and origin’s have diverged. Reconcile them (pull or reset), then review it."
         case .branchNotOnOrigin(let branch):
             "“\(branch)” is not on origin, so a review couldn’t push to it. A fork’s branch is not supported."
-        case .symlinkRefused(let path): "Refusing to create a worktree through the symlink at \(path)."
         }
     }
 }
@@ -118,13 +116,12 @@ extension GitRepository {
         return worktreePath
     }
 
-    /// Where a new worktree goes, made ready for `git worktree add`: never through a symlink, with
-    /// `.worktrees/` in the repository's exclude file so it does not show as untracked.
+    /// Where a new worktree goes, made ready for `git worktree add`: never through a symlink
+    /// (`TaskWorktrees.refuseSymlinks`), with `.worktrees/` in the repository's exclude file so it
+    /// does not show as untracked.
     private func prepareWorktree(slug: String) throws -> String {
         let dir = path + "/.worktrees", worktreePath = dir + "/" + slug
-        for p in [dir, worktreePath] where (try? FileManager.default.destinationOfSymbolicLink(atPath: p)) != nil {
-            throw ReviewRefusal.symlinkRefused(p)
-        }
+        try TaskWorktrees.refuseSymlinks(slug: slug, project: Project(name: "", path: path))
         try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         let gitDir = try run(["rev-parse", "--git-common-dir"])
         try TaskWorktrees.exclude(".worktrees/", inGitDir: gitDir.hasPrefix("/") ? gitDir : path + "/" + gitDir)
@@ -202,8 +199,9 @@ extension GitRepository {
 
 /// A review's task: AiTerm's `TaskCreator.createReview`.
 public enum ReviewWorktrees {
-    /// `cancellation` stops it as it stops a task's create, taking back the half-made worktree; the
-    /// branch stays, as a review's branch may have been there before. `progress` hears its step.
+    /// `cancellation` stops it as it stops a task's create, taking back the half-made worktree; so
+    /// does any other failure — a checkout hook that failed, a timeout — or a retry would be refused
+    /// over a locked worktree. The branch stays, as a review's branch may have been there before. `progress` hears its step.
     /// `modelRequired` is false for an agent that takes no model (`AgentDefinition.takesNoModel`).
     public static func create(draft: ReviewDraft, in project: Project, launcher: CommandLauncher,
                               cancellation: CreationCancellation? = nil,
@@ -217,10 +215,10 @@ public enum ReviewWorktrees {
         do {
             return try create(draft: draft, in: project, slug: slug,
                               git: LauncherGit(launcher: launcher, cancellation: cancellation), launcher: launcher, modelRequired: modelRequired)
-        } catch let cancelled as CreationCancelled {
+        } catch {
             // The worktree is added locked: a double force takes it, and the branch stays.
             TaskWorktrees.undo(worktree: pathWasThere ? nil : path, branch: nil, project: project, launcher: launcher)
-            throw cancelled
+            throw error
         }
     }
 

@@ -8,9 +8,10 @@ struct GitRepoFixture {
     let path: String
     let launcher: CommandLauncher
 
-    init(branch: String = "main") throws {
+    /// `folder`: the repository's folder name, which may hold any character a path can.
+    init(branch: String = "main", folder: String = "repo") throws {
         let root = TestScratch.root.appendingPathComponent("shellforge-repo-\(UUID().uuidString)").path
-        path = "\(root)/repo"
+        path = "\(root)/\(folder)"
         try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
         let env = ["PATH": "/usr/bin:/bin", "HOME": root, "GIT_CONFIG_NOSYSTEM": "1",
                    "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"]

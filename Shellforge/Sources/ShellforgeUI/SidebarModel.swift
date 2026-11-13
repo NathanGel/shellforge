@@ -508,19 +508,29 @@ public final class SidebarModel: ObservableObject {
                 }
                 throw CreationCancelled()
             }
-            try document.update { workspace in
-                // Another window may have made a task of the same worktree while git ran.
-                if draft.useExisting, workspace.tasks.contains(where: {
-                    ExistingWorktrees.resolved($0.worktreePath) == ExistingWorktrees.resolved(made.0.worktreePath)
-                }) {
-                    throw ExistingWorktrees.Refusal.taken(made.0.branch)
+            do {
+                try document.update { workspace in
+                    // Another window may have made a task of the same worktree while git ran.
+                    if draft.useExisting, workspace.tasks.contains(where: {
+                        ExistingWorktrees.resolved($0.worktreePath) == ExistingWorktrees.resolved(made.0.worktreePath)
+                    }) {
+                        throw ExistingWorktrees.Refusal.taken(made.0.branch)
+                    }
+                    workspace.addTask(made.0)
+                    workspace.remember(draft, projectId: projectId)
+                    // Only a box the sheet showed is a choice to remember.
+                    if draft.paneHost != nil { workspace.lastOpenSSHByProject[projectId] = draft.openSSH }
+                    // A task made in a folded project is shown: the project unfolds for it.
+                    if let i = workspace.projects.firstIndex(where: { $0.id == projectId }) { workspace.projects[i].collapsed = false }
                 }
-                workspace.addTask(made.0)
-                workspace.remember(draft, projectId: projectId)
-                // Only a box the sheet showed is a choice to remember.
-                if draft.paneHost != nil { workspace.lastOpenSSHByProject[projectId] = draft.openSSH }
-                // A task made in a folded project is shown: the project unfolds for it.
-                if let i = workspace.projects.firstIndex(where: { $0.id == projectId }) { workspace.projects[i].collapsed = false }
+            } catch {
+                // Not saved: no task names the worktree this create made, so it goes, with its branch,
+                // or a retry with the same name would be refused over them.
+                if draft.worktree == .new {
+                    let (path, branch) = (made.0.worktreePath, made.0.branch)
+                    await BackgroundWork.run { TaskWorktrees.undo(worktree: path, branch: branch, project: project, launcher: launcher) }
+                }
+                throw error
             }
             return made
         }

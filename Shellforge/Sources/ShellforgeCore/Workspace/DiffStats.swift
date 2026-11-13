@@ -75,12 +75,16 @@ public final class DiffStats: Sendable {
         self.git = git; self.now = now; self.ttl = ttl; self.backgroundTTL = max(ttl, backgroundTTL); self.cap = untrackedCap
     }
 
+    /// The app's: git through `launcher`, every call an `AutomaticGitRead` — a badge is never
+    /// something the person asked git for.
+    public convenience init(launcher: CommandLauncher) { self.init(git: LauncherGit(launcher: launcher, automatic: true)) }
+
     private static let sharedOne = Locked<DiffStats?>(nil)
     /// The one every window asks: an answer one window paid for is every window's.
     public static func shared(launcher: CommandLauncher) -> DiffStats {
         sharedOne.withLock { one in
             if let one { return one }
-            let made = DiffStats(git: LauncherGit(launcher: launcher))
+            let made = DiffStats(launcher: launcher)
             one = made
             return made
         }

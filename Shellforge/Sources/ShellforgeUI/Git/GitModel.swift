@@ -45,7 +45,8 @@ public enum GitAction: Equatable, Sendable {
     case discard(GitChange)
     /// Commits with the repository's message draft, which is cleared once the commit is made.
     /// `expectsStaged`: the panel showed staged files, so only they are to be committed. Should
-    /// none be staged by the time it runs, nothing is committed.
+    /// none be staged by the time it runs, nothing is committed; nor when it showed none and some
+    /// were staged since, as committing only those is not what the panel offered.
     case commit(expectsStaged: Bool)
     case push
     case pull
@@ -94,6 +95,8 @@ public final class GitModel: ObservableObject {
     private let read: Read
     private let act: Act
     private var repos: [GitRepoID: Repo] = [:]
+    /// Repositories whose action problem is a `report`'s, which the next open clears.
+    private var reported: Set<GitRepoID> = []
     private var projectOrder: [UUID] = []
     private var taskOrder: [UUID] = []
     /// A task's folder in the main repository's `.git/worktrees/`, where its index lives.
@@ -368,7 +371,7 @@ public final class GitModel: ObservableObject {
     private nonisolated static func commits(in path: String, notOn base: String, launcher: CommandLauncher) -> Int? {
         guard !base.isEmpty, !base.hasPrefix("-") else { return nil }
         for ref in ["refs/heads/\(base)", "refs/remotes/origin/\(base)"] {
-            guard let out = try? launcher.run("git", ["-C", path, "rev-list", "--count", "\(ref)..HEAD"],
+            guard let out = try? launcher.run("git", AutomaticGitRead.arguments(["rev-list", "--count", "\(ref)..HEAD"], in: path),
                                               extra: ["LC_ALL": "C", "GIT_OPTIONAL_LOCKS": "0"], timeout: Self.countTimeout),
                   !out.timedOut, out.status == 0 else { continue }
             return Int(out.stdout.trimmingCharacters(in: .whitespacesAndNewlines))
@@ -422,6 +425,7 @@ public final class GitModel: ObservableObject {
         guard epochs[id] == epoch, let repo = repos[id] else { return }
         repos[id]?.busy = true
         repos[id]?.actionProblem = nil
+        reported.remove(id)
         repos[id]?.readProblem = nil
         publish()
         let problem = await work(repo)
@@ -436,10 +440,19 @@ public final class GitModel: ObservableObject {
     }
 
     /// Shows `problem` on the repository's section, as an action's: a diff or file the panel
-    /// could not open. Cleared by the repository's next action.
+    /// could not open. Cleared by the repository's next action, or the next diff or file it opens.
     public func report(_ problem: String, in id: GitRepoID) {
         guard repos[id] != nil, repos[id]?.actionProblem != problem else { return }
         repos[id]?.actionProblem = problem
+        reported.insert(id)
+        publish()
+    }
+
+    /// Clears what `report` showed, once a diff or file of the repository opens: an action's own
+    /// problem stays.
+    public func clearReport(in id: GitRepoID) {
+        guard reported.remove(id) != nil, repos[id] != nil else { return }
+        repos[id]?.actionProblem = nil
         publish()
     }
 
@@ -480,9 +493,9 @@ public final class GitModel: ObservableObject {
             try GitActions.discard(current, in: repo, launcher: launcher, trash: trash)
         case .commit(let expectsStaged):
             let status = try GitStatus.read(repo, launcher: launcher)
-            // Unstaged elsewhere since the panel was drawn: committing everything is not what
-            // the person saw.
-            if expectsStaged, status.staged.isEmpty {
+            // Unstaged elsewhere since the panel was drawn, committing everything is not what the
+            // person saw; staged elsewhere (an agent's `git add`), committing only that isn't either.
+            if expectsStaged == status.staged.isEmpty {
                 throw GitFailure(message: "The staged files changed. Check them and commit again.")
             }
             try GitActions.commit(message: message, in: repo, status: status, launcher: launcher)

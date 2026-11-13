@@ -47,17 +47,23 @@ public enum ProjectFolderSwitch {
         } else {
             switchArgs = ["switch", "-q", branch]
         }
-        var stashed = false
+        // The stash this switch made, by its commit: `stash push` exits 0 having saved nothing when
+        // the only change is one it cannot stash (a dirty submodule), and `stash@{0}` is then an
+        // older, unrelated stash.
+        var stashed: String?
         if let stash, try !repo.run(["status", "--porcelain"]).isEmpty {
+            let before = try stashTip(repo)
             try repo.run(["stash", "push", "--include-untracked", "-m", stash])
-            stashed = true
+            let after = try stashTip(repo)
+            if after != before { stashed = after }
         }
         do {
             try repo.run(switchArgs)
             return .switched
         } catch {
-            if stashed {
-                _ = try? repo.run(["stash", "pop", "-q"])
+            // Asked to stash, git's own reason is the answer, whether or not anything was stashed.
+            if stash != nil {
+                if let stashed { restore(stashed, in: repo) }
                 throw error
             }
             // git refused: changes in the way, or a reason of its own. A name on several remotes
@@ -65,6 +71,23 @@ public enum ProjectFolderSwitch {
             if !create, try isOnSeveralRemotesOnly(branch, in: repo) { throw error }
             if try !repo.run(["status", "--porcelain"]).isEmpty { return .blockedByChanges }
             throw error
+        }
+    }
+
+    /// The commit `refs/stash` names; nil when there is no stash.
+    private static func stashTip(_ repo: GitRepository) throws -> String? {
+        try repo.ask(["rev-parse", "-q", "--verify", "refs/stash"], none: [1])
+    }
+
+    /// Puts back the stash whose commit is `sha`, and only it: popped by its own `stash@{n}`, which
+    /// is `stash@{0}` unless another stash was pushed since; applied and left listed when it is no
+    /// longer in the list, so nothing else is ever dropped.
+    private static func restore(_ sha: String, in repo: GitRepository) {
+        let listed = (try? repo.run(["stash", "list", "--format=%H"]))?.split(separator: "\n").map(String.init) ?? []
+        if let index = listed.firstIndex(of: sha) {
+            _ = try? repo.run(["stash", "pop", "-q", "stash@{\(index)}"])
+        } else {
+            _ = try? repo.run(["stash", "apply", "-q", sha])
         }
     }
 

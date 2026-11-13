@@ -53,7 +53,9 @@ public enum TaskRemoval {
         guard ownsWorktree(of: task, in: project) else { return false }
         guard FileManager.default.fileExists(atPath: task.worktreePath),
               try registered(task.worktreePath, in: project.path, launcher: launcher) != nil else { return false }
-        return try !git(["status", "--porcelain", "--ignore-submodules=none"], in: task.worktreePath, launcher).isEmpty
+        // Asked before anything is removed, by Shellforge rather than the person: the worktree's
+        // fsmonitor and hooks run nothing.
+        return try !git(AutomaticGitRead.options + ["status", "--porcelain", "--ignore-submodules=none"], in: task.worktreePath, launcher).isEmpty
     }
 
     /// The worktree — or what a removal git gave up on left of it, or git's record of a folder
@@ -172,6 +174,14 @@ public enum TaskRemoval {
                                  launcher: launcher, deleteFolder: deleteFolder)
         } else {
             // A removal git gave up on halfway, retried: there is nothing left to unlock or refuse.
+            // git not listing the folder is no proof of that — a listing misread, or a folder that
+            // was never a worktree — so it goes only when it shows it was one.
+            guard isAbandonedWorktree(worktreePath) else {
+                removalLog.notice("worktree \(worktreePath, privacy: .public) not listed by git and not an abandoned worktree: kept")
+                ErrorLogging.record("removal", "\(worktreePath) kept: git doesn’t list it and nothing shows a removal left it")
+                throw GitFailure(command: "remove \(worktreePath)",
+                                 message: "\(worktreePath) isn’t a worktree git knows, so it was left in place. Delete it yourself if you don’t need it.")
+            }
             try deleteLeftover(worktreePath, in: projectPath, launcher: launcher, deleteFolder: deleteFolder)
         }
         // The checkout is gone either way.
@@ -199,6 +209,24 @@ public enum TaskRemoval {
             }
             throw stillInUse(worktreePath, after: error, launcher: launcher) ?? error
         }
+    }
+
+    /// Positive evidence that `folder` is what a removal git gave up on left of a worktree: its
+    /// `.git` is a file (not a link, not a repository) naming a gitdir that no longer exists. git
+    /// writes that file into every worktree it adds, and deletes the gitdir when it removes one.
+    static func isAbandonedWorktree(_ folder: String) -> Bool {
+        let dotGit = folder + "/.git"
+        var isFolder: ObjCBool = false
+        guard (try? FileManager.default.destinationOfSymbolicLink(atPath: dotGit)) == nil,
+              FileManager.default.fileExists(atPath: dotGit, isDirectory: &isFolder), !isFolder.boolValue,
+              let text = try? String(contentsOfFile: dotGit, encoding: .utf8), text.hasPrefix("gitdir:") else { return false }
+        // "gitdir: <path>\n": only the one line end goes, as a newline may be part of the path.
+        var named = Substring(text.dropFirst("gitdir:".count))
+        while named.first == " " { named = named.dropFirst() }
+        if named.last == "\n" { named = named.dropLast() }
+        guard !named.isEmpty else { return false }
+        let gitdir = named.hasPrefix("/") ? String(named) : folder + "/" + named
+        return !FileManager.default.fileExists(atPath: gitdir)
     }
 
     /// What a half-finished removal left of a worktree git no longer knows. Only ever a folder
@@ -250,22 +278,14 @@ public enum TaskRemoval {
 
     /// git's record of the worktree at `worktreePath`, with the reason it is locked for, if it is;
     /// nil when git does not know it.
+    /// Read with `-z`, so a newline anywhere in the project's path is not taken for the end of one.
     static func registered(_ worktreePath: String, in projectPath: String, launcher: CommandLauncher) throws -> Registered? {
         let wanted = resolved(worktreePath)
-        var current: String?, found: Registered?
-        for line in try git(["worktree", "list", "--porcelain"], in: projectPath, launcher).split(separator: "\n", omittingEmptySubsequences: false) {
-            if line.hasPrefix("worktree ") {
-                current = resolved(String(line.dropFirst("worktree ".count)))
-                if current == wanted { found = Registered(lockReason: nil) }
-            } else if current == wanted, line == "locked" {
-                found?.lockReason = ""
-            } else if current == wanted, line.hasPrefix("locked ") {
-                found?.lockReason = String(line.dropFirst("locked ".count))
-            } else if current == wanted, line.hasPrefix("branch ") {
-                found?.branch = String(line.dropFirst("branch ".count))
-            }
+        let listing = try git(["worktree", "list", "--porcelain", "-z"], in: projectPath, launcher)
+        guard let worktree = GitRepository.worktrees(fromPorcelainZ: listing).first(where: { resolved($0.path) == wanted }) else {
+            return nil
         }
-        return found
+        return Registered(lockReason: worktree.lockReason, branch: worktree.branch.map { "refs/heads/" + $0 })
     }
 
     /// Whether `branch`'s commits are all on `base`, locally or at origin.

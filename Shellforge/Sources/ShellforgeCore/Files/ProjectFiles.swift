@@ -90,7 +90,7 @@ public enum ProjectFiles {
     private static func git(_ args: [String], in projectPath: String, launcher: CommandLauncher) throws -> [String] {
         let out: ChildOutput
         do {
-            out = try launcher.run("git", ["-C", projectPath] + args + ["-z"], extra: ["LC_ALL": "C"], timeout: gitTimeout)
+            out = try launcher.run("git", AutomaticGitRead.arguments(args + ["-z"], in: projectPath), extra: ["LC_ALL": "C"], timeout: gitTimeout)
         } catch {
             throw GitListingProblem.notARepository
         }

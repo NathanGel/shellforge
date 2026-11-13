@@ -16,7 +16,7 @@ public enum Repository {
     public static func detectDefaultBranch(of path: String, launcher: CommandLauncher) throws -> String {
         let prefix = "refs/remotes/origin/"
         let usual = ["refs/remotes/origin/main", "refs/remotes/origin/master", "refs/heads/main", "refs/heads/master"]
-        let args = ["-C", path, "for-each-ref", "--format=%(refname) %(symref)", prefix + "HEAD"] + usual
+        let args = AutomaticGitRead.arguments(["for-each-ref", "--format=%(refname) %(symref)", prefix + "HEAD"] + usual, in: path)
         let out = try launcher.run("git", args)
         guard out.status == 0 else { throw GitFailure(command: "git for-each-ref", message: out.stderr) }
         var existing = Set<String>(), originHead: String?
@@ -31,8 +31,8 @@ public enum Repository {
 
     /// The default branch first, then local branches newest first, then branches only on origin.
     public static func branches(of path: String, launcher: CommandLauncher) -> [String] {
-        let listing = (try? launcher.run("git", ["-C", path, "for-each-ref", "--format=%(refname)", "--sort=-committerdate",
-                                                "refs/heads", "refs/remotes/origin"]))
+        let listing = (try? launcher.run("git", AutomaticGitRead.arguments(["for-each-ref", "--format=%(refname)", "--sort=-committerdate",
+                                                                          "refs/heads", "refs/remotes/origin"], in: path)))
             .flatMap { $0.status == 0 ? $0.stdout : nil }?
             .split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } ?? []
         let locals = listing.compactMap { $0.hasPrefix("refs/heads/") ? String($0.dropFirst("refs/heads/".count)) : nil }

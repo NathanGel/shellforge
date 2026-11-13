@@ -168,11 +168,12 @@ public enum GitActions {
     }
 
     /// Local branches, then remote ones; `origin/HEAD` and remote copies of a local name are left out.
+    /// A read Shellforge makes on its own (`AutomaticGitRead`): the repository's config runs nothing.
     public static func branches(in repo: String, launcher: CommandLauncher) throws -> [GitBranch] {
         let out = try run(["for-each-ref", "--format=%(refname:short)", "refs/heads", "refs/remotes"],
-                          in: repo, action: "branches", launcher: launcher)
+                          in: repo, action: "branches", launcher: launcher, automatic: true)
         let all = out.stdout.split(separator: "\n").map(String.init)
-        let remotes = Set(try run(["remote"], in: repo, action: "branches", launcher: launcher)
+        let remotes = Set(try run(["remote"], in: repo, action: "branches", launcher: launcher, automatic: true)
             .stdout.split(separator: "\n").map(String.init))
         func remote(_ name: String) -> String? {
             guard let slash = name.firstIndex(of: "/"), remotes.contains(String(name[..<slash])) else { return nil }
@@ -244,15 +245,17 @@ public enum GitActions {
         try run(args + ["--pathspec-from-file=\(file.path)", "--pathspec-file-nul"], in: repo, action: action, launcher: launcher)
     }
 
+    /// `automatic`: a read Shellforge makes on its own, with `AutomaticGitRead`'s options; the
+    /// person's own actions run git as it is configured, hooks included.
     @discardableResult
     private static func run(_ args: [String], in repo: String, action: String, launcher: CommandLauncher,
                             remote: Bool = false, timeout: TimeInterval? = nil,
-                            allowFailure: Bool = false) throws -> ChildOutput {
+                            allowFailure: Bool = false, automatic: Bool = false) throws -> ChildOutput {
         var extra = ["LC_ALL": "C"]
         if remote { extra["GIT_TERMINAL_PROMPT"] = "0" }
         let out: ChildOutput
         do {
-            out = try launcher.run("git", ["-C", repo] + args, extra: extra, timeout: timeout ?? (remote ? remoteTimeout : localTimeout))
+            out = try launcher.run("git", automatic ? AutomaticGitRead.arguments(args, in: repo) : ["-C", repo] + args, extra: extra, timeout: timeout ?? (remote ? remoteTimeout : localTimeout))
         } catch {
             logFailure(args, error.localizedDescription)
             throw GitFailure(message: "git: \(error.localizedDescription)")

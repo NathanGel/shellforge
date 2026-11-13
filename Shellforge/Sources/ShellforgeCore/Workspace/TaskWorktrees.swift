@@ -47,6 +47,7 @@ public enum TaskWorktrees {
             n += 1
             name = "\(stem)-\(n)"
         }
+        try refuseSymlinks(slug: name, project: project)
         try exclude(".worktrees/", gitDir: git(["rev-parse", "--git-common-dir"]), project: project)
         _ = try git(["worktree", "add", "-q", "-b", name, "\(root)/\(name)", base])
         return TaskItem(projectId: project.id, title: title, branch: name, worktreePath: "\(root)/\(name)", baseBranch: base)
@@ -54,9 +55,12 @@ public enum TaskWorktrees {
 
     public enum Refusal: Error, Equatable, LocalizedError {
         case invalidBranch(String), emptyTitle, emptyModel
+        /// `.worktrees`, or the new worktree's folder in it, is a symlink, or leads out of the project.
+        case symlink(String)
         public var errorDescription: String? {
             switch self {
             case .invalidBranch(let branch): return "“\(branch)” is not a valid Git branch name."
+            case .symlink(let path): return "Refusing to create a worktree through the symlink at \(path)."
             case .emptyTitle: return "Enter a task name."
             case .emptyModel: return "Choose an available model."
             }
@@ -85,6 +89,7 @@ public enum TaskWorktrees {
         }
         let slug = BranchNaming.unused(draft.worktreeSlug, in: project.path)
         let path = "\(project.path)/.worktrees/\(slug)"
+        try refuseSymlinks(slug: slug, project: project)
         try exclude(".worktrees/", gitDir: git(["rev-parse", "--git-common-dir"]), project: project)
         // As AiTerm: best-effort, so a new worktree starts from the remote's latest when it can;
         // offline, from what was last fetched. An explicit, forced refspec, because `git fetch origin
@@ -113,16 +118,37 @@ public enum TaskWorktrees {
             let out = try launcher.run("git", ["-C", project.path, "worktree", "add", "-q", "-b", draft.branch, path, start],
                                        timeout: 300, cancellation: cancellation)
             try checkCancelled()
-            guard out.status == 0 else {
-                throw GitFailure(command: "git worktree add -q -b \(draft.branch) \(path) \(start)", message: out.stderr)
+            guard !out.timedOut, out.status == 0 else {
+                throw GitFailure(command: "git worktree add -q -b \(draft.branch) \(path) \(start)",
+                                 message: out.timedOut ? "git timed out adding the worktree." : out.stderr)
             }
-        } catch let cancelled as CreationCancelled {
+        } catch {
+            // Cancelled, timed out, or a checkout hook that failed after git made the branch and the
+            // folder: either way nothing is saved, so what this create made goes, or a retry with
+            // the same name would be refused over it.
             undo(worktree: pathWasThere ? nil : path, branch: branchWasThere ? nil : draft.branch, project: project, launcher: launcher)
-            throw cancelled
+            throw error
         }
         return TaskItem(projectId: project.id, title: draft.title, branch: draft.branch, worktreePath: path,
                         baseBranch: draft.baseBranch, agent: draft.agentId, model: draft.model, reasoning: draft.reasoning,
                     jira: draft.ticket.map { JiraRef(key: $0.key, summary: $0.summary, url: $0.url) })
+    }
+
+    /// Refuses a new worktree at `<project>/.worktrees/<slug>` that a symlink would carry elsewhere: a
+    /// repository can commit `.worktrees` as a link to any folder the person can write to, and
+    /// `git worktree add` checks out wherever it leads. Nor may the resolved `.worktrees` lie
+    /// outside the resolved project folder. Called before anything is written or fetched.
+    public static func refuseSymlinks(slug: String, project: Project) throws {
+        let dir = project.path + "/.worktrees"
+        for path in [dir, dir + "/" + slug] where (try? FileManager.default.destinationOfSymbolicLink(atPath: path)) != nil {
+            throw Refusal.symlink(path)
+        }
+        // Compared only once it exists: Foundation resolves a path that is not there yet without
+        // its `/private` prefix, and git creates the folder plainly, inside the project.
+        guard !FileManager.default.fileExists(atPath: dir)
+                || ExistingWorktrees.resolved(dir).hasPrefix(ExistingWorktrees.resolved(project.path) + "/") else {
+            throw Refusal.symlink(dir)
+        }
     }
 
     /// Whether the repository runs a post-checkout hook of its own — a pre-commit `uv sync`, say — which
@@ -145,10 +171,15 @@ public enum TaskWorktrees {
         // A refused path returns before the branch goes too: the branch may be the folder's own.
         if let path {
             guard isInWorktreesFolder(path, project: project),
-                  (try? FileManager.default.destinationOfSymbolicLink(atPath: project.path + "/.worktrees")) == nil else { return }
+                  (try? FileManager.default.destinationOfSymbolicLink(atPath: project.path + "/.worktrees")) == nil,
+                  (try? FileManager.default.destinationOfSymbolicLink(atPath: path)) == nil else { return }
             _ = try? launcher.run("git", ["-C", project.path, "worktree", "remove", "--force", "--force", path])
-            if FileManager.default.fileExists(atPath: path) { try? FileManager.default.removeItem(atPath: path) }
-            _ = try? launcher.run("git", ["-C", project.path, "worktree", "prune"])
+            // What git would not remove, deleted here; then its record goes. Only then: a create
+            // refused before it made anything must not prune other worktrees' records.
+            if FileManager.default.fileExists(atPath: path) {
+                try? FileManager.default.removeItem(atPath: path)
+                _ = try? launcher.run("git", ["-C", project.path, "worktree", "prune"])
+            }
         }
         if let branch { _ = try? launcher.run("git", ["-C", project.path, "branch", "-D", branch]) }
     }

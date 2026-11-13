@@ -68,7 +68,7 @@ extension ProviderDetector {
     /// classified as AiTerm classifies it. Blocks: call it off the main thread.
     public static func provider(ofRepositoryAt path: String, launcher: CommandLauncher) -> Provider {
         guard let git = launcher.locate("git"),
-              let out = try? launcher.run(git, ["-C", path, "remote", "get-url", "origin"], timeout: 10),
+              let out = try? launcher.run(git, AutomaticGitRead.arguments(["remote", "get-url", "origin"], in: path), timeout: 10),
               out.status == 0 else { return detect(remoteUrl: nil, repoPath: path).provider }
         return detect(remoteUrl: out.stdout, repoPath: path).provider
     }

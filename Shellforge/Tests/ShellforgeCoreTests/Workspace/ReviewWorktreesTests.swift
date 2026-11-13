@@ -442,6 +442,28 @@ struct RacingGit: GitCommands {
         #expect(again.worktreePath == repo + "/.worktrees/review-mr-branch")
     }
 
+    /// A checkout hook that fails after git added the locked worktree: the worktree goes, so the
+    /// branch can be reviewed again; the branch, there before, stays.
+    @Test func aFailingReviewCheckoutHookLeavesNoWorktree() throws {
+        let repo = try plainRepo()
+        try run(["branch", "feat/mr-branch"], in: repo)
+        let hook = repo + "/.git/hooks/post-checkout"
+        try "#!/bin/sh\nexit 1\n".write(toFile: hook, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: hook)
+        var draft = ReviewDraft(mr: nil, agentId: "claude", model: "opus", reasoning: nil)
+        draft.apply(mr: Self.mergeRequest)
+        let project = Project(name: "repo", path: repo)
+
+        #expect(throws: GitFailure.self) { try ReviewWorktrees.create(draft: draft, in: project, launcher: launcher) }
+        #expect(!FileManager.default.fileExists(atPath: repo + "/.worktrees/review-mr-branch"))
+        #expect(!(try run(["worktree", "list", "--porcelain"], in: repo)).contains("review-mr-branch"), "no worktree entry, locked or not")
+        #expect(try hasLocalBranch("feat/mr-branch", in: repo), "the branch stays")
+
+        try FileManager.default.removeItem(atPath: hook)
+        let again = try ReviewWorktrees.create(draft: draft, in: project, launcher: launcher)
+        #expect(again.worktreePath == repo + "/.worktrees/review-mr-branch")
+    }
+
     @Test func aReviewIsStampedAsOneAndCarriesItsMergeRequest() throws {
         let repo = try plainRepo()
         try run(["branch", "feat/mr-branch"], in: repo)

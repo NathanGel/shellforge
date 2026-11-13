@@ -14,13 +14,17 @@ public struct LauncherGit: GitCommands {
     let launcher: CommandLauncher
     /// A create's Cancel, which ends the running command and what it started.
     let cancellation: CreationCancellation?
-    public init(launcher: CommandLauncher, cancellation: CreationCancellation? = nil) {
+    /// Every call a read Shellforge makes on its own, with `AutomaticGitRead`'s options.
+    let automatic: Bool
+    public init(launcher: CommandLauncher, cancellation: CreationCancellation? = nil, automatic: Bool = false) {
         self.launcher = launcher
         self.cancellation = cancellation
+        self.automatic = automatic
     }
 
     public func git(_ args: [String], in directory: String, remote: Bool, timeout: TimeInterval?) throws -> ChildOutput {
-        let out = try launcher.run("git", ["-C", directory] + args, extra: remote ? ["GIT_TERMINAL_PROMPT": "0"] : [:],
+        let full = automatic ? AutomaticGitRead.arguments(args, in: directory) : ["-C", directory] + args
+        let out = try launcher.run("git", full, extra: remote ? ["GIT_TERMINAL_PROMPT": "0"] : [:],
                                    timeout: timeout ?? (remote ? 30 : 60), cancellation: cancellation)
         if cancellation?.isCancelled == true { throw CreationCancelled() }
         return out
@@ -126,8 +130,14 @@ public struct GitRepository: Sendable {
 
     /// Every worktree git lists, the main checkout first.
     public func worktrees() throws -> [Worktree] {
+        Self.worktrees(fromPorcelainZ: try run(["worktree", "list", "--porcelain", "-z"]))
+    }
+
+    /// `git worktree list --porcelain -z`, read. With `-z` every field ends in NUL and no path is
+    /// quoted or split: a newline in a path is part of it, never the start of another field.
+    static func worktrees(fromPorcelainZ listing: String) -> [Worktree] {
         var found: [Worktree] = []
-        for line in try run(["worktree", "list", "--porcelain"]).split(separator: "\n", omittingEmptySubsequences: false) {
+        for line in listing.split(separator: "\0", omittingEmptySubsequences: true) {
             if line.hasPrefix("worktree ") {
                 found.append(Worktree(path: String(line.dropFirst("worktree ".count)), branch: nil, lockReason: nil))
             } else if line.hasPrefix("branch refs/heads/"), !found.isEmpty {

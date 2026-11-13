@@ -308,6 +308,27 @@ final class GitModelTests: XCTestCase {
         XCTAssertEqual(status(git.sections.first)?.unstaged.map(\.path), ["src/app.ts"])
     }
 
+    /// The panel showed nothing staged, so Commit was to take every change; an agent staged one
+    /// file before it ran. Committing only that file is not what the panel offered: nothing is
+    /// committed, and the person is asked to look again.
+    func testCommitAllRefusesWhenSomethingWasStagedMeanwhile() async throws {
+        let scratch = try Scratch()
+        let demo = try scratch.project("demo")
+        try scratch.write("src/app.ts", in: demo.path)
+        try scratch.write("src/login.ts", in: demo.path)
+        let git = model(scratch, [demo])
+        await git.settled()
+        let id = GitRepoID.project(demo.id)
+        let head = try scratch.git(["rev-parse", "HEAD"], in: demo.path)
+        try scratch.git(["add", "src/login.ts"], in: demo.path)
+        git.setCommitMessage("Add the login page", for: id)
+        await git.perform(.commit(expectsStaged: false), in: id)
+        XCTAssertEqual(git.sections.first?.problem, "The staged files changed. Check them and commit again.")
+        XCTAssertEqual(try scratch.git(["rev-parse", "HEAD"], in: demo.path), head)
+        XCTAssertEqual(git.commitMessage(id), "Add the login page", "the message is kept")
+        XCTAssertEqual(status(git.sections.first)?.staged.map(\.path), ["src/login.ts"])
+    }
+
     /// A clean task whose action failed stays listed, so its problem is seen.
     func testATaskWithAProblemIsListed() async throws {
         let scratch = try Scratch()
