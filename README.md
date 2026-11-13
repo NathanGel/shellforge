@@ -39,9 +39,9 @@ kept apart in `Shellforge/` so these merges stay small.
 
 <p align="center">
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="Shellforge/docs/images/sessions-dark.png">
-  <source media="(prefers-color-scheme: light)" srcset="Shellforge/docs/images/sessions-light.png">
-  <img src="Shellforge/docs/images/sessions-light.png" width="464" alt="The Shellforge sidebar’s Sessions panel, with the activity bar of panels down its left edge: the projects acme-web, demo-api and docs-site with their tasks, each with its agent, status, Jira ticket, diff count and branch; a running SSH tunnel to staging; a zsh terminal; and the metrics strip with CPU, memory and each agent’s 5-hour and weekly usage">
+  <source media="(prefers-color-scheme: dark)" srcset="Shellforge/docs/images/window-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="Shellforge/docs/images/window-light.png">
+  <img src="Shellforge/docs/images/window-light.png" width="880" alt="A Shellforge window: on the left the sidebar’s Sessions panel, with the activity bar down its edge, the projects acme-web, demo-api and docs-site with their tasks, each with its agent, status, Jira ticket, diff count and branch, a running SSH tunnel to staging, and the metrics strip; on the right the task “Add login page”, its tab split into Claude Code adding the login page and a zsh pane in the same worktree showing git status and the dev server">
 </picture>
 </p>
 

@@ -21,7 +21,7 @@ struct ReadmeScreenshots {
         let folder = Self.outputFolder
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         for appearance in DemoAppearance.allCases {
-            for scene in [DemoScene.sessions, .metrics, .rearrange, .ssh] {
+            for scene in [DemoScene.sessions, .metrics, .rearrange, .ssh, .window] {
                 let demo = try await DemoSidebar.make()
                 let bitmap = try await demo.render(scene, appearance: appearance)
                 try Self.write(bitmap, scene: scene, appearance: appearance, to: folder)
@@ -46,14 +46,14 @@ struct ReadmeScreenshots {
 }
 
 private enum DemoScene: String {
-    case sessions, metrics, rearrange, ssh, newTask = "new-task"
+    case sessions, metrics, rearrange, ssh, window, newTask = "new-task"
 
     /// The sidebar's height in the picture, at its default width: the Metrics and SSH panels are
     /// short, and the rest of a full-height one would be empty.
     var sidebarHeight: CGFloat { self == .metrics || self == .ssh ? 480 : 760 }
 
     /// Whether the scene draws the Sessions list, which fills between turns of the main actor.
-    var showsSessions: Bool { self == .sessions || self == .rearrange }
+    var showsSessions: Bool { self == .sessions || self == .rearrange || self == .window }
 }
 
 private enum DemoAppearance: String, CaseIterable {
@@ -170,19 +170,23 @@ private struct DemoSidebar {
         case .metrics: activity.select(.metrics)
         case .rearrange: model.beginRearrange()
         case .ssh: activity.select(.ssh)
-        case .sessions, .newTask: break
+        case .sessions, .window, .newTask: break
         }
         // The lock is one for every window: let it go whatever the drawing does.
         defer { if model.isRearranging { model.cancelRearrange() } }
-        let view = SidebarView(model: model, activity: activity, chooseFolder: { nil }, hooks: hooks, machine: machine,
+        let chrome = SidebarChrome()
+        if scene == .window { chrome.windowControls = DemoWindow.controls }
+        let sidebar = SidebarView(model: model, activity: activity, chooseFolder: { nil }, hooks: hooks, machine: machine,
                                backpack: BackpackController(ports: .inert, settings: BackpackSettings(defaults: nil), toast: { _ in }),
                                terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()), theme: ThemeSettings(defaults: ScratchDefaults.make()), appDefaults: ScratchDefaults.make(),
-                               feedback: FeedbackPrompt(defaults: ScratchDefaults.make(), channel: .dev), chrome: SidebarChrome(),
+                               feedback: FeedbackPrompt(defaults: ScratchDefaults.make(), channel: .dev), chrome: chrome,
                                showBackpack: { _ in }, showFeedback: { _ in }, hideSidebar: {}, agentTools: .none, agentsChanged: {})
             .interfaceScale(.standard)
             .environment(\.footerClock, DemoClock.footer)
+        let view = scene == .window ? AnyView(DemoWindow(sidebar: sidebar, appearance: appearance)) : AnyView(sidebar)
+        let width = scene == .window ? DemoWindow.width : Size.sidebarWidth
         let rows = model.rows.count
-        return try await snapshot(view, size: NSSize(width: Size.sidebarWidth, height: scene.sidebarHeight), appearance: appearance) { host in
+        return try await snapshot(view, size: NSSize(width: width, height: scene.sidebarHeight), appearance: appearance) { host in
             // The Sessions list has a row for each of the model's, plus its header outside Rearrange mode.
             !scene.showsSessions || Self.tables(in: host).contains { $0.numberOfRows >= rows }
         }
@@ -294,4 +298,107 @@ private enum DemoNewTask {
         return try await snapshot(NewTaskSheet(model: model, dismiss: {}), size: NSSize(width: Sheet.width, height: Sheet.height),
                                   appearance: appearance) { _ in model.draft.ticket == ticket && !model.ticketsOpen }
     }
+}
+
+/// A whole window: the sidebar, window buttons over its top, and the selected task's tab split into
+/// its Claude Code pane and a shell beside it, in the terminal colours Match Terminal sets. The
+/// panes are drawn, not run: every line in them is invented.
+@MainActor
+private struct DemoWindow: View {
+    let sidebar: AnyView
+    let appearance: DemoAppearance
+
+    static let width: CGFloat = Size.sidebarWidth + 860
+    static let controls = SidebarWindowControls(buttonsMaxX: 72, buttonsMidY: 22)
+
+    init(sidebar: some View, appearance: DemoAppearance) {
+        self.sidebar = AnyView(sidebar)
+        self.appearance = appearance
+    }
+
+    var body: some View {
+        let colors = ShellforgeTerminalPalette.colors(in: NSAppearance(named: appearance.named))
+        let color = { (role: TerminalColorRole) in colors[role].map { Color(.sRGB, red: $0.red, green: $0.green, blue: $0.blue) } ?? .primary }
+        HStack(spacing: 0) {
+            sidebar.frame(width: Size.sidebarWidth)
+            VStack(spacing: 0) {
+                VStack(alignment: .leading, spacing: 0) {
+                    DemoPane(lines: DemoPane.claude, color: color).frame(maxHeight: .infinity)
+                    // Claude Code's input, pinned to the foot of its pane.
+                    Text(">").foregroundColor(color(.foreground))
+                        .font(.system(size: 12.5, design: .monospaced))
+                        .padding(.horizontal, 10).padding(.vertical, 8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(color(.ansi(8)), lineWidth: 1))
+                        .padding(.horizontal, 14)
+                    DemoPane(lines: DemoPane.claudeFooter, color: color).fixedSize(horizontal: false, vertical: true)
+                }
+                Rectangle().fill(color(.ansi(8)).opacity(0.5)).frame(height: 1)
+                DemoPane(lines: DemoPane.shell, color: color).frame(height: 250)
+            }
+            .background(color(.background))
+        }
+        .overlay(alignment: .topLeading) {
+            HStack(spacing: 8) {
+                ForEach([Color(red: 1, green: 0.37, blue: 0.34), Color(red: 1, green: 0.74, blue: 0.18),
+                         Color(red: 0.16, green: 0.79, blue: 0.25)], id: \.self) { Circle().fill($0).frame(width: 12, height: 12) }
+            }
+            .padding(.leading, 20).padding(.top, Self.controls.buttonsMidY - 6)
+        }
+    }
+}
+
+/// One terminal pane: lines of coloured runs in the terminal's monospaced font.
+private struct DemoPane: View {
+    struct Run { var text: String; var role: TerminalColorRole = .foreground; var bold = false }
+    let lines: [[Run]]
+    let color: (TerminalColorRole) -> Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            ForEach(lines.indices, id: \.self) { index in
+                lines[index].reduce(Text("")) { line, run in
+                    line + Text(run.text).foregroundColor(color(run.role)).fontWeight(run.bold ? .semibold : .regular)
+                }
+                .font(.system(size: 12.5, design: .monospaced))
+                .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14).padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private static func plain(_ text: String) -> [Run] { [Run(text: text)] }
+    private static let bullet = Run(text: "⏺ ", role: .ansi(2))
+    private static func tool(_ name: String, _ argument: String, _ result: String) -> [[Run]] {
+        [[bullet, Run(text: name, bold: true), Run(text: "(\(argument))")], [Run(text: "  ⎿  ", role: .ansi(8)), Run(text: result, role: .ansi(8))], []]
+    }
+
+    static let claude: [[Run]] = [
+        [Run(text: "> ", role: .ansi(8)), Run(text: "Add the login page from ABC-123: email and password, with an error under each field.")],
+        [],
+        [bullet, Run(text: "I’ll add a LoginPage with a form, wire it to the existing auth client, and cover it with tests.")],
+        [],
+    ] + tool("Read", "src/auth/client.ts", "Read 64 lines")
+      + tool("Write", "src/pages/LoginPage.tsx", "Wrote 112 lines to src/pages/LoginPage.tsx")
+      + tool("Update", "src/routes.tsx", "Updated src/routes.tsx with 3 additions")
+      + tool("Bash", "npm test -- LoginPage", "PASS  src/pages/LoginPage.test.tsx (6 tests)")
+      + [
+        [Run(text: "✻ ", role: .ansi(3)), Run(text: "Showing errors under each field…", role: .ansi(3)), Run(text: " (esc to interrupt)", role: .ansi(8))],
+    ]
+    static let claudeFooter: [[Run]] = [[Run(text: "  ⏵⏵ accept edits on", role: .ansi(5))]]
+
+    private static let prompt: [Run] = [Run(text: "acme-web", role: .ansi(4), bold: true), Run(text: " abc-123-add-login-page", role: .ansi(6)),
+                                        Run(text: " ❯ ", role: .ansi(2))]
+    static let shell: [[Run]] = [
+        prompt + plain("git status --short"),
+        [Run(text: " M ", role: .ansi(1)), Run(text: "src/routes.tsx")],
+        [Run(text: "?? ", role: .ansi(1)), Run(text: "src/pages/LoginPage.test.tsx")],
+        [Run(text: "?? ", role: .ansi(1)), Run(text: "src/pages/LoginPage.tsx")],
+        prompt + plain("npm run dev"),
+        [],
+        [Run(text: "  VITE", role: .ansi(2), bold: true), Run(text: " ready in 412 ms", role: .ansi(8))],
+        [Run(text: "  ➜  ", role: .ansi(2)), Run(text: "Local:   ", bold: true), Run(text: "http://localhost:5173/", role: .ansi(6))],
+    ]
 }
