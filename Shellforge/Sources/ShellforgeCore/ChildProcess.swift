@@ -28,6 +28,13 @@ enum ChildProcess {
         let stdout = Pipe(), stderr = Pipe()
         process.standardOutput = stdout
         process.standardError = stderr
+        // The parent's ends of every pipe close on exec: a child started at the same moment from
+        // another thread (by any spawner) must never hold this child's stdin open, or it would
+        // wait for an end of input that never comes.
+        for pipe in [stdin, stdout, stderr].compactMap({ $0 }) {
+            Self.closeOnExec(pipe.fileHandleForReading.fileDescriptor)
+            Self.closeOnExec(pipe.fileHandleForWriting.fileDescriptor)
+        }
 
         let out = PipeReader(stdout.fileHandleForReading), err = PipeReader(stderr.fileHandleForReading)
         let finished = DispatchSemaphore(value: 0)
@@ -76,14 +83,23 @@ enum ChildProcess {
 }
 
 extension ChildProcess {
-    /// Writes `input` to the child's stdin off this thread, so a child that fills its stdout first,
-    /// or one that outlives its deadline, never blocks the wait; then closes it. A child that exits
-    /// without reading it all raises no SIGPIPE: the write just fails.
+    /// Sets `FD_CLOEXEC` on `fd`. `Process` maps a pipe's child end onto 0, 1 or 2 itself; the
+    /// flag only keeps the parent's descriptors out of every other child.
+    static func closeOnExec(_ fd: Int32) {
+        let flags = fcntl(fd, F_GETFD)
+        if flags >= 0 { _ = fcntl(fd, F_SETFD, flags | FD_CLOEXEC) }
+    }
+
+    /// Writes `input` to the child's stdin on a thread of its own, so a child that fills its
+    /// stdout first, or one that outlives its deadline, never blocks the wait; then closes it. A
+    /// thread rather than a dispatch queue: with the pool's threads all blocked (many children
+    /// waited on at once), a queued write could wait until the child's deadline. A child that
+    /// exits without reading it all raises no SIGPIPE: the write just fails.
     private static func feed(_ input: Data, to pipe: Pipe) {
         let handle = pipe.fileHandleForWriting
         let fd = handle.fileDescriptor
         _ = fcntl(fd, F_SETNOSIGPIPE, 1)
-        DispatchQueue.global(qos: .utility).async {
+        Thread {
             input.withUnsafeBytes { bytes in
                 var offset = 0
                 while offset < bytes.count {
@@ -94,7 +110,7 @@ extension ChildProcess {
                 }
             }
             try? handle.close()
-        }
+        }.start()
     }
 
     /// Asks `process` and every process it started — a git hook and the `uv sync` it ran — to stop
@@ -195,6 +211,10 @@ extension ChildProcess {
         process.arguments = arguments
         process.environment = environment
         let pipe = Pipe()
+        // Its write end stays in this process only: a child that inherited it would keep the
+        // watchdog from ever reading end of file.
+        closeOnExec(pipe.fileHandleForReading.fileDescriptor)
+        closeOnExec(pipe.fileHandleForWriting.fileDescriptor)
         process.standardInput = pipe
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice

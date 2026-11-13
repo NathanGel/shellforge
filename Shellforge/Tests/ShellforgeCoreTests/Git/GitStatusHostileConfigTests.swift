@@ -89,6 +89,10 @@ import Testing
         try repo.git("config", "filter.lfs.process", "git-lfs filter-process")
         try repo.git("config", "filter.lfs.clean", "git-lfs clean -- %f")
         #expect(AutomaticGitRead.filterOverrides(repo.path, launcher: repo.launcher).isEmpty)
+        // What `git lfs install --local --skip-smudge` writes.
+        try repo.git("config", "filter.lfs.smudge", "git-lfs smudge --skip -- %f")
+        try repo.git("config", "filter.lfs.process", "git-lfs filter-process --skip")
+        #expect(AutomaticGitRead.filterOverrides(repo.path, launcher: repo.launcher).isEmpty)
         try repo.git("config", "filter.my.tool.clean", "cat")
         #expect(AutomaticGitRead.filterOverrides(repo.path, launcher: repo.launcher)
             == ["-c", "filter.my.tool.clean=", "-c", "filter.my.tool.smudge=", "-c", "filter.my.tool.process=", "-c", "filter.my.tool.required=false"])

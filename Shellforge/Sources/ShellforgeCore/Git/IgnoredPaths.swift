@@ -42,16 +42,40 @@ public struct IgnoredPaths: Equatable, Sendable {
     }
 
     /// Of `folders` (each with its trailing "/"), those git ignores themselves, without the "/".
-    /// nil when git fails. check-ignore exits 1 when it matches nothing, which is an answer.
+    /// nil when git fails. They go to `check-ignore` as arguments, behind `./` so none is read as
+    /// pathspec magic, in batches well under the argument limit; it echoes each ignored one as it
+    /// was given, and exits 1 when none is. A name git would quote in its answer (a control
+    /// character, `"` or a backslash) is left out, so it counts as not ignored: the safe way, as its
+    /// changes then still refresh the panels.
     private static func ignoredFolders(_ folders: [String], in path: String, launcher: CommandLauncher) -> Set<String>? {
-        let input = Data(folders.joined(separator: "\0").appending("\0").utf8)
-        guard let out = try? launcher.run("git", AutomaticGitRead.arguments(["check-ignore", "-z", "--stdin"], in: path),
-                                          extra: ["LC_ALL": "C"], input: input, timeout: 30),
-              out.status == 0 || out.status == 1, !out.timedOut else { return nil }
-        return Set(out.stdout.split(separator: "\0").compactMap { entry in
-            entry.hasSuffix("/") ? String(entry.dropLast()) : nil
-        })
+        let askable = folders.filter { folder in
+            !folder.unicodeScalars.contains { $0.value < 0x20 || $0.value == 0x7F || $0 == "\"" || $0 == "\\" }
+        }
+        var ignored: Set<String> = []
+        var batch: [String] = [], bytes = 0
+        func ask() -> Bool {
+            defer { batch = []; bytes = 0 }
+            guard !batch.isEmpty else { return true }
+            let args = ["-c", "core.quotePath=false", "check-ignore", "--"] + batch
+            guard let out = try? launcher.run("git", AutomaticGitRead.arguments(args, in: path), extra: ["LC_ALL": "C"], timeout: 30),
+                  out.status == 0 || out.status == 1, !out.timedOut else { return false }
+            for line in out.stdout.split(separator: "\n") where line.hasPrefix("./") && line.hasSuffix("/") {
+                ignored.insert(String(line.dropFirst(2).dropLast()))
+            }
+            return true
+        }
+        for folder in askable {
+            let argument = "./" + folder
+            if bytes + argument.utf8.count > Self.argumentBudget, !ask() { return nil }
+            batch.append(argument)
+            bytes += argument.utf8.count + 1
+        }
+        return ask() ? ignored : nil
     }
+
+    /// The bytes of folder names one `check-ignore` takes: far under macOS's 1 MiB `ARG_MAX`,
+    /// which the environment shares.
+    static let argumentBudget = 128 * 1024
 
     /// Whether a rule git reads for the repository starts with `!`. Unsure (git failed) is yes.
     private static func negates(_ path: String, launcher: CommandLauncher) -> Bool {

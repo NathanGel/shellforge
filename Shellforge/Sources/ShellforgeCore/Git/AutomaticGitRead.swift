@@ -45,7 +45,9 @@ public enum AutomaticGitRead {
 
     /// The commands git-lfs's own install writes: they run the person's git-lfs, nothing the
     /// repository names.
-    private static let lfsCommands: Set<String> = ["git-lfs clean -- %f", "git-lfs smudge -- %f", "git-lfs filter-process"]
+    /// `--skip` forms are what `git lfs install --skip-smudge` writes.
+    private static let lfsCommands: Set<String> = ["git-lfs clean -- %f", "git-lfs smudge -- %f", "git-lfs filter-process",
+                                                   "git-lfs smudge --skip -- %f", "git-lfs filter-process --skip"]
 
     private static func readOverrides(_ path: String, launcher: CommandLauncher) -> [String] {
         let args = arguments(["config", "-z", "--show-scope", "--get-regexp", #"^filter\..*\.(clean|smudge|process)$"#], in: path)

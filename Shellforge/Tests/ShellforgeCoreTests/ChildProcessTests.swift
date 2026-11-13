@@ -4,6 +4,34 @@ import Testing
 @testable import ShellforgeCore
 
 @Suite struct ChildProcessTests {
+    /// Children fed on stdin, many at once with the pool's threads all blocked waiting on them:
+    /// each reads its own input to the end and exits, so none waits out its deadline for an end
+    /// of input another child holds back.
+    @Test func concurrentChildrenWithStdinAllFinish() async throws {
+        let env = ["PATH": "/usr/bin:/bin"]
+        let results = try await withThrowingTaskGroup(of: (Int, ChildOutput).self) { group in
+            for i in 0..<32 {
+                group.addTask {
+                    let input = Data(String(repeating: "line \(i)\n", count: 2000).utf8)
+                    return (i, try ChildProcess.run("/bin/cat", [], environment: env, input: input, timeout: 20))
+                }
+            }
+            return try await group.reduce(into: [(Int, ChildOutput)]()) { $0.append($1) }
+        }
+        #expect(results.count == 32)
+        for (i, out) in results {
+            #expect(!out.timedOut && out.status == 0, "child \(i)")
+            #expect(out.stdout == String(repeating: "line \(i)\n", count: 2000), "child \(i)")
+        }
+    }
+
+    /// The parent's pipe ends close on exec, so no other child can inherit them.
+    @Test func pipeEndsCloseOnExec() {
+        let pipe = Pipe()
+        ChildProcess.closeOnExec(pipe.fileHandleForWriting.fileDescriptor)
+        #expect(fcntl(pipe.fileHandleForWriting.fileDescriptor, F_GETFD) & FD_CLOEXEC != 0)
+    }
+
     /// A child that leaves a background job behind must not be handed the pipes of commands
     /// started at the same moment: they would wait for an end of output that only comes when the
     /// job exits, and lose what they printed. An SSH tunnel is such a job.

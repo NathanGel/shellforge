@@ -109311,7 +109311,7 @@
     },
     "InstanceLock.Heading" : {
       "comment" : "Heading of the warning shown when launching a second copy of iTerm2",
-      "extractionState" : "stale",
+      "extractionState" : "extracted_with_value",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -109407,7 +109407,7 @@
     },
     "InstanceLock.Message" : {
       "comment" : "Shown at launch when another instance of iTerm2 is already running. %d is a process ID.",
-      "extractionState" : "stale",
+      "extractionState" : "extracted_with_value",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -109503,7 +109503,7 @@
     },
     "InstanceLock.SuiteMessage" : {
       "comment" : "Shown at launch when another instance uses the same -suite. %1$d is a process ID; %2$@ is the suite name.",
-      "extractionState" : "stale",
+      "extractionState" : "extracted_with_value",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -258042,7 +258042,7 @@
     },
     "WorkgroupUsage.ReportTruncated" : {
       "comment" : "Appended to a pre-filled bug report body when it was shortened to fit the URL",
-      "extractionState" : "stale",
+      "extractionState" : "extracted_with_value",
       "localizations" : {
         "de" : {
           "stringUnit" : {
