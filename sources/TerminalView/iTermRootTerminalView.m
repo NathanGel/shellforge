@@ -1860,6 +1860,11 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
     return [iTermShellforgeSidebar minimumWindowWidthWithToolbeltWidth:toolbeltWidth];
 }
 
+// Shellforge: the smallest a window with the sidebar may be dragged, shown or hidden; zero without one.
+- (NSSize)shellforgeMinimumWindowSize {
+    return _shellforgeSidebar ? [iTermShellforgeSidebar minimumWindowSize] : NSZeroSize;
+}
+
 // Shellforge: what fitting the window to its tabs adds for the sidebar: the width it will have,
 // not the width a window still at its starting size gives it (as iTerm2 does for left tabs).
 - (CGFloat)shellforgeSidebarPreferredWidth {

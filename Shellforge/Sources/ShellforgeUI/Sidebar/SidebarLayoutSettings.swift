@@ -35,6 +35,10 @@ public struct SidebarLayoutSettings {
     /// What a window keeps for its terminal beside a wide sidebar: about forty columns at a usual
     /// font, so a prompt still fits.
     public static let terminalMinWidth: CGFloat = 320
+    /// The smallest a window with the sidebar can be dragged, however it got smaller: room for the
+    /// activity bar, a project or two with the usage panel under them, and a terminal beside them,
+    /// so neither collapses to a strip under the title bar.
+    public static let minimumWindowSize = CGSize(width: 575, height: 390)
 
     /// Between `Size.sidebarMinWidth` and `maxWidth`; `Size.sidebarWidth` until dragged.
     public var width: CGFloat {

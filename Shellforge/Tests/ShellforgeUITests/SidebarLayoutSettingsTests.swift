@@ -106,6 +106,14 @@ import Testing
         #expect(SidebarLayoutSettings.minimumWindowWidth(beside: 250) == minimum + 250)
     }
 
+    /// However small a window already is, it stops at the floor: below it the sidebar and the
+    /// terminal collapse to a strip under the title bar.
+    @Test func aWindowNeverCollapsesBelowTheFloor() {
+        #expect(SidebarLayoutSettings.minimumWindowSize == CGSize(width: 575, height: 390))
+        #expect(SidebarLayoutSettings.minimumWindowSize.width <= SidebarLayoutSettings.minimumWindowWidth(beside: 0),
+                "the floor never asks for more than the sidebar's own minimum")
+    }
+
     /// iTerm2 holds the toolbelt to at most half the window: a 1000 pt toolbelt in a 1360 pt
     /// window is 680 pt, so the window stops at 1360 pt, not 1680 pt.
     @Test func aWideToolbeltCountsAsLayoutWillMakeIt() {

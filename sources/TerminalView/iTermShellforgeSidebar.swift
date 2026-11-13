@@ -1083,6 +1083,9 @@ extension iTermShellforgeSidebar {
         SidebarLayoutSettings.minimumWindowWidth(beside: toolbeltWidth, toolbeltMaxFraction: 0.5)
     }
 
+    /// The smallest a window with the sidebar can be dragged, however it got smaller.
+    @objc static var minimumWindowSize: NSSize { SidebarLayoutSettings.minimumWindowSize }
+
     /// Tells the floating `sidebar` where the window's buttons sit inside it, so its header shares
     /// their row; nil while they are not inside it — hidden in a compact window or full screen, or
     /// not over the sidebar at all.

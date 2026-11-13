@@ -6230,14 +6230,19 @@ hidingToolbeltShouldResizeWindow:(BOOL)hidingToolbeltShouldResizeWindow
     }
 
     // Shellforge: a window narrowed across the sidebar's minimum beside the terminal's stops there;
-    // the sidebar would otherwise jump from its minimum to nothing. After snapping, so its dead-band
-    // still reads the pointer. Not for accessibility resizing (window managers size as they please),
-    // nor a window already narrower, which another path (tiling, a smaller screen) left so.
-    const CGFloat shellforgeMinimum = [_contentView shellforgeMinimumWindowWidth];
-    if (!self.ptyWindow.it_accessibilityResizing &&
-        senderSize.width >= shellforgeMinimum &&
-        proposedFrameSize.width < shellforgeMinimum) {
-        proposedFrameSize.width = shellforgeMinimum;
+    // the sidebar would otherwise jump from its minimum to nothing. Not for a window already
+    // narrower, which another path (tiling, a smaller screen) left so. Whatever its size, it never
+    // goes below the floor, where the sidebar and terminal would collapse to a strip under the title
+    // bar. After snapping, so its dead-band still reads the pointer. Not for accessibility resizing:
+    // window managers size as they please.
+    if (!self.ptyWindow.it_accessibilityResizing) {
+        const CGFloat shellforgeMinimumWidth = [_contentView shellforgeMinimumWindowWidth];
+        if (senderSize.width >= shellforgeMinimumWidth && proposedFrameSize.width < shellforgeMinimumWidth) {
+            proposedFrameSize.width = shellforgeMinimumWidth;
+        }
+        const NSSize shellforgeFloor = [_contentView shellforgeMinimumWindowSize];
+        proposedFrameSize.width = MAX(proposedFrameSize.width, shellforgeFloor.width);
+        proposedFrameSize.height = MAX(proposedFrameSize.height, shellforgeFloor.height);
     }
 
     // If the original proposal was to fill the screen then allow it

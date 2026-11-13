@@ -9,6 +9,12 @@ it and refuses to release a version that has none.
 
 ## 1.0.2 — unreleased
 
+### Fixed
+
+- **A window no longer shrinks to a strip.** Dragged smaller, a window with the sidebar stops at
+  575 × 390 pt, where the sidebar, its usage panel and the terminal still fit. Before, it could be
+  dragged down to just its title bar.
+
 ## 1.0.1 — 2026-11-13
 
 ### Changed

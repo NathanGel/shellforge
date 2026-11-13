@@ -134,6 +134,8 @@ extern const NSInteger iTermRootTerminalViewWindowNumberLabelWidth;
 - (void)toggleShellforgeSidebar;
 // Shellforge: the narrowest the window may be dragged while the sidebar shows; 0 when hidden.
 - (CGFloat)shellforgeMinimumWindowWidth;
+// Shellforge: the smallest a window with the sidebar may be dragged, shown or hidden; zero without one.
+- (NSSize)shellforgeMinimumWindowSize;
 
 // Should the toolbelt be visible?
 @property(nonatomic) BOOL shouldShowToolbelt;
