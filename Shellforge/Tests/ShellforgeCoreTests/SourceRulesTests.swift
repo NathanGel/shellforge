@@ -75,4 +75,22 @@ import Testing
             #expect(notices.contains(source) && notices.contains("MIT License"), "\(source)'s MIT notice is missing")
         }
     }
+
+    /// Every secret lives in one Keychain item, read once per process by `Keychain.shared`. A second
+    /// instance anywhere in the app would read the item again, and ask the person again after an update.
+    @Test func theAppBuildsNoSecondKeychain() throws {
+        let root = sources.deletingLastPathComponent()
+        let folders = [sources, root.deletingLastPathComponent().appendingPathComponent("sources")]
+        let files = folders.flatMap { folder in
+            (FileManager.default.enumerator(at: folder, includingPropertiesForKeys: nil)?
+                .compactMap { $0 as? URL } ?? []).filter { $0.pathExtension == "swift" }
+        }
+        #expect(files.contains { $0.lastPathComponent == "iTermShellforgeSidebar.swift" })
+        let second = try Regex(#"(^|[^A-Za-z_.])Keychain\((service:|\))"#).anchorsMatchLineEndings()
+        let offenders = try files.filter { $0.lastPathComponent != "SecretStore.swift" }.filter { file in
+            let text = try String(contentsOf: file, encoding: .utf8)
+            return text.contains("Keychain(") && text.contains(second)
+        }
+        #expect(offenders.isEmpty, "Use Keychain.shared: \(offenders.map(\.lastPathComponent))")
+    }
 }

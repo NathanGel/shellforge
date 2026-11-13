@@ -37,7 +37,7 @@ final class iTermShellforgeSidebar: NSObject {
     /// Allow… installs, the iPhone's hotspot through CoreWLAN. Its toasts go to every sidebar's banner.
     static let backpack = BackpackController(
         ports: BackpackPorts.live(),
-        settings: BackpackSettings(defaults: .standard, secrets: Keychain(service: "io.github.nathangel.shellforge")),
+        settings: BackpackSettings(defaults: .standard, secrets: Keychain.shared),
         agentsWorking: { link.store.sessions.values.contains { $0.state == .working } },
         openLocationSettings: {
             if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_LocationServices") {
@@ -45,6 +45,12 @@ final class iTermShellforgeSidebar: NSObject {
             }
         },
         toast: { message in for model in sidebars.allObjects { model.lastError = message } })
+
+    /// Reads Shellforge's one Keychain item now, off the main thread, so its one prompt after an
+    /// update comes at launch rather than when Buddy or AI first needs a secret.
+    @objc nonisolated static func warmKeychain() {
+        DispatchQueue.global(qos: .userInitiated).async { Keychain.shared.warm() }
+    }
 
     /// Every window's sidebar model, for Backpack's toasts.
     private static let sidebars = NSHashTable<SidebarModel>.weakObjects()

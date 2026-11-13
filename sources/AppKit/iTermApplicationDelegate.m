@@ -1512,6 +1512,10 @@ void TurnOnDebugLoggingAutomatically(void) {
     [[iTermApplication sharedApplication] updateAppearance];
     // Shellforge: the saved theme, and its appearance, before the first window; then it follows the Mac.
     [iTermShellforgeThemes start];
+    // Shellforge: the one Keychain read, off the main thread, so an update's one prompt comes now.
+    if (![NSApp isRunningUnitTests]) {
+        [iTermShellforgeSidebar warmKeychain];
+    }
     [[iTermUserDefaults userDefaults] it_addObserverForKey:kPreferenceKeyTabStyle
                                                      block:^(id _Nonnull newValue) {
         [[iTermApplication sharedApplication] updateAppearance];

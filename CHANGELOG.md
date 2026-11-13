@@ -102,6 +102,10 @@ it and refuses to release a version that has none.
 - **Sidebar questions use iTermWarning.** Removing a task, importing worktrees, switching a
   branch and the sidebar's other questions are iTerm2's own alerts now, so they can be answered
   from iTerm2 Buddy on your phone as well as at the Mac.
+- **One Keychain password prompt after an update instead of one per secret; the first launch
+  after updating moves the old items in.** Every secret, iTerm2 Buddy's pairing keys and the AI
+  API keys included, now lives in Shellforge's one Keychain item, read once as the app starts.
+  That first launch still asks once for each old item as it moves it in, for the last time.
 
 ## 0.10.0 — 2026-11-10
 
