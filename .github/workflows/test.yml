@@ -49,9 +49,12 @@ jobs:
         run: node --test
         working-directory: Shellforge/feedback-relay
 
-  # Shellforge's helper. macOS: it reads ttys and peer pids the macOS way, and some tests run only
-  # there. Its README's dev install: the package with its `dev` extras.
-  shellforge-daemon-tests:
+  # Shellforge's helper and its Swift package, in one macOS job: a free account gets few macOS
+  # runners at once, and two jobs here waited for one until GitHub gave up.
+  # The helper reads ttys and peer pids the macOS way, and some of its tests run only there; its
+  # README's dev install is the package with its `dev` extras. `swift.sh` insists on the Swift that
+  # `Shellforge/.swift-version` pins, from swiftly, as a release build does.
+  shellforge-macos-tests:
     runs-on: macos-latest
 
     steps:
@@ -73,15 +76,6 @@ jobs:
           PYTHONDONTWRITEBYTECODE: '1'
         run: python -m pytest -q -p no:cacheprovider
 
-  # The Swift package suite: Core, Design and UI. `swift.sh` insists on the Swift that
-  # `Shellforge/.swift-version` pins, from swiftly, as a release build does.
-  shellforge-package-tests:
-    runs-on: macos-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Install swiftly and the pinned Swift
         run: |
           curl -fsSLO https://download.swift.org/swiftly/darwin/swiftly.pkg
@@ -90,6 +84,8 @@ jobs:
           ~/.swiftly/bin/swiftly install --use "$(cat Shellforge/.swift-version)"
 
       - name: Run the package tests
+        # Also when the helper's tests failed: one red step should not hide the other's result.
+        if: ${{ !cancelled() }}
         working-directory: Shellforge
         run: scripts/swift.sh test
 
