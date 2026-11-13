@@ -7,7 +7,7 @@ a patch fixes, a minor adds features, a major changes a saved setup.
 Each version's section is also its GitHub release notes: `Shellforge/scripts/release.sh` publishes
 it and refuses to release a version that has none.
 
-## 1.0.2 — unreleased
+## 1.0.2 — 2026-11-13
 
 ### Fixed
 
