@@ -132,6 +132,32 @@ struct DesignRulesTests {
         #expect(stale.isEmpty, "exceptions that no longer match anything — remove them: \(stale)")
     }
 
+    /// Every SF Symbol in the package is an `SFSymbolName` case, never a name spelled as a string at
+    /// the call: the scan reads all three modules' sources, comments skipped.
+    @Test func noSymbolIsNamedByAString() throws {
+        let sources = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources")
+        var scanned = 0
+        var violations: [String] = []
+        for module in ["ShellforgeCore", "ShellforgeDesign", "ShellforgeUI"] {
+            let folder = sources.appendingPathComponent(module)
+            let enumerator = try #require(FileManager.default.enumerator(atPath: folder.path))
+            for case let file as String in enumerator where file.hasSuffix(".swift") {
+                scanned += 1
+                let text = try String(contentsOf: folder.appendingPathComponent(file), encoding: .utf8)
+                for (index, line) in text.components(separatedBy: "\n").enumerated()
+                where Self.matches(Self.symbolLiteral, Self.code(line)) {
+                    violations.append("\(module)/\(file):\(index + 1): \(line.trimmingCharacters(in: .whitespaces))")
+                }
+            }
+        }
+        #expect(scanned > 100, "the scan is not reading the package's sources")
+        #expect(violations.isEmpty, "name the symbol with SFSymbolName instead: \(violations)")
+    }
+
+    private static let symbolLiteral = try! NSRegularExpression(pattern: #"\b(?:systemName|systemSymbolName|systemImage):\s*""#)
+
     /// An exception's identity for the stale check: its rule too, so two exceptions for one line —
     /// a font and a length on it — are each proved used, and neither outlives its literal unseen.
     private static func key(_ exception: Exception) -> String { "\(exception.file) [\(exception.rule)]: \(exception.line)" }
@@ -183,6 +209,9 @@ struct DesignRulesTests {
         #expect(Self.matches(Self.foreignImport, "import ShellforgeCore"))
         #expect(Self.matches(Self.foreignImport, "@testable import ShellforgeUI"))
         #expect(!Self.matches(Self.foreignImport, "import ShellforgeDesign"))
+        #expect(Self.matches(Self.symbolLiteral, #"Image(systemName: "plus")"#))
+        #expect(Self.matches(Self.symbolLiteral, #"NSImage(systemSymbolName: "xmark", accessibilityDescription: nil)"#))
+        #expect(!Self.matches(Self.symbolLiteral, "Image(systemName: symbol.rawValue)"))
     }
 
     private static func matches(_ regex: NSRegularExpression, _ text: String) -> Bool {

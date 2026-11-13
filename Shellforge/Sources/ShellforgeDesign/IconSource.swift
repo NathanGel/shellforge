@@ -6,7 +6,7 @@ import AppKit
 /// kind it is. `Icon` and `Badge` both take one of these.
 public enum IconSource: Sendable, Equatable {
     /// An SF Symbol, by name.
-    case symbol(String)
+    case symbol(SFSymbolName)
     /// A single-colour vendor mark, in its brand colour unless tinted. Adding a vendor is one
     /// `Brand`, usable everywhere.
     case brand(Brand)
@@ -20,7 +20,7 @@ public extension IconSource {
     /// decode.
     static let gitlabTanuki = IconSource.artwork(svg: Logos.gitlabFourColourSVG, fallback: .brand(Palette.gitlab))
     /// Pi's white badge, drawn for `VendorMark`'s black disc.
-    static let piBadge = IconSource.artwork(svg: Logos.piBadgeSVG, fallback: .symbol("square.grid.2x2.fill"))
+    static let piBadge = IconSource.artwork(svg: Logos.piBadgeSVG, fallback: .symbol(.squareGrid2x2Fill))
 }
 
 /// Draws an `IconSource` at a size, optionally overriding its ink. A brand or an artwork fills a
@@ -46,7 +46,7 @@ public struct Icon: View {
     public var body: some View {
         switch source {
         case let .symbol(name):
-            Image(systemName: name)
+            Image(symbol: name)
                 .font(.system(size: size))
                 .foregroundStyle(tint ?? surface.ink)
         case let .brand(brand):

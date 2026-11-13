@@ -20,7 +20,7 @@ struct ThemeCard: View {
 
     var body: some View {
         SettingsCard(title: "Theme", status: status) {
-            SymbolMark(symbol: "paintpalette", size: Size.control, style: .paper)
+            SymbolMark(symbol: .paintpalette, size: Size.control, style: .paper)
         } chips: {
             EmptyView()
         } actions: {

@@ -107,7 +107,7 @@ struct ActivityBar: View {
                     GearMenu.perform(action, theme: theme, terminalMatch: terminalMatch, activity: model, openSettings: openSettings)
                 }
             } label: {
-                glyph("gearshape", ink: surface.secondaryInk)
+                glyph(.gearshape, ink: surface.secondaryInk)
                     .frame(width: cell, height: cell)
                     .contentShape(Rectangle())
             }
@@ -127,8 +127,8 @@ struct ActivityBar: View {
     }
 
     /// An icon as the bar draws it: a plain line symbol, centred, at the bar's one size.
-    private func glyph(_ symbol: String, ink: Color) -> some View {
-        Image(systemName: symbol)
+    private func glyph(_ symbol: SFSymbolName, ink: Color) -> some View {
+        Image(symbol: symbol)
             .font(Self.iconStyle)
             .foregroundStyle(ink)
             .background(ViewMark(name: Self.iconMarkName))

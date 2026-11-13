@@ -162,7 +162,7 @@ struct SSHAddHostButton: View {
 
     var body: some View {
         Button(action: { action?() }) {
-            Image(systemName: "plus").font(Typography.label).foregroundStyle(surface.secondaryInk)
+            Image(symbol: .plus).font(Typography.label).foregroundStyle(surface.secondaryInk)
         }
         .buttonStyle(.plain)
         .frame(width: SidebarRowLayout.trailingSlot(scale), height: SidebarRowLayout.trailingSlot(scale))
@@ -260,12 +260,12 @@ private struct SSHHostRow: View {
         }
     }
 
-    private func symbol(_ button: SSHPanel.HostButton) -> String {
+    private func symbol(_ button: SSHPanel.HostButton) -> SFSymbolName {
         switch button {
         case .answerInTab: TunnelRowView.answerInTabSymbol
-        case .openInTerminal: "terminal"
-        case .start: "play.fill"
-        case .stop: "stop.fill"
+        case .openInTerminal: .terminal
+        case .start: .playFill
+        case .stop: .stopFill
         }
     }
 
@@ -295,7 +295,7 @@ private struct SSHHostRow: View {
                                 caption: caption, captionWarns: look?.caption != nil) {
             ForEach(buttons, id: \.self) { button in
                 Button(action: { run(button) }) {
-                    Image(systemName: symbol(button)).font(Typography.micro).foregroundStyle(surface.secondaryInk)
+                    Image(symbol: symbol(button)).font(Typography.micro).foregroundStyle(surface.secondaryInk)
                 }
                 .buttonStyle(.plain)
                 .frame(width: SidebarRowLayout.trailingSlot(scale), height: SidebarRowLayout.trailingSlot(scale))

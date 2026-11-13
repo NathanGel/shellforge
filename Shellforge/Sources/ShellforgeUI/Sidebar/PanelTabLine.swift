@@ -41,7 +41,7 @@ struct PanelTabLine: View {
                 RowTitle(tab.title)
                 Spacer(minLength: scale(Space.tight))
                 Button(action: close) {
-                    Image(systemName: "xmark").font(Typography.micro).foregroundStyle(surface.secondaryInk)
+                    Image(symbol: .xmark).font(Typography.micro).foregroundStyle(surface.secondaryInk)
                 }
                 .buttonStyle(.plain)
                 .frame(width: SidebarRowLayout.trailingSlot(scale), height: SidebarRowLayout.trailingSlot(scale))

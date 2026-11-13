@@ -68,7 +68,7 @@ struct SSHHostSheet: View {
         } content: {
             FormField("SSH host") {
                 if let current {
-                    PickedItemField(mark: .symbol("terminal"), title: current, monospaced: true, clearHelp: "Clear the host") {
+                    PickedItemField(mark: .symbol(.terminal), title: current, monospaced: true, clearHelp: "Clear the host") {
                         self.current = nil
                         open = true
                     }
@@ -76,7 +76,7 @@ struct SSHHostSheet: View {
                     SearchPicker(placeholder: "Pick a host from ~/.ssh/config",
                                  query: _query.projectedValue, open: _open.projectedValue,
                                  items: Self.offered(hosts: hosts, query: query), selection: nil,
-                                 row: { host in PickerResultRow(mark: .symbol("terminal"), key: host.alias, keyWidth: TunnelSheetLayout.aliasColumnWidth,
+                                 row: { host in PickerResultRow(mark: .symbol(.terminal), key: host.alias, keyWidth: TunnelSheetLayout.aliasColumnWidth,
                                                                 title: host.forwards.map(\.label).joined(separator: ", "), detail: nil) },
                                  selected: { _ in EmptyView() },
                                  onPick: { current = $0.alias; open = false },

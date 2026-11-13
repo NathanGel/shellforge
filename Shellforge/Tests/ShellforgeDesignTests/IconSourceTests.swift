@@ -11,7 +11,17 @@ struct IconSourceTests {
     /// A brand's mark is SVG built at runtime; if it will not decode, its fallback is all that is
     /// drawn, so a brand without one would vanish.
     @Test func everyBrandHasAFallback() {
-        for brand in Self.brands { #expect(!brand.fallbackSymbol.isEmpty, "\(brand.path.prefix(12))… has no fallback") }
+        for brand in Self.brands {
+            #expect(NSImage(systemSymbolName: brand.fallbackSymbol.rawValue, accessibilityDescription: nil) != nil,
+                    "\(brand.path.prefix(12))… has no fallback")
+        }
+    }
+
+    /// Every name the package draws is one SF Symbols has: a misspelt raw value draws nothing.
+    @Test func everySymbolNameIsARealSymbol() {
+        for symbol in SFSymbolName.allCases {
+            #expect(NSImage(systemSymbolName: symbol.rawValue, accessibilityDescription: nil) != nil, "\(symbol.rawValue)")
+        }
     }
 
     @Test func brandMarksAreDistinct() {
@@ -38,16 +48,16 @@ struct IconSourceTests {
             host.layoutSubtreeIfNeeded()
             return host.fittingSize.width
         }
-        for name in ["exclamationmark", "checkmark"] {
-            #expect(width(Icon(.symbol(name), size: 10)) == width(Image(systemName: name).font(.system(size: 10))), "\(name)")
+        for name in [SFSymbolName.exclamationmark, .checkmark] {
+            #expect(width(Icon(.symbol(name), size: 10)) == width(Image(symbol: name).font(.system(size: 10))), "\(name)")
         }
     }
 
     /// An untinted symbol inks for the surface it sits on: full white on the accent, the label ink
     /// (≈85 % white) anywhere else.
     @Test func anUntintedSymbolTakesTheSurfaceInk() throws {
-        let onAccent = try #require(brightestPixel(of: Icon(.symbol("circle.fill"), size: 12).surface(.accent)))
-        let onSheet = try #require(brightestPixel(of: Icon(.symbol("circle.fill"), size: 12).surface(.sheet)))
+        let onAccent = try #require(brightestPixel(of: Icon(.symbol(.circleFill), size: 12).surface(.accent)))
+        let onSheet = try #require(brightestPixel(of: Icon(.symbol(.circleFill), size: 12).surface(.sheet)))
         #expect(onAccent.redComponent > 0.97)
         #expect(onSheet.redComponent < 0.9)
     }

@@ -47,7 +47,7 @@ import Testing
         let task = UUID()
         feed.sayAll([(.working, "s1", task, .custom("gemini"))])
         #expect(model.avatars(forTask: task) == [.custom("gemini")])
-        #expect(VendorMark.genericSymbol(for: .custom("gemini")) == "sparkles")
+        #expect(VendorMark.genericSymbol(for: .custom("gemini")) == .sparkles)
         #expect(VendorMark.genericSymbol(for: .claude) == nil && VendorMark.genericSymbol(for: .shell) == nil)
         #expect(model.agentName(.custom("gemini")) == "Gemini CLI")
         model.reloadAgents(AgentPresets.all, readyMade: [])

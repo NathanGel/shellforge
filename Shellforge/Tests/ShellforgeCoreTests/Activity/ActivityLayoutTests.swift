@@ -30,7 +30,6 @@ import Foundation
     @Test func filesIsAPanel() {
         #expect(ActivityLayout(saved: ["sessions", "metrics"]).order == [.sessions, .metrics, .files, .git, .ssh])
         #expect(ActivityPanel.files.title == "Files")
-        #expect(ActivityPanel.files.symbol == "folder")
     }
 
     @Test func savedValueRoundTrips() {

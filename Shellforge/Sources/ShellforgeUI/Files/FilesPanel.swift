@@ -315,8 +315,8 @@ private struct FileRow: View {
     @Environment(\.interfaceScale) private var scale
     @Environment(\.surface) private var surface
 
-    static let folderSymbol = "folder"
-    static let fileSymbol = "doc"
+    static let folderSymbol: SFSymbolName = .folder
+    static let fileSymbol: SFSymbolName = .doc
     /// The folder and file symbols' drawn size, as `ProviderIcon` draws its SF Symbol fallbacks in
     /// the same `Size.avatar` column, so a tree's symbols line up under the project's mark.
     private static let glyphSize: CGFloat = 10

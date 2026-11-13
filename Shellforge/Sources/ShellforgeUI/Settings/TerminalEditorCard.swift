@@ -9,7 +9,7 @@ struct TerminalEditorCard: View {
 
     var body: some View {
         SettingsCard(title: "Terminal editor", status: SettingsStatus(.idle, Self.status(draft: draft, settings: settings))) {
-            SymbolMark(symbol: "terminal", size: Size.control, style: .paper)
+            SymbolMark(symbol: .terminal, size: Size.control, style: .paper)
         } chips: {
             EmptyView()
         } actions: {

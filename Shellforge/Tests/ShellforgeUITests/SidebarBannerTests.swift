@@ -7,9 +7,9 @@ import Testing
 /// tinted ground.
 @MainActor @Suite struct SidebarBannerTests {
     @Test func eachToneHasItsSymbol() {
-        #expect(SidebarBanner.symbol(for: .error) == "xmark.octagon.fill")
-        #expect(SidebarBanner.symbol(for: .warning) == "exclamationmark.triangle.fill")
-        #expect(SidebarBanner.symbol(for: .info) == "info.circle.fill")
+        #expect(SidebarBanner.symbol(for: .error).rawValue == "xmark.octagon.fill")
+        #expect(SidebarBanner.symbol(for: .warning).rawValue == "exclamationmark.triangle.fill")
+        #expect(SidebarBanner.symbol(for: .info).rawValue == "info.circle.fill")
     }
 
     @Test func eachToneHasAGround() {

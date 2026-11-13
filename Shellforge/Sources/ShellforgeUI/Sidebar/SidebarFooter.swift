@@ -48,7 +48,7 @@ struct SidebarFooter: View {
     /// The USAGE group's `ViewMark`.
     static let usageMarkName = "SidebarFooter.Usage"
     /// The Mac's mark on its readings row, as the Mac card draws it.
-    static let macSymbol = "macbook"
+    static let macSymbol: SFSymbolName = .macbook
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {

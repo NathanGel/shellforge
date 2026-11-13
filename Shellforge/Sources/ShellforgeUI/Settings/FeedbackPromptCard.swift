@@ -12,7 +12,7 @@ struct FeedbackPromptCard: View {
 
     var body: some View {
         SettingsCard(title: "Ask for feedback now and then", status: status) {
-            SymbolMark(symbol: "bubble.left", size: Size.control, style: .paper)
+            SymbolMark(symbol: .bubbleLeft, size: Size.control, style: .paper)
         } chips: {
             EmptyView()
         } actions: {

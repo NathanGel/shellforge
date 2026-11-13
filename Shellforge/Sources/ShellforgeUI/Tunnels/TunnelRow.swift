@@ -85,7 +85,7 @@ struct TunnelRowView: View {
     private var look: Look { Self.look(row) }
 
     /// Answer in Tab's glyph, in Sessions and the SSH panel alike.
-    static let answerInTabSymbol = "keyboard"
+    static let answerInTabSymbol: SFSymbolName = .keyboard
     /// What VoiceOver says for the keep-running pin.
     static let keepsRunningText = "Keeps running after quit"
 
@@ -93,7 +93,7 @@ struct TunnelRowView: View {
         TunnelRowContent(alias: row.alias, row: row, dimmed: row.missing, caption: look.caption) {
             if look.answersInTab {
                 Button(action: answerInTab) {
-                    Image(systemName: Self.answerInTabSymbol).font(Typography.micro).foregroundStyle(surface.secondaryInk)
+                    Image(symbol: Self.answerInTabSymbol).font(Typography.micro).foregroundStyle(surface.secondaryInk)
                 }
                 .buttonStyle(.plain)
                 .frame(width: SidebarRowLayout.trailingSlot(scale), height: SidebarRowLayout.trailingSlot(scale))
@@ -102,7 +102,7 @@ struct TunnelRowView: View {
             }
             if let action = look.action {
                 Button(action: action == .start ? start : stop) {
-                    Image(systemName: action == .start ? "play.fill" : "stop.fill")
+                    Image(symbol: action == .start ? .playFill : .stopFill)
                         .font(Typography.micro).foregroundStyle(surface.secondaryInk)
                 }
                 .buttonStyle(.plain)
@@ -171,7 +171,7 @@ struct TunnelRowContent<Trailing: View>: View {
                         .help(TunnelRowView.portsHelp(row) ?? "")
                 }
                 if row?.keepRunning == true {
-                    Image(systemName: "pin.fill").font(Typography.micro).foregroundStyle(surface.secondaryInk)
+                    Image(symbol: .pinFill).font(Typography.micro).foregroundStyle(surface.secondaryInk)
                         .help("Keeps running after Shellforge quits")
                         .accessibilityLabel(TunnelRowView.keepsRunningText)
                 }

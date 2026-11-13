@@ -16,8 +16,8 @@ struct VendorMark: View {
     private static let underscoreWeight: CGFloat = 1.5
 
     /// The SF Symbol of the generic mark every agent that isn't built in draws; nil for the others.
-    static func genericSymbol(for agent: SessionAgent) -> String? {
-        if case .custom = agent { return "sparkles" }
+    static func genericSymbol(for agent: SessionAgent) -> SFSymbolName? {
+        if case .custom = agent { return .sparkles }
         return nil
     }
 
@@ -40,12 +40,12 @@ struct VendorMark: View {
                     .offset(x: size * LogoFit.pi.dx, y: size * LogoFit.pi.dy)
             case .custom:
                 Circle().fill(Palette.markInk)
-                Icon(.symbol(Self.genericSymbol(for: agent) ?? ""), size: size * LogoFit.generic.scale, tint: Palette.markPaper)
+                Icon(.symbol(Self.genericSymbol(for: agent) ?? .sparkles), size: size * LogoFit.generic.scale, tint: Palette.markPaper)
             case .shell:
                 Circle().fill(Palette.markInk)
                 // The `>_` prompt glyph from the canvas: a bold chevron and a short underscore.
                 HStack(alignment: .bottom, spacing: Self.promptGap) {
-                    Image(systemName: "chevron.right").font(.system(size: size * 0.36, weight: .bold)).foregroundStyle(Palette.markPaper)
+                    Image(symbol: .chevronRight).font(.system(size: size * 0.36, weight: .bold)).foregroundStyle(Palette.markPaper)
                     Rectangle().fill(Palette.markPaper).frame(width: size * 0.2, height: Self.underscoreWeight).padding(.bottom, size * 0.08)
                 }
             }

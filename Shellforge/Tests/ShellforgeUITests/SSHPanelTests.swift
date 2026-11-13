@@ -92,7 +92,7 @@ private final class FakeSSHWatcher: FolderWatching, @unchecked Sendable {
     @Test func sshIsAPanel() {
         #expect(ActivityLayout(saved: ["sessions", "metrics", "files", "git"]).order.last == .ssh, "appended to a saved order")
         #expect(ActivityPanel.ssh.title == "SSH")
-        #expect(ActivityPanel.ssh.symbol == "server.rack")
+        #expect(ActivityPanel.ssh.symbol == .serverRack)
     }
 
     /// Nothing reads or watches `~/.ssh` before the panel first shows; then it is read, and its

@@ -136,7 +136,7 @@ struct RearrangeRow<Content: View>: View {
     var body: some View {
         let actions = model.rearrange.map { RearrangeRowActions.titles(for: item, in: $0) } ?? []
         HStack(spacing: 0) {
-            SymbolMark(symbol: "line.3.horizontal", size: scale(Size.avatar), tint: surface.secondaryInk)
+            SymbolMark(symbol: .line3Horizontal, size: scale(Size.avatar), tint: surface.secondaryInk)
                 .padding(.leading, scale(Space.tight))
                 .help("Drag to rearrange")
             content().allowsHitTesting(fold != nil)

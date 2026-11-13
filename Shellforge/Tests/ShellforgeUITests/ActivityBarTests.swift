@@ -10,6 +10,12 @@ import Testing
 /// The activity bar's model: each window picks its own panel, every window shares one saved order,
 /// and the Sessions panel's state and commands live on while another panel shows.
 @MainActor @Suite struct ActivityBarTests {
+    /// Each panel's icon, by the same SF Symbol it has always had.
+    @Test func eachPanelKeepsItsSymbol() {
+        #expect(ActivityPanel.allCases.map(\.symbol.rawValue)
+                == ["rectangle.stack", "gauge.with.dots.needle.33percent", "folder", "arrow.triangle.branch", "server.rack"])
+    }
+
     private func task(_ title: String, in project: UUID) -> TaskItem {
         TaskItem(projectId: project, title: title, branch: "feat/\(title)", worktreePath: "/wt/\(title)", baseBranch: "main")
     }

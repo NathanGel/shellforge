@@ -45,7 +45,7 @@ struct AddMenu<Items: View>: View {
 
     var body: some View {
         Menu(content: items) {
-            Image(systemName: "plus").font(Typography.label).foregroundStyle(surface.secondaryInk)
+            Image(symbol: .plus).font(Typography.label).foregroundStyle(surface.secondaryInk)
         }
         .disabled(!enabled)
         .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden)
@@ -153,7 +153,7 @@ struct HeaderChevron: View {
     @Environment(\.surface) private var surface
 
     var body: some View {
-        Image(systemName: collapsed ? "chevron.right" : "chevron.down")
+        Image(symbol: collapsed ? .chevronRight : .chevronDown)
             .font(Typography.micro).foregroundStyle(surface.secondaryInk)
     }
 }
@@ -268,8 +268,8 @@ struct ProviderIcon: View {
                 Icon(.gitlabTanuki, size: scale(Self.logoSize))
             case .github:
                 Icon(.brand(Palette.github), size: scale(Self.logoSize), tint: surface.ink)
-            case .git: Icon(.symbol("arrow.triangle.branch"), size: scale(Self.glyphSize), tint: surface.secondaryInk)
-            case .none: Icon(.symbol("folder.fill"), size: scale(Self.glyphSize), tint: surface.secondaryInk)
+            case .git: Icon(.symbol(.arrowTriangleBranch), size: scale(Self.glyphSize), tint: surface.secondaryInk)
+            case .none: Icon(.symbol(.folderFill), size: scale(Self.glyphSize), tint: surface.secondaryInk)
             }
         }.frame(width: scale(Size.avatar), height: scale(Size.avatar))
     }

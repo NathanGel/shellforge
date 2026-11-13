@@ -469,7 +469,7 @@ private struct GitBranchLine: View {
     @Environment(\.surface) private var surface
 
     static let switchTitle = "Switch Branch…"
-    static let branchSymbol = "arrow.triangle.branch"
+    static let branchSymbol: SFSymbolName = .arrowTriangleBranch
 
     var body: some View {
         HStack(spacing: scale(Space.snug)) {
@@ -517,7 +517,7 @@ private struct GitBranchList: View {
     @State private var focused = true
 
     static let placeholder = "Search branches"
-    static let checkSymbol = "checkmark"
+    static let checkSymbol: SFSymbolName = .checkmark
     private static let width: CGFloat = 280
     private static let listHeight: CGFloat = 220
 
@@ -553,7 +553,7 @@ private struct GitBranchList: View {
                     ForEach(matches, id: \.self) { branch in
                         Button { if !isCurrent(branch) { pick(branch) } } label: {
                             HStack(spacing: Space.snug) {
-                                Image(systemName: Self.checkSymbol).font(Typography.micro)
+                                Image(symbol: Self.checkSymbol).font(Typography.micro)
                                     .opacity(isCurrent(branch) ? 1 : 0)
                                 Text(branch.title).font(Typography.monoCode).lineLimit(1).truncationMode(.middle)
                                 Spacer(minLength: 0)
@@ -651,7 +651,7 @@ private struct GitListHeader: View {
     static let stageAll = "Stage All"
     static let unstageAll = "Unstage All"
 
-    private var bulk: (title: String, symbol: String, action: GitAction)? {
+    private var bulk: (title: String, symbol: SFSymbolName, action: GitAction)? {
         switch list {
         case .changes: return (Self.stageAll, GitChangeRow.stageSymbol, .stageAll)
         case .staged: return (Self.unstageAll, GitChangeRow.unstageSymbol, .unstageAll)
@@ -714,11 +714,11 @@ private struct GitChangeRow: View {
     static let stageTitle = "Stage"
     static let unstageTitle = "Unstage"
     static let discardTitle = "Discard Changes"
-    static let stageSymbol = "plus"
-    static let unstageSymbol = "minus"
-    static let discardSymbol = "arrow.uturn.backward"
-    static let openSymbol = "doc.text"
-    static let diffSymbol = "plus.forwardslash.minus"
+    static let stageSymbol: SFSymbolName = .plus
+    static let unstageSymbol: SFSymbolName = .minus
+    static let discardSymbol: SFSymbolName = .arrowUturnBackward
+    static let openSymbol: SFSymbolName = .docText
+    static let diffSymbol: SFSymbolName = .plusForwardslashMinus
     private static let letterWidth: CGFloat = 12
 
     private var name: String { (change.path as NSString).lastPathComponent }
@@ -833,7 +833,7 @@ private struct OptionalAction: ViewModifier {
 /// A small borderless symbol button, named by its help and for VoiceOver.
 private struct GitIconButton: View {
     let title: String
-    let symbol: String
+    let symbol: SFSymbolName
     let action: () -> Void
     @Environment(\.interfaceScale) private var scale
     @Environment(\.surface) private var surface

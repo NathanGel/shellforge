@@ -89,7 +89,7 @@ struct AgentFormView: View {
     }
 
     private func removeButton(_ remove: @escaping () -> Void) -> some View {
-        Button(action: remove) { Image(systemName: "minus.circle") }.buttonStyle(.borderless).help("Remove")
+        Button(action: remove) { Image(symbol: .minusCircle) }.buttonStyle(.borderless).help("Remove")
     }
 
     private var variables: some View {

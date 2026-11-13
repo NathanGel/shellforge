@@ -15,7 +15,9 @@ import Testing
     static let ported = ["Palette", "Metrics", "Surface", "InterfaceScale", "Logos", "IconSource", "Badge", "Hairline",
                          "SidebarHeading", "SymbolMark", "FormField", "Input", "Select", "SegmentedControl", "Kbd", "SearchField"]
     /// Ported files that differ from AiTerm's on purpose (ledgered).
-    static let changed: Set = ["FormField", "Input", "SearchField", "SegmentedControl", "Palette", "IconSource", "SidebarHeading", "Metrics", "Surface", "Badge"]
+    static let changed: Set = ["FormField", "Input", "SearchField", "SegmentedControl", "Palette", "IconSource", "SidebarHeading", "Metrics", "Surface", "Badge",
+                               // SF Symbols by `SFSymbolName`, not by string (C9).
+                               "Logos", "SymbolMark"]
     /// SHA-256 of each ported file, normalised, as reviewed.
     static let baseline: [String: String] = [
         "Badge": "8d82c1df4269c88794a80451715afc2a1dd54b5c8f5fa5fec6036c0c0075ff78",
@@ -26,14 +28,14 @@ import Testing
         "SearchField": "6366d5af9d16e8c66a3570c2c3d58e275bcb0153ea0801913285ac2d948f6fbd",
         "SegmentedControl": "2c2d22dc1bc22cb14ce260f2792f6ff6c9f668922176dccfba1847b7c5b4ab4a",
         "Select": "1dd66bc87b8fdd973eb9dc19cdbf9ba6273a329a17b6895bd3ee0e96544621dd",
-        "IconSource": "1c4233822c68d94be0a1d95aefdf0c27242b2a14b31839c4a5ef13c59be093df",
+        "IconSource": "1aeeab9fe00fcb34bdde2f5a75fe2d0982508939451f448c4f6a79d4ce7add15",
         "InterfaceScale": "8cd10c61121676480e5fae9e24d5e9499ee7babcb165739c16514f3174cda745",
-        "Logos": "af2e1ee98ac438ca5bc59b58aa2fcffca6269ad502c2b1c73f78b875dfd7a4f5",
+        "Logos": "9446b4d538014bbd05e28bff0e7a25675f3127daa98b8b734f31dfdebc35b5b6",
         "Metrics": "5d2dda0e021ea1ba4b41f046c66bd9c5d15d4963b8c2d37d3de48b86787dcf78",
-        "Palette": "eb97e7658674c52e0102b551f07311131f1cbb6ebdeb961b7680e309c62ae58a",
+        "Palette": "365658fc902ff1b00ad84dca021f7d1d97ee06cf47ebe0c7df8a68a7260c80c1",
         "SidebarHeading": "920a10e24175cc889fa22c5437ca486ddebd7ee2605350795edb56138ebca38f",
         "Surface": "59282e263f6d4728cd2af4ec4e48ffbbf6b18557111a89a6a97e9d4fe89adf7e",
-        "SymbolMark": "4e2801b33a0284b0ab889398eaac1a6164465feed0a8a177922b41501ae61cc5",
+        "SymbolMark": "a0559facfab31f6273f7a327e77f2631960d1d4a5b5ffb210c18ea80811e0d80",
     ]
 
     private static let ours = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()

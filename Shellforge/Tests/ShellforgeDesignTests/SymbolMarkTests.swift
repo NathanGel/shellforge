@@ -18,13 +18,13 @@ struct SymbolMarkTests {
     /// The mark is exactly the square it is given, at a Settings card's size and at the sidebar's.
     @Test(arguments: [Size.control, Size.vendorMark])
     func theMarkIsTheSizeItIsGiven(size: CGFloat) {
-        let fitting = host(SymbolMark(symbol: "personalhotspot", size: size)).fittingSize
+        let fitting = host(SymbolMark(symbol: .personalhotspot, size: size)).fittingSize
         #expect(abs(fitting.width - size) < 0.5 && abs(fitting.height - size) < 0.5)
     }
 
     /// The disc is `controlActive`: a point inside the disc but outside the half-size glyph is it.
     @Test func theDiscIsControlActive() throws {
-        let host = host(SymbolMark(symbol: "personalhotspot", size: 28))
+        let host = host(SymbolMark(symbol: .personalhotspot, size: 28))
         let bitmap = try #require(Snapshot.bitmap(of: host))
         let scale = CGFloat(bitmap.pixelsWide) / host.bounds.width
         let sample = try #require(bitmap.colorAt(x: Int(5 * scale), y: Int(14 * scale))?.usingColorSpace(.sRGB))
@@ -42,7 +42,7 @@ struct SymbolMarkTests {
     /// `.paper` is the vendor discs' recipe: `markInk` on `markPaper`, the Mac's mark in the footer
     /// and on its Settings card. The disc reads as white.
     @Test func thePaperDiscIsMarkPaper() throws {
-        let host = host(SymbolMark(symbol: "macbook", size: 28, style: .paper))
+        let host = host(SymbolMark(symbol: .macbook, size: 28, style: .paper))
         let bitmap = try #require(Snapshot.bitmap(of: host))
         let scale = CGFloat(bitmap.pixelsWide) / host.bounds.width
         let sample = try #require(bitmap.colorAt(x: Int(5 * scale), y: Int(14 * scale))?.usingColorSpace(.sRGB))

@@ -76,7 +76,7 @@ struct SearchPicker<Item: Identifiable, Row: View, Selected: View>: View {
     /// it has closed the list.
     private var toggle: some View {
         Button { open.toggle(); if open { index = 0 } } label: {
-            Image(systemName: "chevron.down")
+            Image(symbol: .chevronDown)
                 .font(Typography.micro).foregroundStyle(Palette.muted)
                 .rotationEffect(.degrees(open ? 180 : 0))
                 .frame(width: Size.menuRow, height: Size.control)
@@ -143,7 +143,7 @@ struct PickedItemField<Trailing: View>: View {
             Spacer(minLength: Space.snug)
             trailing
             Button(action: clear) {
-                Image(systemName: "xmark").font(Typography.micro).foregroundStyle(Palette.muted)
+                Image(symbol: .xmark).font(Typography.micro).foregroundStyle(Palette.muted)
             }.buttonStyle(.plain).help(clearHelp)
         }
         .fieldChrome()

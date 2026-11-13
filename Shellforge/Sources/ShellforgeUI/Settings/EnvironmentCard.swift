@@ -68,7 +68,7 @@ struct EnvironmentCard: View {
     var body: some View {
         TimelineView(.everyMinute) { context in
             SettingsCard(title: "Environment", status: Self.status(model.report, now: context.date)) {
-                SymbolMark(symbol: "terminal", size: Size.control, style: .paper)
+                SymbolMark(symbol: .terminal, size: Size.control, style: .paper)
             } chips: {
                 EmptyView()
             } actions: {

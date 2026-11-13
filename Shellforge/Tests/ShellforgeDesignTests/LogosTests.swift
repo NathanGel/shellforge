@@ -9,8 +9,8 @@ struct LogosTests {
     /// their path data starts, and the cache never hashes the path to tell.
     @Test func brandsThatStartAlikeAreCachedApart() {
         let prefix = "M0 0h24v24H0zM0 0h24v24H0z"
-        let first = Logos.image(brand: Brand("first", 0xFFFFFF, path: prefix + "M2 2h4v4H2z", fallbackSymbol: "circle"), fill: "#FFFFFF")
-        let second = Logos.image(brand: Brand("second", 0xFFFFFF, path: prefix + "M2 2h8v8H2z", fallbackSymbol: "circle"), fill: "#FFFFFF")
+        let first = Logos.image(brand: Brand("first", 0xFFFFFF, path: prefix + "M2 2h4v4H2z", fallbackSymbol: .circle), fill: "#FFFFFF")
+        let second = Logos.image(brand: Brand("second", 0xFFFFFF, path: prefix + "M2 2h8v8H2z", fallbackSymbol: .circle), fill: "#FFFFFF")
         #expect(first != nil && second != nil)
         #expect(first !== second)
     }
@@ -39,11 +39,11 @@ struct LogosTests {
     @Test func brandsSharingANameButNotAPathAreCachedApart() {
         for (one, other) in [("M0 0h24v24H0z", "M0 0h2v2H0z"), ("M0 0h24v24H0z", "M0 0h12v12H0z")] {
             let name = "same-\(UUID().uuidString)"
-            let first = Logos.image(brand: Brand(name, 0xFFFFFF, path: one, fallbackSymbol: "circle"), fill: "#FFFFFF")
-            let second = Logos.image(brand: Brand(name, 0xFFFFFF, path: other, fallbackSymbol: "circle"), fill: "#FFFFFF")
+            let first = Logos.image(brand: Brand(name, 0xFFFFFF, path: one, fallbackSymbol: .circle), fill: "#FFFFFF")
+            let second = Logos.image(brand: Brand(name, 0xFFFFFF, path: other, fallbackSymbol: .circle), fill: "#FFFFFF")
             #expect(first != nil && second != nil)
             #expect(first !== second, "\(other) was drawn as \(one)")
-            #expect(Logos.image(brand: Brand(name, 0xFFFFFF, path: other, fallbackSymbol: "circle"), fill: "#FFFFFF") === second,
+            #expect(Logos.image(brand: Brand(name, 0xFFFFFF, path: other, fallbackSymbol: .circle), fill: "#FFFFFF") === second,
                     "still rasterised once")
         }
     }

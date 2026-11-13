@@ -127,7 +127,7 @@ struct TunnelsSheet: View {
     }
 
     private func hostRow(_ host: SSHHost) -> some View {
-        PickerResultRow(mark: .symbol("network"), key: host.alias, keyWidth: TunnelSheetLayout.aliasColumnWidth,
+        PickerResultRow(mark: .symbol(.network), key: host.alias, keyWidth: TunnelSheetLayout.aliasColumnWidth,
                         title: host.forwards.map(\.label).joined(separator: ", "), detail: nil)
     }
 
@@ -143,7 +143,7 @@ struct TunnelsSheet: View {
 
     private func linkedTunnelLine(_ tunnel: TunnelDefinition) -> some View {
         HStack(spacing: Space.base) {
-            PickedItemField(mark: .symbol("network"), key: tunnel.alias, title: forwards(of: tunnel.alias),
+            PickedItemField(mark: .symbol(.network), key: tunnel.alias, title: forwards(of: tunnel.alias),
                             clearHelp: "Remove \(tunnel.alias)") {
                 linked.removeAll { $0.alias == tunnel.alias }
             }

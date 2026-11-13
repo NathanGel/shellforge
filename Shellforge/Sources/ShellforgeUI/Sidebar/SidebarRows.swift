@@ -30,14 +30,14 @@ struct SidebarHeader: View {
             SidebarHeading("Projects")
             Spacer()
             Button(action: showHooks) {
-                Image(systemName: "bolt.horizontal.circle").font(Typography.label).foregroundStyle(surface.secondaryInk)
+                Image(symbol: .boltHorizontalCircle).font(Typography.label).foregroundStyle(surface.secondaryInk)
             }
             .buttonStyle(.plain)
             .frame(width: SidebarRowLayout.trailingSlot(scale), height: SidebarRowLayout.trailingSlot(scale))
             .help("Agent hooks")
             .accessibilityLabel("Agent hooks")
             Button(action: newHomeTab) {
-                Image(systemName: "terminal").font(Typography.label).foregroundStyle(surface.secondaryInk)
+                Image(symbol: .terminal).font(Typography.label).foregroundStyle(surface.secondaryInk)
             }
             .buttonStyle(.plain)
             .frame(width: SidebarRowLayout.trailingSlot(scale), height: SidebarRowLayout.trailingSlot(scale))
@@ -51,7 +51,7 @@ struct SidebarHeader: View {
             // toggle, at the start of this row, where it stays when the sidebar is closed.
             if windowControls == nil {
                 Button(action: hideSidebar) {
-                    Image(systemName: "sidebar.left").font(Typography.label).foregroundStyle(surface.secondaryInk)
+                    Image(symbol: .sidebarLeft).font(Typography.label).foregroundStyle(surface.secondaryInk)
                 }
                 .buttonStyle(.plain)
                 .frame(width: SidebarRowLayout.trailingSlot(scale), height: SidebarRowLayout.trailingSlot(scale))
@@ -401,11 +401,11 @@ struct SidebarBanner: View {
     }
 
     /// The notice's symbol, by tone.
-    static func symbol(for tone: Tone) -> String {
+    static func symbol(for tone: Tone) -> SFSymbolName {
         switch tone {
-        case .error: "xmark.octagon.fill"
-        case .warning: "exclamationmark.triangle.fill"
-        case .info: "info.circle.fill"
+        case .error: .xmarkOctagonFill
+        case .warning: .exclamationmarkTriangleFill
+        case .info: .infoCircleFill
         }
     }
 
@@ -445,13 +445,13 @@ struct NoticeLine: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: scale(Space.snug)) {
-            Image(systemName: SidebarBanner.symbol(for: tone)).font(Typography.help).foregroundStyle(SidebarBanner.symbolInk(for: tone))
+            Image(symbol: SidebarBanner.symbol(for: tone)).font(Typography.help).foregroundStyle(SidebarBanner.symbolInk(for: tone))
                 .accessibilityHidden(true)
             Text(text).font(Typography.help).foregroundStyle(SidebarBanner.textInk(for: tone)).textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
             if let dismiss {
                 Button(action: dismiss) {
-                    Image(systemName: "xmark").font(Typography.help).foregroundStyle(surface.secondaryInk)
+                    Image(symbol: .xmark).font(Typography.help).foregroundStyle(surface.secondaryInk)
                 }
                 .buttonStyle(.plain)
                 .help("Dismiss")

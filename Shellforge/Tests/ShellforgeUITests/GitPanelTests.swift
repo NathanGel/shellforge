@@ -83,7 +83,7 @@ private final class InertGitWatcher: FolderWatching, @unchecked Sendable {
     @Test func gitIsAPanel() {
         #expect(ActivityLayout(saved: ["sessions", "metrics", "files"]).order.dropFirst(3).first == .git)
         #expect(ActivityPanel.git.title == "Git")
-        #expect(ActivityPanel.git.symbol == "arrow.triangle.branch")
+        #expect(ActivityPanel.git.symbol == .arrowTriangleBranch)
     }
 
     /// The app's one Git model is made when the panel first shows: before, no repository is read.

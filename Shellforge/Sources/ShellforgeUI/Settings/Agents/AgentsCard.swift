@@ -60,7 +60,7 @@ private struct AgentRowCard: View {
                     Button("Restore Default", action: restore)
                 }
             } label: {
-                Image(systemName: "ellipsis")
+                Image(symbol: .ellipsis)
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)

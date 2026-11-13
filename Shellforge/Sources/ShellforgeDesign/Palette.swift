@@ -204,25 +204,25 @@ public enum Palette {
     // Brand marks, not UI colours.
     /// Anthropic's vendor colour for the Claude logo/glyph — a brand mark, not a UI colour; never
     /// use it to colour a button or status.
-    public static let claude = Brand("claude", 0xD97757, path: Logos.claudePath, fallbackSymbol: "asterisk")
+    public static let claude = Brand("claude", 0xD97757, path: Logos.claudePath, fallbackSymbol: .asterisk)
     /// Atlassian's vendor colour for the Jira mark — a brand mark, not a UI colour; do not reach
     /// for it to colour general UI.
-    public static let jira = Brand("jira", 0x2684FF, path: Logos.jiraPath, fallbackSymbol: "ticket")
+    public static let jira = Brand("jira", 0x2684FF, path: Logos.jiraPath, fallbackSymbol: .ticket)
     /// GitLab's vendor colour for its mark — a brand mark, not a UI colour; reserved for the
     /// GitLab logo/badge only.
-    public static let gitlab = Brand("gitlab", 0xFC6D26, path: Logos.gitlabPath, fallbackSymbol: "triangle.fill")
+    public static let gitlab = Brand("gitlab", 0xFC6D26, path: Logos.gitlabPath, fallbackSymbol: .triangleFill)
     /// GitHub's mark, in white: GitHub's mark is monochrome, and the app is dark-only. A brand
     /// mark, not a UI colour; reserved for the GitHub logo/badge only. A light ground — the
     /// Integrations disc — tints it `markInk`.
-    public static let github = Brand("github", 0xFFFFFF, path: Logos.githubPath, fallbackSymbol: "chevron.left.forwardslash.chevron.right", followsAppearance: true)
+    public static let github = Brand("github", 0xFFFFFF, path: Logos.githubPath, fallbackSymbol: .chevronLeftForwardslashChevronRight, followsAppearance: true)
     /// Microsoft's vendor colour for the VS Code mark — a brand mark, not a UI colour; used only
     /// where the VS Code badge appears.
-    public static let vscode = Brand("vscode", 0x23A9F2, path: Logos.vscodePath, fallbackSymbol: "chevron.left.forwardslash.chevron.right")
+    public static let vscode = Brand("vscode", 0x23A9F2, path: Logos.vscodePath, fallbackSymbol: .chevronLeftForwardslashChevronRight)
     /// OpenAI's mark, in its own black — drawn on `VendorMark`'s white Codex disc. A brand mark,
     /// not a UI colour.
-    public static let openai = Brand("openai", 0x000000, path: Logos.openaiPath, fallbackSymbol: "hexagon")
+    public static let openai = Brand("openai", 0x000000, path: Logos.openaiPath, fallbackSymbol: .hexagon)
     /// xAI's Grok mark, in black: Grok has no brand colour. A brand mark, not a UI colour.
-    public static let grok = Brand("grok", 0x000000, path: Logos.grokPath, fallbackSymbol: "circle.slash", evenOdd: true)
+    public static let grok = Brand("grok", 0x000000, path: Logos.grokPath, fallbackSymbol: .circleSlash, evenOdd: true)
 
     // -- sidebar ---------------------------------------------------------------------
     /// A neutral translucent wash behind an unselected count chip or badge. 8 % of `.primary`, which
@@ -314,7 +314,7 @@ public struct Brand: Sendable, Hashable {
     /// on macOS, so the mark is path data rather than a hand-ported `Path`.
     public let path: String
     /// Drawn instead when the SVG will not decode, so a mark never silently vanishes.
-    public let fallbackSymbol: String
+    public let fallbackSymbol: SFSymbolName
     /// Whether `path` needs `fill-rule="evenodd"` to render its cut-outs as holes rather than fill:
     /// opt-in, since most vendor marks are already correct under SVG's default nonzero winding rule.
     /// Only Grok's mark sets this.
@@ -330,7 +330,7 @@ public struct Brand: Sendable, Hashable {
     public static func == (lhs: Brand, rhs: Brand) -> Bool { lhs.name == rhs.name }
     public func hash(into hasher: inout Hasher) { hasher.combine(name) }
 
-    public init(_ name: String, _ value: UInt32, path: String, fallbackSymbol: String, evenOdd: Bool = false,
+    public init(_ name: String, _ value: UInt32, path: String, fallbackSymbol: SFSymbolName, evenOdd: Bool = false,
                 followsAppearance: Bool = false) {
         self.name = name
         color = followsAppearance ? Palette.text : Palette.hex(value)

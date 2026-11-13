@@ -84,7 +84,7 @@ struct LogoGlyph: View {
             Image(nsImage: image).resizable().interpolation(.high).frame(width: size, height: size)
                 .accessibilityHidden(true)
         } else {
-            Image(systemName: brand.fallbackSymbol).font(.system(size: size * 0.9, weight: .bold))
+            Image(symbol: brand.fallbackSymbol).font(.system(size: size * 0.9, weight: .bold))
                 .accessibilityHidden(true)
         }
     }

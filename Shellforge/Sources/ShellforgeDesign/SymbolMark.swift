@@ -7,7 +7,7 @@ import SwiftUI
 /// draws it at `Size.control`; the sidebar footer's Mac readings row draws it at `Size.vendorMark`. `size` is
 /// points on screen: the caller scales the token it passes.
 public struct SymbolMark: View {
-    let symbol: String
+    let symbol: SFSymbolName
     let size: CGFloat
     let tint: Color
 
@@ -22,7 +22,7 @@ public struct SymbolMark: View {
     /// does not apply, and no `Size` step fits.
     private static let glyphRatio: CGFloat = 0.5
 
-    public init(symbol: String, size: CGFloat, tint: Color = Palette.text, style: Style = .quiet) {
+    public init(symbol: SFSymbolName, size: CGFloat, tint: Color = Palette.text, style: Style = .quiet) {
         self.symbol = symbol
         self.size = size
         self.tint = tint

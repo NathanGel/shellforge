@@ -13,16 +13,6 @@ public enum ActivityPanel: String, CaseIterable, Sendable {
         case .ssh: return "SSH"
         }
     }
-
-    public var symbol: String {
-        switch self {
-        case .sessions: return "rectangle.stack"
-        case .metrics: return "gauge.with.dots.needle.33percent"
-        case .files: return "folder"
-        case .git: return "arrow.triangle.branch"
-        case .ssh: return "server.rack"
-        }
-    }
 }
 
 /// The order of the activity bar's panels, which of them the bar leaves out, and which one is

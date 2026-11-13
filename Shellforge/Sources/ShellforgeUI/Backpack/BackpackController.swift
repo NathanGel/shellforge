@@ -2,6 +2,7 @@
 import Combine
 import Foundation
 import ShellforgeCore
+import ShellforgeDesign
 
 /// A turn-on or turn-off under way, which the header draws as a spinner.
 public enum BackpackTransition: Equatable { case turningOn, turningOff }
@@ -26,7 +27,7 @@ public enum ConnectPhase: Equatable {
 @MainActor
 public final class BackpackController: ObservableObject {
     /// The glyph on every Backpack toast: the mode's own, the iPhone it runs through.
-    static let symbol = "iphone"
+    static let symbol: SFSymbolName = .iphone
 
     @Published public private(set) var state: BackpackState = .off
     @Published public private(set) var setup = BackpackSetup(sleepRule: false, location: false, network: nil)

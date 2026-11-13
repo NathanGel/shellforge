@@ -276,7 +276,7 @@ struct BackpackSheet: View {
             HStack(alignment: .top, spacing: Space.inset) {
                 ZStack {
                     Circle().fill(Palette.accent)
-                    Icon(.symbol("checkmark"), size: Size.control / 2, tint: Palette.onAccent)
+                    Icon(.symbol(.checkmark), size: Size.control / 2, tint: Palette.onAccent)
                 }
                 .frame(width: Size.control, height: Size.control)
                 VStack(alignment: .leading, spacing: Space.tight) {

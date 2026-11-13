@@ -323,7 +323,7 @@ struct CompletionPopup: View {
 
         var body: some View {
             HStack(spacing: Space.base) {
-                Icon(.symbol(item.kind == .skill ? "sparkles" : "terminal"), size: CompletionPopup.iconSize,
+                Icon(.symbol(item.kind == .skill ? .sparkles : .terminal), size: CompletionPopup.iconSize,
                      tint: surface.secondaryInk)
                     .frame(width: CompletionPopup.iconSlot)
                 Text(item.name).font(Typography.monoCode)
