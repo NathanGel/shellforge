@@ -162,3 +162,23 @@ final class ThemeRedrawView: NSView {
         return found
     }
 }
+
+/// The theme's accent as the tint of controls under it, only while a theme with colours of its
+/// own is on: under Shellforge the system's own tint is kept, so controls grey in an inactive
+/// window exactly as they always have.
+private struct ThemeTint: ViewModifier {
+    @State private var themed = ThemeRuntime.current.colors != nil
+
+    func body(content: Content) -> some View {
+        content
+            .tint(themed ? Palette.accent : nil)
+            .onReceive(NotificationCenter.default.publisher(for: ThemeRuntime.didChange)) { _ in
+                themed = ThemeRuntime.current.colors != nil
+            }
+    }
+}
+
+extension View {
+    /// Tints controls with the theme's accent while a non-Shellforge theme is on; see `ThemeTint`.
+    public func themeTint() -> some View { modifier(ThemeTint()) }
+}
