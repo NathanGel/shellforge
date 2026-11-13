@@ -14,7 +14,10 @@ public enum EditorCommand {
     }
 
     /// The line typed into the tab: the shell is replaced by the editor, so the tab closes with it.
-    public static func line(editor: String, file: String) -> String {
-        "exec " + editor + " " + AgentCommand.shellWord(file)
+    /// The editor stays as typed; only the file's word is guarded (`TypedPath`), behind `--` for an
+    /// editor that takes it. Throws `TypedPath.Unsafe` for a name that can't be typed safely.
+    public static func line(editor: String, file: String) throws -> String {
+        let endOfOptions = TypedPath.acceptsEndOfOptions(editor) ? " --" : ""
+        return "exec " + editor + endOfOptions + " " + (try TypedPath.word(file))
     }
 }

@@ -191,17 +191,18 @@ public enum GitActions {
     }
 
     /// The command line that shows `change` in a terminal. Paths are literal pathspecs; a staged
-    /// rename names both its paths, so it shows as a rename.
-    public static func diffLine(for change: GitChange, staged: Bool) -> String {
+    /// rename names both its paths, so it shows as a rename. Every path is guarded (`TypedPath`):
+    /// throws `TypedPath.Unsafe` for a name that can't be typed safely.
+    public static func diffLine(for change: GitChange, staged: Bool) throws -> String {
         if change.letter == .untracked {
             // `--no-index` compares two files, not pathspecs.
-            return "git diff --no-index -- /dev/null \(AgentCommand.shellWord(change.path))"
+            return "git diff --no-index -- /dev/null \(try TypedPath.word(change.path))"
         }
-        let word = { AgentCommand.shellWord(literal($0)) }
+        let word = { try TypedPath.word($0, pathspec: true) }
         if staged, change.letter == .renamed, let original = change.originalPath {
-            return "git diff --staged -M -- \(word(original)) \(word(change.path))"
+            return "git diff --staged -M -- \(try word(original)) \(try word(change.path))"
         }
-        return "git diff\(staged ? " --staged" : "") -- \(word(change.path))"
+        return "git diff\(staged ? " --staged" : "") -- \(try word(change.path))"
     }
 
     /// A refusal of `action`, from git's stderr (read under `LC_ALL=C`), in words a person can act on.

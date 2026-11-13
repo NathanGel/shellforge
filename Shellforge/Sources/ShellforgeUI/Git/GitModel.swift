@@ -435,6 +435,14 @@ public final class GitModel: ObservableObject {
         publish()
     }
 
+    /// Shows `problem` on the repository's section, as an action's: a diff or file the panel
+    /// could not open. Cleared by the repository's next action.
+    public func report(_ problem: String, in id: GitRepoID) {
+        guard repos[id] != nil, repos[id]?.actionProblem != problem else { return }
+        repos[id]?.actionProblem = problem
+        publish()
+    }
+
     private nonisolated static func problem(_ error: Error) -> String {
         (error as? GitFailure)?.message ?? "git: \(error.localizedDescription)"
     }

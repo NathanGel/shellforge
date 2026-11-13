@@ -6,6 +6,9 @@ import ShellforgeCore
 public struct FilesSection: Equatable, Identifiable {
     public var project: Project
     public var state: State
+    /// Why the last file opened in this project opened nothing, in plain words: shown until the
+    /// next file is opened.
+    public var problem: String?
     public var id: UUID { project.id }
 
     public enum State: Equatable, Sendable {
@@ -127,6 +130,14 @@ public final class FilesModel: ObservableObject {
     }
 
     private func expanded(_ project: UUID) -> [String] { stored[project.uuidString] ?? [] }
+
+    // -- problems -------------------------------------------------------------------------
+
+    /// Shows `problem` (nil clears it) on the project's section.
+    public func report(_ problem: String?, project: UUID) {
+        guard let index = sections.firstIndex(where: { $0.id == project }), sections[index].problem != problem else { return }
+        sections[index].problem = problem
+    }
 
     // -- listing --------------------------------------------------------------------------
 

@@ -19,9 +19,9 @@ final class EditorCommandTests: XCTestCase {
         XCTAssertEqual(EditorCommand.editor(setting: "  ", environment: ["EDITOR": "nvim"]), "nvim")
     }
 
-    func testOddFileNamesAreQuoted() {
-        XCTAssertEqual(EditorCommand.line(editor: "vim", file: "my file's $x.md"), #"exec vim 'my file'\''s $x.md'"#)
-        XCTAssertEqual(EditorCommand.line(editor: "vim", file: "ünïcode.txt"), "exec vim 'ünïcode.txt'")
-        XCTAssertEqual(EditorCommand.line(editor: "nvim -p", file: "src/app.ts"), "exec nvim -p src/app.ts")
+    func testOddFileNamesAreQuoted() throws {
+        XCTAssertEqual(try EditorCommand.line(editor: "vim", file: "my file's $x.md"), #"exec vim -- './my file'\''s $x.md'"#)
+        XCTAssertEqual(try EditorCommand.line(editor: "vim", file: "ünïcode.txt"), "exec vim -- './ünïcode.txt'")
+        XCTAssertEqual(try EditorCommand.line(editor: "nvim -p", file: "src/app.ts"), "exec nvim -p -- ./src/app.ts")
     }
 }

@@ -123,8 +123,26 @@ private final class InertGitWatcher: FolderWatching, @unchecked Sendable {
         let change = GitChange(path: "src/app.ts", letter: .modified)
         let section = section(.project(demo.id), status(.branch("main"), unstaged: [change]))
         _ = try #require(GitPanel.rows([section], isOpen: { _ in true }).first { $0.id == GitPanel.changeID(section.id, .changes, change) })
-        actions(host).viewDiff(change, list: .changes, in: section)
-        #expect(host.openedPlain.map { "\($0.directory)|\($0.title)|\($0.command)" } == ["/demo|Diff: app.ts|git diff -- ':(literal)src/app.ts'"])
+        actions(host).viewDiff(change, list: .changes, in: section, model: gitModel())
+        #expect(host.openedPlain.map { "\($0.directory)|\($0.title)|\($0.command)" } == ["/demo|Diff: app.ts|git diff -- ':(literal)./src/app.ts'"])
+    }
+
+    /// A name that can't be typed safely opens neither its diff nor its editor; the section says why.
+    @Test func aFileNameThatCantBeTypedOpensNoTab() async throws {
+        let change = GitChange(path: "src/a\u{15}b.ts", letter: .modified)
+        let ready = status(.branch("main"), unstaged: [change])
+        let host = FakeTerminalHost()
+        let model = GitModel(projects: [demo], tasks: [], launcher: launcher, watcher: { _ in InertGitWatcher() },
+                             read: { _, _ in ready }, act: { _, _, _, _ in })
+        await model.settled()
+        let section = try #require(model.sections.first)
+        let refusal = "This file’s name can’t be typed safely into a terminal."
+        actions(host).viewDiff(change, list: .changes, in: section, model: model)
+        #expect(host.openedPlain.isEmpty)
+        #expect(model.sections.first?.problem == refusal)
+        await actions(host).openInEditor(change, in: section, model: model)
+        #expect(host.openedPlain.isEmpty)
+        #expect(model.sections.first?.problem == refusal)
     }
 
     /// A diff tab carries its repository's and file's tag, leaves Other Tabs, and lists under its
@@ -141,7 +159,7 @@ private final class InertGitWatcher: FolderWatching, @unchecked Sendable {
                              read: { _, _ in ready }, act: { _, _, _, _ in })
         await model.settled()
         let section = try #require(model.sections.first)
-        actions(host).viewDiff(change, list: .changes, in: section)
+        actions(host).viewDiff(change, list: .changes, in: section, model: model)
         #expect(host.openedPlain.map(\.panel) == [.diff(repo: "project:" + demo.id.uuidString, path: "src/app.ts")])
         #expect(sidebar.tree.otherTabs.isEmpty, "not under Sessions’ Other Tabs")
         let tab = try #require(host.tabs.first)

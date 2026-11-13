@@ -28,8 +28,9 @@ struct FileOpener {
     let environment: @Sendable () -> [String: String]
     var kind: @Sendable (String) -> FileKind = FileKind.onDisk
 
-    /// A file still there opens in its editor. One gone since the listing opens nothing: the
-    /// project is listed again. A folder never opens an editor: it folds or unfolds instead.
+    /// A file still there opens in its editor, unless its name can't be typed safely: then nothing
+    /// opens and the section says why. One gone since the listing opens nothing: the project is
+    /// listed again. A folder never opens an editor: it folds or unfolds instead.
     func open(_ node: FileNode, in project: Project, files: FilesModel) async {
         let path = URL(fileURLWithPath: project.path).appendingPathComponent(node.path).path
         let (kind, environment) = (self.kind, self.environment)
@@ -45,8 +46,15 @@ struct FileOpener {
             await files.refresh(project: project.id)
         case .file:
             let editor = EditorCommand.editor(setting: defaults.string(forKey: EditorCommand.settingKey), environment: variables)
-            host.openTab(in: project.path, title: node.name, command: EditorCommand.line(editor: editor, file: node.path),
-                         panel: .file(project: project.id, path: node.path))
+            let line: String
+            do {
+                line = try EditorCommand.line(editor: editor, file: node.path)
+            } catch {
+                files.report(error.localizedDescription, project: project.id)
+                return
+            }
+            files.report(nil, project: project.id)
+            host.openTab(in: project.path, title: node.name, command: line, panel: .file(project: project.id, path: node.path))
         }
     }
 }
@@ -88,6 +96,8 @@ struct FilesPanel: View {
         case project(Project, open: Bool)
         /// What the section says in place of its tree: loading, its folder gone, why it can't be read.
         case message(project: UUID, text: String, warns: Bool)
+        /// Why the last file opened opened nothing.
+        case problem(project: UUID, text: String)
         case node(Project, FileNode, depth: Int, open: Bool)
         /// Under an open folder with nothing listed in it, at its children's depth: what it is.
         case note(project: UUID, folder: String, text: String, depth: Int)
@@ -96,6 +106,7 @@ struct FilesPanel: View {
             switch self {
             case .project(let project, _): FilesPanel.rowMark(project: project.id, path: "")
             case .message(let project, _, _): "message:" + project.uuidString
+            case .problem(let project, _): "problem:" + project.uuidString
             case .node(let project, let node, _, _): FilesPanel.rowMark(project: project.id, path: node.path)
             case .note(let project, let folder, _, _): "note:\(project.uuidString):\(folder)"
             }
@@ -116,6 +127,7 @@ struct FilesPanel: View {
             let open = isOpen(project.id, "")
             var rows: [Row] = [.project(project, open: open)]
             guard open else { return rows }
+            if let problem = section.problem { rows.append(.problem(project: project.id, text: problem)) }
             switch section.state {
             case .loading: rows.append(.message(project: project.id, text: loadingText, warns: false))
             case .missing: rows.append(.message(project: project.id, text: missingText, warns: true))
@@ -202,6 +214,11 @@ struct FilesPanel: View {
             RowCaption(text, warns: warns)
                 .frame(maxWidth: .infinity, minHeight: scale(Size.menuRow), alignment: .leading)
                 .padding(.leading, scale(Space.section) + SidebarRowLayout.chevronWidth(scale) + scale(Space.base))
+        case .problem(_, let text):
+            RowCaption(text, warns: true)
+                .frame(maxWidth: .infinity, minHeight: scale(Size.menuRow), alignment: .leading)
+                .padding(.leading, scale(Space.section) + SidebarRowLayout.chevronWidth(scale) + scale(Space.base))
+                .background(ViewMark(name: row.id))
         case .node(let project, let node, let depth, let open):
             FileRow(project: project, node: node, depth: depth, open: open,
                     activate: { activate(node, in: project) },
