@@ -52,7 +52,7 @@ jobs:
   # Shellforge's helper. macOS: it reads ttys and peer pids the macOS way, and some tests run only
   # there. Its README's dev install: the package with its `dev` extras.
   shellforge-daemon-tests:
-    runs-on: macos-26
+    runs-on: macos-latest
 
     steps:
       - name: Checkout
@@ -76,7 +76,7 @@ jobs:
   # The Swift package suite: Core, Design and UI. `swift.sh` insists on the Swift that
   # `Shellforge/.swift-version` pins, from swiftly, as a release build does.
   shellforge-package-tests:
-    runs-on: macos-26
+    runs-on: macos-latest
 
     steps:
       - name: Checkout
