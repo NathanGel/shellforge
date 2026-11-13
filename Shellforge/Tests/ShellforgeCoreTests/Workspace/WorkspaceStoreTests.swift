@@ -76,4 +76,46 @@ import Testing
         twice.projects.append(twice.projects[0])
         #expect(throws: WorkspaceStore.Refusal.duplicateId(twice.projects[0].id)) { try store.save(twice) }
     }
+
+    // MARK: A file that is there but cannot be read
+
+    private var file: URL { folder.appendingPathComponent("workspace.json") }
+    private var backup: URL { folder.appendingPathComponent("workspace.json.backup") }
+
+    /// Saves twice, so both the file and the backup exist, then takes every permission off the file.
+    private func unreadableFileWithBackup() throws -> Workspace {
+        let saved = sample()
+        try store.save(saved)
+        try store.save(saved)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: file.path)
+        return saved
+    }
+
+    private func restorePermissions() {
+        _ = try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path)
+    }
+
+    /// A file that is there but cannot be read is not a missing one: loading throws, so the
+    /// document refuses to save over it, instead of loading the backup and later replacing it.
+    @Test(.disabled(if: getuid() == 0, "root reads a file with no permissions"))
+    func anUnreadableWorkspaceRefusesToSave() throws {
+        _ = try unreadableFileWithBackup()
+        defer { restorePermissions() }
+        #expect(throws: (any Error).self) { try store.load() }
+    }
+
+    /// A save whose copy of the old file fails leaves the backup as it was; no temporary copy is
+    /// left behind.
+    @Test(.disabled(if: getuid() == 0, "root reads a file with no permissions"))
+    func theBackupIsReplacedNotRemovedFirst() throws {
+        let saved = try unreadableFileWithBackup()
+        defer { restorePermissions() }
+        var next = saved
+        next.projects[0].name = "renamed"
+        #expect(throws: (any Error).self) { try store.save(next) }
+        let kept = try Data(contentsOf: backup)
+        #expect(try JSONDecoder.workspace.decode(Workspace.self, from: kept) == saved)
+        let names = try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted()
+        #expect(names == ["workspace.json", "workspace.json.backup"])
+    }
 }

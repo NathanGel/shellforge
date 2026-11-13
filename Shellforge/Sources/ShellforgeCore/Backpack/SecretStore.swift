@@ -48,7 +48,8 @@ protocol KeychainItems: Sendable {
     /// The item's stamp, from an attributes-only query that shows no prompt. `.absent` when there
     /// is no item, `nil` when its attributes could not be read.
     func stamp(_ account: String) -> KeychainStamp?
-    func write(_ account: String, _ data: Data) -> Bool
+    /// Stores `data` with `writeID` beside it, which the item's stamp then carries.
+    func write(_ account: String, _ data: Data, writeID: Data) -> Bool
     func delete(_ account: String) -> Bool
 }
 
@@ -87,8 +88,7 @@ struct SystemKeychainItems: KeychainItems {
 
     /// Updates in place when the item exists and adds it otherwise, rather than deleting first: a
     /// delete that succeeds followed by an add that fails would throw the secret away.
-    func write(_ account: String, _ data: Data) -> Bool {
-        let writeID = withUnsafeBytes(of: UUID().uuid) { Data($0) }
+    func write(_ account: String, _ data: Data, writeID: Data) -> Bool {
         let update = SecItemUpdate(query(account) as CFDictionary, [kSecValueData as String: data, kSecAttrGeneric as String: writeID] as CFDictionary)
         if update == errSecSuccess { return true }
         guard update == errSecItemNotFound else { return false }
@@ -111,7 +111,10 @@ struct SystemKeychainItems: KeychainItems {
 /// Other processes share the item (a release build and a dev build running together). Before each
 /// write the item's stamp, which shows no prompt, says whether one of them wrote since this process
 /// read it; if so the item is read again and only this change is applied on top, so their entries
-/// survive.
+/// survive. A lock on a file in the support folder (`VaultLock`) keeps a second process from writing
+/// between that check and the write, and each write is read back: when the stamp is not the one just
+/// written, a process without the lock (an older build) wrote meanwhile, and the change is applied
+/// again on top of what it stored.
 public final class Keychain: SecretStore, Sendable {
     public static let shared = Keychain()
     static let account = "secrets"
@@ -126,12 +129,23 @@ public final class Keychain: SecretStore, Sendable {
         var stamp: KeychainStamp?
     }
 
+    /// How many times a write whose read-back shows another writer's stamp is applied again.
+    static let retries = 3
+
     private let items: any KeychainItems
+    /// `nil` takes no lock across processes, for tests that need none.
+    private let lock: VaultLock?
     /// `nil` until the item has been read. A refused read leaves it `nil`, so a later call asks again.
     private let state = Locked<Loaded?>(nil)
 
-    public convenience init(service: String = "io.github.nathangel.shellforge") { self.init(items: SystemKeychainItems(service: service)) }
-    init(items: any KeychainItems) { self.items = items }
+    public convenience init(service: String = "io.github.nathangel.shellforge") {
+        self.init(items: SystemKeychainItems(service: service), lock: .standard)
+    }
+
+    init(items: any KeychainItems, lock: VaultLock? = nil) {
+        self.items = items
+        self.lock = lock
+    }
 
     public func get(_ key: String) -> String? {
         state.withLock { load(&$0)?[key] }
@@ -160,7 +174,7 @@ public final class Keychain: SecretStore, Sendable {
 
     /// What a write came to. `unavailable`: the item could not be read (the person clicked Deny),
     /// so nothing was written. `failed`: the Keychain refused the write. Either way the Keychain
-    /// is unchanged.
+    /// is unchanged, unless another writer kept replacing the item until the retries ran out.
     public enum VaultWrite: Equatable {
         case written
         case unavailable
@@ -252,9 +266,21 @@ public final class Keychain: SecretStore, Sendable {
 
     /// Applies `change` to the secrets and stores the result. When another process wrote the item
     /// since this one read it, the change goes on top of what the item holds now, not the copy in
-    /// memory. A change that changes nothing writes nothing.
+    /// memory. A change that changes nothing writes nothing. The whole of it runs under the lock
+    /// across processes.
     private func mutate(_ change: (inout [String: String]) -> Void) -> VaultWrite {
         state.withLock { loaded in
+            guard let lock else { return mutateLocked(change, &loaded) }
+            return lock.withLock { mutateLocked(change, &loaded) }
+        }
+    }
+
+    /// After the write the item's stamp is read back. Only when it carries this write's `writeID`
+    /// are the secrets kept under it; otherwise another writer stored the item in between, so it is
+    /// read again and the change applied on top, at most `retries` more times. Caching this
+    /// process's secrets under the other writer's stamp would let the next write drop its entries.
+    private func mutateLocked(_ change: (inout [String: String]) -> Void, _ loaded: inout Loaded?) -> VaultWrite {
+        for _ in 0...Self.retries {
             guard load(&loaded) != nil else { return .unavailable }
             if loaded?.stamp == nil || items.stamp(Self.account) != loaded?.stamp {
                 loaded = nil
@@ -264,10 +290,20 @@ public final class Keychain: SecretStore, Sendable {
             var next = current
             change(&next)
             if next == current { return .written }
-            guard store(next) else { return .failed }
-            loaded = Loaded(secrets: next, stamp: items.stamp(Self.account))
-            return .written
+            let writeID = Self.newWriteID()
+            guard store(next, writeID: writeID) else { return .failed }
+            let after = items.stamp(Self.account)
+            if next.isEmpty ? after == .absent : after?.writeID == writeID {
+                loaded = Loaded(secrets: next, stamp: after)
+                return .written
+            }
+            loaded = nil
         }
+        return .failed
+    }
+
+    private static func newWriteID() -> Data {
+        withUnsafeBytes(of: UUID().uuid) { Data($0) }
     }
 
     /// The stamp is taken before the data: a write that lands between the two then looks like a
@@ -297,16 +333,16 @@ public final class Keychain: SecretStore, Sendable {
             case .refused: return nil
             }
         }
-        guard !moved.isEmpty, store(moved) else { return (moved, false) }
+        guard !moved.isEmpty, store(moved, writeID: Self.newWriteID()) else { return (moved, false) }
         for account in moved.keys { _ = items.delete(account) }
         return (moved, true)
     }
 
     /// No secrets left is no item at all.
-    private func store(_ secrets: [String: String]) -> Bool {
+    private func store(_ secrets: [String: String], writeID: Data) -> Bool {
         if secrets.isEmpty { return items.delete(Self.account) }
         let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
         guard let data = try? encoder.encode(secrets) else { return false }
-        return items.write(Self.account, data)
+        return items.write(Self.account, data, writeID: writeID)
     }
 }

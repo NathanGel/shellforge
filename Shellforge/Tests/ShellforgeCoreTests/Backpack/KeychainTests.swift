@@ -2,6 +2,7 @@
 import Testing
 import Foundation
 @testable import ShellforgeCore
+@testable import ShellforgeTestSupport
 
 /// Every secret lives in one Keychain item, read once per process, so macOS asks for access once
 /// rather than once per token. The items are a stand-in: a test never touches the real Keychain.
@@ -255,6 +256,81 @@ import Foundation
         #expect(keychain.data(service: "example.service", account: "example-account") == .missing)
     }
 
+    // MARK: Two processes writing at once
+
+    /// An older build, which takes no lock, read the item before this process wrote and stores its
+    /// whole copy right after. The read-back sees its stamp, so this change is applied again on top
+    /// of what it stored, and nothing is cached under its stamp: the next write keeps its entry too.
+    @Test func aStaleStampIsNotCached() {
+        let items = FakeKeychainItems([Keychain.account: #"{"jira.token":"j"}"#])
+        let keychain = Keychain(items: items)
+        keychain.warm()
+        items.anotherWriterAfterWrites.withLock { $0 = [#"{"jira.token":"j","x":"1"}"#] }
+        #expect(keychain.set("y", "2"))
+        #expect(keychain.set("z", "3"))
+        let fresh = Keychain(items: items)
+        #expect(fresh.get("jira.token") == "j")
+        #expect(fresh.get("x") == "1")
+        #expect(fresh.get("y") == "2")
+        #expect(fresh.get("z") == "3")
+    }
+
+    /// A writer that loses to another one every time gives up after the retries rather than looping.
+    @Test func aWriteThatKeepsLosingGivesUp() {
+        let items = FakeKeychainItems([Keychain.account: #"{"jira.token":"j"}"#])
+        let keychain = Keychain(items: items)
+        items.anotherWriterAfterWrites.withLock { $0 = Array(repeating: #"{"jira.token":"j"}"#, count: 10) }
+        #expect(!keychain.set("y", "2"))
+        #expect(items.writes.withLock { $0 } == 1 + Keychain.retries)
+    }
+
+    /// Another process holds the vault lock (`lockf` takes the same `flock`) and writes the item while
+    /// this one waits for it. This process's write waits, then goes on top, so both entries are kept.
+    @Test func twoWritersBothKeepTheirEntries() throws {
+        let lockURL = TestScratch.root.appendingPathComponent("vault-\(UUID().uuidString).lock")
+        try FileManager.default.createDirectory(at: TestScratch.root, withIntermediateDirectories: true)
+        let other = Process()
+        other.executableURL = URL(fileURLWithPath: "/usr/bin/lockf")
+        other.arguments = ["-k", lockURL.path, "/bin/sh", "-c", "echo locked; read line"]
+        let input = Pipe(), output = Pipe()
+        other.standardInput = input
+        other.standardOutput = output
+        try other.run()
+        defer { other.waitUntilExit() }
+        // The shell runs only once `lockf` holds the lock.
+        let said = String(decoding: output.fileHandleForReading.availableData, as: UTF8.self)
+        guard said.hasPrefix("locked") else {
+            input.fileHandleForWriting.closeFile()
+            Issue.record("the other process did not take the lock: \(said)")
+            return
+        }
+
+        let items = FakeKeychainItems([Keychain.account: #"{"jira.token":"j"}"#])
+        let waiting = DispatchSemaphore(value: 0)
+        let keychain = Keychain(items: items, lock: VaultLock(url: lockURL, waiting: { waiting.signal() }))
+        keychain.warm()
+        let result = Locked<Bool?>(nil)
+        let done = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            let written = keychain.set("y", "2")
+            result.withLock { $0 = written }
+            done.signal()
+        }
+        // A bound for a broken lock only, which never waits: a working one signals at once.
+        let waited = waiting.wait(timeout: .now() + 60) == .success
+        #expect(waited, "the writer did not wait for the other process's lock")
+        #expect(items.writes.withLock { $0 } == 0)
+        items.storeAsAnotherWriter(#"{"jira.token":"j","x":"1"}"#)
+        input.fileHandleForWriting.closeFile()
+        done.wait()
+
+        #expect(result.withLock { $0 } == true)
+        let fresh = Keychain(items: items)
+        #expect(fresh.get("jira.token") == "j")
+        #expect(fresh.get("x") == "1")
+        #expect(fresh.get("y") == "2")
+    }
+
     @Test func warmReadsOnce() {
         let items = FakeKeychainItems([Keychain.account: #"{"jira.token":"j"}"#])
         let keychain = Keychain(items: items)
@@ -276,8 +352,12 @@ private final class FakeKeychainItems: KeychainItems {
     let onRead = Locked<(@Sendable () -> Void)?>(nil)
     let refusesReads: Locked<Bool>
     let refusesWrites: Locked<Bool>
+    /// Each payload is stored by another writer right after one of this process's writes, one
+    /// payload per write, as a process that takes no lock would.
+    let anotherWriterAfterWrites = Locked<[String]>([])
     /// Bumped by every write and delete; the stamp's date, as the Keychain's modification date would.
     private let version = Locked(0)
+    private let writeIDs = Locked<[String: Data]>([:])
 
     init(_ values: [String: String] = [:], refusesReads: Bool = false, refusesWrites: Bool = false) {
         self.values = Locked(values.mapValues { Data($0.utf8) })
@@ -296,21 +376,35 @@ private final class FakeKeychainItems: KeychainItems {
 
     func stamp(_ account: String) -> KeychainStamp? {
         guard values.withLock({ $0[account] }) != nil else { return .absent }
-        return KeychainStamp(modified: Date(timeIntervalSinceReferenceDate: Double(version.withLock { $0 })), writeID: nil)
+        return KeychainStamp(modified: Date(timeIntervalSinceReferenceDate: Double(version.withLock { $0 })),
+                             writeID: writeIDs.withLock { $0[account] })
     }
 
-    func write(_ account: String, _ data: Data) -> Bool {
+    func write(_ account: String, _ data: Data, writeID: Data) -> Bool {
         writes.withLock { $0 += 1 }
         if refusesWrites.withLock({ $0 }) { return false }
-        values.withLock { $0[account] = data }
-        version.withLock { $0 += 1 }
+        store(account, data, writeID: writeID)
+        let next = anotherWriterAfterWrites.withLock { $0.isEmpty ? nil : $0.removeFirst() }
+        if let next { storeAsAnotherWriter(next) }
         return true
+    }
+
+    /// Another process's write: not counted in `writes`, with a write ID of its own.
+    func storeAsAnotherWriter(_ json: String) {
+        store(Keychain.account, Data(json.utf8), writeID: Data(UUID().uuidString.utf8))
+    }
+
+    private func store(_ account: String, _ data: Data, writeID: Data) {
+        values.withLock { $0[account] = data }
+        writeIDs.withLock { $0[account] = writeID }
+        version.withLock { $0 += 1 }
     }
 
     func delete(_ account: String) -> Bool {
         writes.withLock { $0 += 1 }
         if refusesWrites.withLock({ $0 }) { return false }
         values.withLock { $0[account] = nil }
+        writeIDs.withLock { $0[account] = nil }
         version.withLock { $0 += 1 }
         return true
     }
