@@ -11,7 +11,8 @@ public enum GitWatchPaths {
     private static let worktreeFiles: Set<String> = ["index", "HEAD"]
 
     /// Whether a change at `path` can change the panel. Inside `.git/`, only `gitFiles`, `refs/…`,
-    /// `reftable/…` and `worktrees/<name>/{index,HEAD}`; lock files, objects and logs never. A
+    /// `reftable/…`, `info/exclude` (what is ignored) and `worktrees/<name>/{index,HEAD}`; lock
+    /// files, objects and logs never. A
     /// change reported for `.git` or `.git/refs` itself (the stream naming a folder to rescan)
     /// counts. Outside it,
     /// everything except task worktrees (`.worktrees/`, which their own watchers cover) and a
@@ -26,6 +27,7 @@ public enum GitWatchPaths {
         guard !last.hasSuffix(".lock") else { return false }
         if refFolders.contains(first) { return true }
         if inside.count == 1 { return gitFiles.contains(first) }
+        if inside == ["info", "exclude"] { return true }
         return first == "worktrees" && inside.count == 3 && worktreeFiles.contains(inside[2])
     }
 

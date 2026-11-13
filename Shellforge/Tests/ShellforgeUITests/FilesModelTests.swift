@@ -7,14 +7,16 @@ import ShellforgeTestSupport
 private final class FakeWatcher: FolderWatching, @unchecked Sendable {
     let path: String
     private let lock = NSLock()
-    private var handler: (@Sendable () -> Void)?
+    private var handler: (@Sendable ([String]) -> Void)?
     private var stopped = false
     init(_ path: String) { self.path = path }
-    func watch(_ path: String, onChange: @escaping @Sendable () -> Void) { lock.withLock { handler = onChange } }
+    func watch(_ path: String, onChange: @escaping @Sendable () -> Void) { watch(path, onChanges: { _ in onChange() }) }
+    func watch(_ path: String, onChanges: @escaping @Sendable ([String]) -> Void) { lock.withLock { handler = onChanges } }
     /// Keeps its handler, so a test can fire a late event after the stop.
     func stop() { lock.withLock { stopped = true } }
     var isStopped: Bool { lock.withLock { stopped } }
-    func fire() { lock.withLock { handler }?() }
+    /// No paths: the stream could not say what changed.
+    func fire(_ changes: [String] = []) { lock.withLock { handler }?(changes) }
 }
 
 /// Answers listings, counts them per path, and can hold the next one until the test lets it go.
@@ -64,10 +66,11 @@ final class FilesModelTests: XCTestCase {
     private let acme = Project(name: "acme-web", path: "/work/acme-web")
 
     private func model(_ projects: [Project], defaults: UserDefaults = ScratchDefaults.make(), lister: Lister = Lister(),
-                       watchers: @escaping (FakeWatcher) -> Void = { _ in }) -> FilesModel {
+                       ignored: IgnoredPaths = .none, watchers: @escaping (FakeWatcher) -> Void = { _ in }) -> FilesModel {
         FilesModel(projects: projects, launcher: launcher, defaults: defaults,
                    watcher: { let w = FakeWatcher($0); watchers(w); return w },
-                   list: { path, launcher in lister.list(path, launcher) })
+                   list: { path, launcher in lister.list(path, launcher) },
+                   ignored: { _, _ in ignored })
     }
 
     func testAChangeRefreshesThatProjectOnly() async {
@@ -318,4 +321,118 @@ final class FilesModelTests: XCTestCase {
         watching.cancel()
         XCTAssertEqual(published, 0)
     }
+}
+
+// -- while hidden, what git ignores, and what is remembered -------------------------------------
+
+extension FilesModelTests {
+    /// No window shows the panel: a change marks the project and lists nothing. Shown again, the
+    /// marked project is listed once, the others not at all.
+    func testAHiddenPanelListsNothing() async {
+        let lister = Lister()
+        var made: [String: FakeWatcher] = [:]
+        let holder = FilesHolder { self.model([self.demo, self.acme], lister: lister) { made[$0.path] = $0 } }
+        let files = holder.model
+        var viewer: PanelViewer? = holder.register()
+        await files.settled()
+        let before = (lister.count(demo.path), lister.count(acme.path))
+
+        viewer?.release()
+        made[demo.path]!.fire(["src/app.ts"])
+        made[demo.path]!.fire()
+        await files.settled()
+        XCTAssertEqual(lister.count(demo.path), before.0, "nothing is listed while no window shows the panel")
+
+        // A project added while hidden waits too.
+        let docs = Project(name: "docs", path: "/work/docs")
+        files.update(projects: [demo, acme, docs])
+        await files.settled()
+        XCTAssertEqual(lister.count(docs.path), 0)
+
+        viewer = holder.register()
+        await files.settled()
+        XCTAssertEqual(lister.count(demo.path), before.0 + 1, "the marked project is listed once")
+        XCTAssertEqual(lister.count(acme.path), before.1, "one that did not change is not")
+        XCTAssertEqual(lister.count(docs.path), 1)
+        viewer = nil
+        XCTAssertFalse(files.isShown)
+    }
+
+    /// A change only under an ignored folder lists nothing; a change beside it does, and a changed
+    /// `.gitignore` reads the ignored folders again.
+    func testIgnoredBuildOutputTriggersNothing() async {
+        let lister = Lister()
+        let rules = IgnoredRules(["build", "node_modules", ".DS_Store"])
+        var made: [String: FakeWatcher] = [:]
+        let files = FilesModel(projects: [demo], launcher: launcher, defaults: ScratchDefaults.make(),
+                               watcher: { let w = FakeWatcher($0); made[$0] = w; return w },
+                               list: { path, launcher in lister.list(path, launcher) },
+                               ignored: { _, _ in rules.read() })
+        await files.settled()
+        XCTAssertEqual(rules.reads, 1, "read with the first listing")
+        let before = lister.count(demo.path)
+
+        made[demo.path]!.fire(["build/out/app.o", "build", "node_modules/left-pad/index.js", ".DS_Store"])
+        await files.settled()
+        XCTAssertEqual(lister.count(demo.path), before, "only ignored paths changed")
+
+        made[demo.path]!.fire(["build/out/app.o", "src/app.ts"])
+        await files.settled()
+        XCTAssertEqual(lister.count(demo.path), before + 1)
+        XCTAssertEqual(rules.reads, 1, "the rules did not change")
+
+        rules.set(["node_modules"])
+        made[demo.path]!.fire([".gitignore"])
+        await files.settled()
+        XCTAssertEqual(lister.count(demo.path), before + 2)
+        XCTAssertEqual(rules.reads, 2)
+        made[demo.path]!.fire(["build/out/app.o"])
+        await files.settled()
+        XCTAssertEqual(lister.count(demo.path), before + 3, "build/ is no longer ignored")
+    }
+
+    /// On load, what is stored for a project the workspace no longer has, and for a folder that
+    /// is gone, is dropped; the rest stays, and so does a project whose own folder is missing.
+    func testRemovedProjectsAreForgotten() async throws {
+        let root = TestScratch.root.appendingPathComponent("shellforge-files-prune-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: root + "/demo/src/views", withIntermediateDirectories: true)
+        let kept = Project(name: "demo", path: root + "/demo")
+        let unplugged = Project(name: "archive", path: root + "/archive")
+        let removed = UUID()
+        let defaults = ScratchDefaults.make()
+        defaults.set([kept.id.uuidString: ["src", "src/views", "dist", ""],
+                      unplugged.id.uuidString: ["old"],
+                      removed.uuidString: ["src"]], forKey: FilesModel.expandedKey)
+        let files = FilesModel(projects: [], launcher: launcher, defaults: defaults, watcher: { FakeWatcher($0) },
+                               list: { _, _ in .git([]) }, ignored: { _, _ in .none })
+        files.follow(Just([kept, unplugged]))
+        await files.pruning?.value
+        let stored = defaults.dictionary(forKey: FilesModel.expandedKey) as? [String: [String]]
+        XCTAssertEqual(stored, [kept.id.uuidString: ["src", "src/views", ""], unplugged.id.uuidString: ["old"]])
+        XCTAssertTrue(files.isOpen(project: kept.id, folder: "src/views"))
+        XCTAssertFalse(files.isOpen(project: kept.id, folder: "dist"))
+    }
+
+    /// An empty workspace — perhaps one that could not be read — forgets no project.
+    func testAnEmptyWorkspaceForgetsNothing() async {
+        let defaults = ScratchDefaults.make()
+        let saved = [UUID().uuidString: ["src"]]
+        defaults.set(saved, forKey: FilesModel.expandedKey)
+        let files = FilesModel(projects: [], launcher: launcher, defaults: defaults, watcher: { FakeWatcher($0) },
+                               list: { _, _ in .git([]) }, ignored: { _, _ in .none })
+        files.follow(Just([]))
+        await files.pruning?.value
+        XCTAssertEqual(defaults.dictionary(forKey: FilesModel.expandedKey) as? [String: [String]], saved)
+    }
+}
+
+/// What a test says the repository ignores, counting the reads.
+private final class IgnoredRules: @unchecked Sendable {
+    private let lock = NSLock()
+    private var entries: Set<String>
+    private var count = 0
+    init(_ entries: Set<String>) { self.entries = entries }
+    func read() -> IgnoredPaths { lock.withLock { count += 1; return IgnoredPaths(entries) } }
+    func set(_ entries: Set<String>) { lock.withLock { self.entries = entries } }
+    var reads: Int { lock.withLock { count } }
 }

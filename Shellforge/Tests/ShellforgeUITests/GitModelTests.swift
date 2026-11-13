@@ -470,3 +470,95 @@ final class GitModelTests: XCTestCase {
         XCTAssertEqual(git.sections.map(\.title), ["acme-web"])
     }
 }
+
+// -- while hidden, and what git ignores ----------------------------------------------------
+
+extension GitModelTests {
+    /// No window shows the panel: a change marks the repository and reads nothing. Shown again,
+    /// the marked repository is read once, the others not at all.
+    func testAHiddenPanelRunsNoGit() async throws {
+        let scratch = try Scratch()
+        let demo = try scratch.project("demo"), acme = try scratch.project("acme-web")
+        let reader = Reader()
+        var made: [String: FakeWatcher] = [:]
+        let holder = GitHolder { self.model(scratch, [demo, acme], reader: reader, watchers: { made[$0.path] = $0 }) }
+        let git = holder.model
+        var viewer: PanelViewer? = holder.register()
+        await git.settled()
+        let before = (reader.count(demo.path), reader.count(acme.path))
+
+        viewer?.release()
+        XCTAssertFalse(git.isShown)
+        try scratch.write("src/app.ts", in: demo.path)
+        made[demo.path]!.fire(["src/app.ts"])
+        made[demo.path]!.fire(["src/app.ts"])
+        await git.settled()
+        XCTAssertEqual(reader.count(demo.path), before.0, "nothing is read while no window shows the panel")
+        XCTAssertNil(status(git.sections.first)?.unstaged.first)
+
+        viewer = holder.register()
+        XCTAssertTrue(git.isShown)
+        await git.settled()
+        XCTAssertEqual(reader.count(demo.path), before.0 + 1, "the marked repository is read once")
+        XCTAssertEqual(reader.count(acme.path), before.1, "one that did not change is not")
+        XCTAssertEqual(status(git.sections.first)?.unstaged.map(\.path), ["src/app.ts"])
+
+        // A window that closes without saying its panel disappeared lets go all the same.
+        viewer = nil
+        XCTAssertEqual(holder.viewerCount, 0)
+        XCTAssertFalse(git.isShown)
+    }
+
+    /// Two windows show the panel: hiding it in one keeps it live for the other.
+    func testThePanelStaysLiveWhileAnyWindowShowsIt() async throws {
+        let scratch = try Scratch()
+        let demo = try scratch.project("demo")
+        let reader = Reader()
+        var made: [String: FakeWatcher] = [:]
+        let holder = GitHolder { self.model(scratch, [demo], reader: reader, watchers: { made[$0.path] = $0 }) }
+        let git = holder.model
+        let first = holder.register(), second = holder.register()
+        await git.settled()
+        first.release()
+        first.release()   // released once only
+        XCTAssertEqual(holder.viewerCount, 1)
+        let before = reader.count(demo.path)
+        made[demo.path]!.fire(["src/app.ts"])
+        await git.settled()
+        XCTAssertEqual(reader.count(demo.path), before + 1)
+        second.release()
+        XCTAssertFalse(git.isShown)
+    }
+
+    /// A build writing under an ignored folder reads nothing; a tracked file beside it still does,
+    /// and a changed `.gitignore` lists the ignored folders again.
+    func testIgnoredBuildOutputTriggersNothing() async throws {
+        let scratch = try Scratch()
+        let demo = try scratch.project("demo")
+        try "build/\nnode_modules/\n".write(toFile: demo.path + "/.gitignore", atomically: true, encoding: .utf8)
+        try scratch.write("build/out/app.o", in: demo.path)
+        try scratch.write("node_modules/left-pad/index.js", in: demo.path)
+        let reader = Reader()
+        var made: [String: FakeWatcher] = [:]
+        let git = model(scratch, [demo], reader: reader, watchers: { made[$0.path] = $0 })
+        await git.settled()
+        let before = reader.count(demo.path)
+
+        made[demo.path]!.fire(["build/out/app.o", "build/out", "node_modules/left-pad/index.js"])
+        await git.settled()
+        XCTAssertEqual(reader.count(demo.path), before, "only ignored paths changed")
+
+        made[demo.path]!.fire(["build/out/app.o", "src/app.ts"])
+        await git.settled()
+        XCTAssertEqual(reader.count(demo.path), before + 1, "a path git does not ignore counts")
+
+        // build/ is no longer ignored: the rules are listed again, and its changes count.
+        try "node_modules/\n".write(toFile: demo.path + "/.gitignore", atomically: true, encoding: .utf8)
+        made[demo.path]!.fire([".gitignore"])
+        await git.settled()
+        XCTAssertEqual(reader.count(demo.path), before + 2)
+        made[demo.path]!.fire(["build/out/app.o"])
+        await git.settled()
+        XCTAssertEqual(reader.count(demo.path), before + 3)
+    }
+}

@@ -20,8 +20,10 @@ public struct FilesSection: Equatable, Identifiable {
 }
 
 /// The Files panel's trees, one per workspace project. Each project's folder is watched; a change
-/// there lists that project again, off the main actor. Which folders are open is remembered per
-/// project, on this Mac. The app has one, which every window's panel draws.
+/// there lists that project again, off the main actor, unless git ignores where it happened. While
+/// no window shows the panel a change only marks its project, which is listed when one shows it
+/// again. Which folders are open is remembered per project, on this Mac. The app has one, which
+/// every window's panel draws.
 @MainActor
 public final class FilesModel: ObservableObject {
     @Published public private(set) var sections: [FilesSection] = []
@@ -36,6 +38,8 @@ public final class FilesModel: ObservableObject {
     private var stored: [String: [String]]
     private let makeWatcher: (String) -> FolderWatching
     private let list: @Sendable (String, CommandLauncher) -> ProjectFiles.Listing
+    private let readIgnored: @Sendable (String, CommandLauncher) -> IgnoredPaths
+    private let pool: ReadPool
     private var watchers: [UUID: FolderWatching] = [:]
     /// A project's epoch changes when it is added, removed or its folder changes; a listing that
     /// started in an earlier epoch is dropped, so it cannot land on a section it was not for.
@@ -49,18 +53,33 @@ public final class FilesModel: ObservableObject {
     private var loops: [UUID: Task<Void, Never>] = [:]
     private var dirty: Set<UUID> = []
     private var loopTokens: [UUID: Int] = [:]
+    /// Whether a window shows the panel; while none does, `stale` collects what changed.
+    public private(set) var isShown = true
+    /// Projects that changed while no window showed the panel: listed when one shows it.
+    private var stale: Set<UUID> = []
+    /// What each project's repository ignores, as last listed; a change only there is dropped.
+    private var ignored: [UUID: IgnoredPaths] = [:]
+    /// Projects whose ignore rules changed, or were never read: their next listing reads them.
+    private var rulesChanged: Set<UUID> = []
+    /// The pruning of `stored` the first workspace starts. For tests.
+    private(set) var pruning: Task<Void, Never>?
     /// Events handed from the watcher's queue to the main actor, so tests can await them.
     private let hops = EventHops()
 
-    /// `list` is for tests that must see where listing runs; it defaults to `ProjectFiles.list`.
+    /// `list` and `ignored` are for tests that must see where listing runs or what is ignored; they
+    /// default to `ProjectFiles.list` and `IgnoredPaths.read`. `pool` is where listings wait their turn.
     public init(projects: [Project], launcher: CommandLauncher, defaults: UserDefaults,
                 watcher: @escaping (String) -> FolderWatching,
-                list: @escaping @Sendable (String, CommandLauncher) -> ProjectFiles.Listing = { ProjectFiles.list($0, launcher: $1) }) {
+                list: @escaping @Sendable (String, CommandLauncher) -> ProjectFiles.Listing = { ProjectFiles.list($0, launcher: $1) },
+                ignored: @escaping @Sendable (String, CommandLauncher) -> IgnoredPaths = { IgnoredPaths.read($0, launcher: $1) },
+                pool: ReadPool = .panels) {
         self.launcher = launcher
         self.defaults = defaults
         self.stored = defaults.dictionary(forKey: Self.expandedKey) as? [String: [String]] ?? [:]
         self.makeWatcher = watcher
         self.list = list
+        self.readIgnored = ignored
+        self.pool = pool
         update(projects: projects)
     }
 
@@ -72,7 +91,13 @@ public final class FilesModel: ObservableObject {
     /// in Sessions, the sections follow in the workspace's order.
     public func follow(_ projects: some Publisher<[Project], Never>) {
         following = projects.removeDuplicates().sink { [weak self] projects in
-            MainActor.assumeIsolated { self?.update(projects: projects) }
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.update(projects: projects)
+                // The first workspace is the one loaded: what is stored for projects or folders
+                // gone since is dropped then.
+                if self.pruning == nil { self.pruning = Task { await self.prune(keeping: projects) } }
+            }
         }
     }
 
@@ -98,11 +123,28 @@ public final class FilesModel: ObservableObject {
             let watcher = makeWatcher(project.path)
             watchers[project.id] = watcher
             let id = project.id
-            watcher.watch(project.path, onChange: { [weak self, hops] in
-                hops.hop { self?.fileEvent(project: id) }
+            rulesChanged.insert(id)
+            watcher.watch(project.path, onChanges: { [weak self, hops] changes in
+                hops.hop { self?.fileEvent(project: id, changes: changes) }
             })
-            startLoop(project: id)
+            if isShown { startLoop(project: id) } else { stale.insert(id) }
         }
+    }
+
+    /// Whether a window shows the panel. Shown again, the projects that changed meanwhile are
+    /// listed again.
+    public func setShown(_ shown: Bool) {
+        guard shown != isShown else { return }
+        isShown = shown
+        guard shown else { return }
+        let changed = projectsInOrder(stale)
+        stale.removeAll()
+        for project in changed { refreshSoon(project: project) }
+    }
+
+    /// `ids` in the sections' order, so the first project is listed first.
+    private func projectsInOrder(_ ids: Set<UUID>) -> [UUID] {
+        sections.map(\.id).filter(ids.contains)
     }
 
     private func forget(_ id: UUID) {
@@ -110,6 +152,9 @@ public final class FilesModel: ObservableObject {
         epochs[id] = nil
         applied[id] = nil
         dirty.remove(id)
+        stale.remove(id)
+        ignored[id] = nil
+        rulesChanged.remove(id)
         loops.removeValue(forKey: id)?.cancel()
         loopTokens[id] = nil
     }
@@ -131,6 +176,48 @@ public final class FilesModel: ObservableObject {
 
     private func expanded(_ project: UUID) -> [String] { stored[project.uuidString] ?? [] }
 
+    /// Drops what is stored for projects not in `projects` and for open folders that are no longer
+    /// there, checked off the main actor. A project whose own folder is missing keeps its entries:
+    /// its disk may only be unplugged. No project at all forgets none: a workspace that could not
+    /// be read is empty too. A project added again while the check ran keeps its entry.
+    func prune(keeping projects: [Project]) async {
+        let snapshot = stored
+        let paths = Dictionary(projects.map { ($0.id.uuidString, $0.path) }, uniquingKeysWith: { first, _ in first })
+        let drop = await BackgroundWork.run(on: .global(qos: .utility)) { () -> [String: Set<String>?] in
+            var drop: [String: Set<String>?] = [:]
+            for (key, folders) in snapshot {
+                guard let root = paths[key] else {
+                    drop[key] = .some(nil)   // the whole entry: the project is gone
+                    continue
+                }
+                guard Self.isFolder(root) else { continue }
+                let gone = Set(folders.filter { !$0.isEmpty && !Self.isFolder(root + "/" + $0) })
+                if !gone.isEmpty { drop[key] = gone }
+            }
+            return drop
+        }
+        guard !drop.isEmpty else { return }
+        var pruned = stored
+        for (key, folders) in drop {
+            guard let current = pruned[key] else { continue }
+            if let folders {
+                let kept = current.filter { !folders.contains($0) }
+                pruned[key] = kept.isEmpty ? nil : kept
+            } else if !projects.isEmpty, sections.allSatisfy({ $0.id.uuidString != key }) {
+                pruned[key] = nil
+            }
+        }
+        guard pruned != stored else { return }
+        objectWillChange.send()
+        stored = pruned
+        defaults.set(stored, forKey: Self.expandedKey)
+    }
+
+    private nonisolated static func isFolder(_ path: String) -> Bool {
+        var isDirectory: ObjCBool = false
+        return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
+    }
+
     // -- problems -------------------------------------------------------------------------
 
     /// Shows `problem` (nil clears it) on the project's section.
@@ -149,14 +236,18 @@ public final class FilesModel: ObservableObject {
         counter += 1
         let generation = counter
         let openFolders = expanded(project).filter { !$0.isEmpty }
-        let list = self.list, launcher = self.launcher
-        let (state, plainFolder) = await BackgroundWork.run { () -> (FilesSection.State?, Bool) in
+        let list = self.list, launcher = self.launcher, readIgnored = self.readIgnored
+        // Read with the listing, when the rules changed: a `.gitignore` edit lists again anyway.
+        let readsRules = rulesChanged.remove(project) != nil
+        let (state, plainFolder, rules) = await pool.run(.project) { () -> (FilesSection.State?, Bool, IgnoredPaths?) in
+            let rules = readsRules ? readIgnored(path, launcher) : nil
             let listing = list(path, launcher)
             let state = Self.state(for: listing, path: path, openFolders: openFolders)
             let plainFolder: Bool
             if case .folder = listing { plainFolder = true } else { plainFolder = false }
-            return (state == shown ? nil : state, plainFolder)
+            return (state == shown ? nil : state, plainFolder, rules)
         }
+        if let rules, epochs[project] == epoch { ignored[project] = rules }
         guard !Task.isCancelled, epochs[project] == epoch, generation > applied[project, default: 0],
               let index = sections.firstIndex(where: { $0.id == project }) else { return }
         applied[project] = generation
@@ -201,8 +292,19 @@ public final class FilesModel: ObservableObject {
         for loop in Array(loops.values) { await loop.value }
     }
 
-    private func fileEvent(project: UUID) {
+    /// A change the watcher reported: dropped when git ignores everywhere it happened; noted for
+    /// later while no window shows the panel; else the project is listed again.
+    private func fileEvent(project: UUID, changes: [String]) {
         guard watchers[project] != nil else { return }   // a late event for a project that is gone
+        if changes.contains(where: IgnoredPaths.changesRules) {
+            rulesChanged.insert(project)
+        } else if let rules = ignored[project], rules.relevant(changes) == nil {
+            return
+        }
+        guard isShown else {
+            stale.insert(project)
+            return
+        }
         refreshSoon(project: project)
     }
 

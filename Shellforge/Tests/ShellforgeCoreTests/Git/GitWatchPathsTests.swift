@@ -22,6 +22,12 @@ final class GitWatchPathsTests: XCTestCase {
         XCTAssertFalse(relevant("/.git/config"))
     }
 
+    /// The exclude file decides what is untracked and what ignored: the panel lists its rules again.
+    func testTheExcludeFileCounts() {
+        XCTAssertTrue(relevant("/.git/info/exclude"))
+        XCTAssertFalse(relevant("/.git/info/refs"))
+    }
+
     func testAFolderToRescanAndReftableCount() {
         XCTAssertTrue(relevant("/.git"))
         XCTAssertTrue(relevant("/.git/refs"))

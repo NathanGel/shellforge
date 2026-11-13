@@ -407,6 +407,9 @@ public final class FilesHolder {
     private let make: @MainActor () -> FilesModel
     /// The model, once made; nil until then. Reading it makes nothing.
     private(set) var made: FilesModel?
+    /// The windows showing the panel. While none does, the model's watchers only note what changed,
+    /// and nothing is listed until a window shows the panel again.
+    private lazy var viewers = PanelViewers { [weak self] shown in self?.made?.setShown(shown) }
 
     public init(_ make: @escaping @MainActor () -> FilesModel) { self.make = make }
 
@@ -417,4 +420,10 @@ public final class FilesHolder {
         made = model
         return model
     }
+
+    /// A window shows the panel until the viewer is released, or goes.
+    func register() -> PanelViewer { viewers.register() }
+
+    /// How many windows show the panel. For tests.
+    var viewerCount: Int { viewers.count }
 }

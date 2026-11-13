@@ -112,6 +112,9 @@ it and refuses to release a version that has none.
   launch Shellforge adds the token to the hooks it installed before, changing nothing else in
   those files, and makes `~/.claude/settings.json` and `~/.codex/config.toml` readable by you
   only. Hooks it can’t update keep working until you repair them in Agent hooks.
+- **A working agent’s spinner no longer redraws the sidebar.** A tab whose title no row shows,
+  such as a task’s only tab, can retitle itself several times a second without the sidebar
+  drawing again, and the `+n −m` line counts are read at a lower priority than your own work.
 
 ## 0.10.0 — 2026-11-10
 

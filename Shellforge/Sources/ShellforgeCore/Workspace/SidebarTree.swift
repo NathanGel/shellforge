@@ -69,6 +69,27 @@ public struct SidebarTree: Equatable, Sendable {
         return SidebarTree(projects: projects, otherTabs: other, panelTabs: panelTabs)
     }
 
+    /// Whether the two trees draw the same: equal but for the titles of tabs no row draws. A task's
+    /// tabs are drawn under it only while it is `selectedTask`; a terminal's never are (its row
+    /// shows the terminal's name). Other and panel tabs always are. Claude's spinner retitles its
+    /// tab several times a second, and a retitle that no row shows must not redraw the sidebar.
+    public func drawsTheSame(as other: SidebarTree, selectedTask: UUID?) -> Bool {
+        self.undrawnTitlesCleared(selectedTask) == other.undrawnTitlesCleared(selectedTask)
+    }
+
+    private func undrawnTitlesCleared(_ selectedTask: UUID?) -> SidebarTree {
+        var copy = self
+        for p in copy.projects.indices {
+            for t in copy.projects[p].tasks.indices where copy.projects[p].tasks[t].id != selectedTask {
+                for i in copy.projects[p].tasks[t].tabs.indices { copy.projects[p].tasks[t].tabs[i].title = "" }
+            }
+            for t in copy.projects[p].terminals.indices {
+                for i in copy.projects[p].terminals[t].tabs.indices { copy.projects[p].terminals[t].tabs[i].title = "" }
+            }
+        }
+        return copy
+    }
+
     /// The task whose tag `tab` carries, if it is one of the workspace's.
     public func task(owning tab: TabSnapshot) -> TaskItem? {
         projects.lazy.flatMap(\.tasks).first { $0.task.id == tab.taskId }?.task

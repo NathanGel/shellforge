@@ -541,6 +541,8 @@ struct SidebarView: View {
                     FilesPanel(model: filesModel, sidebar: model, titled: chrome.windowControls == nil, providers: model.providers,
                                opener: FileOpener(host: model.host, defaults: terminalEditorDefaults,
                                                   environment: { [launcher = model.launcher] in launcher.environment.variables }))
+                    // While no window shows the panel, its watchers only note what changed.
+                    .modifier(PanelViewing(register: { [files] in files?.register() ?? PanelViewer {} }))
                 } else {
                     // A sidebar made without a Files model, or before it is taken: the panel's title over nothing.
                     VStack(spacing: 0) { if chrome.windowControls == nil { PanelTitle(panel: .files) } }
@@ -554,6 +556,7 @@ struct SidebarView: View {
                                                       environment: { [launcher = model.launcher] in launcher.environment.variables },
                                                       launcher: model.launcher, prompter: { [model] in model.prompter },
                                                       busyTask: { [model] project in model.projectFolderBusyTask(project) }))
+                    .modifier(PanelViewing(register: { [git] in git?.register() ?? PanelViewer {} }))
                 } else {
                     VStack(spacing: 0) { if chrome.windowControls == nil { PanelTitle(panel: .git) } }
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

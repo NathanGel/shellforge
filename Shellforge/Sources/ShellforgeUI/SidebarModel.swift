@@ -98,7 +98,10 @@ public protocol SessionFeed: AnyObject {
 /// applied back on it.
 @MainActor
 public final class SidebarModel: ObservableObject {
-    @Published public private(set) var tree = SidebarTree(projects: [], otherTabs: [])
+    /// What the sidebar draws. Not `@Published`: a change only to the title of a tab no row draws
+    /// is stored without announcing it (`rebuildTree`), so a spinner in a background task's tab
+    /// does not redraw the sidebar. A later redraw reads the stored titles.
+    public private(set) var tree = SidebarTree(projects: [], otherTabs: [])
     /// What `rows` draws beyond the tree — the current tab's highlight and the dividers — as of the
     /// last refresh: published so a change to either redraws, as the tree's does.
     @Published private(set) var drawnTabId: String?
@@ -589,8 +592,11 @@ public final class SidebarModel: ObservableObject {
 
     private func rebuildTree(_ workspace: Workspace) {
         let built = SidebarTree.build(workspace, tabs: host.tabs, isOwned: { self.owns($0, in: workspace) })
-        // Assigned only when it differs: `@Published` announces every assignment.
-        if built != tree { tree = built }
+        // Announced only when what is drawn differs; a title no row shows is kept quietly.
+        if built != tree {
+            if !built.drawsTheSame(as: tree, selectedTask: selectedTaskId) { objectWillChange.send() }
+            tree = built
+        }
         // Here rather than in `refresh`, so a tab moved by a config change (`sshHosts`) keeps no
         // stale footer context either.
         contexts.prune(keeping: Set(tree.projects.flatMap(\.tasks).map { FooterRow.task($0.id) }

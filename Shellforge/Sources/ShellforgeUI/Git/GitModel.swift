@@ -53,7 +53,9 @@ public enum GitAction: Equatable, Sendable {
 }
 
 /// The Git panel's repositories: every workspace project and its tasks' worktrees. Each one is
-/// watched; a change there reads that repository again, off the main actor. A repository does one
+/// watched; a change there reads that repository again, off the main actor, unless git ignores
+/// where it happened. While no window shows the panel a change only marks its repository, which is
+/// read when one shows it again. Reads wait their turn in a pool, projects first. A repository does one
 /// thing at a time: its refreshes and actions wait in one serial queue, and events during an
 /// action make one refresh after it. The app has one, which every window's panel draws; the host
 /// makes it when the panel is first shown, so nothing is read or watched before.
@@ -94,6 +96,16 @@ public final class GitModel: ObservableObject {
     private let makeWatcher: (String) -> FolderWatching
     private let read: Read
     private let act: Act
+    private let readIgnored: @Sendable (String, CommandLauncher) -> IgnoredPaths
+    private let pool: ReadPool
+    /// Whether a window shows the panel; while none does, `stale` collects what changed.
+    public private(set) var isShown = true
+    /// Repositories that changed while no window showed the panel: read when one shows it.
+    private var stale: Set<GitRepoID> = []
+    /// What each repository ignores, as last listed; a change only there is dropped.
+    private var ignored: [GitRepoID: IgnoredPaths] = [:]
+    /// Repositories whose ignore rules changed, or were never read: their next read lists them.
+    private var rulesChanged: Set<GitRepoID> = []
     private var repos: [GitRepoID: Repo] = [:]
     /// Repositories whose action problem is a `report`'s, which the next open clears.
     private var reported: Set<GitRepoID> = []
@@ -132,13 +144,18 @@ public final class GitModel: ObservableObject {
                   act: { try GitModel.run($0, in: $1, message: $2, launcher: $3, trash: trash) })
     }
 
-    /// `read` and `act` are for tests that must count reads or hold an action.
+    /// `read` and `act` are for tests that must count reads or hold an action; `ignored` for tests
+    /// that say what is ignored. `pool` is where reads wait their turn.
     init(projects: [Project], tasks: [TaskItem], launcher: CommandLauncher,
-         watcher: @escaping (String) -> FolderWatching, read: @escaping Read, act: @escaping Act) {
+         watcher: @escaping (String) -> FolderWatching, read: @escaping Read, act: @escaping Act,
+         ignored: @escaping @Sendable (String, CommandLauncher) -> IgnoredPaths = { IgnoredPaths.read($0, launcher: $1) },
+         pool: ReadPool = .panels) {
         self.launcher = launcher
         self.makeWatcher = watcher
         self.read = read
         self.act = act
+        self.readIgnored = ignored
+        self.pool = pool
         update(projects: projects, tasks: tasks)
     }
 
@@ -195,7 +212,24 @@ public final class GitModel: ObservableObject {
         watcher.watch(repo.path, onChanges: { [weak self, hops] changes in
             hops.hop { self?.changed(id, changes) }
         })
-        refreshSoon(id)
+        rulesChanged.insert(id)
+        request(id)
+    }
+
+    /// Whether a window shows the panel. Shown again, the repositories that changed meanwhile are
+    /// read again, projects first.
+    public func setShown(_ shown: Bool) {
+        guard shown != isShown else { return }
+        isShown = shown
+        guard shown else { return }
+        let changed = projectOrder.map(GitRepoID.project).filter(stale.contains) + taskOrder.map(GitRepoID.task).filter(stale.contains)
+        stale.removeAll()
+        for id in changed { refreshSoon(id) }
+    }
+
+    /// A refresh now while a window shows the panel; else noted for when one does.
+    private func request(_ id: GitRepoID) {
+        if isShown { refreshSoon(id) } else if epochs[id] != nil { stale.insert(id) }
     }
 
     /// Finds the task's folder in `.git/worktrees/` before anything else is queued for it, so the
@@ -218,6 +252,9 @@ public final class GitModel: ObservableObject {
         drafts.removeValue(forKey: id)?.text = ""
         if let pending = pendingRefresh.removeValue(forKey: id) { absorbed.insert(pending.token) }
         if case .task(let task) = id { worktreeNames[task] = nil }
+        stale.remove(id)
+        ignored[id] = nil
+        rulesChanged.remove(id)
     }
 
     // -- events ---------------------------------------------------------------------------
@@ -226,16 +263,30 @@ public final class GitModel: ObservableObject {
     /// those refresh the task. Refs and HEAD are shared by every worktree, so a change there
     /// (a fetch, a push) refreshes the project and its listed tasks, whose ahead and behind may
     /// have moved. Not knowing what changed refreshes the project and all its tasks.
-    private func changed(_ id: GitRepoID, _ changes: [String]) {
+    /// A change only where git ignores (build output, `node_modules`) is dropped; one to an ignore
+    /// rule has the rules listed again with the next read.
+    private func changed(_ id: GitRepoID, _ reported: [String]) {
         guard watchers[id] != nil else { return }   // a late event for a repository that is gone
+        let changes: [String]
+        if reported.contains(where: IgnoredPaths.changesRules) {
+            rulesChanged.insert(id)
+            changes = reported
+        } else if let rules = ignored[id] {
+            guard let kept = rules.relevant(reported) else { return }
+            changes = kept
+        } else {
+            changes = reported
+        }
         guard case .project(let project) = id else {
-            refreshSoon(id)
+            request(id)
             return
         }
         let tasks = taskOrder.filter { repos[.task($0)]?.projectId == project }
+        // The main repository's exclude file is every worktree's.
+        if changes.contains(".git/info/exclude") { rulesChanged.formUnion(tasks.map(GitRepoID.task)) }
         if changes.isEmpty {
-            refreshSoon(id)
-            for task in tasks { refreshSoon(.task(task)) }
+            request(id)
+            for task in tasks { request(.task(task)) }
             return
         }
         var projectChanged = false
@@ -248,8 +299,8 @@ public final class GitModel: ObservableObject {
                 if GitWatchPaths.isShared(change) { tasksChanged.formUnion(tasks.filter(isListed)) }
             }
         }
-        if projectChanged { refreshSoon(id) }
-        for task in tasks where tasksChanged.contains(task) { refreshSoon(.task(task)) }
+        if projectChanged { request(id) }
+        for task in tasks where tasksChanged.contains(task) { request(.task(task)) }
     }
 
     private func isListed(_ task: UUID) -> Bool {
@@ -324,10 +375,14 @@ public final class GitModel: ObservableObject {
         // A refresh queued behind this read would read the same: it is dropped.
         if let pending = pendingRefresh.removeValue(forKey: id) { absorbed.insert(pending.token) }
         let generation = next()
-        let path = repo.path, read = self.read, launcher = self.launcher, base = repo.baseBranch
+        let path = repo.path, read = self.read, launcher = self.launcher, base = repo.baseBranch, readIgnored = self.readIgnored
         let isTask: Bool
         if case .task = id { isTask = true } else { isTask = false }
-        let loaded = await BackgroundWork.run { Self.load(path, isTask: isTask, base: base, read: read, launcher: launcher) }
+        let readsRules = rulesChanged.remove(id) != nil
+        let (loaded, rules) = await pool.run(isTask ? .task : .project) { () -> (Loaded, IgnoredPaths?) in
+            (Self.load(path, isTask: isTask, base: base, read: read, launcher: launcher), readsRules ? readIgnored(path, launcher) : nil)
+        }
+        if let rules, epochs[id] == epoch { ignored[id] = rules }
         guard epochs[id] == epoch, generation > applied[id, default: 0], repos[id] != nil else { return }
         applied[id] = generation
         if let state = loaded.state {

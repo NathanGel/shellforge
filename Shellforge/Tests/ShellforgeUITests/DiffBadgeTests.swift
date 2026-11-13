@@ -21,6 +21,11 @@ import Testing
         return (model, task)
     }
 
+    /// A background poll: the badges are read at utility QoS, behind what the person asked for.
+    @Test func badgesAreReadAtUtility() {
+        #expect(SidebarModel.diffQueue.qos.qosClass == .utility)
+    }
+
     @Test func diffsAreReadForEachTask() async throws {
         let (model, task) = try await model()
         try "a\nb\n".write(toFile: task.worktreePath + "/new.txt", atomically: true, encoding: .utf8)

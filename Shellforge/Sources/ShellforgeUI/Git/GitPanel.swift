@@ -857,6 +857,9 @@ public final class GitHolder {
     private let make: @MainActor () -> GitModel
     /// The model, once made; nil until then. Reading it makes nothing.
     private(set) var made: GitModel?
+    /// The windows showing the panel. While none does, the model's watchers only note what changed,
+    /// and nothing is read until a window shows the panel again.
+    private lazy var viewers = PanelViewers { [weak self] shown in self?.made?.setShown(shown) }
 
     public init(_ make: @escaping @MainActor () -> GitModel) { self.make = make }
 
@@ -867,4 +870,10 @@ public final class GitHolder {
         made = model
         return model
     }
+
+    /// A window shows the panel until the viewer is released, or goes.
+    func register() -> PanelViewer { viewers.register() }
+
+    /// How many windows show the panel. For tests.
+    var viewerCount: Int { viewers.count }
 }

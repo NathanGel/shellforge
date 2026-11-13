@@ -16,13 +16,17 @@ extension SidebarModel {
         let workspace = document.workspace
         let (all, stats) = (workspace.tasks, diffStats)
         let shown = Self.tasksShowingDiffs(in: workspace)
-        let read = await BackgroundWork.run { stats.diffs(for: shown, keeping: all, background: background) }
+        let read = await BackgroundWork.run(on: Self.diffQueue) { stats.diffs(for: shown, keeping: all, background: background) }
         // A folded task keeps the badge it had; one gone from the workspace loses it.
         let shownIds = Set(shown.map(\.id)), allIds = Set(all.map(\.id))
         var found = read
         for (id, diff) in diffs where !shownIds.contains(id) && allIds.contains(id) { found[id] = diff }
         if found != diffs { diffs = found }
     }
+
+    /// Where the badges are read: at utility QoS, as a background poll is, not ahead of what the
+    /// person asked for.
+    nonisolated static let diffQueue = DispatchQueue.global(qos: .utility)
 
     /// The tasks whose badge can be seen: those of a project that is not collapsed.
     nonisolated static func tasksShowingDiffs(in workspace: Workspace) -> [TaskItem] {
