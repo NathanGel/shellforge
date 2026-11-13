@@ -106,6 +106,9 @@ public final class GitModel: ObservableObject {
     private var ignored: [GitRepoID: IgnoredPaths] = [:]
     /// Repositories whose ignore rules changed, or were never read: their next read lists them.
     private var rulesChanged: Set<GitRepoID> = []
+    /// When each repository's ignored paths were last listed again for a change outside them.
+    private var relearnt: [GitRepoID: Date] = [:]
+    private let now: @Sendable () -> Date
     private var repos: [GitRepoID: Repo] = [:]
     /// Repositories whose action problem is a `report`'s, which the next open clears.
     private var reported: Set<GitRepoID> = []
@@ -149,13 +152,14 @@ public final class GitModel: ObservableObject {
     init(projects: [Project], tasks: [TaskItem], launcher: CommandLauncher,
          watcher: @escaping (String) -> FolderWatching, read: @escaping Read, act: @escaping Act,
          ignored: @escaping @Sendable (String, CommandLauncher) -> IgnoredPaths = { IgnoredPaths.read($0, launcher: $1) },
-         pool: ReadPool = .panels) {
+         pool: ReadPool = .panels, now: @escaping @Sendable () -> Date = Date.init) {
         self.launcher = launcher
         self.makeWatcher = watcher
         self.read = read
         self.act = act
         self.readIgnored = ignored
         self.pool = pool
+        self.now = now
         update(projects: projects, tasks: tasks)
     }
 
@@ -221,7 +225,15 @@ public final class GitModel: ObservableObject {
     public func setShown(_ shown: Bool) {
         guard shown != isShown else { return }
         isShown = shown
-        guard shown else { return }
+        guard shown else {
+            // A refresh queued and not started waits for the panel too.
+            for (id, pending) in pendingRefresh {
+                absorbed.insert(pending.token)
+                stale.insert(id)
+            }
+            pendingRefresh.removeAll()
+            return
+        }
         let changed = projectOrder.map(GitRepoID.project).filter(stale.contains) + taskOrder.map(GitRepoID.task).filter(stale.contains)
         stale.removeAll()
         for id in changed { refreshSoon(id) }
@@ -255,6 +267,7 @@ public final class GitModel: ObservableObject {
         stale.remove(id)
         ignored[id] = nil
         rulesChanged.remove(id)
+        relearnt[id] = nil
     }
 
     // -- events ---------------------------------------------------------------------------
@@ -268,11 +281,13 @@ public final class GitModel: ObservableObject {
     private func changed(_ id: GitRepoID, _ reported: [String]) {
         guard watchers[id] != nil else { return }   // a late event for a repository that is gone
         let changes: [String]
-        if reported.contains(where: IgnoredPaths.changesRules) {
+        let rules = ignored[id]
+        if reported.contains(where: (rules ?? .none).changesRules) {
             rulesChanged.insert(id)
             changes = reported
-        } else if let rules = ignored[id] {
+        } else if let rules {
             guard let kept = rules.relevant(reported) else { return }
+            relearn(id, after: kept)
             changes = kept
         } else {
             changes = reported
@@ -282,8 +297,13 @@ public final class GitModel: ObservableObject {
             return
         }
         let tasks = taskOrder.filter { repos[.task($0)]?.projectId == project }
-        // The main repository's exclude file is every worktree's.
+        // The main repository's exclude file is every worktree's; a task's own index is in the
+        // main repository's `.git/worktrees/<name>/`.
         if changes.contains(".git/info/exclude") { rulesChanged.formUnion(tasks.map(GitRepoID.task)) }
+        for change in changes where change.hasSuffix("/index") {
+            guard let name = GitWatchPaths.worktreeName(change) else { continue }
+            rulesChanged.formUnion(tasks.filter { worktreeNames[$0] == name }.map(GitRepoID.task))
+        }
         if changes.isEmpty {
             request(id)
             for task in tasks { request(.task(task)) }
@@ -365,12 +385,27 @@ public final class GitModel: ObservableObject {
 
     /// Reads the repository again, after what is queued for it; when it returns the section shows
     /// what was read.
+    /// A change outside what is ignored may be a folder that appeared since the list was read (a
+    /// first build's output): the read it causes lists the ignored paths again too, at most every
+    /// `relearnSpacing` seconds per repository. Git's own folder is never listed, so it never asks.
+    private func relearn(_ id: GitRepoID, after kept: [String]) {
+        guard kept.isEmpty || kept.contains(where: { !IgnoredPaths.isGitFolder($0) }) else { return }
+        let time = now()
+        if let last = relearnt[id], time.timeIntervalSince(last) < Self.relearnSpacing { return }
+        relearnt[id] = time
+        rulesChanged.insert(id)
+    }
+
+    /// The least time between two listings of a repository's ignored paths for changes outside them.
+    static let relearnSpacing: TimeInterval = 30
+
     public func refresh(_ repo: GitRepoID) async {
         await refreshSoon(repo)?.value
     }
 
     /// Reads the repository now: called from its queue only.
-    private func load(_ id: GitRepoID, epoch: Int) async {
+    /// `afterAction`: the read after something the person did, which goes ahead of background reads.
+    private func load(_ id: GitRepoID, epoch: Int, afterAction: Bool = false) async {
         guard epochs[id] == epoch, let repo = repos[id] else { return }
         // A refresh queued behind this read would read the same: it is dropped.
         if let pending = pendingRefresh.removeValue(forKey: id) { absorbed.insert(pending.token) }
@@ -379,7 +414,7 @@ public final class GitModel: ObservableObject {
         let isTask: Bool
         if case .task = id { isTask = true } else { isTask = false }
         let readsRules = rulesChanged.remove(id) != nil
-        let (loaded, rules) = await pool.run(isTask ? .task : .project) { () -> (Loaded, IgnoredPaths?) in
+        let (loaded, rules) = await pool.run(afterAction ? .action : isTask ? .task : .project) { () -> (Loaded, IgnoredPaths?) in
             (Self.load(path, isTask: isTask, base: base, read: read, launcher: launcher), readsRules ? readIgnored(path, launcher) : nil)
         }
         if let rules, epochs[id] == epoch { ignored[id] = rules }
@@ -488,7 +523,7 @@ public final class GitModel: ObservableObject {
         repos[id]?.actionProblem = problem
         done(problem)
         publish()
-        await load(id, epoch: epoch)
+        await load(id, epoch: epoch, afterAction: true)
         guard epochs[id] == epoch, repos[id] != nil else { return }
         repos[id]?.busy = false
         publish()

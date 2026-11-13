@@ -26,11 +26,41 @@ import Testing
     }
 
     @Test func ignoreRulesAreTold() {
-        #expect(IgnoredPaths.changesRules(".gitignore"))
-        #expect(IgnoredPaths.changesRules("packages/web/.gitignore"))
-        #expect(IgnoredPaths.changesRules(".git/info/exclude"))
-        #expect(!IgnoredPaths.changesRules("docs/gitignore.md"))
-        #expect(!IgnoredPaths.changesRules("src/app.gitignore"))
+        let rules = IgnoredPaths([".venv", ".build"])
+        #expect(rules.changesRules(".gitignore"))
+        #expect(rules.changesRules("packages/web/.gitignore"))
+        #expect(rules.changesRules(".git/info/exclude"))
+        #expect(rules.changesRules(".git/index"), "a file added with -f inside an ignored folder")
+        #expect(!rules.changesRules("docs/gitignore.md"))
+        #expect(!rules.changesRules("src/app.gitignore"))
+        #expect(!rules.changesRules(".venv/.gitignore"), "git never reads one inside an ignored folder")
+        #expect(!rules.changesRules(".build/checkouts/left-pad/.gitignore"))
+        #expect(IgnoredPaths.none.changesRules(".venv/.gitignore"), "not known to be ignored")
+    }
+
+    /// With `dist/*` and `!dist/keep`, git lists `dist/` whole while `dist/keep` is not there; once
+    /// it is, git shows it. So while a rule negates, only the listed paths themselves are covered.
+    @Test func aNegatedRuleKeepsItsFolderCounting() throws {
+        let repo = try GitRepoFixture()
+        try "dist/*\n!dist/keep\n".write(toFile: repo.path + "/.gitignore", atomically: true, encoding: .utf8)
+        try FileManager.default.createDirectory(atPath: repo.path + "/dist", withIntermediateDirectories: true)
+        try "x\n".write(toFile: repo.path + "/dist/other.js", atomically: true, encoding: .utf8)
+        let rules = IgnoredPaths.read(repo.path, launcher: repo.launcher)
+        #expect(rules.negates)
+        #expect(!rules.covers("dist/keep"))
+        try "x\n".write(toFile: repo.path + "/dist/keep", atomically: true, encoding: .utf8)
+        #expect(try repo.git("status", "--porcelain", "--untracked-files=all").contains("dist/keep"), "git shows it")
+    }
+
+    /// A negation in the repository's exclude file counts as well.
+    @Test func aNegationInInfoExcludeCounts() throws {
+        let repo = try GitRepoFixture()
+        try "build/\n".write(toFile: repo.path + "/.gitignore", atomically: true, encoding: .utf8)
+        try FileManager.default.createDirectory(atPath: repo.path + "/build", withIntermediateDirectories: true)
+        try "x\n".write(toFile: repo.path + "/build/a.o", atomically: true, encoding: .utf8)
+        #expect(!IgnoredPaths.read(repo.path, launcher: repo.launcher).negates)
+        try "!keep.log\n".write(toFile: repo.path + "/.git/info/exclude", atomically: true, encoding: .utf8)
+        #expect(IgnoredPaths.read(repo.path, launcher: repo.launcher).negates)
     }
 
     /// git names an ignored folder once, with `--directory`, and ignored files one by one; what is

@@ -421,8 +421,20 @@ public final class FilesHolder {
         return model
     }
 
+    /// Told each time a window's panel registers: the host checks then whether that window's
+    /// sidebar can be seen (`setVisible`), rather than on its next tick.
+    public var onRegister: (@MainActor () -> Void)?
+
     /// A window shows the panel until the viewer is released, or goes.
-    func register() -> PanelViewer { viewers.register() }
+    func register() -> PanelViewer {
+        let viewer = viewers.register()
+        onRegister?()
+        return viewer
+    }
+
+    /// Whether a sidebar that can be seen (not hidden, not in the Dock, not covered) has the panel
+    /// selected: the host's check, each second and when a window's visibility may have changed.
+    public func setVisible(_ visible: Bool) { viewers.setVisible(visible) }
 
     /// How many windows show the panel. For tests.
     var viewerCount: Int { viewers.count }

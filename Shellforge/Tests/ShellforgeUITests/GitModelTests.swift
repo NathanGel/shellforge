@@ -1,7 +1,7 @@
 import Combine
 import XCTest
 @testable import ShellforgeCore
-import ShellforgeTestSupport
+@testable import ShellforgeTestSupport
 @testable import ShellforgeUI
 
 private final class FakeWatcher: FolderWatching, @unchecked Sendable {
@@ -561,4 +561,92 @@ extension GitModelTests {
         await git.settled()
         XCTAssertEqual(reader.count(demo.path), before + 3)
     }
+
+    /// The panel's view is up but its sidebar is hidden (⌃⌘S), in the Dock or covered: the host
+    /// says no sidebar that can be seen has the panel selected, and nothing is read until one does.
+    func testAHiddenSidebarRunsNoGit() async throws {
+        let scratch = try Scratch()
+        let demo = try scratch.project("demo")
+        let reader = Reader()
+        var made: [String: FakeWatcher] = [:]
+        let holder = GitHolder { self.model(scratch, [demo], reader: reader, watchers: { made[$0.path] = $0 }) }
+        var asked = 0
+        holder.onRegister = { asked += 1 }
+        let git = holder.model
+        let viewer = holder.register()
+        XCTAssertEqual(asked, 1, "the host checks the window as its panel appears")
+        await git.settled()
+        let before = reader.count(demo.path)
+
+        holder.setVisible(false)
+        XCTAssertFalse(git.isShown)
+        made[demo.path]!.fire(["src/app.ts"])
+        await git.settled()
+        XCTAssertEqual(reader.count(demo.path), before)
+
+        holder.setVisible(true)
+        XCTAssertTrue(git.isShown)
+        await git.settled()
+        XCTAssertEqual(reader.count(demo.path), before + 1)
+        viewer.release()
+        holder.setVisible(true)
+        XCTAssertFalse(git.isShown, "visible, but no window's panel is up")
+    }
+
+    /// Which panels the host reports: those selected in a sidebar that can be seen.
+    func testVisiblePanelsAreThoseOfShowingSidebars() {
+        XCTAssertEqual(ShellforgeSidebar.visiblePanels([(true, .git), (false, .files), (true, .sessions), (true, nil)]),
+                       [.git, .sessions])
+        XCTAssertEqual(ShellforgeSidebar.visiblePanels([(false, .git)]), [])
+    }
+
+    /// A refresh queued when the panel hides is not run: it waits for the panel.
+    func testARefreshPendingWhenThePanelHidesWaits() async throws {
+        let scratch = try Scratch()
+        let demo = try scratch.project("demo")
+        let reader = Reader()
+        var made: [String: FakeWatcher] = [:]
+        let git = model(scratch, [demo], reader: reader, watchers: { made[$0.path] = $0 })
+        await git.settled()
+        let before = reader.count(demo.path)
+        let gate = reader.holdNext(demo.path)
+        made[demo.path]!.fire(["src/app.ts"])
+        await git.eventsDelivered()
+        await reader.waitUntilHeld()
+        made[demo.path]!.fire(["src/app.ts"])   // queued behind the held read
+        await git.eventsDelivered()
+        git.setShown(false)
+        gate.signal()
+        await git.settled()
+        XCTAssertEqual(reader.count(demo.path), before + 1, "the held read only")
+        git.setShown(true)
+        await git.settled()
+        XCTAssertEqual(reader.count(demo.path), before + 2)
+    }
+
+    /// A first build makes `dist/` after the list was read: the read its first change causes lists
+    /// the ignored paths again, and its later changes read nothing.
+    func testANewIgnoredFolderIsLearnt() async throws {
+        let scratch = try Scratch()
+        let demo = try scratch.project("demo")
+        try "dist/\n".write(toFile: demo.path + "/.gitignore", atomically: true, encoding: .utf8)
+        let reader = Reader()
+        let clock = TestClock()
+        var made: [String: FakeWatcher] = [:]
+        let git = GitModel(projects: [demo], tasks: [], launcher: scratch.launcher,
+                           watcher: { let w = FakeWatcher($0); made[$0] = w; return w },
+                           read: { try reader.read($0, $1) }, act: { try GitModel.run($0, in: $1, message: $2, launcher: $3) },
+                           now: { clock.now })
+        await git.settled()
+        let before = reader.count(demo.path)
+
+        try scratch.write("dist/main.js", in: demo.path)
+        made[demo.path]!.fire(["dist/main.js"])
+        await git.settled()
+        XCTAssertEqual(reader.count(demo.path), before + 1, "not known to be ignored yet")
+        made[demo.path]!.fire(["dist/main.js", "dist/main.js.map"])
+        await git.settled()
+        XCTAssertEqual(reader.count(demo.path), before + 1, "learnt")
+    }
 }
+

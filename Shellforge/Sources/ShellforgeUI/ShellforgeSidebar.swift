@@ -112,6 +112,13 @@ public enum ShellforgeSidebar {
         (view as? SidebarHostingView<ZoomedSidebar>)?.activity?.layout.selected
     }
 
+    /// The panels some sidebar that can be seen has selected: what the Files and Git holders are
+    /// told (`setVisible`). `sidebars` is each window's sidebar: whether it can be seen
+    /// (`SidebarVisibility.isShowing`), and its selected panel.
+    public static func visiblePanels(_ sidebars: [(isShowing: Bool, panel: ActivityPanel?)]) -> Set<ActivityPanel> {
+        Set(sidebars.filter(\.isShowing).compactMap(\.panel))
+    }
+
     /// How far the sidebar's list insets its rows: what lines the host's toggle up with them.
     public static var listInset: CGFloat { SidebarRowLayout.listInset }
 

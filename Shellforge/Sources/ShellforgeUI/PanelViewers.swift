@@ -1,11 +1,16 @@
 import SwiftUI
 
-/// How many windows show an app-wide panel (Files, Git). Each window's panel registers when it
-/// appears and lets go when it disappears or its window closes; `changed` hears whether any shows,
-/// each time that flips.
+/// Whether any window shows an app-wide panel (Files, Git). Each window's panel registers when it
+/// appears and lets go when it disappears or its window closes. A panel whose view is up can still
+/// be out of sight — its sidebar hidden (⌃⌘S), its window in the Dock or covered — which SwiftUI
+/// does not say: the host tells `visible`, whether a sidebar that can be seen has the panel
+/// selected. The panel shows while both hold; `changed` hears each time that flips.
 @MainActor
 final class PanelViewers {
     private(set) var count = 0
+    /// The host's word: some sidebar that can be seen has the panel selected. True until it says.
+    private(set) var visible = true
+    private var shown = false
     private let changed: @MainActor (_ shown: Bool) -> Void
 
     init(_ changed: @escaping @MainActor (_ shown: Bool) -> Void) { self.changed = changed }
@@ -13,14 +18,26 @@ final class PanelViewers {
     /// One more window shows the panel, until the viewer returned is released or goes.
     func register() -> PanelViewer {
         count += 1
-        if count == 1 { changed(true) }
+        settle()
         return PanelViewer { [weak self] in self?.unregister() }
+    }
+
+    func setVisible(_ visible: Bool) {
+        self.visible = visible
+        settle()
     }
 
     private func unregister() {
         guard count > 0 else { return }
         count -= 1
-        if count == 0 { changed(false) }
+        settle()
+    }
+
+    private func settle() {
+        let now = count > 0 && visible
+        guard now != shown else { return }
+        shown = now
+        changed(now)
     }
 }
 

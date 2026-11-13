@@ -1,7 +1,7 @@
 import Combine
 import XCTest
 @testable import ShellforgeCore
-import ShellforgeTestSupport
+@testable import ShellforgeTestSupport
 @testable import ShellforgeUI
 
 private final class FakeWatcher: FolderWatching, @unchecked Sendable {
@@ -364,10 +364,7 @@ extension FilesModelTests {
         let lister = Lister()
         let rules = IgnoredRules(["build", "node_modules", ".DS_Store"])
         var made: [String: FakeWatcher] = [:]
-        let files = FilesModel(projects: [demo], launcher: launcher, defaults: ScratchDefaults.make(),
-                               watcher: { let w = FakeWatcher($0); made[$0] = w; return w },
-                               list: { path, launcher in lister.list(path, launcher) },
-                               ignored: { _, _ in rules.read() })
+        let files = ignoringModel(rules, lister: lister) { made[$0.path] = $0 }
         await files.settled()
         XCTAssertEqual(rules.reads, 1, "read with the first listing")
         let before = lister.count(demo.path)
@@ -375,20 +372,114 @@ extension FilesModelTests {
         made[demo.path]!.fire(["build/out/app.o", "build", "node_modules/left-pad/index.js", ".DS_Store"])
         await files.settled()
         XCTAssertEqual(lister.count(demo.path), before, "only ignored paths changed")
+        XCTAssertEqual(rules.reads, 1)
 
         made[demo.path]!.fire(["build/out/app.o", "src/app.ts"])
         await files.settled()
         XCTAssertEqual(lister.count(demo.path), before + 1)
-        XCTAssertEqual(rules.reads, 1, "the rules did not change")
 
         rules.set(["node_modules"])
+        let reads = rules.reads
         made[demo.path]!.fire([".gitignore"])
         await files.settled()
         XCTAssertEqual(lister.count(demo.path), before + 2)
-        XCTAssertEqual(rules.reads, 2)
+        XCTAssertEqual(rules.reads, reads + 1, "a changed rule lists the ignored paths again")
         made[demo.path]!.fire(["build/out/app.o"])
         await files.settled()
         XCTAssertEqual(lister.count(demo.path), before + 3, "build/ is no longer ignored")
+    }
+
+    private func ignoringModel(_ rules: IgnoredRules, lister: Lister, clock: TestClock = TestClock(),
+                               watchers: @escaping (FakeWatcher) -> Void) -> FilesModel {
+        FilesModel(projects: [demo], launcher: launcher, defaults: ScratchDefaults.make(),
+                   watcher: { let w = FakeWatcher($0); watchers(w); return w },
+                   list: { path, launcher in lister.list(path, launcher) },
+                   ignored: { _, _ in rules.read() }, now: { clock.now })
+    }
+
+    /// A folder that appears after the list was read (a first build's `dist/`) is learnt: the
+    /// listing a change outside the list causes reads the list again too, at most every 30 s.
+    func testANewIgnoredFolderIsLearnt() async {
+        let lister = Lister()
+        let rules = IgnoredRules([])
+        let clock = TestClock()
+        var made: [String: FakeWatcher] = [:]
+        let files = ignoringModel(rules, lister: lister, clock: clock) { made[$0.path] = $0 }
+        await files.settled()
+        let before = lister.count(demo.path)
+
+        rules.set(["dist"])   // the first build made it
+        made[demo.path]!.fire(["dist/main.js"])
+        await files.settled()
+        XCTAssertEqual(lister.count(demo.path), before + 1)
+        XCTAssertEqual(rules.reads, 2, "read again with that listing")
+        made[demo.path]!.fire(["dist/main.js"])
+        await files.settled()
+        XCTAssertEqual(lister.count(demo.path), before + 1, "learnt: its next changes read nothing")
+
+        // Within 30 s, another change outside the list lists the project but not the rules.
+        rules.set(["dist", "coverage"])
+        made[demo.path]!.fire(["coverage/index.html"])
+        await files.settled()
+        XCTAssertEqual(rules.reads, 2)
+        XCTAssertEqual(lister.count(demo.path), before + 2)
+        // Git's own folder never asks.
+        clock.advance(by: 31)
+        made[demo.path]!.fire([".git/HEAD"])
+        await files.settled()
+        XCTAssertEqual(rules.reads, 2)
+        made[demo.path]!.fire(["coverage/index.html"])
+        await files.settled()
+        XCTAssertEqual(rules.reads, 3, "30 s on, the rules are read again")
+        made[demo.path]!.fire(["coverage/index.html"])
+        await files.settled()
+        XCTAssertEqual(lister.count(demo.path), before + 4)
+    }
+
+    /// The index changed (`git add -f dist/keep.js`): the ignored paths are listed again, so the
+    /// now tracked file's changes count. A `.gitignore` a tool writes in an ignored folder is not a
+    /// rule git reads, and changes nothing.
+    func testTheIndexIsARuleAndAnIgnoredGitignoreIsNot() async {
+        let lister = Lister()
+        let rules = IgnoredRules(["dist", ".venv"])
+        var made: [String: FakeWatcher] = [:]
+        let files = ignoringModel(rules, lister: lister) { made[$0.path] = $0 }
+        await files.settled()
+        let before = lister.count(demo.path)
+
+        made[demo.path]!.fire([".venv/.gitignore", ".venv/bin/python"])
+        await files.settled()
+        XCTAssertEqual(lister.count(demo.path), before)
+        XCTAssertEqual(rules.reads, 1)
+
+        rules.set([".venv", "dist/other.js"])
+        made[demo.path]!.fire([".git/index"])
+        await files.settled()
+        XCTAssertEqual(rules.reads, 2)
+        made[demo.path]!.fire(["dist/keep.js"])
+        await files.settled()
+        XCTAssertEqual(lister.count(demo.path), before + 2, "the force-added file counts")
+    }
+
+    /// A listing promised after the running one, when the panel hides, waits for the panel.
+    func testAListingPendingWhenThePanelHidesWaits() async {
+        let lister = Lister()
+        var made: [String: FakeWatcher] = [:]
+        let files = model([demo], lister: lister) { made[$0.path] = $0 }
+        await files.settled()
+        let gate = lister.holdNext()
+        made[demo.path]!.fire(["src/app.ts"])
+        await files.eventsDelivered()
+        await lister.waitUntilHeld()
+        made[demo.path]!.fire(["src/app.ts"])   // one more after the running one
+        await files.eventsDelivered()
+        files.setShown(false)
+        gate.signal()
+        await files.settled()
+        XCTAssertEqual(lister.count(demo.path), 2, "the first listing and the held one, not the pending one")
+        files.setShown(true)
+        await files.settled()
+        XCTAssertEqual(lister.count(demo.path), 3)
     }
 
     /// On load, what is stored for a project the workspace no longer has, and for a folder that

@@ -118,12 +118,21 @@ final class iTermShellforgeSidebar: NSObject {
     /// The Files panel's model: one for the app, so every window draws the same trees and open
     /// folders from one set of watchers. Made the first time the panel shows in any window; until
     /// then nothing is listed or watched. Each window opens files in its own tabs.
-    private static let files = FilesHolder { makeFiles() }
+    private static let files: FilesHolder = {
+        let holder = FilesHolder { makeFiles() }
+        // A window's panel appeared: whether its sidebar can be seen is checked now.
+        holder.onRegister = { refreshPanelVisibility() }
+        return holder
+    }()
 
     /// The Git panel's model: one for the app, so every window draws the same repositories from one
     /// set of watchers. Made the first time the panel shows in any window; until then no repository
     /// is read or watched. Each window opens diffs in its own tabs and asks its own questions.
-    private static let git = GitHolder { makeGit() }
+    private static let git: GitHolder = {
+        let holder = GitHolder { makeGit() }
+        holder.onRegister = { refreshPanelVisibility() }
+        return holder
+    }()
 
     /// What the app bundle gives the agents: `shellforge-status`, `shellforge-run` and the ready-made agents.
     static let agentTools = AgentTools.bundled(resourceURL: Bundle.main.resourceURL, bundlePath: Bundle.main.bundlePath,
@@ -718,6 +727,18 @@ extension iTermShellforgeSidebar {
             DLog("Shellforge: a sidebar shows: \(anyShown); the Mac's readings \(anyShown ? "resume" : "pause")")
         }
         machine.setShown(anyShown)
+        refreshPanelVisibility()
+    }
+
+    /// The Files and Git panels watch and read only while a sidebar that can be seen — not hidden
+    /// (⌃⌘S), not in the Dock, not covered — has them selected; otherwise a change only marks what
+    /// to read when one shows them again.
+    private static func refreshPanelVisibility() {
+        let shown = ShellforgeSidebar.visiblePanels(sidebars.allObjects.compactMap { model in
+            sidebarViews.object(forKey: model).map { view in (SidebarVisibility.isShowing(view), ShellforgeSidebar.shownPanel(of: view)) }
+        })
+        files.setVisible(shown.contains(.files))
+        git.setVisible(shown.contains(.git))
     }
 
     /// Every session in every window, split panes included; the selected one of the selected tab

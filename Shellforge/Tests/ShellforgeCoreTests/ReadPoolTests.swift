@@ -43,6 +43,40 @@ import Testing
         #expect(order.log == ["project", "task"])
     }
 
+    /// Projects keep coming: after four of them in a row, a waiting task's read goes.
+    @Test func tasksAreNotStarved() {
+        let pool = ReadPool(limit: 1, queue: DispatchQueue(label: "pool-test"))
+        let gate = DispatchSemaphore(value: 0)
+        let order = Probe()
+        let done = DispatchGroup()
+        pool.submit(.project) { gate.wait() }
+        func add(_ name: String, _ priority: ReadPool.Priority) {
+            done.enter()
+            pool.submit(priority) { order.record(name); done.leave() }
+        }
+        add("t1", .task)
+        for n in 1...6 { add("p\(n)", .project) }
+        gate.signal()
+        done.wait()
+        #expect(order.log == ["p1", "p2", "p3", "p4", "t1", "p5", "p6"])
+    }
+
+    /// The read after the person's own action goes ahead of every background read.
+    @Test func aReadAfterAnActionGoesFirst() {
+        let pool = ReadPool(limit: 1, queue: DispatchQueue(label: "pool-test"))
+        let gate = DispatchSemaphore(value: 0)
+        let order = Probe()
+        let done = DispatchGroup()
+        pool.submit(.project) { gate.wait() }
+        for (name, priority) in [("task", ReadPool.Priority.task), ("project", .project), ("action", .action)] {
+            done.enter()
+            pool.submit(priority) { order.record(name); done.leave() }
+        }
+        gate.signal()
+        done.wait()
+        #expect(order.log == ["action", "project", "task"])
+    }
+
     @Test func runReturnsWhatTheWorkReturns() async throws {
         struct Refused: Error {}
         let pool = ReadPool(limit: 2, queue: .global(qos: .utility))

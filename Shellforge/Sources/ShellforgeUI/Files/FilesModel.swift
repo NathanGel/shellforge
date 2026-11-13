@@ -61,6 +61,9 @@ public final class FilesModel: ObservableObject {
     private var ignored: [UUID: IgnoredPaths] = [:]
     /// Projects whose ignore rules changed, or were never read: their next listing reads them.
     private var rulesChanged: Set<UUID> = []
+    /// When each project's ignored paths were last listed again for a change outside them.
+    private var relearnt: [UUID: Date] = [:]
+    private let now: @Sendable () -> Date
     /// The pruning of `stored` the first workspace starts. For tests.
     private(set) var pruning: Task<Void, Never>?
     /// Events handed from the watcher's queue to the main actor, so tests can await them.
@@ -72,7 +75,7 @@ public final class FilesModel: ObservableObject {
                 watcher: @escaping (String) -> FolderWatching,
                 list: @escaping @Sendable (String, CommandLauncher) -> ProjectFiles.Listing = { ProjectFiles.list($0, launcher: $1) },
                 ignored: @escaping @Sendable (String, CommandLauncher) -> IgnoredPaths = { IgnoredPaths.read($0, launcher: $1) },
-                pool: ReadPool = .panels) {
+                pool: ReadPool = .panels, now: @escaping @Sendable () -> Date = Date.init) {
         self.launcher = launcher
         self.defaults = defaults
         self.stored = defaults.dictionary(forKey: Self.expandedKey) as? [String: [String]] ?? [:]
@@ -80,6 +83,7 @@ public final class FilesModel: ObservableObject {
         self.list = list
         self.readIgnored = ignored
         self.pool = pool
+        self.now = now
         update(projects: projects)
     }
 
@@ -136,7 +140,12 @@ public final class FilesModel: ObservableObject {
     public func setShown(_ shown: Bool) {
         guard shown != isShown else { return }
         isShown = shown
-        guard shown else { return }
+        guard shown else {
+            // A listing promised after the running one waits for the panel too.
+            stale.formUnion(dirty)
+            dirty.removeAll()
+            return
+        }
         let changed = projectsInOrder(stale)
         stale.removeAll()
         for project in changed { refreshSoon(project: project) }
@@ -155,6 +164,7 @@ public final class FilesModel: ObservableObject {
         stale.remove(id)
         ignored[id] = nil
         rulesChanged.remove(id)
+        relearnt[id] = nil
         loops.removeValue(forKey: id)?.cancel()
         loopTokens[id] = nil
     }
@@ -296,10 +306,12 @@ public final class FilesModel: ObservableObject {
     /// later while no window shows the panel; else the project is listed again.
     private func fileEvent(project: UUID, changes: [String]) {
         guard watchers[project] != nil else { return }   // a late event for a project that is gone
-        if changes.contains(where: IgnoredPaths.changesRules) {
+        let rules = ignored[project]
+        if changes.contains(where: (rules ?? .none).changesRules) {
             rulesChanged.insert(project)
-        } else if let rules = ignored[project], rules.relevant(changes) == nil {
-            return
+        } else if let rules {
+            guard let kept = rules.relevant(changes) else { return }
+            relearn(project, after: kept)
         }
         guard isShown else {
             stale.insert(project)
@@ -307,6 +319,20 @@ public final class FilesModel: ObservableObject {
         }
         refreshSoon(project: project)
     }
+
+    /// A change outside what is ignored may be a folder that appeared since the list was read (a
+    /// first build's output): the listing it causes reads the list again too, at most every
+    /// `relearnSpacing` seconds per project. Git's own folder is never listed, so it never asks.
+    private func relearn(_ project: UUID, after kept: [String]) {
+        guard kept.isEmpty || kept.contains(where: { !IgnoredPaths.isGitFolder($0) }) else { return }
+        let time = now()
+        if let last = relearnt[project], time.timeIntervalSince(last) < Self.relearnSpacing { return }
+        relearnt[project] = time
+        rulesChanged.insert(project)
+    }
+
+    /// The least time between two listings of a project's ignored paths for changes outside them.
+    static let relearnSpacing: TimeInterval = 30
 
     /// One more refresh after the running one, or one now.
     private func refreshSoon(project: UUID) {
