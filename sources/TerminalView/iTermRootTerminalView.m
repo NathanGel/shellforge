@@ -2042,8 +2042,9 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
     return [iTermShellforgeSidebar toggleFrameWithZoomButton:zoomFrame hasWindowButtons:hasButtons rootHeight:NSHeight(self.bounds)];
 }
 
-// Shellforge: the sidebar's one toggle, above everything in the root view, in the same place open
-// or closed: just after the window buttons, or in full screen at the top of the panel or the rail.
+// Shellforge: the window's toggle, above everything in the root view, while the sidebar is hidden:
+// just after the window buttons, or in full screen at the top of the rail. While the sidebar shows,
+// Hide Sidebar is its activity bar's.
 - (void)updateShellforgeToggle {
     // Only a floating window has the window's own toggle: a compact one draws its buttons where it
     // would sit, and keeps the header's toggle and the title bar's Show Sidebar button instead.
@@ -2059,7 +2060,7 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
     }
     _shellforgeToggle.toolTip = [iTermShellforgeSidebar toggleTooltipWithHidden:_shellforgeSidebarHidden];
     _shellforgeToggle.frame = self.shellforgeToggleFrame;
-    _shellforgeToggle.hidden = NO;
+    _shellforgeToggle.hidden = !_shellforgeSidebarHidden;
 }
 
 - (void)updateShellforgeSidebarDragHandle {

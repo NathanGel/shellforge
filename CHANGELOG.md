@@ -9,6 +9,13 @@ it and refuses to release a version that has none.
 
 ## 1.0.1 — unreleased
 
+### Changed
+
+- **Hide Sidebar is in the activity bar.** The sidebar icon sits at the bottom of the activity bar,
+  above the gear, in the bar's own style, in every window. It left the Sessions header, and on
+  macOS 26 the button beside the window buttons now shows only while the sidebar is hidden, to bring
+  it back. ⌃⌘S and View › Hide Sidebar work as before.
+
 ## 1.0.0 — 2026-11-13
 
 ### Added

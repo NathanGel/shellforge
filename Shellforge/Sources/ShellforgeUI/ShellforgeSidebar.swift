@@ -15,7 +15,7 @@ public enum ShellforgeSidebar {
     /// `hooks` is the app's Agent hooks sheet.
     /// `machine` is the app's one sampler of the Mac's readings, for the footer.
     /// `backpack` is the app's one Backpack Mode; `showBackpack` hands back how this sidebar opens
-    /// its sheet, for the View menu's ⌘B. `hideSidebar` is the header's Hide Sidebar button: ⌃⌘S.
+    /// its sheet, for the View menu's ⌘B. `hideSidebar` is the activity bar's Hide Sidebar: ⌃⌘S.
     /// `zoom` is the app's one text size, which every window's sidebar draws at; its sheets, in
     /// panels of their own, stay at `.standard`. `appDefaults` is the app's own suite:
     /// the terminal editor, the Jira and GitLab hosts and the agents' default models are saved there. `terminalMatch` is the app's one Settings › Core ›
@@ -435,12 +435,14 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // With the window's buttons inside the panel, their band — the buttons and the sidebar
-            // toggle, drawn by the window — runs across the top, and holds nothing of the sidebar's.
+            // With the window's buttons inside the panel, their band — the buttons, drawn by the
+            // window, and its sidebar toggle while the sidebar is hidden — runs across the top, and
+            // holds nothing of the sidebar's.
             if let controls = chrome.windowControls { Color.clear.frame(height: controls.bandHeight) }
             HStack(spacing: 0) {
                 // VS Code's way: the bar the full height below the band, the panel's column beside it.
-                ActivityBar(model: activity, theme: theme, terminalMatch: terminalMatch, openSettings: showMacSettings)
+                ActivityBar(model: activity, theme: theme, terminalMatch: terminalMatch, openSettings: showMacSettings,
+                            hideSidebar: hideSidebar)
                 panelColumn
             }
         }
@@ -608,8 +610,7 @@ struct SidebarView: View {
 
     private func header(_ controls: SidebarWindowControls?) -> SidebarHeader {
         SidebarHeader(addProject: addProject, addDivider: showAddDivider, canAddDivider: model.can(.addDivider),
-                      showHooks: showHooks, newHomeTab: { model.openHomeTab() }, hideSidebar: hideSidebar,
-                      windowControls: controls)
+                      showHooks: showHooks, newHomeTab: { model.openHomeTab() }, windowControls: controls)
     }
 
     /// A row as drawn: in Rearrange mode, behind its handle (RearrangeRow); a row that does not move

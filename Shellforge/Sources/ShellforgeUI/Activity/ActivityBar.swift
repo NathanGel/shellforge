@@ -4,7 +4,7 @@ import SwiftUI
 
 /// The sidebar's activity bar, VS Code's way: one plain line icon per panel in the shared order,
 /// each centred in a square cell, the selected one in the primary ink with an accent stripe flush
-/// against the bar's left edge, and the gear's menu (`GearMenu`) fixed at the bottom. Only the
+/// against the bar's left edge, and at the bottom Hide Sidebar, then the gear's menu (`GearMenu`). Only the
 /// panels the bar shows are drawn: Customize hides the others. A click selects; a press dragged
 /// past `liftDistance` lifts the icon, which follows the pointer up or down the bar, and the release
 /// drops it where it is (`release`). VoiceOver reorders with Move Up and Move Down instead. A drag gesture of the bar's own rather than a `List`'s move,
@@ -16,12 +16,15 @@ struct ActivityBar: View {
     @ObservedObject var theme: ThemeSettings
     @ObservedObject var terminalMatch: TerminalMatchSettings
     let openSettings: () -> Void
+    /// Hide Sidebar, as ⌃⌘S: the bar goes with the sidebar, so the window's own toggle brings it back.
+    var hideSidebar: () -> Void = {}
     @Environment(\.interfaceScale) private var scale
     @Environment(\.surface) private var surface
     /// The icon being dragged and how far, while one is lifted. Gesture state, so a drag the system
     /// cancels never leaves an icon lifted.
     @GestureState private var drag: Drag?
     @State private var hovered: ActivityPanel?
+    @State private var hidesHovered = false
 
     private struct Drag: Equatable {
         let panel: ActivityPanel
@@ -39,6 +42,8 @@ struct ActivityBar: View {
     static let markName = "ActivityBar", iconMarkName = "ActivityBarIcon", stripeMarkName = "ActivityBarStripe"
     /// The gear's tooltip, VS Code's word, and what VoiceOver reads for it: all it holds.
     static let gearHelp = "Manage", gearLabel = "Settings, Theme and Customize"
+    /// Hide Sidebar's tooltip and VoiceOver label, and its `ViewMark`.
+    static let hideHelp = "Hide Sidebar (⌃⌘S)", hideLabel = "Hide Sidebar", hideMarkName = "ActivityBarHideSidebar"
 
     /// How far a press travels before it lifts the icon: less is a click's slip, which selects.
     static let liftDistance: CGFloat = Space.tight
@@ -101,6 +106,18 @@ struct ActivityBar: View {
                 icon(panel, at: index, cell: cell, count: order.count)
             }
             Spacer(minLength: 0)
+            // Fixed above the gear, never among the panels: it is not one, and does not move.
+            Button(action: hideSidebar) {
+                glyph(.sidebarLeft, ink: hidesHovered ? surface.ink : surface.secondaryInk)
+                    .frame(width: cell, height: cell)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .frame(width: cell, height: cell)
+            .onHover { hidesHovered = $0 }
+            .background(ViewMark(name: Self.hideMarkName))
+            .help(Self.hideHelp)
+            .accessibilityLabel(Self.hideLabel)
             // `.button` + `.plain`, as `AddMenu`'s: the glyph drawn as the panels' are, not by a pop-up button.
             Menu {
                 GearMenuContent(items: GearMenu.items(choice: theme.choice, match: terminalMatch.isOn, layout: model.layout)) { action in

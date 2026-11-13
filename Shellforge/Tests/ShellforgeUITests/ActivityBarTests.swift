@@ -390,7 +390,7 @@ import Testing
         return frame(of: try #require(marks.first), in: host)
     }
 
-    /// VS Code's bar: each icon, the gear too, centred in the bar; the selected one's accent stripe
+    /// VS Code's bar: each icon, Hide Sidebar and the gear too, centred in the bar; the selected one's accent stripe
     /// flush with its left edge and a cell high; the bar from the top of the sidebar, or from below
     /// the window buttons' band; and the panel's header in the column beside it, not across it.
     @Test(arguments: [nil, SidebarWindowControls(buttonsMaxX: 70, buttonsMidY: 20),
@@ -407,14 +407,18 @@ import Testing
             #expect(abs(bar.minY - (controls?.bandHeight ?? 0)) < 0.5, "the bar starts at \(bar.minY)")
             let cell = ActivityBar.width(.standard)
             let icons = shown(ActivityBar.iconMarkName, in: host).map { frame(of: $0, in: host) }.sorted { $0.midY < $1.midY }
-            #expect(icons.count == ActivityPanel.allCases.count + 1, "a panel icon each, and the gear")
+            #expect(icons.count == ActivityPanel.allCases.count + 2, "a panel icon each, Hide Sidebar and the gear")
             for icon in icons { #expect(abs(icon.midX - bar.midX) <= 0.5, "an icon off-centre: \(icon) in \(bar)") }
-            // Down the bar too: each panel's glyph in the middle of its cell, the gear in the last.
-            for (index, icon) in icons.dropLast().enumerated() {
+            // Down the bar too: each panel's glyph in the middle of its cell, Hide Sidebar in the
+            // cell above the gear, and the gear in the last.
+            for (index, icon) in icons.dropLast(2).enumerated() {
                 #expect(abs(icon.midY - (bar.minY + (CGFloat(index) + 0.5) * cell)) <= 0.5, "icon \(index) off its cell's middle: \(icon)")
             }
             let gear = try #require(icons.last)
             #expect(abs(gear.midY - (bar.maxY - cell / 2)) <= 0.5, "the gear off its cell's middle: \(gear) in \(bar)")
+            let hide = try shownFrame(ActivityBar.hideMarkName, in: host)
+            #expect(abs(hide.midY - (bar.maxY - 1.5 * cell)) <= 0.5, "Hide Sidebar is not just above the gear: \(hide) in \(bar)")
+            #expect(abs(icons[icons.count - 2].midY - hide.midY) <= 0.5, "Hide Sidebar's glyph is off its cell's middle")
             let stripe = try shownFrame(ActivityBar.stripeMarkName, in: host)
             #expect(abs(stripe.minX - bar.minX) < 0.5, "the stripe is detached from the bar's edge")
             #expect(abs(stripe.height - ActivityBar.width(.standard)) < 0.5, "the stripe is a cell high")
@@ -458,16 +462,16 @@ import Testing
         }
     }
 
-    /// A hidden panel's icon leaves the bar; the gear stays.
+    /// A hidden panel's icon leaves the bar; Hide Sidebar and the gear stay.
     @Test func hiddenPanelsLeaveTheBar() throws {
         let (sidebar, _) = try sidebarModel()
         let activity = ActivityModel(source: ActivityOrderSource(defaults: nil))
         let (host, window) = hosted(sidebar, activity: activity, controls: nil)
         defer { window.close() }
-        #expect(shown(ActivityBar.iconMarkName, in: host).count == ActivityPanel.allCases.count + 1)
+        #expect(shown(ActivityBar.iconMarkName, in: host).count == ActivityPanel.allCases.count + 2)
         #expect(activity.setHidden(.metrics, true) && activity.setHidden(.git, true))
         #expect(activity.layout.visibleOrder == [.sessions, .files, .ssh])
-        #expect(shown(ActivityBar.iconMarkName, in: host).count == 3 + 1, "a hidden panel’s icon is still drawn")
+        #expect(shown(ActivityBar.iconMarkName, in: host).count == 3 + 2, "a hidden panel’s icon is still drawn")
         activity.select(.metrics)
         #expect(activity.layout.selected == .sessions, "a hidden panel was shown")
     }
@@ -581,6 +585,12 @@ import Testing
         let theme = try submenu("Theme", in: GearMenu.items(choice: crossed, match: false, layout: ActivityLayout(saved: nil)))
         #expect(checked(try submenu("Light Theme", in: theme)) == ["Shellforge"])
         #expect(checked(try submenu("Dark Theme", in: theme)) == ["Shellforge"])
+    }
+
+    /// Hide Sidebar says its key, as the View menu's item does.
+    @Test func hideSidebarSaysItsKey() {
+        #expect(ActivityBar.hideHelp == "Hide Sidebar (⌃⌘S)")
+        #expect(ActivityBar.hideLabel == "Hide Sidebar")
     }
 
     /// The gear's tooltip is VS Code's word; VoiceOver reads what it holds.

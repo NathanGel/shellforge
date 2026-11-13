@@ -7,8 +7,8 @@ import ShellforgeCore
 import ShellforgeDesign
 import SwiftUI
 
-/// `PROJECTS`, the Agent hooks and New Tab in Home Folder buttons, the menu that adds a project, and
-/// Hide Sidebar. Settings is the activity bar's gear alone.
+/// `PROJECTS`, the Agent hooks and New Tab in Home Folder buttons, and the menu that adds a project.
+/// Hide Sidebar and Settings are the activity bar's.
 struct SidebarHeader: View {
     let addProject: () -> Void
     var addDivider: () -> Void = {}
@@ -17,10 +17,7 @@ struct SidebarHeader: View {
     let showHooks: () -> Void
     /// A shell of no project, in the home folder.
     var newHomeTab: () -> Void = {}
-    /// ⌃⌘S as a button; while hidden, the window's title bar shows the same icon to bring it back.
-    var hideSidebar: () -> Void = {}
-    /// Set while the window's buttons sit inside the sidebar: the header is pinned below their band,
-    /// and the sidebar toggle is the window's.
+    /// Set while the window's buttons sit inside the sidebar: the header is pinned below their band.
     var windowControls: SidebarWindowControls? = nil
     @Environment(\.interfaceScale) private var scale
     @Environment(\.surface) private var surface
@@ -46,17 +43,6 @@ struct SidebarHeader: View {
             AddMenu(help: "Add project", enabled: true) {
                 Button("Add Project…", action: addProject)
                 Button("Add Divider…", action: addDivider).disabled(!canAddDivider)
-            }
-            // Last, at the sidebar's edge: the side it folds away to — unless the window holds the
-            // toggle, at the start of this row, where it stays when the sidebar is closed.
-            if windowControls == nil {
-                Button(action: hideSidebar) {
-                    Image(symbol: .sidebarLeft).font(Typography.label).foregroundStyle(surface.secondaryInk)
-                }
-                .buttonStyle(.plain)
-                .frame(width: SidebarRowLayout.trailingSlot(scale), height: SidebarRowLayout.trailingSlot(scale))
-                .help("Hide Sidebar (⌃⌘S)")
-                .accessibilityLabel("Hide Sidebar")
             }
         }
         .frame(height: scale(Size.menuRow))

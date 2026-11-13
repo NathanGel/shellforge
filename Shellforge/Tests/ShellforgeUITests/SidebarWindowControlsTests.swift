@@ -36,10 +36,11 @@ import ShellforgeDesign
         #expect(leading < controls.buttonsMaxX, "the title starts at the rows' edge, not after the buttons: \(leading)")
     }
 
-    /// Settings is the activity bar's gear alone: with the window holding the sidebar toggle, the
-    /// header's trailing buttons are Agent hooks, New Tab in Home Folder and “+” — three marks.
-    @Test func theHeaderHasNoSettingsGear() throws {
-        let (rep, size) = try render(SidebarHeader(addProject: {}, showHooks: {}, windowControls: Self.controls))
+    /// Settings and Hide Sidebar are the activity bar's alone: in any window, the header's trailing
+    /// buttons are Agent hooks, New Tab in Home Folder and “+” — three marks.
+    @Test(arguments: [nil, controls])
+    func theHeaderHasNoSettingsGearOrHideSidebar(controls: SidebarWindowControls?) throws {
+        let (rep, size) = try render(SidebarHeader(addProject: {}, showHooks: {}, windowControls: controls))
         let lit = (0..<rep.pixelsWide).map { x in (0..<rep.pixelsHigh).contains { y in
             (rep.colorAt(x: x, y: y)?.usingColorSpace(.sRGB)?.brightnessComponent ?? 0) > 0.2 } }
         // Runs of inked columns in the header's right half, a gap of 3 pt or more between two marks.

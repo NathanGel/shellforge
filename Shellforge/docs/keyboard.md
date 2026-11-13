@@ -34,7 +34,7 @@ iTerm2.
 | Keys | Action | Notes |
 |---|---|---|
 | ⌘B | Backpack Mode | AiTerm's key; free in iTerm2, whose B shortcuts all carry another modifier. |
-| ⌃⌘S | Hide Sidebar / Show Sidebar | The key Finder and Mail use. Also the sidebar icon in the sidebar's header, and, while hidden, in the window's title bar. New windows open as the last toggle left them. |
+| ⌃⌘S | Hide Sidebar / Show Sidebar | The key Finder and Mail use. Also the sidebar icon at the bottom of the activity bar, and, while hidden, beside the window buttons or in the window's title bar. New windows open as the last toggle left them. |
 | ⌃⌘E | Show Sessions | The key window's sidebar shows its Sessions panel, opening the sidebar if it is hidden. E, as S is Hide Sidebar's. |
 | ⌃⌘M | Show Metrics | The same, for the Metrics panel. |
 | ⌃⌘I | Show Files | The same, for the Files panel. I, as F is iTerm2's Full Screen. |

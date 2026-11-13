@@ -324,6 +324,25 @@ final class ShellforgeFloatingSidebarTest: XCTestCase {
         XCTAssertEqual(root.shellforgeToggleFrame, open)
     }
 
+    /// The window's toggles over the root view that are drawn.
+    private func shownToggles() -> [NSButton] {
+        root.subviews.compactMap { $0 as? NSButton }.filter { !$0.isHidden && $0.toolTip?.contains("Sidebar") == true }
+    }
+
+    /// While the sidebar shows, Hide Sidebar is the activity bar's; the window's toggle comes only
+    /// while it is hidden, to bring it back, in the same place.
+    func testTheWindowsToggleShowsOnlyWhileTheSidebarIsHidden() throws {
+        try XCTSkipUnless(iTermShellforgeSidebar.floats)
+        root.layoutSubviews()
+        XCTAssertEqual(shownToggles(), [], "a window toggle beside the activity bar's Hide Sidebar")
+        root.toggleShellforgeSidebar()
+        defer { root.toggleShellforgeSidebar() }
+        root.layoutSubviews()
+        let toggle = try XCTUnwrap(shownToggles().first, "no way back to a hidden sidebar")
+        XCTAssertEqual(toggle.frame, root.shellforgeToggleFrame)
+        XCTAssertEqual(toggle.toolTip, iTermShellforgeSidebar.toggleTooltip(hidden: true))
+    }
+
     /// The header starts after the toggle, on its row.
     func testTheHeaderStartsAfterTheToggle() throws {
         try XCTSkipUnless(iTermShellforgeSidebar.floats)

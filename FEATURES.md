@@ -36,10 +36,10 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 - **Where it is.** Every terminal window has a sidebar on its left. It follows the window's appearance: light or dark, as macOS or iTerm2's Appearance setting has it, or as a light or dark theme holds it (see [Themes](#themes)). iTerm2's tab bar is hidden in these windows, because the sidebar lists the tabs instead.
 - **On macOS 26 and later** the sidebar floats: a rounded glass panel 10 pt inside the window and 10 pt from the terminal (in full screen too), on the terminal's own colour, with the window buttons in its top corner; their row is left to them, and the Projects header sits below it, beside the activity bar. The window's title sits over the terminal on the same row. Earlier macOS versions keep the full-height sidebar.
   - With Match Terminal on, the window keeps its own title bar and buttons; only the colours change.
-  - The sidebar button sits just after the window buttons and stays there open or closed. In full screen it has its own row at the top of the panel, above Projects; with the sidebar closed, a slim bar in the terminal's colour keeps the button in the same place; click it to open the sidebar, or move the pointer to the screen's left edge and it slides in over the terminal, and away again when you leave it.
+  - While the sidebar is hidden, a Show Sidebar button sits just after the window buttons. In full screen, a slim bar in the terminal's colour holds it instead; click it to open the sidebar, or move the pointer to the screen's left edge and the sidebar slides in over the terminal, and away again when you leave it. In full screen the top of the panel keeps that button's row, above Projects.
 - **Hide and show.** Use ⌃⌘S, View › Hide Sidebar / Show Sidebar, or the sidebar button.
-  - On macOS 26 the button sits just after the window buttons, as above.
-  - Earlier, it is at the far right of the sidebar's header, and while the sidebar is hidden the same button sits in the window's title bar, beside the window buttons. In full screen there is no title bar, so use ⌃⌘S or the View menu.
+  - While the sidebar shows, Hide Sidebar is the sidebar icon at the bottom of the activity bar, above the gear.
+  - While it is hidden, the same icon brings it back: on macOS 26 just after the window buttons, as above; earlier, in the window's title bar, beside the window buttons. In full screen before macOS 26 there is no title bar, so use ⌃⌘S or the View menu.
   - New windows open the way the last toggle left them.
 - **Width.** Drag the sidebar's right edge, marked by a thin line, to resize it.
   - The default width is 464 pt, the minimum 404 and the maximum 720. Both include the 44 pt activity bar, so the panel beside it opens at 420 pt and narrows to 360.
@@ -56,8 +56,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 - **Header.** Projects, then its buttons, left to right:
   - Agent hooks (the bolt);
   - New Tab in Home Folder (the terminal icon), which opens a shell in `~` that belongs to no project;
-  - "+", with Add Project… and Add Divider…;
-  - before macOS 26, Hide Sidebar, at the far right.
+  - "+", with Add Project… and Add Divider….
 - **Empty state.** With no projects, the sidebar shows "Add a git repository to start." and an Add Project… button.
 - **Banners** are inline notices with an icon, at the top of the sidebar above whichever panel shows:
   - a fallback PATH;
@@ -74,6 +73,8 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
   - Files (the folder): see [Files](#files);
   - Git (the branch): see [Git](#git);
   - SSH (the server rack): see [SSH](#ssh).
+
+  At the bottom, Hide Sidebar (the sidebar icon, ⌃⌘S), then the gear. Neither moves, and Customize hides neither.
 - **Switching.** Click an icon. The selected one is drawn brighter, with an accent stripe along the bar's left edge. Each window shows its own panel; Sessions keeps its scroll position and selection while another panel shows, and the Tasks menu's commands work whatever the panel.
 - **From the keyboard.** View › Show Sessions (⌃⌘E), Show Metrics (⌃⌘M), Show Files (⌃⌘I), Show Git (no key) and Show SSH (⌃⌘H) show that panel in the key window's sidebar, opening the sidebar if it is hidden. Back on Sessions, the keyboard returns to its list if it was there. A hidden panel's item leaves the View menu.
 - **Panel order.** Drag an icon up or down the bar to reorder the panels: it follows the pointer, the others make room, and it lands where you let go. A click that doesn't move only selects, and a drag the system cancels drops nothing. Every window's bar follows the same order, and it is kept after a restart. VoiceOver offers Move Up and Move Down on each icon instead.
@@ -140,7 +141,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
   - A project's SSH rows move among themselves, and its tasks and terminals move among themselves, in any mix. Nothing leaves its project, and no task or terminal goes above the SSH rows. A drop the rules don't allow jumps back.
   - Tabs and Other Tabs are hidden, and clicks, menus and banner buttons wait until you are done. A project's chevron still folds and unfolds it.
   - Rearrange takes the keyboard into the sidebar, so Esc works at once; Done and Cancel give it back.
-- **Done** saves the new order. **Cancel** puts everything back, as does Esc while the keyboard is in the sidebar; Return and Esc typed in the terminal stay the terminal's. Hiding the sidebar with ⌃⌘S or the window's sidebar toggle cancels too.
+- **Done** saves the new order. **Cancel** puts everything back, as does Esc while the keyboard is in the sidebar; Return and Esc typed in the terminal stay the terminal's. Hiding the sidebar with ⌃⌘S or Hide Sidebar cancels too.
 - **One window at a time.** While one window is rearranging, Rearrange is greyed in the others.
 - **The order counts elsewhere too.** Next Task and Previous Task (⌃⌘] / ⌃⌘[) step through the tasks in the order you set. A new task or terminal goes to the bottom of its project.
 
