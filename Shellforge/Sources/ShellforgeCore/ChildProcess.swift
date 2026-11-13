@@ -12,18 +12,19 @@ public struct ChildOutput: Sendable, Equatable {
 /// The only place in Shellforge that creates a `Process`. Everything else goes through
 /// `CommandLauncher`, which gives the child the login environment; a source test keeps it that way.
 enum ChildProcess {
-    /// Runs `executable` with exactly `environment`, stdin closed, and waits up to `timeout` seconds.
-    /// A child that outlives it — or that `cancellation` stops — is sent SIGTERM with everything it
+    /// Runs `executable` with exactly `environment`, stdin closed (or fed `input`, then closed), and
+    /// waits up to `timeout` seconds. A child that outlives it — or that `cancellation` stops — is sent SIGTERM with everything it
     /// started, then SIGKILL a second later if it is still there.
     static func run(_ executable: String, _ arguments: [String], environment: [String: String],
-                    directory: String? = nil, timeout: TimeInterval,
+                    directory: String? = nil, input: Data? = nil, timeout: TimeInterval,
                     cancellation: CreationCancellation? = nil) throws -> ChildOutput {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
         process.environment = environment
         if let directory { process.currentDirectoryURL = URL(fileURLWithPath: directory) }
-        process.standardInput = FileHandle.nullDevice
+        let stdin = input.map { _ in Pipe() }
+        process.standardInput = stdin ?? FileHandle.nullDevice
         let stdout = Pipe(), stderr = Pipe()
         process.standardOutput = stdout
         process.standardError = stderr
@@ -38,6 +39,7 @@ enum ChildProcess {
         // A create already cancelled starts nothing more.
         if cancellation?.isCancelled == true { throw CreationCancelled() }
         try process.run()
+        if let stdin, let input { feed(input, to: stdin) }
         var stopped: [pid_t] = []
         if let cancellation, !cancellation.begin(process, wake: { finished.signal() }) { stopped = terminateTree(process) }
 
@@ -74,6 +76,27 @@ enum ChildProcess {
 }
 
 extension ChildProcess {
+    /// Writes `input` to the child's stdin off this thread, so a child that fills its stdout first,
+    /// or one that outlives its deadline, never blocks the wait; then closes it. A child that exits
+    /// without reading it all raises no SIGPIPE: the write just fails.
+    private static func feed(_ input: Data, to pipe: Pipe) {
+        let handle = pipe.fileHandleForWriting
+        let fd = handle.fileDescriptor
+        _ = fcntl(fd, F_SETNOSIGPIPE, 1)
+        DispatchQueue.global(qos: .utility).async {
+            input.withUnsafeBytes { bytes in
+                var offset = 0
+                while offset < bytes.count {
+                    let written = Darwin.write(fd, bytes.baseAddress! + offset, bytes.count - offset)
+                    if written < 0, errno == EINTR { continue }
+                    guard written > 0 else { break }
+                    offset += written
+                }
+            }
+            try? handle.close()
+        }
+    }
+
     /// Asks `process` and every process it started — a git hook and the `uv sync` it ran — to stop
     /// (SIGTERM), and returns who was asked, for `reap`. Enumerated once: a process forked after, or
     /// one already handed to launchd, is not reached.
@@ -176,7 +199,6 @@ extension ChildProcess {
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         try process.run()
-        try? pipe.fileHandleForReading.close()
         return pipe.fileHandleForWriting
     }
 

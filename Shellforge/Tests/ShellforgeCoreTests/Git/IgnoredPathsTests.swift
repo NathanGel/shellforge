@@ -76,6 +76,26 @@ import Testing
         #expect(rules.entries == ["build", "debug.log"])
     }
 
+    /// git's `--directory` also names a folder that is not ignored but holds only ignored files
+    /// (Finder's `.DS_Store`, say). That folder is not covered, so a new file in it still counts.
+    @Test func aFolderHoldingOnlyIgnoredFilesIsNotIgnored() throws {
+        let repo = try GitRepoFixture()
+        try "*.log\nnode_modules/\n".write(toFile: repo.path + "/.gitignore", atomically: true, encoding: .utf8)
+        for folder in ["logs", "deep/x", "node_modules/left-pad"] {
+            try FileManager.default.createDirectory(atPath: repo.path + "/" + folder, withIntermediateDirectories: true)
+        }
+        try "x\n".write(toFile: repo.path + "/logs/a.log", atomically: true, encoding: .utf8)
+        try "x\n".write(toFile: repo.path + "/deep/x/c.log", atomically: true, encoding: .utf8)
+        try "x\n".write(toFile: repo.path + "/node_modules/left-pad/index.js", atomically: true, encoding: .utf8)
+        let read = IgnoredPaths.read(repo.path, launcher: repo.launcher)
+        #expect(!read.covers("logs/new.md"))
+        #expect(!read.covers("deep/x/new.md"))
+        #expect(read.changesRules("logs/.gitignore"), "a .gitignore there is read")
+        #expect(read.covers("logs/a.log"))
+        #expect(read.covers("deep/x/c.log"))
+        #expect(read.covers("node_modules/left-pad/index.js"), "a folder ignored itself still is")
+    }
+
     /// The read is an automatic one: a repository's fsmonitor runs nothing.
     @Test func theReadRunsNoFsmonitor() throws {
         let repo = try GitRepoFixture()

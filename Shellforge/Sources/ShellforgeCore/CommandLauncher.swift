@@ -111,8 +111,9 @@ public final class CommandLauncher: @unchecked Sendable {
     }
 
     /// Runs `command` with the login environment, `extra` set over it, and waits for it to finish.
+    /// `input`, when given, is written to its stdin.
     public func run(_ command: String, _ arguments: [String], directory: String? = nil,
-                    extra: [String: String] = [:], timeout: TimeInterval = 120,
+                    extra: [String: String] = [:], input: Data? = nil, timeout: TimeInterval = 120,
                     cancellation: CreationCancellation? = nil) throws -> ChildOutput {
         var current = environment
         var executable = Self.locate(command, in: current.variables["PATH"] ?? "")
@@ -125,7 +126,7 @@ public final class CommandLauncher: @unchecked Sendable {
             throw CommandNotFound(name: command, searchedPath: current.variables["PATH"] ?? "", source: current.source)
         }
         return try ChildProcess.run(executable, arguments, environment: current.variables.merging(extra) { $1 },
-                                    directory: directory, timeout: timeout, cancellation: cancellation)
+                                    directory: directory, input: input, timeout: timeout, cancellation: cancellation)
     }
 
     /// An executable regular file: `isExecutableFile` alone is also true of a folder.

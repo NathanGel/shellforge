@@ -22,16 +22,35 @@ public struct IgnoredPaths: Equatable, Sendable {
     public static let none = IgnoredPaths()
 
     /// git's list for the repository at `path`: `--directory` names an ignored folder once rather
-    /// than every file in it. Then whether any rule git reads negates: the `.gitignore` files git
-    /// does not ignore, the repository's `info/exclude` and the global excludes file. The reads are
-    /// automatic ones, so the repository's fsmonitor and hooks run nothing. Nothing when git fails.
+    /// than every file in it. It also names a folder that is not ignored but holds only ignored
+    /// files (`logs/` for `logs/a.log` under `*.log`), so each folder is asked of `check-ignore`
+    /// and kept only when git says the folder itself is ignored. Then whether any rule git reads
+    /// negates: the `.gitignore` files git does not ignore, the repository's `info/exclude` and the
+    /// global excludes file. The reads are automatic ones, so the repository's fsmonitor and hooks
+    /// run nothing. Nothing when git fails.
     public static func read(_ path: String, launcher: CommandLauncher) -> IgnoredPaths {
         let args = ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"]
         guard let listed = git(args, in: path, launcher: launcher) else { return .none }
-        let entries = Set(listed.split(separator: "\0").map { entry in
-            entry.hasSuffix("/") ? String(entry.dropLast()) : String(entry)
-        })
+        let all = listed.split(separator: "\0").map(String.init)
+        var entries = Set(all.filter { !$0.hasSuffix("/") })
+        let folders = all.filter { $0.hasSuffix("/") }
+        if !folders.isEmpty {
+            guard let ignored = ignoredFolders(folders, in: path, launcher: launcher) else { return .none }
+            entries.formUnion(ignored)
+        }
         return IgnoredPaths(entries, negates: entries.isEmpty ? false : negates(path, launcher: launcher))
+    }
+
+    /// Of `folders` (each with its trailing "/"), those git ignores themselves, without the "/".
+    /// nil when git fails. check-ignore exits 1 when it matches nothing, which is an answer.
+    private static func ignoredFolders(_ folders: [String], in path: String, launcher: CommandLauncher) -> Set<String>? {
+        let input = Data(folders.joined(separator: "\0").appending("\0").utf8)
+        guard let out = try? launcher.run("git", AutomaticGitRead.arguments(["check-ignore", "-z", "--stdin"], in: path),
+                                          extra: ["LC_ALL": "C"], input: input, timeout: 30),
+              out.status == 0 || out.status == 1, !out.timedOut else { return nil }
+        return Set(out.stdout.split(separator: "\0").compactMap { entry in
+            entry.hasSuffix("/") ? String(entry.dropLast()) : nil
+        })
     }
 
     /// Whether a rule git reads for the repository starts with `!`. Unsure (git failed) is yes.
