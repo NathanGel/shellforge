@@ -20,13 +20,16 @@ final class DaemonConnection {
     /// not adopted. After a crash, a fast relaunch can reach the old helper before it hears its
     /// app is gone and quits: what it refuses then is no reason to say "another version".
     private let refusalGrace: Duration
+    /// The time `refusalGrace` is measured on; a test passes one it moves by hand.
+    private let now: @Sendable () -> ContinuousClock.Instant
     private var lifetime: Task<Void, Never>?
     private var client: DaemonClient?
 
     init(socketPath: String, onClient: @escaping @MainActor (DaemonClient?) -> Void,
          onStatus: @escaping @MainActor (HelperStatus) -> Void, onEvent: @escaping @MainActor (DaemonEvent) -> Void,
          backoff: @escaping @Sendable (_ attempt: Int) -> TimeInterval = { Backoff.delay(attempt: $0) },
-         steadyAfter: Duration = .seconds(5), refusalGrace: Duration = .zero) {
+         steadyAfter: Duration = .seconds(5), refusalGrace: Duration = .zero,
+         now: @escaping @Sendable () -> ContinuousClock.Instant = { .now }) {
         self.socketPath = socketPath
         self.onClient = onClient
         self.onStatus = onStatus
@@ -34,6 +37,7 @@ final class DaemonConnection {
         self.backoff = backoff
         self.steadyAfter = steadyAfter
         self.refusalGrace = refusalGrace
+        self.now = now
     }
 
     /// The grace `DaemonLink` gives a connection to a helper it adopted.
@@ -65,7 +69,7 @@ final class DaemonConnection {
         // after a connection that held. The retries after it, every few seconds while the helper
         // is down, would write thousands of lines a day about one problem.
         var recordsConnectFailure = true
-        let began = ContinuousClock.now
+        let began = now()
         while !Task.isCancelled {
             let connection = DaemonClient(socketPath: socketPath)
             client = connection
@@ -118,7 +122,7 @@ final class DaemonConnection {
                     // merely unreachable; retrying at it forever would never fix either.
                     if let error = error as? DaemonError, error.isMismatch {
                         let refusal = error.code == .unknownMethod || error.code == .unauthorized
-                        ended(refusal && ContinuousClock.now - began < refusalGrace ? .helperUnreachable : .helperMismatch)
+                        ended(refusal && now() - began < refusalGrace ? .helperUnreachable : .helperMismatch)
                     } else if error is DecodingError {
                         ended(.helperMismatch)
                     } else { ended(.helperUnreachable) }

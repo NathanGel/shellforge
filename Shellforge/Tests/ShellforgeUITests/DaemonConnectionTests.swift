@@ -91,11 +91,16 @@ while True:
 """)
         defer { server.stop() }
         var states: [HelperStatus] = []
+        // The grace runs on a clock this test moves: on a busy runner the first answer alone came
+        // after a real three seconds, and was taken as past the grace.
+        let clock = Locked(ContinuousClock.now)
         let connection = DaemonConnection(socketPath: server.path, onClient: { _ in },
                                           onStatus: { if states.last != $0 { states.append($0) } }, onEvent: { _ in },
-                                          backoff: { _ in 0.01 }, refusalGrace: .seconds(3))
+                                          backoff: { _ in 0.01 }, refusalGrace: .seconds(3), now: { clock.withLock { $0 } })
         connection.start()
         defer { connection.stop() }
+        await eventually { states.contains(.helperUnreachable) }
+        clock.withLock { $0 += .seconds(4) }
         await eventually { states.contains(.helperMismatch) }
 
         #expect(states.first == .helperUnreachable, "a refusal within the grace is retried, got \(states)")
