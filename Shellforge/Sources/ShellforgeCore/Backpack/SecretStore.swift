@@ -54,7 +54,12 @@ protocol KeychainItems: Sendable {
 
 struct SystemKeychainItems: KeychainItems {
     let service: String
-    private func query(_ account: String) -> [String: Any] { [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account] }
+    /// Pinned to the login keychain: on a build with the data-protection entitlement an unpinned
+    /// update or delete could land there instead, and the vault must stay one login item.
+    private func query(_ account: String) -> [String: Any] {
+        [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account,
+         kSecUseDataProtectionKeychain as String: false]
+    }
 
     func read(_ account: String) -> KeychainRead {
         var q = query(account); q[kSecReturnData as String] = true; q[kSecMatchLimit as String] = kSecMatchLimitOne
