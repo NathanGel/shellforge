@@ -37,6 +37,7 @@ public struct WorkspaceStore: Sendable {
     /// Throws when the file is there but cannot be read (its permissions, a disk error), or when the
     /// damaged file cannot be kept aside; nothing may be saved over it then.
     public func load() throws -> Loaded {
+        removeStaleTemporaries()
         let data: Data
         do {
             data = try Data(contentsOf: file)
@@ -74,10 +75,24 @@ public struct WorkspaceStore: Sendable {
         try JSONEncoder.workspace.encode(workspace).write(to: file, options: .atomic)
     }
 
+    /// A temporary backup is left only by a crash between its copy and its rename. Only regular
+    /// files named like one are removed.
+    private func removeStaleTemporaries() {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+        for name in names where name.hasPrefix(Self.temporaryPrefix) && name.hasSuffix(Self.temporarySuffix) {
+            let url = folder.appendingPathComponent(name)
+            guard (try? FileManager.default.attributesOfItem(atPath: url.path))?[.type] as? FileAttributeType == .typeRegular else { continue }
+            _ = try? FileManager.default.removeItem(at: url)
+        }
+    }
+
+    private static let temporaryPrefix = "workspace.json.backup-"
+    private static let temporarySuffix = ".tmp"
+
     /// Copies `workspace.json` to a temporary file beside the backup and renames it over the backup,
     /// which replaces it in one step: when the copy fails, the old backup is still there.
     private func replaceBackup() throws {
-        let temporary = folder.appendingPathComponent("workspace.json.backup-\(UUID().uuidString).tmp")
+        let temporary = folder.appendingPathComponent("\(Self.temporaryPrefix)\(UUID().uuidString)\(Self.temporarySuffix)")
         do {
             try FileManager.default.copyItem(at: file, to: temporary)
             guard rename(temporary.path, backup.path) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }

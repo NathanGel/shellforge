@@ -266,25 +266,26 @@ public final class Keychain: SecretStore, Sendable {
 
     /// Applies `change` to the secrets and stores the result. When another process wrote the item
     /// since this one read it, the change goes on top of what the item holds now, not the copy in
-    /// memory. A change that changes nothing writes nothing. The whole of it runs under the lock
-    /// across processes.
+    /// memory. A change that changes nothing writes nothing. The first read, which may show a
+    /// Keychain prompt, comes before the lock across processes, so no prompt holds it; checking and
+    /// writing run under it.
     private func mutate(_ change: (inout [String: String]) -> Void) -> VaultWrite {
         state.withLock { loaded in
-            guard let lock else { return mutateLocked(change, &loaded) }
-            return lock.withLock { mutateLocked(change, &loaded) }
+            guard load(&loaded, holdingLock: false) != nil else { return .unavailable }
+            return exclusive(holdingLock: false) { mutateLocked(change, &loaded) }
         }
     }
 
-    /// After the write the item's stamp is read back. Only when it carries this write's `writeID`
-    /// are the secrets kept under it; otherwise another writer stored the item in between, so it is
-    /// read again and the change applied on top, at most `retries` more times. Caching this
-    /// process's secrets under the other writer's stamp would let the next write drop its entries.
+    /// After the write the item is read back (`readBack`). Only when the write is this one's are the
+    /// secrets kept; otherwise another writer stored the item in between, so it is read again and
+    /// the change applied on top, at most `retries` more times. Caching this process's secrets
+    /// under the other writer's stamp would let the next write drop its entries.
     private func mutateLocked(_ change: (inout [String: String]) -> Void, _ loaded: inout Loaded?) -> VaultWrite {
         for _ in 0...Self.retries {
-            guard load(&loaded) != nil else { return .unavailable }
+            guard load(&loaded, holdingLock: true) != nil else { return .unavailable }
             if loaded?.stamp == nil || items.stamp(Self.account) != loaded?.stamp {
                 loaded = nil
-                guard load(&loaded) != nil else { return .unavailable }
+                guard load(&loaded, holdingLock: true) != nil else { return .unavailable }
             }
             guard let current = loaded?.secrets else { return .unavailable }
             var next = current
@@ -292,9 +293,8 @@ public final class Keychain: SecretStore, Sendable {
             if next == current { return .written }
             let writeID = Self.newWriteID()
             guard store(next, writeID: writeID) else { return .failed }
-            let after = items.stamp(Self.account)
-            if next.isEmpty ? after == .absent : after?.writeID == writeID {
-                loaded = Loaded(secrets: next, stamp: after)
+            if case .ours(let stamp) = readBack(next, writeID: writeID) {
+                loaded = Loaded(secrets: next, stamp: stamp)
                 return .written
             }
             loaded = nil
@@ -302,13 +302,46 @@ public final class Keychain: SecretStore, Sendable {
         return .failed
     }
 
+    /// Runs `body` under the lock across processes, unless the caller already holds it or there is
+    /// none.
+    private func exclusive<T>(holdingLock: Bool, _ body: () -> T) -> T {
+        guard !holdingLock, let lock else { return body() }
+        return lock.withLock(body)
+    }
+
+    private enum ReadBack {
+        /// The item holds this write. The stamp is `nil` when its attributes could not be read,
+        /// which counts as changed, so the next write reads the item again.
+        case ours(KeychainStamp?)
+        case anotherWriters
+    }
+
+    /// Whether the item holds the write just made: its stamp carries `writeID`, or, for a delete,
+    /// there is no item. When the stamp cannot be read, one read of the value settles it, rather
+    /// than counting an unreadable stamp as another writer and writing again.
+    private func readBack(_ secrets: [String: String], writeID: Data) -> ReadBack {
+        if let after = items.stamp(Self.account) {
+            return (secrets.isEmpty ? after == .absent : after.writeID == writeID) ? .ours(after) : .anotherWriters
+        }
+        switch items.read(Self.account) {
+        case .missing: return secrets.isEmpty ? .ours(nil) : .anotherWriters
+        case .found(let data):
+            let stored = try? JSONDecoder().decode([String: String].self, from: data)
+            return stored == secrets ? .ours(nil) : .anotherWriters
+        case .refused:
+            // The Keychain took the write and nothing says otherwise; the next write reads again.
+            return .ours(nil)
+        }
+    }
+
     private static func newWriteID() -> Data {
         withUnsafeBytes(of: UUID().uuid) { Data($0) }
     }
 
     /// The stamp is taken before the data: a write that lands between the two then looks like a
-    /// change, and the next write reads again, rather than the other way round.
-    private func load(_ loaded: inout Loaded?) -> [String: String]? {
+    /// change, and the next write reads again, rather than the other way round. `holdingLock` says
+    /// whether the caller holds the lock across processes, which moving the earlier items takes.
+    private func load(_ loaded: inout Loaded?, holdingLock: Bool = false) -> [String: String]? {
         if let loaded { return loaded.secrets }
         let stamp = items.stamp(Self.account)
         switch items.read(Self.account) {
@@ -316,15 +349,18 @@ public final class Keychain: SecretStore, Sendable {
             guard let secrets = try? JSONDecoder().decode([String: String].self, from: data) else { return nil }
             loaded = Loaded(secrets: secrets, stamp: stamp)
         case .missing:
-            guard let moved = moveSeparateItems() else { return nil }
-            loaded = Loaded(secrets: moved.secrets, stamp: moved.stored ? items.stamp(Self.account) : stamp)
+            guard let moved = moveSeparateItems(holdingLock: holdingLock, stampBefore: stamp) else { return nil }
+            loaded = Loaded(secrets: moved.secrets, stamp: moved.stamp)
         case .refused:
             return nil
         }
         return loaded?.secrets
     }
 
-    private func moveSeparateItems() -> (secrets: [String: String], stored: Bool)? {
+    /// Reads the earlier items, which may prompt, before taking the lock; then, under it, stores
+    /// them as the one item if it is still missing, and deletes them only once the read-back says
+    /// the item holds them. The stamp returned is the one to cache.
+    private func moveSeparateItems(holdingLock: Bool, stampBefore: KeychainStamp?) -> (secrets: [String: String], stamp: KeychainStamp?)? {
         var moved: [String: String] = [:]
         for account in Self.separateAccounts {
             switch items.read(account) {
@@ -333,9 +369,17 @@ public final class Keychain: SecretStore, Sendable {
             case .refused: return nil
             }
         }
-        guard !moved.isEmpty, store(moved, writeID: Self.newWriteID()) else { return (moved, false) }
-        for account in moved.keys { _ = items.delete(account) }
-        return (moved, true)
+        guard !moved.isEmpty else { return (moved, stampBefore) }
+        return exclusive(holdingLock: holdingLock) {
+            // Another process moved them meanwhile: what it stored is unknown here, so the stamp is
+            // too, and the next write reads the item.
+            guard items.stamp(Self.account) == .absent else { return (moved, nil) }
+            let writeID = Self.newWriteID()
+            guard store(moved, writeID: writeID) else { return (moved, stampBefore) }
+            guard case .ours(let stamp) = readBack(moved, writeID: writeID) else { return (moved, nil) }
+            for account in moved.keys { _ = items.delete(account) }
+            return (moved, stamp)
+        }
     }
 
     /// No secrets left is no item at all.

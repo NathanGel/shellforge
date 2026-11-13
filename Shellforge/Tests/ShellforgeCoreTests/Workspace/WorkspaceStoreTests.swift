@@ -118,4 +118,36 @@ import Testing
         let names = try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted()
         #expect(names == ["workspace.json", "workspace.json.backup"])
     }
+
+    /// A rename that fails (here the backup is a folder with something in it) keeps the old backup
+    /// and leaves no temporary copy.
+    @Test func aFailedRenameKeepsTheOldBackup() throws {
+        let saved = sample()
+        try store.save(saved)
+        try FileManager.default.createDirectory(at: backup, withIntermediateDirectories: true)
+        try "kept".write(to: backup.appendingPathComponent("inside"), atomically: true, encoding: .utf8)
+        var next = saved
+        next.projects[0].name = "renamed"
+        #expect(throws: (any Error).self) { try store.save(next) }
+        #expect(try String(contentsOf: backup.appendingPathComponent("inside"), encoding: .utf8) == "kept")
+        #expect(try store.load().workspace == saved)
+        let names = try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted()
+        #expect(names == ["workspace.json", "workspace.json.backup"])
+    }
+
+    /// A temporary backup left by a crash between its copy and its rename goes at the next load.
+    /// Only regular files with exactly that name are removed.
+    @Test func aLeftoverTemporaryBackupIsRemovedAtLoad() throws {
+        try store.save(sample())
+        let leftover = folder.appendingPathComponent("workspace.json.backup-0F1E2D3C.tmp")
+        try "{}".write(to: leftover, atomically: true, encoding: .utf8)
+        let folderNamedLikeOne = folder.appendingPathComponent("workspace.json.backup-folder.tmp")
+        try FileManager.default.createDirectory(at: folderNamedLikeOne, withIntermediateDirectories: true)
+        let other = folder.appendingPathComponent("notes.tmp")
+        try "invented".write(to: other, atomically: true, encoding: .utf8)
+        _ = try store.load()
+        #expect(!FileManager.default.fileExists(atPath: leftover.path))
+        #expect(FileManager.default.fileExists(atPath: folderNamedLikeOne.path))
+        #expect(FileManager.default.fileExists(atPath: other.path))
+    }
 }

@@ -20,10 +20,14 @@ public final class WorkspaceDocument: ObservableObject {
     private let canSave: Bool
 
     public enum Refusal: Error, CustomStringConvertible {
-        case notLoaded
+        /// `folder` is the running build's data folder, where its `workspace.json` is.
+        case notLoaded(folder: String)
 
         public var description: String {
-            "Your workspace file could not be read, so changes are not saved over it. Quit Shellforge and check ~/Library/Application Support/Shellforge."
+            switch self {
+            case .notLoaded(let folder):
+                "Your workspace file could not be read, so changes are not saved over it. Quit Shellforge and check \(folder)."
+            }
         }
     }
 
@@ -40,15 +44,20 @@ public final class WorkspaceDocument: ObservableObject {
         } catch {
             workspace = Workspace()
             canSave = false
-            loadProblem = Refusal.notLoaded.description
+            loadProblem = Refusal.notLoaded(folder: Self.shown(store.folder)).description
             ErrorLogging.record("workspace", "Loading the workspace failed: \(error)")
         }
+    }
+
+    /// The folder as the person would type it, with `~` for their home.
+    private static func shown(_ folder: URL) -> String {
+        (folder.path as NSString).abbreviatingWithTildeInPath
     }
 
     /// Applies `change` to a copy of the workspace, saves the copy, and only then shows it, so the
     /// sidebar never shows what is not on disk.
     public func update(_ change: (inout Workspace) throws -> Void) throws {
-        guard canSave else { throw Refusal.notLoaded }
+        guard canSave else { throw Refusal.notLoaded(folder: Self.shown(store.folder)) }
         var next = workspace
         try change(&next)
         do { try store.save(next) } catch {
