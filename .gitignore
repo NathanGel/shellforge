@@ -103,3 +103,4 @@ tests/.venv-ping-flood/
 # must never be committed. See tools/extract_strings.sh for how the canonical
 # copy is updated.
 /sources/Localizable.xcstrings
+Shellforge/docs/plans/
