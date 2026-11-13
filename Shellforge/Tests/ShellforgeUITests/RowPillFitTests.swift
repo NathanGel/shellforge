@@ -8,11 +8,10 @@ import ShellforgeDesign
 /// The row pill is the rectangle macOS itself selects and rings: a right-click draws its blue ring
 /// around that rectangle, so a pill of any other shape had the ring falling outside it.
 ///
-/// What macOS draws natively depends on the SDK the *test host* was linked against, not on other
-/// tests: `scripts/swift.sh test` runs swiftly's `swiftpm-testing-helper` (linked against the
-/// macOS 14 SDK, so AppKit draws its compatibility look), while a plain `swift test` from Xcode runs
-/// Xcode's `xctest` (macOS 27 SDK, the new look), where this suite fails every time. Run it through
-/// `scripts/swift.sh`, as CI and `test-all.sh` do.
+/// How macOS draws its own selection depends on the look AppKit draws in the test host
+/// (`AppKitLook`): the compatibility look paints it into the row, the current look, the one the app
+/// ships with, puts a material view in the row, which a snapshot does not draw. Both looks inset it
+/// by the same amount, measured each look's way.
 @MainActor @Suite struct RowPillFitTests {
     @Test func aSelectedRowsPillIsTheNativeSelectionRectangle() throws {
         let list = List {
@@ -60,13 +59,22 @@ import ShellforgeDesign
         window.makeKeyAndOrderFront(nil)
         host.layoutSubtreeIfNeeded()
         defer { window.close() }
-        let rep = try #require(Snapshot.bitmap(of: host))
-        // At the selection's mid-height, clear of its rounded corners.
-        let rows = (0..<rep.pixelsHigh).map { y in
-            (0..<rep.pixelsWide).filter { x in (rep.colorAt(x: x, y: y)?.brightnessComponent ?? 0) > 0.15 }
-        }.filter { $0.count > 200 }
-        let middle = try #require(rows.isEmpty ? nil : rows[rows.count / 2])
-        let leading = CGFloat(try #require(middle.first)) / Snapshot.scale
+        let leading: CGFloat
+        switch AppKitLook.drawn {
+        case .current:
+            // The selection is the material view inside the selected row: its frame.
+            func views(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(views) }
+            let selection = try #require(views(host).first { $0 is NSVisualEffectView && $0.superview is NSTableRowView })
+            leading = selection.convert(selection.bounds, to: host).minX
+        case .compatibility:
+            let rep = try #require(Snapshot.bitmap(of: host))
+            // At the selection's mid-height, clear of its rounded corners.
+            let rows = (0..<rep.pixelsHigh).map { y in
+                (0..<rep.pixelsWide).filter { x in (rep.colorAt(x: x, y: y)?.brightnessComponent ?? 0) > 0.15 }
+            }.filter { $0.count > 200 }
+            let middle = try #require(rows.isEmpty ? nil : rows[rows.count / 2])
+            leading = CGFloat(try #require(middle.first)) / Snapshot.scale
+        }
         #expect(abs(leading - SidebarRowLayout.highlightInset) <= 1, "macOS insets its selection by \(leading) pt")
     }
 }
