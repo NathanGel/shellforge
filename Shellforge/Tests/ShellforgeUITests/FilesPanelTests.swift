@@ -90,10 +90,10 @@ private final class CountingLister: @unchecked Sendable {
     @Test func clickingAFileOpensItsEditorLine() async {
         let host = FakeTerminalHost()
         await opener(host, kind: .file).open(appTs, in: demo, files: files(CountingLister(.git(["src/app.ts"]))))
-        #expect(host.openedPlain.map { "\($0.directory)|\($0.title)|\($0.command)" } == ["/demo|app.ts|exec vim -- ./src/app.ts"])
+        #expect(host.openedPlain.map { "\($0.directory)|\($0.title)|\($0.command)" } == ["/demo|app.ts|vim -- ./src/app.ts"])
     }
 
-    /// A name that can't be typed safely opens no tab; the section says why, until the next open.
+    /// A name with a control character opens no tab; the section says why, until the next open.
     @Test func aFileNameThatCantBeTypedOpensNoTab() async {
         let host = FakeTerminalHost()
         let model = files(CountingLister(.git(["src/a\u{15}b.ts", "src/app.ts"])))
@@ -101,11 +101,11 @@ private final class CountingLister: @unchecked Sendable {
         let hostile = FileNode(name: "a\u{15}b.ts", path: "src/a\u{15}b.ts", isFolder: false, children: nil)
         await opener(host, kind: .file).open(hostile, in: demo, files: model)
         #expect(host.openedPlain.isEmpty)
-        let refusal = "This file’s name can’t be typed safely into a terminal."
+        let refusal = "This file’s name has a control character in it, so it can’t be opened in a terminal."
         #expect(model.sections.first?.problem == refusal)
         #expect(FilesPanel.rows(model.sections, isOpen: model.isOpen).contains(.problem(project: demo.id, text: refusal)))
         await opener(host, kind: .file).open(appTs, in: demo, files: model)
-        #expect(host.openedPlain.map(\.command) == ["exec vim -- ./src/app.ts"])
+        #expect(host.openedPlain.map(\.command) == ["vim -- ./src/app.ts"])
         #expect(model.sections.first?.problem == nil)
     }
 
@@ -116,7 +116,7 @@ private final class CountingLister: @unchecked Sendable {
         defaults.set("nvim -p", forKey: EditorCommand.settingKey)
         let opener = FileOpener(host: host, defaults: defaults, environment: { ["EDITOR": "vim"] }, kind: { _ in .file })
         await opener.open(appTs, in: demo, files: files(CountingLister(.git(["src/app.ts"]))))
-        #expect(host.openedPlain.map(\.command) == ["exec nvim -p -- ./src/app.ts"])
+        #expect(host.openedPlain.map(\.command) == ["nvim -p -- ./src/app.ts"])
     }
 
     @Test func clickingAGoneFileRefreshesAndOpensNothing() async {

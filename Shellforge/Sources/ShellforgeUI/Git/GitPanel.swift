@@ -41,24 +41,25 @@ struct GitPanelActions {
 
     /// A change's diff, in a new tab in its repository, tagged with the repository and the file so
     /// the panel lists it. The tab keeps its shell after the pager: git's `less -FRX` quits at once
-    /// on a short diff, which would close a tab that ran it with `exec`. A name that can't be typed
-    /// safely opens nothing: the section says why.
+    /// on a short diff, which would close a tab that ran it with `exec`. A name with a control
+    /// character opens nothing: the section says why.
     func viewDiff(_ change: GitChange, list: GitChangeList, in section: GitSection, model: GitModel) {
         let name = (change.path as NSString).lastPathComponent
-        let line: String
+        let command: FileCommand
         do {
-            line = try GitActions.diffLine(for: change, staged: list == .staged)
+            command = try GitActions.diffCommand(for: change, staged: list == .staged)
         } catch {
             model.report(error.localizedDescription, in: section.id)
             return
         }
-        host.openTab(in: section.path, title: "Diff: \(name)", command: line,
+        model.clearReport(in: section.id)
+        host.openTab(in: section.path, title: "Diff: \(name)", running: command,
                      panel: .diff(repo: GitPanel.key(section.id), path: change.path))
     }
 
     /// A changed file in the terminal editor, as the Files panel opens one, tagged as a diff tab is
     /// so the panel lists it under the file. A file no longer there opens nothing: its repository is
-    /// read again. A name that can't be typed safely opens nothing either: the section says why.
+    /// read again. A name with a control character opens nothing either: the section says why.
     func openInEditor(_ change: GitChange, in section: GitSection, model: GitModel) async {
         let path = URL(fileURLWithPath: section.path).appendingPathComponent(change.path).path
         let (kind, environment) = (self.kind, self.environment)
@@ -71,14 +72,15 @@ struct GitPanelActions {
             return
         }
         let editor = EditorCommand.editor(setting: defaults.string(forKey: EditorCommand.settingKey), environment: variables)
-        let line: String
+        let command: FileCommand
         do {
-            line = try EditorCommand.line(editor: editor, file: change.path)
+            command = try EditorCommand.command(editor: editor, file: change.path)
         } catch {
             model.report(error.localizedDescription, in: section.id)
             return
         }
-        host.openTab(in: section.path, title: (change.path as NSString).lastPathComponent, command: line,
+        model.clearReport(in: section.id)
+        host.openTab(in: section.path, title: (change.path as NSString).lastPathComponent, running: command,
                      panel: .diff(repo: GitPanel.key(section.id), path: change.path))
     }
 

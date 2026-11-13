@@ -30,6 +30,9 @@ public protocol TerminalHost: AnyObject {
     /// Opens a tab of no task in `directory`, typing `command` into its shell, and selects it.
     /// `panel` tags it with the panel that opened it (`ShellforgeTags.panel`), nil for none.
     func openTab(in directory: String, title: String, command: String, panel: PanelTab?)
+    /// Opens a tab of no task in `directory` whose own command is `running` (`FileCommand.argv` with
+    /// the login shell): nothing is typed. Tagged with `panel`, and selected.
+    func openTab(in directory: String, title: String, running: FileCommand, panel: PanelTab)
     /// Opens a terminal row's tab: a plain shell in `directory`, tagged with the terminal and its
     /// project, and selects it.
     func openTab(in directory: String, terminalId: UUID, projectId: UUID, title: String)

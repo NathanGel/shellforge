@@ -127,7 +127,7 @@ private final class InertGitWatcher: FolderWatching, @unchecked Sendable {
         #expect(host.openedPlain.map { "\($0.directory)|\($0.title)|\($0.command)" } == ["/demo|Diff: app.ts|git diff -- ':(literal)./src/app.ts'"])
     }
 
-    /// A name that can't be typed safely opens neither its diff nor its editor; the section says why.
+    /// A name with a control character opens neither its diff nor its editor; the section says why.
     @Test func aFileNameThatCantBeTypedOpensNoTab() async throws {
         let change = GitChange(path: "src/a\u{15}b.ts", letter: .modified)
         let ready = status(.branch("main"), unstaged: [change])
@@ -136,13 +136,16 @@ private final class InertGitWatcher: FolderWatching, @unchecked Sendable {
                              read: { _, _ in ready }, act: { _, _, _, _ in })
         await model.settled()
         let section = try #require(model.sections.first)
-        let refusal = "This file’s name can’t be typed safely into a terminal."
+        let refusal = "This file’s name has a control character in it, so it can’t be opened in a terminal."
         actions(host).viewDiff(change, list: .changes, in: section, model: model)
         #expect(host.openedPlain.isEmpty)
         #expect(model.sections.first?.problem == refusal)
         await actions(host).openInEditor(change, in: section, model: model)
         #expect(host.openedPlain.isEmpty)
         #expect(model.sections.first?.problem == refusal)
+        actions(host).viewDiff(GitChange(path: "café.md", letter: .modified), list: .changes, in: section, model: model)
+        #expect(host.openedPlain.map(\.command) == ["git diff -- ':(literal)./café.md'"])
+        #expect(model.sections.first?.problem == nil, "the next diff that opens clears it")
     }
 
     /// A diff tab carries its repository's and file's tag, leaves Other Tabs, and lists under its

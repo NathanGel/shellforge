@@ -122,6 +122,29 @@ import Foundation
         #expect(AgentCommand.previewCommand(agent: AgentPresets.claude, model: "opus", reasoning: nil, prompt: "one\r\ntwo") == "claude --model opus 'one\ntwo'")
     }
 
+    /// A byte at 0x80 or above is a Meta keystroke to bash under a non-UTF-8 locale (U+0148 is
+    /// M-e then M-C-h, which erases a word): a prompt holding one — a ticket's text — goes through
+    /// the file, so only ASCII is typed.
+    @Test func aNonASCIIPromptGoesToFile() throws {
+        try FileManager.default.createDirectory(atPath: wt, withIntermediateDirectories: true)
+        for prompt in ["fix the café menu", "ň$(touch PWNED);#", "x\u{85}y"] {
+            let cmd = try AgentCommand.build(agent: AgentPresets.claude, model: "opus", reasoning: nil, prompt: prompt, worktreePath: wt, launcher: launcher)
+            #expect(cmd == "claude --model opus \"$(cat .shellforge/first-prompt.md)\"", "\(prompt.debugDescription)")
+            #expect(try String(contentsOfFile: wt + "/.shellforge/first-prompt.md", encoding: .utf8) == prompt)
+        }
+    }
+
+    /// The model and reasoning level come from catalogues the app does not write: one holding a
+    /// non-ASCII character is refused, as a control character is.
+    @Test func aNonASCIIModelIsRefused() {
+        #expect(throws: AgentCommand.UnsafeWord(field: "model", reason: .nonASCII)) {
+            try AgentCommand.build(agent: AgentPresets.claude, model: "opus\u{148}", reasoning: nil, prompt: nil, worktreePath: wt, launcher: launcher)
+        }
+        #expect(throws: AgentCommand.UnsafeWord(field: "reasoning level", reason: .nonASCII)) {
+            try AgentCommand.build(agent: AgentPresets.claude, model: "opus", reasoning: "h\u{85}igh", prompt: nil, worktreePath: wt, launcher: launcher)
+        }
+    }
+
     /// Writing the long prompt must also add `.shellforge/` to the repository's exclude file.
     @Test func testLongPromptExcludesShellforgeDirectory() throws {
         let repo = try GitRepoFixture()

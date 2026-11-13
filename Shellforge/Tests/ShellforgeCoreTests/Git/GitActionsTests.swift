@@ -85,8 +85,10 @@ final class GitActionsTests: XCTestCase {
 
     func testTheDiffOfABracketPathShowsThatFile() throws {
         let repo = try bracketRepo()
-        let line = try GitActions.diffLine(for: GitChange(path: bracket, letter: .modified), staged: false)
-        let out = try repo.launcher.run("/bin/sh", ["-c", "cd \(AgentCommand.shellWord(repo.path)) && \(line) | cat"])
+        let diff = try GitActions.diffCommand(for: GitChange(path: bracket, letter: .modified), staged: false)
+        let argv = diff.argv(shell: "/bin/sh").filter { $0 != "-l" && $0 != "-i" }
+        let script = "cd \(AgentCommand.shellWord(repo.path)) && " + diff.script(.posix, then: "/bin/sh").replacingOccurrences(of: "; exec /bin/sh -l", with: " | cat")
+        let out = try repo.launcher.run("/bin/sh", ["-c", script] + argv.dropFirst(3))
         XCTAssertTrue(out.stdout.contains(bracket), out.stdout)
         XCTAssertFalse(out.stdout.contains("app/i/page.tsx"), out.stdout)
     }
@@ -457,13 +459,11 @@ final class GitActionsTests: XCTestCase {
     }
 
     func testDiffLinesQuoteOddNames() throws {
-        XCTAssertEqual(try GitActions.diffLine(for: GitChange(path: "src/app.ts", letter: .modified), staged: false),
-                       "git diff -- ':(literal)./src/app.ts'")
-        XCTAssertEqual(try GitActions.diffLine(for: GitChange(path: "my file's $x.md", letter: .modified), staged: true),
-                       "git diff --staged -- ':(literal)./my file'\\''s $x.md'")
-        XCTAssertEqual(try GitActions.diffLine(for: GitChange(path: "src/main.ts", originalPath: "src/app.ts", letter: .renamed), staged: true),
+        let line = { try GitActions.diffCommand(for: $0, staged: $1).line }
+        XCTAssertEqual(try line(GitChange(path: "src/app.ts", letter: .modified), false), "git diff -- ':(literal)./src/app.ts'")
+        XCTAssertEqual(try line(GitChange(path: "my file's $x.md", letter: .modified), true), "git diff --staged -- ':(literal)./my file'\\''s $x.md'")
+        XCTAssertEqual(try line(GitChange(path: "src/main.ts", originalPath: "src/app.ts", letter: .renamed), true),
                        "git diff --staged -M -- ':(literal)./src/app.ts' ':(literal)./src/main.ts'")
-        XCTAssertEqual(try GitActions.diffLine(for: GitChange(path: "new file.md", letter: .untracked), staged: false),
-                       "git diff --no-index -- /dev/null './new file.md'")
+        XCTAssertEqual(try line(GitChange(path: "new file.md", letter: .untracked), false), "git diff --no-index -- /dev/null './new file.md'")
     }
 }

@@ -191,19 +191,23 @@ public enum GitActions {
         return locals.map { GitBranch(title: $0, name: $0, remote: nil) } + remoteOnly
     }
 
-    /// The command line that shows `change` in a terminal. Paths are literal pathspecs; a staged
-    /// rename names both its paths, so it shows as a rename. Every path is guarded (`TypedPath`):
-    /// throws `TypedPath.Unsafe` for a name that can't be typed safely.
-    public static func diffLine(for change: GitChange, staged: Bool) throws -> String {
+    /// What a tab runs to show `change`: `git diff`, its paths the shell's arguments, never typed.
+    /// Paths are literal pathspecs; a staged rename names both its paths, so it shows as a rename.
+    /// The tab keeps its shell after the pager. Throws `FileCommand.Unsafe` for a name with a
+    /// control character.
+    public static func diffCommand(for change: GitChange, staged: Bool) throws -> FileCommand {
         if change.letter == .untracked {
             // `--no-index` compares two files, not pathspecs.
-            return "git diff --no-index -- /dev/null \(try TypedPath.word(change.path))"
+            return FileCommand(parts: [.text("git diff --no-index -- /dev/null "), .path(0)],
+                               paths: [try FileCommand.argument(change.path)], keepsShell: true)
         }
-        let word = { try TypedPath.word($0, pathspec: true) }
         if staged, change.letter == .renamed, let original = change.originalPath {
-            return "git diff --staged -M -- \(try word(original)) \(try word(change.path))"
+            return FileCommand(parts: [.text("git diff --staged -M -- "), .path(0), .text(" "), .path(1)],
+                               paths: [try FileCommand.argument(original, pathspec: true), try FileCommand.argument(change.path, pathspec: true)],
+                               keepsShell: true)
         }
-        return "git diff\(staged ? " --staged" : "") -- \(try word(change.path))"
+        return FileCommand(parts: [.text("git diff\(staged ? " --staged" : "") -- "), .path(0)],
+                           paths: [try FileCommand.argument(change.path, pathspec: true)], keepsShell: true)
     }
 
     /// A refusal of `action`, from git's stderr (read under `LC_ALL=C`), in words a person can act on.

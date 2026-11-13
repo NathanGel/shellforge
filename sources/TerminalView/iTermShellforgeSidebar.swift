@@ -222,6 +222,48 @@ final class iTermShellforgeSidebar: NSObject {
         profile[KEY_WORKING_DIRECTORY] = directory
         return profile
     }
+
+    /// The default profile changed to run `argv` itself in `directory`, as its custom command: no
+    /// login shell is started to type into, and no initial text is sent. `title` is the tab's name.
+    nonisolated static func fileTabProfile(base: [AnyHashable: Any], directory: String, argv: [String], title: String) -> [AnyHashable: Any] {
+        var profile = taskTabProfile(base: base, directory: directory, initialText: nil)
+        profile[KEY_CUSTOM_COMMAND] = kProfilePreferenceCommandTypeCustomValue
+        profile[KEY_COMMAND_LINE] = commandLine(argv)
+        profile[KEY_RUN_COMMAND_IN_LOGIN_SHELL] = false
+        profile[KEY_INITIAL_TEXT] = ""
+        profile[KEY_NAME] = literalName(title)
+        return profile
+    }
+
+    /// `argv` as a profile's command line that iTerm2 reads back as exactly these words, whatever
+    /// they hold. The line is first evaluated as an interpolated string, where `\\` is one backslash
+    /// and `\(` would start an expression, so every backslash is doubled. Then `$$NAME$$` is a
+    /// parameter iTerm2 asks for, so no two `$` are ever adjacent: a quote closed and reopened
+    /// (`$""$`) sits between them. Then `componentsInShellCommand` splits it: each word is double-
+    /// quoted, where only `\\` and `\"` are escapes, and quoted, it is never split or `~`-expanded.
+    nonisolated static func commandLine(_ argv: [String]) -> String {
+        argv.map { word -> String in
+            // Scalar by scalar: a quote followed by a combining mark is one Character, and still a quote.
+            var quoted = "\""
+            var previous: Unicode.Scalar?
+            for scalar in word.unicodeScalars {
+                if scalar == "$", previous == "$" { quoted += "\"\"" }
+                switch scalar {
+                case "\\": quoted += "\\\\"
+                case "\"": quoted += "\\\""
+                default: quoted.unicodeScalars.append(scalar)
+                }
+                previous = scalar
+            }
+            return quoted + "\""
+        }.joined(separator: " ").replacingOccurrences(of: "\\", with: "\\\\")
+    }
+
+    /// `name` as a profile's name that shows as it is: iTerm2 reads `$$NAME$$` in it as a parameter
+    /// to ask for, and `$$$$` as `$$`.
+    nonisolated static func literalName(_ name: String) -> String {
+        name.replacingOccurrences(of: "$$", with: "$$$$")
+    }
 }
 
 /// `TerminalHost` for one window: its tabs, read live from iTerm2, tagged by user variables.
@@ -441,6 +483,23 @@ final class iTermShellforgeHost: TerminalHost {
                                             respectTabbingMode: false, index: nil, command: nil,
                                             makeSession: nil, didMakeSession: { session in
             if let panel { Self.tag(session, panel: panel) }
+        }, completion: { [weak self] _, _ in
+            MainActor.assumeIsolated { self?.onChange?() }
+        })
+    }
+
+    /// A tab a panel opened on a file — its editor, its diff — tagged with `panel`, whose own command
+    /// is `command` run by the account's login shell: the file's path is an argument, never typed.
+    func openTab(in directory: String, title: String, running command: FileCommand, panel: PanelTab) {
+        guard let windowController, let base = ProfileModel.sharedInstance()?.defaultBookmark() else { return }
+        let argv = command.argv(shell: iTermOpenDirectory.userShell() ?? "/bin/zsh")
+        DLog("Shellforge: opening a file tab running \(argv)")
+        let profile = iTermShellforgeSidebar.fileTabProfile(base: base, directory: directory, argv: argv, title: title)
+        iTermSessionLauncher.launchBookmark(profile, in: windowController, style: .tab, withURL: nil,
+                                            hotkeyWindowType: .none, makeKey: true, canActivate: true,
+                                            respectTabbingMode: false, index: nil, command: nil,
+                                            makeSession: nil, didMakeSession: { session in
+            Self.tag(session, panel: panel)
         }, completion: { [weak self] _, _ in
             MainActor.assumeIsolated { self?.onChange?() }
         })

@@ -39,6 +39,55 @@ final class ShellforgeHostTest: XCTestCase {
         XCTAssertEqual(profile[KEY_WORKING_DIRECTORY] as? String, "/tmp/x")
     }
 
+    /// What iTerm2 does to a custom command line before it runs it: evaluate it as an interpolated
+    /// string (`ITAddressBookMgr computeCommandForProfile`), ask for any `$$NAME$$` and turn `$$$$`
+    /// into `$$` (`iTermSessionFactory`), then split it (`PTYSession computeArgvForCommand`).
+    private func argvITerm2Runs(_ commandLine: String) -> [String]? {
+        var value: String?
+        let evaluator = iTermExpressionEvaluator(strictInterpolatedString: commandLine, scope: iTermVariableScope())
+        evaluator.evaluate(withTimeout: 0, sideEffectsAllowed: true) { value = $0.value as? String }
+        guard let evaluated = value?.trimmingCharacters(in: .whitespacesAndNewlines) else { return nil }
+        let asked = (evaluated as NSString).doubleDollarVariables() as? Set<String> ?? []
+        XCTAssertTrue(asked.isSubset(of: ["$$$$"]), "iTerm2 would ask for \(asked)")
+        let substituted = (evaluated as NSString).performingSubstitutions(["$$$$": "$$"])
+        return (substituted as NSString).componentsInShellCommand()
+    }
+
+    /// A file's tab runs `[shell, -l, -i, -c, script, shellforge-open, path]` exactly, for the
+    /// review's hostile names: a Meta byte, an option to vim, quotes, iTerm2's own `\(…)`, `$$…$$`
+    /// and `$$$$`, odd spaces, a quote with a combining mark.
+    func testAFileTabsCommandLineParsesBackToItsArgv() throws {
+        let hostile = ["ň$(touch PWNED);#", "\u{85}$(touch PWNED);#", "\u{9B}x", "+!touch PWNED", "-c!touch PWNED", "-", "--",
+                       #"a\'; touch PWNED; '.md"#, #"\(touch)"#, #"\\(x)"#, #"x\"#, #"\n\t\a\r"#, "$$HOME$$", "$$$$", "a$$$b", "$",
+                       "\"q\"", "\"\u{301}x", "'", "`touch PWNED`", "~x", " lead", "trail ", "tab\u{A0}nbsp", "line\u{2028}sep",
+                       "\u{3000}ideo", "\u{202E}gnp.exe", "😀.md", "café.md", "x;y|z&w", "*", "[ab]", "!!", "sub/-x[1].txt"]
+        for name in hostile {
+            let edit = try EditorCommand.command(editor: "vim", file: name)
+            for shell in ["/bin/zsh", "/opt/homebrew/bin/fish", "/bin/my shell's \"dir\"/bash"] {
+                let argv = edit.argv(shell: shell)
+                XCTAssertEqual(argvITerm2Runs(iTermShellforgeSidebar.commandLine(argv)), argv, name)
+            }
+            XCTAssertEqual(edit.argv(shell: "/bin/zsh"), ["/bin/zsh", "-l", "-i", "-c", #"exec vim -- "$1""#, "shellforge-open", "./" + name])
+            let diff = try GitActions.diffCommand(for: GitChange(path: name, originalPath: "old " + name, letter: .renamed), staged: true)
+            XCTAssertEqual(argvITerm2Runs(iTermShellforgeSidebar.commandLine(diff.argv(shell: "/bin/bash"))), diff.argv(shell: "/bin/bash"), name)
+        }
+    }
+
+    /// A file's tab runs its own command in the folder, with no login shell to type into and none
+    /// of the default profile's initial text; its title shows as it is.
+    func testAFileTabRunsItsOwnCommand() {
+        let base: [AnyHashable: Any] = [KEY_CUSTOM_COMMAND: "No", KEY_INITIAL_TEXT: "echo hi", KEY_RUN_COMMAND_IN_LOGIN_SHELL: true]
+        let profile = iTermShellforgeSidebar.fileTabProfile(base: base, directory: "/tmp/demo", argv: ["/bin/zsh", "-c", "x"], title: "$$a$$.md")
+        XCTAssertEqual(profile[KEY_CUSTOM_COMMAND] as? String, kProfilePreferenceCommandTypeCustomValue)
+        XCTAssertEqual(profile[KEY_COMMAND_LINE] as? String, #""/bin/zsh" "-c" "x""#)
+        XCTAssertEqual(profile[KEY_RUN_COMMAND_IN_LOGIN_SHELL] as? Bool, false)
+        XCTAssertEqual(profile[KEY_INITIAL_TEXT] as? String, "")
+        XCTAssertEqual(profile[KEY_WORKING_DIRECTORY] as? String, "/tmp/demo")
+        let name = profile[KEY_NAME] as? String ?? ""
+        XCTAssertEqual((name as NSString).performingSubstitutions(["$$$$": "$$"]), "$$a$$.md")
+        XCTAssertTrue(((name as NSString).doubleDollarVariables() as? Set<String> ?? []).isSubset(of: ["$$$$"]))
+    }
+
     /// A reopened task's tab is a shell: no initial text is added.
     func testAShellTabHasNoInitialTextOfItsOwn() {
         let profile = iTermShellforgeSidebar.taskTabProfile(base: [:], directory: "/tmp/x", initialText: nil)

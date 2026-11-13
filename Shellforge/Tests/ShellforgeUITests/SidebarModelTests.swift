@@ -82,6 +82,14 @@ import Testing
         onChange?()
     }
 
+    /// The file tabs a panel opened, by what they run: listed in `openedPlain` too, by its `line`.
+    var openedFiles: [FileCommand] = []
+
+    func openTab(in directory: String, title: String, running: FileCommand, panel: PanelTab) {
+        openedFiles.append(running)
+        openTab(in: directory, title: title, command: running.line, panel: panel)
+    }
+
     /// The terminal tabs opened, and the terminals whose tabs were asked to close.
     var openedTerminals: [(directory: String, terminalId: UUID, projectId: UUID, title: String)] = []
     var closedTerminals: [UUID] = []

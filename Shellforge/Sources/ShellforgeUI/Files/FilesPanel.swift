@@ -17,7 +17,7 @@ public enum FileKind: Sendable, Equatable {
 }
 
 /// Opens a file of the Files panel in a terminal tab: a new tab in the project's folder, titled
-/// with the file's name, typing `EditorCommand.line`, tagged with the file so the panel lists it. The editor is resolved at the click — the
+/// with the file's name, running `EditorCommand.command`, tagged with the file so the panel lists it. The editor is resolved at the click — the
 /// Settings choice, else `$EDITOR`, else `vi` — and the login environment is read off the main
 /// actor, as it may run a login shell when it has not been read yet.
 @MainActor
@@ -28,7 +28,7 @@ struct FileOpener {
     let environment: @Sendable () -> [String: String]
     var kind: @Sendable (String) -> FileKind = FileKind.onDisk
 
-    /// A file still there opens in its editor, unless its name can't be typed safely: then nothing
+    /// A file still there opens in its editor, unless its name has a control character: then nothing
     /// opens and the section says why. One gone since the listing opens nothing: the project is
     /// listed again. A folder never opens an editor: it folds or unfolds instead.
     func open(_ node: FileNode, in project: Project, files: FilesModel) async {
@@ -46,15 +46,15 @@ struct FileOpener {
             await files.refresh(project: project.id)
         case .file:
             let editor = EditorCommand.editor(setting: defaults.string(forKey: EditorCommand.settingKey), environment: variables)
-            let line: String
+            let command: FileCommand
             do {
-                line = try EditorCommand.line(editor: editor, file: node.path)
+                command = try EditorCommand.command(editor: editor, file: node.path)
             } catch {
                 files.report(error.localizedDescription, project: project.id)
                 return
             }
             files.report(nil, project: project.id)
-            host.openTab(in: project.path, title: node.name, command: line, panel: .file(project: project.id, path: node.path))
+            host.openTab(in: project.path, title: node.name, running: command, panel: .file(project: project.id, path: node.path))
         }
     }
 }

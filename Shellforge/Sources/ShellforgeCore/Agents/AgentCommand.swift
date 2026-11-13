@@ -39,22 +39,25 @@ public enum AgentCommand {
 
     /// A word of the command that can't be typed safely. A control character acts as a keystroke
     /// even inside quotes (^U erases the open quote, CR runs the rest of the line), and a backslash
-    /// ends the quote for fish, which reads `\'` as an escape.
+    /// ends the quote for fish, which reads `\'` as an escape. A byte at 0x80 or above is a Meta
+    /// keystroke to bash under a non-UTF-8 locale, so a word from a catalogue must be ASCII.
     public struct UnsafeWord: Error, Equatable, LocalizedError {
-        public enum Reason: Equatable, Sendable { case control, backslash }
+        public enum Reason: Equatable, Sendable { case control, backslash, nonASCII }
         public let field: String
         public let reason: Reason
         public var errorDescription: String? {
             switch reason {
             case .control: "The \(field) holds a control character, which can’t be typed into a terminal safely. Remove it in Settings › Agents."
             case .backslash: "The \(field) holds a backslash, which not every shell reads the same inside quotes. Remove it in Settings › Agents."
+            case .nonASCII: "The \(field) holds a character outside ASCII, which some shells read as a keystroke. Choose another in Settings › Agents."
             }
         }
     }
 
-    static func refuseUnsafe(_ text: String, field: String, backslash: Bool) throws {
+    static func refuseUnsafe(_ text: String, field: String, backslash: Bool, asciiOnly: Bool = false) throws {
         if text.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7F }) { throw UnsafeWord(field: field, reason: .control) }
         if backslash, text.contains("\\") { throw UnsafeWord(field: field, reason: .backslash) }
+        if asciiOnly, !text.unicodeScalars.allSatisfy(\.isASCII) { throw UnsafeWord(field: field, reason: .nonASCII) }
     }
 
     /// The prompt as typed: a pasted Windows line ending is a newline, and nothing at all is nil.
@@ -81,8 +84,9 @@ public enum AgentCommand {
         let backslash = prefix != nil
         try refuseUnsafe(agent.command, field: "command", backslash: backslash)
         for word in agent.arguments.joined() { try refuseUnsafe(word, field: "arguments", backslash: backslash) }
-        try refuseUnsafe(model, field: "model", backslash: backslash)
-        if let reasoning { try refuseUnsafe(reasoning, field: "reasoning level", backslash: backslash) }
+        // From catalogues the app does not write: typed, so ASCII only.
+        try refuseUnsafe(model, field: "model", backslash: backslash, asciiOnly: true)
+        if let reasoning { try refuseUnsafe(reasoning, field: "reasoning level", backslash: backslash, asciiOnly: true) }
         let prompt = normalizedPrompt(prompt)
         if prompt != nil, agent.prompt == .stdin { throw Unsupported(agent: agent.name) }
         let words = pieces(agent: agent, model: model, reasoning: reasoning, hasPrompt: prompt != nil)
@@ -171,9 +175,12 @@ public enum AgentCommand {
     ///
     /// A backslash goes through the file too: the tab runs the account's login shell, and fish reads
     /// `\'` and `\\` as escapes even inside single quotes, where zsh and bash read them as they are.
+    /// So does any character outside ASCII: bash under a non-UTF-8 locale reads each byte at 0x80
+    /// or above as a Meta keystroke, and U+0148 erases the word before it. A prompt can hold a
+    /// ticket's or a merge request's text, which others write.
     private static func readsFromFile(_ prompt: String, plan: Plan) -> Bool {
         plan.line.utf8.count > inlineLimit
-            || prompt.unicodeScalars.contains { $0 != "\n" && ($0.value < 0x20 || $0.value == 0x7F) }
+            || prompt.unicodeScalars.contains { $0 != "\n" && ($0.value < 0x20 || $0.value == 0x7F || !$0.isASCII) }
             || prompt.contains("\\")
     }
 
