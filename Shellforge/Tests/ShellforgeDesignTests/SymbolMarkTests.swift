@@ -23,11 +23,15 @@ struct SymbolMarkTests {
     }
 
     /// The disc is `controlActive`: a point inside the disc but outside the half-size glyph is it.
+    /// Above the glyph, halfway between the disc's edge and the glyph's box (which starts a quarter
+    /// of the way in): beside it, a symbol is drawn wider than its box, by how much depends on the
+    /// macOS release's SF Symbols: on macOS 26 it covered a point two points left of its box.
     @Test func theDiscIsControlActive() throws {
-        let host = host(SymbolMark(symbol: .personalhotspot, size: 28))
+        let size: CGFloat = 28
+        let host = host(SymbolMark(symbol: .personalhotspot, size: size))
         let bitmap = try #require(Snapshot.bitmap(of: host))
         let scale = CGFloat(bitmap.pixelsWide) / host.bounds.width
-        let sample = try #require(bitmap.colorAt(x: Int(5 * scale), y: Int(14 * scale))?.usingColorSpace(.sRGB))
+        let sample = try #require(bitmap.colorAt(x: Int(size / 2 * scale), y: Int(size / 8 * scale))?.usingColorSpace(.sRGB))
         // Resolved as `ColorProbe` resolves: `controlActive` is a dynamic colour, light outside
         // `.darkAqua`.
         var resolved: NSColor?
