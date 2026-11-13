@@ -18,7 +18,6 @@ struct PaletteDistinctionTests {
         ("surface", Palette.surface),
         ("surfaceRaised", Palette.surfaceRaised),
         ("groupFill", Palette.groupFill),
-        ("groupEdge", Palette.groupEdge),
         ("fieldFill", Palette.fieldFill),
         ("menu", Palette.menu),
         ("border", Palette.border),

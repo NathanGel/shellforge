@@ -307,8 +307,8 @@ Mac, Environment, Match the terminal, Feedback), Agents (the agent list, then ea
 agent's default model and reasoning) and Services (Jira, GitLab, GitHub) — under one
 `SheetSubtitle`, with Cancel and Save. A section is drawn as macOS's grouped form draws one: a
 heading in `Typography.bodyEmphasis` lined up with the rows' marks, then one box of
-`Palette.groupFill` (a veil measured against the native grouped form's: darker in light, lighter in
-dark), its rows divided by a `SettingsRowDivider` inset past the marks. An agent's form opens in the
+`Palette.groupFill` (a veil measured against macOS 26's native grouped form: darker in light, lighter
+in dark, with no edge line, rounded at `Radius.groupBox`), its rows divided by a `SettingsRowDivider` inset past the marks. An agent's form opens in the
 panel in place of the sections, with its own Cancel and Save.
 
 `SettingsCard` is one row of a section, drawn in the section's box with none of its own: a

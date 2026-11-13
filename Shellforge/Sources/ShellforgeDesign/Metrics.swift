@@ -49,8 +49,10 @@ public enum Radius {
     public static let chip: CGFloat = 4
     /// Fields, buttons, sidebar rows, the command block.
     public static let control: CGFloat = 6
-    /// Segmented tracks and the boxed groups in Settings.
+    /// Segmented tracks and fields.
     public static let group: CGFloat = 8
+    /// A Settings section's box, as macOS 26's grouped form rounds one.
+    public static let groupBox: CGFloat = 12
     /// Menus, dropdowns, the completion popup.
     public static let panel: CGFloat = 10
 }
@@ -58,8 +60,6 @@ public enum Radius {
 /// Heights, widths and diameters: the sidebar's own widths, every control and row height, and the
 /// marks drawn inside them.
 public enum Size {
-    /// The edge of a Settings section's box: one device pixel at 2×, as the native grouped box draws it.
-    public static let groupEdge: CGFloat = 0.5
     /// The activity bar's width at the sidebar's left: an icon's `control` square and a `base` margin
     /// either side. The sidebar's widths below include it, so the panel beside it keeps the room
     /// they were sized for.

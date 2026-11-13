@@ -133,8 +133,7 @@ extension Theme: CustomTestStringConvertible {
 
     static let surface = Color(nsColor: .windowBackgroundColor)
     static let surfaceRaised = Color(nsColor: .underPageBackgroundColor)
-    static let groupFill = adaptive(light: NSColor(white: 0, alpha: 0.017), dark: NSColor(white: 1, alpha: 0.014))
-    static let groupEdge = adaptive(light: NSColor(white: 0, alpha: 0.076), dark: NSColor(white: 1, alpha: 0.135))
+    static let groupFill = adaptive(light: NSColor(white: 0, alpha: 0.031), dark: NSColor(white: 1, alpha: 0.025))
     static let fieldFill = adaptive(light: .white, dark: NSColor(white: 1, alpha: 0.09))
     static let border = Color(nsColor: .separatorColor)
     static let controlActive = Color(nsColor: .unemphasizedSelectedContentBackgroundColor)
@@ -175,7 +174,7 @@ extension Theme: CustomTestStringConvertible {
     /// today’s roots exactly as `Palette` writes them from its own.
     static let tokens: [(name: String, live: Color, today: Color)] = [
         ("surface", Palette.surface, surface), ("surfaceRaised", Palette.surfaceRaised, surfaceRaised),
-        ("groupFill", Palette.groupFill, groupFill), ("groupEdge", Palette.groupEdge, groupEdge),
+        ("groupFill", Palette.groupFill, groupFill),
         ("fieldFill", Palette.fieldFill, fieldFill), ("menu", Palette.menu, surfaceRaised),
         ("border", Palette.border, border), ("controlActive", Palette.controlActive, controlActive),
         ("codeBackground", Palette.codeBackground, codeBackground), ("text", Palette.text, text),
@@ -323,7 +322,7 @@ extension ThemeTests {
 
     @MainActor @Test func everyTokenIsHeldToToday() {
         // The frozen list covers every token the manifest in PaletteDistinctionTests names.
-        #expect(Today.tokens.count == 56)
+        #expect(Today.tokens.count == 55)
         #expect(Set(Today.tokens.map(\.name)).count == Today.tokens.count)
     }
 

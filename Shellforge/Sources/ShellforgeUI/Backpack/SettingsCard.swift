@@ -216,9 +216,7 @@ struct SettingsSection<Content: View>: View {
                 .padding(.leading, Space.block)
             VStack(alignment: .leading, spacing: 0) { content }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(RoundedRectangle(cornerRadius: Radius.group, style: .continuous).fill(Palette.groupFill))
-                .overlay(RoundedRectangle(cornerRadius: Radius.group, style: .continuous)
-                    .strokeBorder(Palette.groupEdge, lineWidth: Size.groupEdge))
+                .background(RoundedRectangle(cornerRadius: Radius.groupBox, style: .continuous).fill(Palette.groupFill))
         }
     }
 }

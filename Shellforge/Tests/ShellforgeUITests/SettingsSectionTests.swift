@@ -27,7 +27,7 @@ import ShellforgeDesign
             row("Two")
         })))
         // 2 pt inside the box's left edge, upward from a full corner radius above its foot.
-        let x = Int(2 * Snapshot.scale), start = rep.pixelsHigh - 1 - Int(Radius.group * Snapshot.scale)
+        let x = Int(2 * Snapshot.scale), start = rep.pixelsHigh - 1 - Int(Radius.groupBox * Snapshot.scale)
         let fill = try #require(rep.colorAt(x: x, y: start)?.usingColorSpace(.sRGB))
         var y = start
         while y > 0, let pixel = rep.colorAt(x: x, y: y - 1)?.usingColorSpace(.sRGB),
@@ -46,5 +46,18 @@ import ShellforgeDesign
         #expect(rule.redComponent != ground.redComponent, "the rule is drawn: \(rep.pixelsWide)×\(rep.pixelsHigh), rule \(rule), ground \(ground)")
         #expect(abs(edge.redComponent - ground.redComponent) < 0.002, "nothing in the last \(Space.block / 2) pt")
     }
-}
 
+    /// The box has no edge line, as macOS 26's grouped box has none: its outermost pixel column, half
+    /// way up the box, is already the fill.
+    @Test func theBoxDrawsNoEdgeLine() throws {
+        let rep = try #require(Snapshot.bitmap(of: host(SettingsSection("Core") {
+            row("One")
+            SettingsRowDivider()
+            row("Two")
+        })))
+        let y = rep.pixelsHigh - 1 - Int(2 * Radius.groupBox * Snapshot.scale)
+        let outer = try #require(rep.colorAt(x: 0, y: y)?.usingColorSpace(.sRGB))
+        let fill = try #require(rep.colorAt(x: Int(4 * Snapshot.scale), y: y)?.usingColorSpace(.sRGB))
+        #expect(abs(outer.redComponent - fill.redComponent) < 0.002, "edge \(outer), fill \(fill)")
+    }
+}

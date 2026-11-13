@@ -82,6 +82,8 @@ it and refuses to release a version that has none.
 - **Settings › Core's Match terminal card became the Theme card.** Match Terminal is its last
   switch, under the theme choice, and keeps the choice you made. As before, iTerm2 uses its Minimal
   theme only while it is on.
+- **Settings sections look like macOS 26's own grouped boxes.** Each section's box is set off
+  from the sheet as far as the system's, with rounder 12 pt corners and no outline.
 - **The Sessions header no longer has a Settings gear.** Settings is the gear at the foot of the
   activity bar; Mac Settings… is on the Metrics panel's Mac row (right-click).
 - **Banners show above every panel.** An error, work in progress such as "Adding demo…", a
