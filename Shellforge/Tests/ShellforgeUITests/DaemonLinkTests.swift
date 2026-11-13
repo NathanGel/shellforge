@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import os
 @testable import ShellforgeCore
 @testable import ShellforgeUI
 @testable import ShellforgeTestSupport
@@ -100,15 +101,16 @@ import Testing
 
     @Test func reportsAreSentOnAttachAndThenOnlyWhenTheyChange() async throws {
         let server = server()
-        var tabs = ["A"]
-        let link = DaemonLink(socketPath: server.path, daemonDir: nil, findPython: { nil }, reports: { tabs.map(report) })
+        // The reports closure runs on the link's queue, so the list it reads sits behind a lock.
+        let tabs = OSAllocatedUnfairLock(initialState: ["A"])
+        let link = DaemonLink(socketPath: server.path, daemonDir: nil, findPython: { nil }, reports: { tabs.withLock { $0 }.map(report) })
         defer { link.shutdown(); server.stop() }
         link.supervisorChanged(.listening(pid: 1))
         #expect(await eventually { updates(server) == [["A"]] })
         link.reportsMayHaveChanged()
         try await Task.sleep(for: .milliseconds(200))
         #expect(updates(server) == [["A"]])
-        tabs = ["A", "B"]
+        tabs.withLock { $0 = ["A", "B"] }
         link.reportsMayHaveChanged()
         #expect(await eventually { updates(server) == [["A"], ["A", "B"]] })
     }
