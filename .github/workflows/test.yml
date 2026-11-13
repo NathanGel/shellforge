@@ -56,6 +56,10 @@ jobs:
   # `Shellforge/.swift-version` pins, from swiftly, as a release build does.
   shellforge-macos-tests:
     runs-on: macos-latest
+    # Disabled 2026-11-13: GitHub's free macOS arm64 runners were too scarce to take the job;
+    # it queued 15 minutes and was cancelled, run after run. Run `Shellforge/scripts/test-all.sh`
+    # locally instead (release.sh does). Re-enable by removing this line.
+    if: false
 
     steps:
       - name: Checkout
