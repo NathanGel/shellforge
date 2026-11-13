@@ -41,6 +41,22 @@ private final class RecordedBackoff: Sendable {
 /// the test looks at it: under the parallel runner a test can outlast the real fifteen seconds.
 private let neverAbandoned: TimeInterval = 3600
 
+/// What a fake daemon runs to stay up until the supervisor stops it. Not for a guess at how long a
+/// test takes: a starved runner kept tests waiting for minutes, and fakes that slept thirty seconds
+/// exited, were counted as crashes and were started again behind the tests' backs.
+private let untilStopped = "exec /bin/sleep 86400"
+
+/// How long an adopted daemon goes unprobed in a test that is not about the probe: a probe finds
+/// no socket behind a fake that only said it was adopted, and starts another.
+private let neverProbed: TimeInterval = 3600
+
+/// A crash loop's backoff that retries quickly for the first `quick` attempts — as many as the test
+/// waits for — and then waits an hour: a test kept waiting on a busy runner must not meanwhile start
+/// a child a hundred times a second.
+private func quickFor(_ quick: Int) -> @Sendable (Int) -> TimeInterval {
+    { attempt in attempt < quick ? 0.01 : 3600 }
+}
+
 @Suite final class DaemonSupervisorTests {
     /// Every supervisor built here writes its daemon log into a throwaway directory: the default
     /// (`ShellforgePaths.daemonLogURL`) is the real `~/Library/Application Support/Shellforge`, which the
@@ -71,7 +87,7 @@ private let neverAbandoned: TimeInterval = 3600
         // Use /bin/sh as the "python": the module name is ignored, the process exits immediately with 0.
         let box = StateBox()
         let sup = DaemonSupervisor(python: URL(fileURLWithPath: "/bin/sh"), daemonDir: URL(fileURLWithPath: "/tmp"), socketPath: "/tmp/x.sock", arguments: ["-c", "exit 0"], logURL: logURL,
-                                   backoff: { _ in 0.01 }) { state in
+                                   backoff: quickFor(1)) { state in
             box.append(state)
         }
         sup.start()
@@ -87,7 +103,7 @@ private let neverAbandoned: TimeInterval = 3600
     // adoption would then treat the process that replaced it as itself having exited.
     @Test func testAStaleChildsExitIsIgnored() async {
         let box = StateBox()
-        let sup = DaemonSupervisor(python: URL(fileURLWithPath: "/bin/sh"), daemonDir: URL(fileURLWithPath: "/tmp"), socketPath: "/tmp/stale-\(UUID().uuidString).sock", arguments: ["-c", "sleep 30"], logURL: logURL, bindDeadline: neverAbandoned) { state in
+        let sup = DaemonSupervisor(python: URL(fileURLWithPath: "/bin/sh"), daemonDir: URL(fileURLWithPath: "/tmp"), socketPath: "/tmp/stale-\(UUID().uuidString).sock", arguments: ["-c", untilStopped], logURL: logURL, bindDeadline: neverAbandoned) { state in
             box.append(state)
         }
         sup.start()
@@ -113,7 +129,7 @@ private let neverAbandoned: TimeInterval = 3600
     @Test func testStopTerminatesTheProcessBeforeReturning() async {
         let box = StateBox()
         // A "python" that stays alive, so the process is still running when stop() is called.
-        let sup = DaemonSupervisor(python: URL(fileURLWithPath: "/bin/sh"), daemonDir: URL(fileURLWithPath: "/tmp"), socketPath: "/tmp/z.sock", arguments: ["-c", "sleep 30"], logURL: logURL, bindDeadline: neverAbandoned) { state in
+        let sup = DaemonSupervisor(python: URL(fileURLWithPath: "/bin/sh"), daemonDir: URL(fileURLWithPath: "/tmp"), socketPath: "/tmp/z.sock", arguments: ["-c", untilStopped], logURL: logURL, bindDeadline: neverAbandoned) { state in
             box.append(state)
         }
         sup.start()
@@ -135,7 +151,7 @@ private let neverAbandoned: TimeInterval = 3600
     @Test func stopReturnsAsSoonAsTheTerminationHandlerHearsTheExit() async {
         let box = StateBox()
         let sup = DaemonSupervisor(python: URL(fileURLWithPath: "/bin/sh"), daemonDir: URL(fileURLWithPath: "/tmp"),
-                                   socketPath: "/tmp/sem-\(UUID().uuidString.prefix(8)).sock", arguments: ["-c", "exec sleep 30"],
+                                   socketPath: "/tmp/sem-\(UUID().uuidString.prefix(8)).sock", arguments: ["-c", untilStopped],
                                    logURL: logURL, bindDeadline: neverAbandoned, stopGrace: 3600) { box.append($0) }
         sup.start()
         func runningPid() -> Int32? { box.states.lazy.compactMap { if case .running(let pid) = $0 { pid } else { nil } }.first }
@@ -151,7 +167,7 @@ private let neverAbandoned: TimeInterval = 3600
     /// The wait `stop()` uses: it ends when the termination handler hears the child end, and not
     /// before; a child still running when its deadline passes is reported as such.
     @Test func aChildsWaitEndsWithItsTerminationHandler() throws {
-        let child = try ChildProcess.launch("/bin/sleep", ["30"], environment: [:], directory: nil, output: nil) { _, _ in }
+        let child = try ChildProcess.launch("/bin/sleep", ["86400"], environment: [:], directory: nil, output: nil) { _, _ in }
         #expect(!child.waitForExit(until: .now() + 0.05), "a child that is still running was reported gone")
         child.terminate()
         #expect(child.waitForExit(until: .now() + 600))
@@ -168,7 +184,7 @@ private let neverAbandoned: TimeInterval = 3600
         // A "python" that dumps the two variables we care about and then stays alive. (BSD
         // `printenv` takes a single name, hence the shell expansion.)
         let sup = DaemonSupervisor(python: URL(fileURLWithPath: "/bin/sh"), daemonDir: URL(fileURLWithPath: "/tmp"), socketPath: "/tmp/env.sock",
-                                   arguments: ["-c", "echo \"nobytecode=$PYTHONDONTWRITEBYTECODE pythonpath=$PYTHONPATH\" > '\(out.path)'; sleep 30"],
+                                   arguments: ["-c", "echo \"nobytecode=$PYTHONDONTWRITEBYTECODE pythonpath=$PYTHONPATH\" > '\(out.path)'; \(untilStopped)"],
                                    logURL: logURL, bindDeadline: neverAbandoned) { state in
             box.append(state)
         }
@@ -249,7 +265,7 @@ private let neverAbandoned: TimeInterval = 3600
         let box = StateBox()
         let recorded = Locked<[String]>([])
         let sup = DaemonSupervisor(python: URL(fileURLWithPath: "/nonexistent/python3"), daemonDir: URL(fileURLWithPath: "/tmp"), socketPath: "/tmp/y.sock", logURL: logURL,
-                                   backoff: { _ in 0.01 }, recordError: { message in recorded.withLock { $0.append(message) } }) { state in
+                                   backoff: quickFor(2), recordError: { message in recorded.withLock { $0.append(message) } }) { state in
             box.append(state)
         }
         sup.start()
@@ -272,7 +288,7 @@ private let neverAbandoned: TimeInterval = 3600
     @Test func testSupervisorAdoptsARunningDaemonInsteadOfRestarting() async {
         let box = StateBox()
         let sup = DaemonSupervisor(python: URL(fileURLWithPath: "/bin/sh"), daemonDir: URL(fileURLWithPath: "/tmp"), socketPath: "/tmp/adopt-\(UUID().uuidString).sock",
-                                   arguments: ["-c", "exit \(DaemonSupervisor.alreadyRunningExitStatus)"], logURL: logURL, adoptedProbeInterval: 30) { state in
+                                   arguments: ["-c", "exit \(DaemonSupervisor.alreadyRunningExitStatus)"], logURL: logURL, adoptedProbeInterval: neverProbed) { state in
             box.append(state)
         }
         sup.start()
@@ -336,8 +352,8 @@ while True:
     /// The supervisor's own helper: refuses (exit 3) while another serves the socket, else stays.
     private func ownHelper(_ supervisorStates: StateBox, socketPath: String) -> DaemonSupervisor {
         DaemonSupervisor(python: URL(fileURLWithPath: "/bin/sh"), daemonDir: URL(fileURLWithPath: "/tmp"), socketPath: socketPath,
-                         arguments: ["-c", "[ -S \"$0\" ] && exit \(DaemonSupervisor.alreadyRunningExitStatus); exec sleep 30", socketPath],
-                         logURL: logURL, adoptedProbeInterval: 30, bindDeadline: neverAbandoned) { supervisorStates.append($0) }
+                         arguments: ["-c", "[ -S \"$0\" ] && exit \(DaemonSupervisor.alreadyRunningExitStatus); \(untilStopped)", socketPath],
+                         logURL: logURL, adoptedProbeInterval: neverProbed, bindDeadline: neverAbandoned) { supervisorStates.append($0) }
     }
 
     // A helper of an older protocol has no pid check: a new app that adopted it would trust any
@@ -387,7 +403,7 @@ while True:
         let box = StateBox()
         let socketPath = "/tmp/ready-\(UUID().uuidString.prefix(8)).sock"
         let listening = Locked<[Bool]>([])
-        let script = "import socket,sys,time\ntime.sleep(0.3)\ns=socket.socket(socket.AF_UNIX)\ns.bind(sys.argv[1]);s.listen()\ntime.sleep(30)"
+        let script = "import socket,sys,time\ntime.sleep(0.3)\ns=socket.socket(socket.AF_UNIX)\ns.bind(sys.argv[1]);s.listen()\ntime.sleep(86400)"
         let sup = DaemonSupervisor(python: URL(fileURLWithPath: "/usr/bin/python3"), daemonDir: URL(fileURLWithPath: "/tmp"), socketPath: socketPath,
                                    arguments: ["-c", script, socketPath], logURL: logURL) { state in
             if case .listening = state { listening.withLock { $0.append(SocketProbe.isLive(path: socketPath)) } }
@@ -411,7 +427,7 @@ while True:
     @Test func testADaemonThatNeverListensIsAFailedLaunchAndIsRestarted() async {
         let box = StateBox()
         let sup = DaemonSupervisor(python: URL(fileURLWithPath: "/bin/sh"), daemonDir: URL(fileURLWithPath: "/tmp"), socketPath: "/tmp/mute-\(UUID().uuidString.prefix(8)).sock",
-                                   arguments: ["-c", "sleep 30"], logURL: logURL, bindDeadline: 0.2, backoff: { _ in 0.01 }) { state in
+                                   arguments: ["-c", untilStopped], logURL: logURL, bindDeadline: 0.2, backoff: quickFor(1)) { state in
             box.append(state)
         }
         sup.start()
@@ -488,7 +504,7 @@ while True:
         // `exec`, so no shell is left waiting on the sleep: `stop()`'s SIGTERM reaches the whole
         // process group, and a shell that outlived its sleep wrote "Terminated" into the log.
         let sup = DaemonSupervisor(python: URL(fileURLWithPath: "/bin/sh"), daemonDir: URL(fileURLWithPath: "/tmp"), socketPath: "/tmp/inode.sock",
-                                   arguments: ["-c", "echo new-daemon; exec sleep 30"], logURL: logURL, bindDeadline: neverAbandoned) { state in
+                                   arguments: ["-c", "echo new-daemon; \(untilStopped)"], logURL: logURL, bindDeadline: neverAbandoned) { state in
             box.append(state)
         }
         sup.start()

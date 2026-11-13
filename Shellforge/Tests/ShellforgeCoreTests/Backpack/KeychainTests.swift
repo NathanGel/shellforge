@@ -296,7 +296,7 @@ import Foundation
         keychain.warm()
         let result = Locked<Bool?>(nil)
         let done = DispatchSemaphore(value: 0)
-        DispatchQueue.global().async {
+        onAThreadOfItsOwn {
             let written = keychain.set("y", "2")
             result.withLock { $0 = written }
             done.signal()
@@ -326,7 +326,7 @@ import Foundation
         let keychain = Keychain(items: items, lock: VaultLock(url: other.lockURL, timeout: 0.2, waiting: { waiting.withLock { $0 = true } }))
         let result = Locked<Bool?>(nil)
         let done = DispatchSemaphore(value: 0)
-        DispatchQueue.global().async {
+        onAThreadOfItsOwn {
             let written = keychain.set("y", "2")
             result.withLock { $0 = written }
             done.signal()
@@ -400,7 +400,7 @@ import Foundation
         let keychain = Keychain(items: items, lock: VaultLock(url: other.lockURL, timeout: 600, waiting: { waiting.signal() }))
         let read = Locked<String?>(nil)
         let done = DispatchSemaphore(value: 0)
-        DispatchQueue.global().async {
+        onAThreadOfItsOwn {
             let value = keychain.get("jira.token")
             read.withLock { $0 = value }
             done.signal()
@@ -446,6 +446,13 @@ import Foundation
     }
 }
 
+/// Runs `body` on a thread started for it. Not on a dispatch queue: the parallel runner keeps the
+/// global queues' threads busy with other tests' blocking waits, and a block queued behind them
+/// there did not start within these tests' minute.
+private func onAThreadOfItsOwn(_ body: @escaping @Sendable () -> Void) {
+    Thread(block: body).start()
+}
+
 /// Another process, `lockf`, holding the vault lock on a scratch file until `release`.
 private final class OtherProcessHoldingTheLock {
     let lockURL = TestScratch.root.appendingPathComponent("vault-\(UUID().uuidString).lock")
@@ -466,7 +473,7 @@ private final class OtherProcessHoldingTheLock {
         // never says so fails the test rather than hanging it.
         let said = Locked("")
         let heard = DispatchSemaphore(value: 0)
-        DispatchQueue.global().async {
+        onAThreadOfItsOwn {
             let data = output.fileHandleForReading.availableData
             said.withLock { $0 = String(decoding: data, as: UTF8.self) }
             heard.signal()

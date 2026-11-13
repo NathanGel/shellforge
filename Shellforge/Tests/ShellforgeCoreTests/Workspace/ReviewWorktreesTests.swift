@@ -421,7 +421,9 @@ struct RacingGit: GitCommands {
         try run(["branch", "feat/mr-branch"], in: repo)
         let marker = repo + "/../review-hook-started"
         let hook = repo + "/.git/hooks/post-checkout"
-        try "#!/bin/sh\ntouch '\(marker)'\nexec /bin/sleep 60\n".write(toFile: hook, atomically: true, encoding: .utf8)
+        // Until the cancel ends it: a starved runner reached the cancel after the minute this hook
+        // used to sleep, with the review already made.
+        try "#!/bin/sh\ntouch '\(marker)'\nexec /bin/sleep 86400\n".write(toFile: hook, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: hook)
         var draft = ReviewDraft(mr: nil, agentId: "claude", model: "opus", reasoning: nil)
         draft.apply(mr: Self.mergeRequest)

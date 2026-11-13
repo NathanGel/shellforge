@@ -54,11 +54,14 @@ public enum PiModelCatalog {
         }
     }
 
+    /// How long PI has to list its models before it is killed: the five seconds `timedOut` says.
+    static let timeout: TimeInterval = 5
+
     /// PI's models, from `pi --offline --list-models`, launched through the login shell's
-    /// environment and killed after five seconds. `ModelCatalogue` is what the app asks.
+    /// environment and killed after `timeout`. `ModelCatalogue` is what the app asks.
     static func discover(executable: String, launcher: CommandLauncher) throws -> [AgentModel] {
         let result: ChildOutput
-        do { result = try launcher.run(executable, ["--offline", "--list-models"], extra: ["PI_OFFLINE": "1"], timeout: 5) }
+        do { result = try launcher.run(executable, ["--offline", "--list-models"], extra: ["PI_OFFLINE": "1"], timeout: timeout) }
         catch { throw PiModelCatalogError.unavailable }
         guard !result.timedOut else { throw PiModelCatalogError.timedOut }
         guard result.status == 0 else {

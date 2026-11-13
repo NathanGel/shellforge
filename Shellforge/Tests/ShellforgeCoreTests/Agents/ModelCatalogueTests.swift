@@ -56,15 +56,20 @@ import Testing
     @Test(.timeLimit(.minutes(1))) func aSilentPiTimesOut() throws {
         let home = try home(), bin = home.appendingPathComponent("bin")
         // By path: the launcher's PATH holds only `bin`, so a bare `sleep` would fail at once instead of hanging.
-        try script("pi", in: bin, "exec /bin/sleep 30\n")
+        // A PI that never answers: only its deadline ends it, and the time limit fails a call that
+        // waits for it.
+        try script("pi", in: bin, "exec /bin/sleep 86400\n")
         let started = Date()
         let error = #expect(throws: PiModelCatalogError.self) {
             try ModelCatalogue(home: home, launcher: launcher(bin: bin)).models(for: AgentPresets.pi)
         }
         #expect(error == .timedOut)
+        #expect(PiModelCatalog.timeout == 5)
         #expect(error?.localizedDescription == "PI didn’t answer within 5 seconds.")
+        // The deadline is not cut short. How far past it the call returns is the host's to say: a
+        // busy runner wakes the waiting thread late, so no upper bound is read off the wall clock.
         let waited = Date().timeIntervalSince(started)
-        #expect(waited > 4 && waited < 10, "PI was given \(waited) s, not its five")
+        #expect(waited >= PiModelCatalog.timeout - 0.5, "PI was given \(waited) s, not its five")
     }
 
     @Test func anAgentWithAFixedListOffersIt() throws {

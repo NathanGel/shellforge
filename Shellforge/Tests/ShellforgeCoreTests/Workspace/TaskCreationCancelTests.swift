@@ -6,10 +6,15 @@ import Testing
 /// A create that hangs in the repository's own checkout hook — a pre-commit `uv sync` — can be
 /// stopped: the hook and everything it started end, and nothing is left behind.
 @Suite struct TaskCreationCancelTests {
+    /// How long a hook's child runs: until the cancel ends it. A day, not a guess at how long the
+    /// test takes: a starved runner reached the cancel after the minute these used to sleep, with
+    /// the create already done.
+    private static let untilCancelled = "/bin/sleep 86400"
+
     /// A post-checkout hook that says it started, then takes its time, with a child of its own.
     private func slowHook(in repo: GitRepoFixture, marker: String, childPid: String) throws {
         let hook = "\(repo.path)/.git/hooks/post-checkout"
-        try "#!/bin/sh\n/bin/sleep 60 &\necho $! > '\(childPid)'\ntouch '\(marker)'\nwait\n".write(toFile: hook, atomically: true, encoding: .utf8)
+        try "#!/bin/sh\n\(Self.untilCancelled) &\necho $! > '\(childPid)'\ntouch '\(marker)'\nwait\n".write(toFile: hook, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: hook)
     }
 
@@ -85,7 +90,7 @@ import Testing
         let repo = try GitRepoFixture()
         let marker = "\(repo.path)/../stubborn-started", childPid = "\(repo.path)/../stubborn-child"
         let hook = "\(repo.path)/.git/hooks/post-checkout"
-        try "#!/bin/sh\n( trap '' TERM; exec /bin/sleep 60 ) &\necho $! > '\(childPid)'\ntouch '\(marker)'\nwait\n"
+        try "#!/bin/sh\n( trap '' TERM; exec \(Self.untilCancelled) ) &\necho $! > '\(childPid)'\ntouch '\(marker)'\nwait\n"
             .write(toFile: hook, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: hook)
         let cancellation = CreationCancellation()
