@@ -87,7 +87,7 @@ def test_the_daemon_starts_without_the_iterm2_package(tmp_path):
             "from shellforged.__main__ import main\n"
             "import shellforged.app_sessions, shellforged.service\n"
             "assert 'iterm2' not in sys.modules\n")
-    out = subprocess.run([sys.executable, "-c", code], cwd=daemon, env={"PYTHONPATH": f"{tmp_path}:{daemon}"},
+    out = subprocess.run([sys.executable, "-c", code], cwd=daemon, env={"PYTHONPATH": f"{tmp_path}:{daemon}", "PYTHONDONTWRITEBYTECODE": "1"},
                          capture_output=True, text=True, timeout=60)
     assert out.returncode == 0, out.stderr
 
