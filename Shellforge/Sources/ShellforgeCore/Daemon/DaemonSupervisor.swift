@@ -31,6 +31,9 @@ public final class DaemonSupervisor: Sendable {
     private let python: URL, daemonDir: URL, supportDirectory: URL, socketPath: String, hookPort: Int, arguments: [String]?
     private let logURL: URL
     private let adoptedProbeInterval: TimeInterval
+    /// Finds the helper already serving the socket before it is adopted (`RunningHelper.probe`).
+    private let findRunning: @Sendable (_ socketPath: String) -> RunningHelper?
+    private let replaceGrace: TimeInterval
     private let bindDeadline: TimeInterval
     private let stopGrace: TimeInterval
     private let backoff: @Sendable (_ attempt: Int) -> TimeInterval
@@ -52,8 +55,8 @@ public final class DaemonSupervisor: Sendable {
     private let state = Locked(Supervision())
     private let queue = DispatchQueue(label: "shellforge.supervisor")
 
-    public init(python: URL, daemonDir: URL, support: ShellforgeSupport = ShellforgePaths.current, socketPath: String? = nil, hookPort: Int? = nil, arguments: [String]? = nil, logURL: URL? = nil, adoptedProbeInterval: TimeInterval = 5, bindDeadline: TimeInterval = DaemonSupervisor.bindDeadline, stopGrace: TimeInterval = DaemonSupervisor.stopGracePeriod, backoff: @escaping @Sendable (_ attempt: Int) -> TimeInterval = { Backoff.delay(attempt: $0) }, recordError: @escaping @Sendable (_ message: String) -> Void = { ErrorLogging.record("daemon", $0) }, onStateChange: @escaping @Sendable (State) -> Void) {
-        self.python = python; self.daemonDir = daemonDir; self.supportDirectory = support.folder; self.socketPath = socketPath ?? support.socketPath; self.hookPort = hookPort ?? support.hookPort; self.arguments = arguments; self.logURL = logURL ?? support.daemonLogURL; self.adoptedProbeInterval = adoptedProbeInterval; self.bindDeadline = bindDeadline; self.stopGrace = stopGrace; self.backoff = backoff; self.recordError = recordError; self.onStateChange = onStateChange
+    public init(python: URL, daemonDir: URL, support: ShellforgeSupport = ShellforgePaths.current, socketPath: String? = nil, hookPort: Int? = nil, arguments: [String]? = nil, logURL: URL? = nil, adoptedProbeInterval: TimeInterval = 5, findRunning: @escaping @Sendable (_ socketPath: String) -> RunningHelper? = { RunningHelper.probe(socketPath: $0) }, replaceGrace: TimeInterval = DaemonSupervisor.replaceGracePeriod, bindDeadline: TimeInterval = DaemonSupervisor.bindDeadline, stopGrace: TimeInterval = DaemonSupervisor.stopGracePeriod, backoff: @escaping @Sendable (_ attempt: Int) -> TimeInterval = { Backoff.delay(attempt: $0) }, recordError: @escaping @Sendable (_ message: String) -> Void = { ErrorLogging.record("daemon", $0) }, onStateChange: @escaping @Sendable (State) -> Void) {
+        self.python = python; self.daemonDir = daemonDir; self.supportDirectory = support.folder; self.socketPath = socketPath ?? support.socketPath; self.hookPort = hookPort ?? support.hookPort; self.arguments = arguments; self.logURL = logURL ?? support.daemonLogURL; self.adoptedProbeInterval = adoptedProbeInterval; self.findRunning = findRunning; self.replaceGrace = replaceGrace; self.bindDeadline = bindDeadline; self.stopGrace = stopGrace; self.backoff = backoff; self.recordError = recordError; self.onStateChange = onStateChange
     }
 
     public func start() {
@@ -225,9 +228,54 @@ public final class DaemonSupervisor: Sendable {
         // A daemon that refused to start because one is already running is not a crash: the app
         // wants *that* daemon. Restarting instead is what produced the "Daemon keeps exiting"
         // loop, since every retry hit the same live socket.
-        if status == Self.alreadyRunningExitStatus { adopt(); return }
+        if status == Self.alreadyRunningExitStatus { adoptOrReplace(); return }
         state.withLock { if Date().timeIntervalSince($0.startedAt) > 60 { $0.attempt = 0 } }
         recordFailure(message: "exited with status \(status)")
+    }
+
+    /// How long a replaced helper has to end on SIGTERM before SIGKILL. Its graceful end stops its
+    /// tunnels and leaves the keep-running ones in the ledger (`tunnels.json`) for the next helper to
+    /// take back; that can take a few seconds while each ssh is asked to stop.
+    public static let replaceGracePeriod: TimeInterval = 10
+
+    /// The helper serving the socket is adopted, unless it speaks an older protocol than this app:
+    /// that one (protocol 2 and before) has no pid check, so it is ended and this app's own started,
+    /// with no "another version" banner. Its keep-running tunnels survive in the ledger, and the
+    /// new helper adopts them as it would after any restart.
+    private func adoptOrReplace() {
+        guard let running = findRunning(socketPath), running.isOlder else { adopt(); return }
+        daemonLog.notice("Replacing a helper that speaks protocol \(running.protocolVersion) (this app \(DaemonProtocol.version)), pid \(running.pid)")
+        onStateChange(.starting)
+        Darwin.kill(running.pid, SIGTERM)
+        awaitGone(running.pid, since: Date(), killed: false)
+    }
+
+    /// Waits for a replaced helper to exit, then launches this app's own. One still there after
+    /// `replaceGrace` gets SIGKILL; the ledger it last wrote still lists its tunnels, and the next
+    /// helper ends the ones that do not keep running.
+    private func awaitGone(_ pid: pid_t, since: Date, killed: Bool) {
+        schedule(after: 0.05) { supervisor in
+            if Self.hasExited(pid) { supervisor.launch(); return }
+            let elapsed = Date().timeIntervalSince(since)
+            if !killed, elapsed >= supervisor.replaceGrace {
+                Darwin.kill(pid, SIGKILL)
+                supervisor.awaitGone(pid, since: since, killed: true)
+            } else if killed, elapsed >= supervisor.replaceGrace + Self.killGracePeriod * 4 {
+                // Not gone even after SIGKILL: launch anyway; it exits 3 again while the old one
+                // holds the socket, and is adopted or replaced by the same path.
+                supervisor.launch()
+            } else {
+                supervisor.awaitGone(pid, since: since, killed: killed)
+            }
+        }
+    }
+
+    /// Gone, or a zombie its parent has not reaped yet: either way it has run its last code.
+    static func hasExited(_ pid: pid_t) -> Bool {
+        if Darwin.kill(pid, 0) != 0 { return errno == ESRCH }
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        return proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size && info.pbi_status == UInt32(SZOMB)
     }
 
     private func adopt() {

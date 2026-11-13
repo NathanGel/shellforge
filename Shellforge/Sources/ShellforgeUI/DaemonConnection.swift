@@ -15,20 +15,29 @@ final class DaemonConnection {
     /// How long a connection must hold after its snapshot for its end to start the backoff over,
     /// and, after one that ended as a mismatch, for what it says to be shown.
     private let steadyAfter: Duration
+    /// How long a refusal (`unknown_method`, `unauthorized`) from a helper this launch adopted is
+    /// taken as one still going away rather than one of another version; zero when the helper was
+    /// not adopted. After a crash, a fast relaunch can reach the old helper before it hears its
+    /// app is gone and quits: what it refuses then is no reason to say "another version".
+    private let refusalGrace: Duration
     private var lifetime: Task<Void, Never>?
     private var client: DaemonClient?
 
     init(socketPath: String, onClient: @escaping @MainActor (DaemonClient?) -> Void,
          onStatus: @escaping @MainActor (HelperStatus) -> Void, onEvent: @escaping @MainActor (DaemonEvent) -> Void,
          backoff: @escaping @Sendable (_ attempt: Int) -> TimeInterval = { Backoff.delay(attempt: $0) },
-         steadyAfter: Duration = .seconds(5)) {
+         steadyAfter: Duration = .seconds(5), refusalGrace: Duration = .zero) {
         self.socketPath = socketPath
         self.onClient = onClient
         self.onStatus = onStatus
         self.onEvent = onEvent
         self.backoff = backoff
         self.steadyAfter = steadyAfter
+        self.refusalGrace = refusalGrace
     }
+
+    /// The grace `DaemonLink` gives a connection to a helper it adopted.
+    static let adoptedRefusalGrace: Duration = .seconds(10)
 
     /// The retry loop holds this connection for as long as it runs, so releasing the connection
     /// does not end it: `stop()` does.
@@ -56,6 +65,7 @@ final class DaemonConnection {
         // after a connection that held. The retries after it, every few seconds while the helper
         // is down, would write thousands of lines a day about one problem.
         var recordsConnectFailure = true
+        let began = ContinuousClock.now
         while !Task.isCancelled {
             let connection = DaemonClient(socketPath: socketPath)
             client = connection
@@ -71,7 +81,7 @@ final class DaemonConnection {
             }
             do {
                 try await BackgroundWork.run { try connection.connect() }
-                let snapshot = try await connection.snapshot()
+                _ = try await connection.snapshot()
                 try Task.checkCancellation()
                 onClient(connection)
                 statuses.report(.connected)
@@ -107,7 +117,8 @@ final class DaemonConnection {
                     // with a shape this app's `Decodable`s reject — is not the same as one that is
                     // merely unreachable; retrying at it forever would never fix either.
                     if let error = error as? DaemonError, error.isMismatch {
-                        ended(.helperMismatch)
+                        let refusal = error.code == .unknownMethod || error.code == .unauthorized
+                        ended(refusal && ContinuousClock.now - began < refusalGrace ? .helperUnreachable : .helperMismatch)
                     } else if error is DecodingError {
                         ended(.helperMismatch)
                     } else { ended(.helperUnreachable) }

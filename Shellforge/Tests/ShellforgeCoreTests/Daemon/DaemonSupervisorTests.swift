@@ -308,6 +308,77 @@ private let neverAbandoned: TimeInterval = 3600
         #expect(startsAfterFirstAdoption() >= 1, "a vanished adopted daemon must be replaced, got \(box.states)")
     }
 
+    /// A helper from before the pid check (an older protocol), still serving the socket after an
+    /// update: it answers `workspace.snapshot` with its version, and on SIGTERM leaves a marker
+    /// (as the real one writes its tunnel ledger) and removes its socket.
+    @MainActor private func oldHelper(version: Int, marker: String) async throws -> PythonSocketServer {
+        try await PythonSocketServer.start(script: """
+import json,os,signal,socket,sys
+def term(*_):
+    open(sys.argv[2],'w').write('term')
+    os.unlink(sys.argv[1])
+    os._exit(0)
+signal.signal(signal.SIGTERM, term)
+s=socket.socket(socket.AF_UNIX)
+s.bind(sys.argv[1]);s.listen()
+while True:
+ c,_=s.accept()
+ with c:
+  f=c.makefile('rb')
+  line=f.readline()
+  if line:
+   m=json.loads(line)
+   c.sendall((json.dumps({'id':m['id'],'result':{'protocolVersion':int(sys.argv[3])}})+'\\n').encode())
+  f.close()
+""", arguments: [marker, String(version)])
+    }
+
+    /// The supervisor's own helper: refuses (exit 3) while another serves the socket, else stays.
+    private func ownHelper(_ supervisorStates: StateBox, socketPath: String) -> DaemonSupervisor {
+        DaemonSupervisor(python: URL(fileURLWithPath: "/bin/sh"), daemonDir: URL(fileURLWithPath: "/tmp"), socketPath: socketPath,
+                         arguments: ["-c", "[ -S \"$0\" ] && exit \(DaemonSupervisor.alreadyRunningExitStatus); exec sleep 30", socketPath],
+                         logURL: logURL, adoptedProbeInterval: 30, bindDeadline: neverAbandoned) { supervisorStates.append($0) }
+    }
+
+    // A helper of an older protocol has no pid check: a new app that adopted it would trust any
+    // process of the user. So it is ended (SIGTERM, which lets it write its tunnel ledger) and
+    // this app's own started, with no adoption and so no "another version" banner.
+    @MainActor @Test func anOlderHelperIsReplacedNotAdopted() async throws {
+        let marker = TestScratch.root.appendingPathComponent("old-helper-\(UUID().uuidString)").path
+        defer { try? FileManager.default.removeItem(atPath: marker) }
+        let old = try await oldHelper(version: DaemonProtocol.version - 1, marker: marker)
+        defer { old.stop() }
+        let found = RunningHelper.probe(socketPath: old.path)
+        #expect(found?.protocolVersion == DaemonProtocol.version - 1 && found?.isOlder == true, "got \(String(describing: found))")
+        let box = StateBox()
+        let sup = ownHelper(box, socketPath: old.path)
+        sup.start()
+        await eventually { box.runningCount >= 2 }
+        sup.stop()
+
+        #expect(FileManager.default.fileExists(atPath: marker), "the old helper must be asked to stop with SIGTERM")
+        #expect(!box.states.contains(.adopted), "got \(box.states)")
+        #expect(!box.states.contains { if case .failed = $0 { true } else { false } }, "got \(box.states)")
+        #expect(!old.isRunning || DaemonSupervisor.hasExited(found?.pid ?? 0))
+    }
+
+    // One of this app's own protocol is adopted as before, and left running.
+    @MainActor @Test func aHelperOfThisProtocolIsAdopted() async throws {
+        let marker = TestScratch.root.appendingPathComponent("same-helper-\(UUID().uuidString)").path
+        defer { try? FileManager.default.removeItem(atPath: marker) }
+        let same = try await oldHelper(version: DaemonProtocol.version, marker: marker)
+        defer { same.stop() }
+        let box = StateBox()
+        let sup = ownHelper(box, socketPath: same.path)
+        sup.start()
+        await eventually { box.states.contains(.adopted) }
+        sup.stop()
+
+        #expect(box.states.contains(.adopted), "got \(box.states)")
+        #expect(!FileManager.default.fileExists(atPath: marker))
+        #expect(same.isRunning)
+    }
+
     // The app connects when the supervisor says the daemon is there. A daemon binds its
     // socket only after Python has imported its modules and started asyncio, so reporting it on spawn
     // sent the first connect into a missing socket: a "Reconnecting to AiTerm's helper…" banner on

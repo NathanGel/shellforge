@@ -58,9 +58,9 @@ public final class DaemonLink: ObservableObject {
             return
         }
         let findPython = self.findPython, support = self.support, socketPath = self.socketPath
-        startup = Task {
+        startup = Task { [weak self] in
             let found = await BackgroundWork.run { findPython() }
-            guard !Task.isCancelled, running else { return }
+            guard let self, !Task.isCancelled, running else { return }
             guard let python = found else { status = .pythonMissing; return }
             supervisor = DaemonSupervisor(python: python, daemonDir: daemonDir, support: support, socketPath: socketPath) { [weak self] state in
                 Task { @MainActor in self?.supervisorChanged(state) }
@@ -216,7 +216,8 @@ public final class DaemonLink: ObservableObject {
                 connection = DaemonConnection(socketPath: socketPath,
                     onClient: { [weak self] in self?.attached($0) },
                     onStatus: { [weak self] in self?.connectionSaid($0) },
-                    onEvent: { [weak self] in self?.store.apply($0) })
+                    onEvent: { [weak self] in self?.store.apply($0) },
+                    refusalGrace: state == .adopted ? DaemonConnection.adoptedRefusalGrace : .zero)
             }
             connection?.start()
         // One failure is a restart in progress; from the second on the helper is stuck.

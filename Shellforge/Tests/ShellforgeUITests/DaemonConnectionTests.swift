@@ -20,7 +20,7 @@ while True:
   f=c.makefile('rb')
   for line in f:
    m=json.loads(line)
-   result={'protocolVersion':2,'connected':True,'sessions':[],'usage':{'claude':None,'codex':None}}
+   result={'protocolVersion':\(DaemonProtocol.version),'connected':True,'sessions':[],'usage':{'claude':None,'codex':None}}
    c.sendall((json.dumps({'id':m['id'],'result':result})+'\\n').encode())
    if count==1: break
   f.close()
@@ -70,6 +70,60 @@ with c:
         await eventually { !states.isEmpty }
 
         #expect(states.first == .helperMismatch, "a snapshot the app cannot decode must not be blamed on an unreachable helper, got \(states)")
+    }
+
+    /// After a crash, a fast relaunch can adopt the old helper before it quits; that one refuses
+    /// this app (`unauthorized`). For a helper this launch adopted, such a refusal is retried as an
+    /// unreachable helper for a while, and only then said to be another version.
+    @Test func anAdoptedHelperThatRefusesIsRetriedBeforeItIsAMismatch() async throws {
+        let server = try await PythonSocketServer.start(script: """
+import json,socket,sys
+s=socket.socket(socket.AF_UNIX)
+s.bind(sys.argv[1]);s.listen()
+while True:
+ c,_=s.accept()
+ with c:
+  f=c.makefile('rb')
+  for line in f:
+   m=json.loads(line)
+   c.sendall((json.dumps({'id':m['id'],'error':{'code':'unauthorized','message':'not the app'}})+'\\n').encode())
+  f.close()
+""")
+        defer { server.stop() }
+        var states: [HelperStatus] = []
+        let connection = DaemonConnection(socketPath: server.path, onClient: { _ in },
+                                          onStatus: { if states.last != $0 { states.append($0) } }, onEvent: { _ in },
+                                          backoff: { _ in 0.01 }, refusalGrace: .milliseconds(300))
+        connection.start()
+        defer { connection.stop() }
+        await eventually { states.contains(.helperMismatch) }
+
+        #expect(states.first == .helperUnreachable, "a refusal within the grace is retried, got \(states)")
+        #expect(states.last == .helperMismatch, "and said to be another version after it, got \(states)")
+    }
+
+    /// Without the grace (a helper this app started), a refusal is a mismatch at once.
+    @Test func aRefusalFromAHelperNotAdoptedIsAMismatchAtOnce() async throws {
+        let server = try await PythonSocketServer.start(script: """
+import json,socket,sys
+s=socket.socket(socket.AF_UNIX)
+s.bind(sys.argv[1]);s.listen()
+c,_=s.accept()
+with c:
+ f=c.makefile('rb')
+ for line in f:
+  m=json.loads(line)
+  c.sendall((json.dumps({'id':m['id'],'error':{'code':'unknown_method','message':'no such method'}})+'\\n').encode())
+""")
+        defer { server.stop() }
+        var states: [HelperStatus] = []
+        let connection = DaemonConnection(socketPath: server.path, onClient: { _ in },
+                                          onStatus: { if states.last != $0 { states.append($0) } }, onEvent: { _ in })
+        connection.start()
+        defer { connection.stop() }
+        await eventually { !states.isEmpty }
+
+        #expect(states.first == .helperMismatch, "got \(states)")
     }
 
     /// A helper that sends an event this app knows but cannot read sends it again
@@ -124,7 +178,7 @@ while True:
   f=c.makefile('rb')
   for line in f:
    m=json.loads(line)
-   result={'protocolVersion':2,'connected':True,'sessions':[],'usage':{'claude':None,'codex':None}}
+   result={'protocolVersion':\(DaemonProtocol.version),'connected':True,'sessions':[],'usage':{'claude':None,'codex':None}}
    c.sendall((json.dumps({'id':m['id'],'result':result})+'\\n').encode())
    # session.changed without the session it is about: a shape this app cannot read.
    if count<=unreadable: c.sendall((json.dumps({'event':'session.changed','payload':{'sessionId':'s1'}})+'\\n').encode())
@@ -175,7 +229,7 @@ with c:
  f=c.makefile('rb')
  line=f.readline()
  m=json.loads(line)
- result={'protocolVersion':2,'connected':True,'sessions':[],'usage':{'claude':None,'codex':None}}
+ result={'protocolVersion':\(DaemonProtocol.version),'connected':True,'sessions':[],'usage':{'claude':None,'codex':None}}
  c.sendall((json.dumps({'id':m['id'],'result':result})+'\\n').encode())
 """, arguments: [path])
             defer { server.stop() }
@@ -201,7 +255,7 @@ with c:
  for line in f:
   m=json.loads(line)
   c.sendall((json.dumps({'event':'session.closed','payload':{'sessionId':'early'}})+'\\n').encode())
-  result={'protocolVersion':2,'connected':True,'sessions':[],'usage':{'claude':None,'codex':None}}
+  result={'protocolVersion':\(DaemonProtocol.version),'connected':True,'sessions':[],'usage':{'claude':None,'codex':None}}
   c.sendall((json.dumps({'id':m['id'],'result':result})+'\\n').encode())
   c.sendall((json.dumps({'event':'session.closed','payload':{'sessionId':'late'}})+'\\n').encode())
 """)

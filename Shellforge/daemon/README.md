@@ -5,7 +5,7 @@ context and token counts, and tracks usage. It was copied from AiTerm's daemon (
 
     python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'   # once
     .venv/bin/python -m shellforged run                          # sessions from the app
-    .venv/bin/python -m shellforged ctl sessions.list            # ask a running daemon
+    .venv/bin/python -m shellforged ctl sessions.list            # ask a daemon run by hand
     .venv/bin/pytest -q                                          # tests
 
 It keeps its socket (`shellforged.sock`), `daemon.json`, log and `hook-port` in
@@ -35,9 +35,11 @@ its caller's terminal itself. Any other process of the same user gets `unauthori
 `unknown_method` for `workspace.snapshot`, which an app from before this check reads as a helper
 of another version. The daemon quits as soon as that process exits (a kqueue `NOTE_EXIT`), so no
 later process can be handed the trusted pid and a relaunch starts a fresh daemon rather than
-adopting this one. Run by hand without `--app-pid`, as with `ctl`, every connection is the app's.
+adopting this one. Run by hand without `--app-pid`, every connection is the app's, so `ctl` can
+call the app's methods (`sessions.list`, `tunnels.list`) only against such a helper: against the
+app's own, it gets `unauthorized`.
 
-`workspace.snapshot` returns protocol version 2, iTerm2 availability, tagged sessions, and
+`workspace.snapshot` returns protocol version 3, iTerm2 availability, tagged sessions, and
 usage. The server writes this response before yielding; the Swift client places it in its
 event stream as a bootstrap barrier. Events before the barrier are discarded. A disconnected
 snapshot does not prove any window closed. Event overflow or malformed framing closes the
@@ -46,8 +48,11 @@ have a two-second drain deadline. Swift requests time out after 15 seconds and c
 
 `window.createTask` serializes creation and checks existing tagged sessions first. Retrying
 the same task ID returns its existing window without replaying an agent command. This works
-after a helper restart because tags live in iTerm2. The app refuses incompatible snapshots
-and does not terminate a helper it adopted from another app process.
+after a helper restart because tags live in iTerm2. The app refuses incompatible snapshots.
+When it finds a helper of an older protocol already serving the socket (one from before the pid
+check, still running after an update), it ends that helper with SIGTERM and starts its own; the old
+helper's keep-running tunnels stay in the ledger and the new one adopts them. Any other helper it
+finds is adopted and never terminated.
 
 Hook events report agent activity only. The helper does not rewrite shell commands, schedule
 checkout deletion, or close windows after Stop. Cleanup is an explicit app action.

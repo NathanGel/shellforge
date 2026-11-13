@@ -135,7 +135,7 @@
     "window.setFrame",
     "workspace.snapshot"
   ],
-  "protocolVersion": 2,
+  "protocolVersion": 3,
   "sessionAgents": [
     "claude",
     "codex",
