@@ -455,8 +455,9 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
 
 - **What it is.** A small Python process that tracks each tab's agent, status, model, context and tokens, reads usage, and runs tunnels.
   - Agents report to it through their hooks, on `127.0.0.1:47831`.
-  - The app tells it which sessions are open.
-- **When it runs.** It starts with Shellforge and needs Python 3.11 or newer on your login PATH. It restarts after a crash, waiting longer each time. One left running from before is picked up. It stops when Shellforge quits.
+  - The app tells it which sessions are open. Only the Shellforge that started the helper can do that, or start tunnels and agents through it: another program, even one of yours, is refused.
+  - Known risk: on a Mac shared by several accounts, another account can post status to the hook port or listen on it while Shellforge isn't running.
+- **When it runs.** It starts with Shellforge and needs Python 3.11 or newer on your login PATH. It restarts after a crash, waiting longer each time. It stops when the Shellforge that started it quits or crashes; the next launch starts a new one.
 - **Its files** are in `~/Library/Application Support/Shellforge/`: the socket, `shellforged.log`, `daemon.json`, `tunnels.json` and `hook-port`. A dev build's helper keeps its own in the dev build's data folder, on a port of its own.
 - **Messages it can cause:**
   - starting or reconnecting;

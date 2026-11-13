@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import ShellforgeUI
+@testable import ShellforgeTestSupport
 
 /// iTerm2 posts a notification per title change — several a second while an agent works — and each
 /// rebuilt the sidebar and resent the session list. A burst in one run-loop turn is one change.
@@ -29,10 +30,10 @@ import Testing
         await Task.yield()
         coalescer.signal()
         #expect(fired == 0, "nothing fires before the delay")
-        while fired == 0 { try? await Task.sleep(for: .milliseconds(10)) }
+        #expect(await eventually { fired >= 1 })
         coalescer.signal()
         #expect(fired == 1, "both signals before the delay were one fire")
-        while fired == 1 { try? await Task.sleep(for: .milliseconds(10)) }
+        #expect(await eventually { fired >= 2 })
         #expect(fired == 2)
     }
 }

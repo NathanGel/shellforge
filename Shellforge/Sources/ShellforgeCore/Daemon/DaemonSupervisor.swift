@@ -132,8 +132,12 @@ public final class DaemonSupervisor: Sendable {
 
     /// Sessions come from the app (`sessions.update`), so no iTerm2 cookie is asked for.
     /// The helper keeps its own files (`daemon.json`, `helper-python`) in `supportDirectory`.
-    static func arguments(supportDirectory: URL, socketPath: String, hookPort: Int) -> [String] {
-        ["-m", "shellforged", "run", "--support-dir", supportDirectory.path, "--socket", socketPath, "--hook-port", String(hookPort)]
+    /// `--app-pid` is this process: the helper answers the app's methods only on a connection from
+    /// it (by the socket's peer pid), and quits when it exits, so a later launch never adopts a
+    /// helper that trusts a pid that is no longer the app; it starts its own.
+    static func arguments(supportDirectory: URL, socketPath: String, hookPort: Int, appPid: Int32 = getpid()) -> [String] {
+        ["-m", "shellforged", "run", "--support-dir", supportDirectory.path, "--socket", socketPath, "--hook-port", String(hookPort),
+         "--app-pid", String(appPid)]
     }
 
     /// The app's environment minus its launch identity (`LoginEnvironment.forChildren`): a child that

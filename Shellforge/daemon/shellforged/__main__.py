@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import select
 import signal
 import sys
 import time
@@ -94,6 +95,9 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--support-dir", help=support_help)
     run.add_argument("--socket", help="default: shellforged.sock in the support folder")
     run.add_argument("--hook-port", type=int, default=DEFAULT_HOOK_PORT)
+    run.add_argument("--app-pid", type=int,
+                     help="the app that starts the helper: only it may call the app's methods, and the helper "
+                          "quits when it exits (default: none, every connection is the app's, for a helper run by hand)")
     run.add_argument("--log-level", default="INFO")
     run.add_argument("--idle-exit-seconds", type=float, default=IDLE_EXIT_SECONDS,
                      help="quit after this long with no client attached (0 disables)")
@@ -132,6 +136,35 @@ async def ctl_request(socket_path: str, method: str, params: Any) -> dict[str, A
     raise RuntimeError("daemon closed the connection")
 
 
+def watch_exit(pid: int, on_exit: Callable[[], None]) -> Callable[[], None]:
+    """Calls `on_exit` once, on the event loop, when process `pid` exits, at once when it already has.
+    The app's pid is trusted for the app's methods (`RpcServer.app_pid`), so the helper must not
+    outlive it: another process could be given that pid later. A kqueue NOTE_EXIT, so no polling.
+    Returns what stops watching."""
+    loop = asyncio.get_running_loop()
+    queue = select.kqueue()
+    try:
+        queue.control([select.kevent(pid, select.KQ_FILTER_PROC, select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
+                                     select.KQ_NOTE_EXIT)], 0)
+    except ProcessLookupError:
+        queue.close()
+        loop.call_soon(on_exit)
+        return lambda: None
+
+    def exited() -> None:
+        stop_watching()
+        on_exit()
+
+    def stop_watching() -> None:
+        if queue.closed:
+            return
+        loop.remove_reader(queue.fileno())
+        queue.close()
+
+    loop.add_reader(queue.fileno(), exited)
+    return stop_watching
+
+
 async def run_daemon(ns: argparse.Namespace) -> None:
     from .claude_sessions import ClaudeSessionFiles
     from .codex_sessions import CodexSessionFiles
@@ -151,7 +184,7 @@ async def run_daemon(ns: argparse.Namespace) -> None:
     else:
         from .app_sessions import AppSessions
         iterm = AppSessions()
-    rpc = RpcServer(ns.socket)
+    rpc = RpcServer(ns.socket, app_pid=ns.app_pid)
     # A cookie is for iTerm2's Python API: with the app as the source there is none to ask for.
     supervisor = ItermSupervisor(iterm, rpc.broadcast, lambda: rpc.client_count,
                                  cookies_from_app=ns.cookies_from_app and ns.session_source == "iterm")
@@ -159,6 +192,8 @@ async def run_daemon(ns: argparse.Namespace) -> None:
                   claude_files=ClaudeSessionFiles(), codex_files=CodexSessionFiles(),
                   clock=time.time, supervisor=supervisor, tunnel_ledger=Path(ns.socket).parent / "tunnels.json")
     await svc.start()
+    # Not adopted by a later app once its own is gone: it would trust a pid that no longer is the app.
+    stop_watching_app = watch_exit(ns.app_pid, stop.set) if ns.app_pid is not None else (lambda: None)
     watchdog = asyncio.get_running_loop().create_task(
         IdleWatchdog(lambda: rpc.client_count, ns.idle_exit_seconds, stop.set, check_seconds=IDLE_CHECK_SECONDS).run())
     folder: Path = ns.support_dir
@@ -173,6 +208,7 @@ async def run_daemon(ns: argparse.Namespace) -> None:
     try:
         await stop.wait()
     finally:
+        stop_watching_app()
         watchdog.cancel()
         await asyncio.gather(watchdog, return_exceptions=True)
         await svc.stop()

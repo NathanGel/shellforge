@@ -5,6 +5,7 @@
     "iterm_unavailable",
     "not_found",
     "protocol",
+    "unauthorized",
     "unknown_method"
   ],
   "events": [
@@ -27,6 +28,7 @@
       "iterm_unavailable": "error.iterm_unavailable.json",
       "not_found": "error.not_found.json",
       "protocol": "error.protocol.json",
+      "unauthorized": "error.unauthorized.json",
       "unknown_method": "error.unknown_method.json"
     },
     "events": {

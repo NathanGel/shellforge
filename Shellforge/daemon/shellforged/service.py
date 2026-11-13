@@ -223,7 +223,9 @@ class Service:
         r("tunnels.list", self._h_tunnels_list)
         r("tunnels.hold", self._h_tunnels_hold)
         r("agents.armLaunch", self._h_arm_launch)
-        self.rpc.register_with_caller("agents.takeLaunch", self._h_take_launch)
+        # shellforge-run's, from the agent's tab: the one method any connection may call, since the
+        # tab's own process proves itself by its terminal (`_take_allowed`). Every other is the app's.
+        self.rpc.register_with_caller("agents.takeLaunch", self._h_take_launch, public=True)
 
     async def _h_snapshot(self, _p: Any) -> dict[str, Any]:
         try:

@@ -54,9 +54,9 @@ import Testing
     /// The helper is started with the folder's own socket, port and `--support-dir`.
     @Test func theHelperIsStartedInTheFolder() {
         let support = ShellforgeSupport(folder: devFolder, home: home)
-        #expect(DaemonSupervisor.arguments(supportDirectory: support.folder, socketPath: support.socketPath, hookPort: support.hookPort)
+        #expect(DaemonSupervisor.arguments(supportDirectory: support.folder, socketPath: support.socketPath, hookPort: support.hookPort, appPid: 4242)
                 == ["-m", "shellforged", "run", "--support-dir", devFolder.path, "--socket", devFolder.path + "/shellforged.sock",
-                    "--hook-port", String(support.hookPort)])
+                    "--hook-port", String(support.hookPort), "--app-pid", "4242"])
     }
 
     private static var hooksFolder: URL {

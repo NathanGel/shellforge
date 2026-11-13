@@ -358,3 +358,31 @@ async def test_a_caller_handler_is_told_the_peers_pid_and_whether_it_left(server
     await wait_until(lambda: server.client_count == 0)
     assert seen[0].gone()
     assert "who" in server.methods
+
+
+async def test_only_the_apps_process_calls_methods_not_registered_public(sock_dir):
+    """S-V6: the pid the kernel gives for the connection, not anything the caller sends."""
+    srv = RpcServer(os.path.join(sock_dir, "p.sock"), app_pid=os.getpid() + 1)
+
+    async def ok(_p):
+        return {"ok": True}
+
+    async def take(_p, caller):
+        return {"pid": caller.pid}
+
+    srv.register("sessions.update", ok)
+    srv.register("workspace.snapshot", ok)
+    srv.register_with_caller("agents.takeLaunch", take, public=True)
+    await srv.start()
+    try:
+        r, w = await _client(srv.path)
+        refused = await _call(r, w, {"id": 1, "method": "sessions.update", "params": {}})
+        assert refused["error"]["code"] == "unauthorized"
+        # What an older app reads as a helper of another version.
+        assert (await _call(r, w, {"id": 2, "method": "workspace.snapshot"}))["error"]["code"] == "unknown_method"
+        assert (await _call(r, w, {"id": 3, "method": "agents.takeLaunch"}))["result"] == {"pid": os.getpid()}
+        srv.app_pid = os.getpid()
+        assert (await _call(r, w, {"id": 4, "method": "sessions.update", "params": {}}))["result"] == {"ok": True}
+        w.close()
+    finally:
+        await srv.stop()

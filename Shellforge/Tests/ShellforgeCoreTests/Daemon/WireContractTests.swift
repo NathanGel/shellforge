@@ -100,7 +100,7 @@ import Testing
         #expect(error.code == code)
         #expect(!error.message.isEmpty)
         #expect(error.isNotFound == (code == .notFound))
-        #expect(error.isMismatch == (code == .unknownMethod))
+        #expect(error.isMismatch == (code == .unknownMethod || code == .unauthorized))
     }
 
     /// What the app read is what the daemon sent: every field the daemon sent, at every level, is

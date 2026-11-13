@@ -9,8 +9,22 @@ from pathlib import Path
 
 import pytest
 
-from shellforged.__main__ import EXIT_ALREADY_RUNNING, IDLE_EXIT_SECONDS, IdleWatchdog, ctl_request, main, parse_args
+from shellforged.__main__ import (EXIT_ALREADY_RUNNING, IDLE_EXIT_SECONDS, IdleWatchdog, ctl_request, main, parse_args,
+                                  support_dir)
 from tests.conftest import wait_until
+
+REAL_SUPPORT = Path.home() / "Library" / "Application Support" / "Shellforge"
+
+
+@pytest.fixture(autouse=True)
+def scratch_home(tmp_path_factory, monkeypatch):
+    """No test here runs a helper in the real home: HOME and SHELLFORGE_SUPPORT point at a scratch
+    folder, so a helper started without --support-dir writes there."""
+    home = tmp_path_factory.mktemp("home")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("SHELLFORGE_SUPPORT", raising=False)
+    assert support_dir() == home / "Library" / "Application Support" / "Shellforge" != REAL_SUPPORT
+    return home
 
 
 def test_parser_defaults(tmp_path, monkeypatch):
@@ -96,7 +110,9 @@ def test_run_exits_with_already_running_status_without_touching_iterm2(capsys, s
     srv_sock.bind(sock_path)
     srv_sock.listen(1)
     try:
-        result = main(["run", "--socket", sock_path, "--hook-port", "0"])
+        support = os.path.join(sock_dir, "support")
+        result = main(["run", "--support-dir", support, "--socket", sock_path, "--hook-port", "0"])
+        assert not os.path.exists(os.path.join(support, "daemon.json"))
         # A status of its own, not the generic 1: it is what lets the supervisor tell
         # "another daemon owns the socket" (adopt it) from "the daemon crashed"
         # (restart it). Sharing 1 made the app restart-loop forever against an orphan.
@@ -114,7 +130,8 @@ def test_run_reports_a_hook_port_in_use_cleanly(capsys, sock_dir):
     blocker.listen(1)
     try:
         sock_path = os.path.join(sock_dir, "s.sock")
-        result = main(["run", "--socket", sock_path, "--hook-port", str(blocker.getsockname()[1])])
+        support = os.path.join(sock_dir, "support")
+        result = main(["run", "--support-dir", support, "--socket", sock_path, "--hook-port", str(blocker.getsockname()[1])])
         assert result == 1
         err = capsys.readouterr().err
         assert "Traceback" not in err and "could not start" in err
@@ -218,6 +235,73 @@ async def test_run_daemon_quits_once_its_last_app_has_left(monkeypatch, tmp_path
         w.close()
         await asyncio.wait_for(daemon, 2)
         assert not os.path.exists(sock)
+    finally:
+        daemon.cancel()
+        await asyncio.gather(daemon, return_exceptions=True)
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            asyncio.get_running_loop().remove_signal_handler(sig)
+
+
+async def _ask(sock, method, params=None):
+    r, w = await asyncio.open_unix_connection(sock)
+    w.write(json.dumps({"id": 1, "method": method, "params": params}).encode() + b"\n")
+    await w.drain()
+    try:
+        while True:
+            reply = json.loads(await asyncio.wait_for(r.readline(), 5))
+            if reply.get("id") == 1:
+                return reply
+    finally:
+        w.close()
+
+
+async def test_only_the_app_that_started_the_helper_calls_its_methods_and_its_exit_ends_the_helper(tmp_path, sock_dir, monkeypatch):
+    """S-V6: started with another process's pid as the app's, this test's process is any other
+    process of the same user. It cannot replace the sessions, arm a launch or read the snapshot,
+    which an older app reads as a helper of another version; shellforge-run's take stays open.
+    When that app exits, the helper quits rather than trust its pid for the next process."""
+    import shellforged.__main__ as entry
+    from shellforged import service
+
+    monkeypatch.setattr(service, "TAKE_WAIT_SECONDS", 0.05)  # nothing is armed: not_found, soon
+    app = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    sock = os.path.join(sock_dir, "a.sock")
+    ns = parse_args(["run", "--support-dir", str(tmp_path / "support"), "--socket", sock, "--hook-port", "0",
+                     "--app-pid", str(app.pid), "--idle-exit-seconds", "0"])
+    daemon = asyncio.create_task(entry.run_daemon(ns))
+    try:
+        await wait_until(lambda: os.path.exists(tmp_path / "support" / "daemon.json"))
+        forged = {"sessions": [{"sessionId": "w0t0p0:FORGED", "windowId": "w0", "tabIndex": 0, "jobPid": os.getpid()}]}
+        for method, params in (("sessions.update", forged), ("agents.armLaunch", {"sessionId": "s", "agentId": "a", "environment": {}}),
+                               ("tunnels.start", {"alias": "db", "environment": {}}), ("usage.get", None)):
+            assert (await _ask(sock, method, params))["error"]["code"] == "unauthorized", method
+        assert (await _ask(sock, "workspace.snapshot"))["error"]["code"] == "unknown_method"
+        take = await _ask(sock, "agents.takeLaunch", {"session": "s", "agentId": "a"})
+        assert take.get("error", {}).get("code") != "unauthorized"
+        assert not daemon.done()
+        app.kill()
+        app.wait()
+        await asyncio.wait_for(daemon, 5)
+        assert not os.path.exists(sock)
+    finally:
+        app.kill()
+        daemon.cancel()
+        await asyncio.gather(daemon, return_exceptions=True)
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            asyncio.get_running_loop().remove_signal_handler(sig)
+
+
+async def test_the_app_that_started_the_helper_calls_its_methods(tmp_path, sock_dir):
+    import shellforged.__main__ as entry
+
+    sock = os.path.join(sock_dir, "b.sock")
+    ns = parse_args(["run", "--support-dir", str(tmp_path / "support"), "--socket", sock, "--hook-port", "0",
+                     "--app-pid", str(os.getpid()), "--idle-exit-seconds", "0"])
+    daemon = asyncio.create_task(entry.run_daemon(ns))
+    try:
+        await wait_until(lambda: os.path.exists(tmp_path / "support" / "daemon.json"))
+        assert (await _ask(sock, "sessions.update", {"sessions": []}))["result"] == {"ok": True}
+        assert (await _ask(sock, "workspace.snapshot"))["result"]["sessions"] == []
     finally:
         daemon.cancel()
         await asyncio.gather(daemon, return_exceptions=True)

@@ -218,6 +218,10 @@ async def emitted(make_service, monkeypatch) -> dict[str, str]:
         await app_svc.start()
         shellforge = App(*await asyncio.open_unix_connection(app_svc.rpc.path))
         try:
+            # Another process than the app that started the helper: refused.
+            app_svc.rpc.app_pid = os.getpid() + 1
+            errors[protocol.UNAUTHORIZED] = await shellforge.call("sessions.update", {"sessions": []})
+            app_svc.rpc.app_pid = os.getpid()
             replies["sessions.update"] = await shellforge.call("sessions.update", {"sessions": [{
                 "sessionId": "SESSION-GUID", "windowId": "w1", "tabIndex": 0, "commandLine": "pi", "jobPid": 4242,
                 "title": "pi", "cwd": WORKTREE, "active": True, "taskId": TASK_ID, "projectId": PROJECT_ID,

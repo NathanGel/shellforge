@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": "unauthorized",
+    "message": "sessions.update is only for the app that started this helper"
+  },
+  "id": 1
+}

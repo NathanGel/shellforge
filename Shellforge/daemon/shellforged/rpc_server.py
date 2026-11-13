@@ -47,8 +47,15 @@ class RpcError(Exception):
 
 
 class RpcServer:
-    def __init__(self, path: str):
+    """`app_pid`: the app that started the helper (`--app-pid`). Only a connection from that process,
+    by the pid the kernel gives for the socket, may call a method not registered `public`; any other
+    gets `unauthorized`. None, a helper run by hand or in a test, takes every connection as the app's."""
+
+    def __init__(self, path: str, app_pid: int | None = None):
         self.path = path
+        self.app_pid = app_pid
+        # The methods any connection may call: shellforge-run's, which checks its caller itself.
+        self.public_methods: set[str] = set()
         self._handlers: dict[str, CallerHandler] = {}
         self._server: asyncio.AbstractServer | None = None
         self._clients: set[asyncio.StreamWriter] = set()
@@ -66,9 +73,17 @@ class RpcServer:
     def register(self, method: str, handler: Handler) -> None:
         self._handlers[method] = lambda params, _caller: handler(params)
 
-    def register_with_caller(self, method: str, handler: CallerHandler) -> None:
-        """A handler that is also told who is asking (`Caller`)."""
+    def register_with_caller(self, method: str, handler: CallerHandler, public: bool = False) -> None:
+        """A handler that is also told who is asking (`Caller`). `public`: any connection may call
+        it, not only the app's."""
         self._handlers[method] = handler
+        if public:
+            self.public_methods.add(method)
+
+    def is_app(self, caller: Caller) -> bool:
+        """Whether `caller` is the app that started the helper: its pid, as the kernel gave it when
+        it connected. Another process of the same user can reach the 0600 socket, but not be that one."""
+        return self.app_pid is None or (caller.pid is not None and caller.pid == self.app_pid)
 
     @property
     def methods(self) -> list[str]:
@@ -205,6 +220,11 @@ class RpcServer:
         handler = self._handlers.get(method)
         if handler is None:
             return protocol.error(request_id, protocol.UNKNOWN_METHOD, str(method))
+        if method not in self.public_methods and not self.is_app(caller):
+            # An app from before this check, attached to a helper another copy started, asks for the
+            # snapshot first: `unknown_method` is what it reads as a helper of another version.
+            code = protocol.UNKNOWN_METHOD if method == "workspace.snapshot" else protocol.UNAUTHORIZED
+            return protocol.error(request_id, code, f"{method} is only for the app that started this helper")
         try:
             result = await handler(msg.get("params"), caller)
         except RpcError as exc:

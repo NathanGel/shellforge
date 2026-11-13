@@ -71,8 +71,11 @@ extension DaemonError {
         public static let `internal`: Code = "internal"
         /// The daemon has no handler for this request name — an older helper out of sync with a newer app.
         public static let unknownMethod: Code = "unknown_method"
+        /// A method only the app that started the helper may call, from another process: this app
+        /// is attached to a helper another copy of Shellforge started.
+        public static let unauthorized: Code = "unauthorized"
         /// Every code the daemon answers with.
-        public static let daemonCodes: [Code] = [.badParams, .notFound, .itermUnavailable, .protocol, .internal, .unknownMethod]
+        public static let daemonCodes: [Code] = [.badParams, .notFound, .itermUnavailable, .protocol, .internal, .unknownMethod, .unauthorized]
 
         // This client's own.
         /// `DaemonClient.snapshot()`'s guard: a helper whose protocol version this app cannot speak.

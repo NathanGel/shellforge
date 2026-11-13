@@ -28,6 +28,15 @@ running iTerm2: `SHELLFORGED_LIVE=1 .venv/bin/pytest tests/integration -q`.
 
 ## App connection
 
+The app starts the daemon with `--app-pid <its own pid>`. Only a connection from that process, by
+the peer pid the kernel gives for the socket (`LOCAL_PEERPID`), may call the app's methods: every
+method but `agents.takeLaunch`, which `shellforge-run` calls from the agent's tab and which checks
+its caller's terminal itself. Any other process of the same user gets `unauthorized`, or
+`unknown_method` for `workspace.snapshot`, which an app from before this check reads as a helper
+of another version. The daemon quits as soon as that process exits (a kqueue `NOTE_EXIT`), so no
+later process can be handed the trusted pid and a relaunch starts a fresh daemon rather than
+adopting this one. Run by hand without `--app-pid`, as with `ctl`, every connection is the app's.
+
 `workspace.snapshot` returns protocol version 2, iTerm2 availability, tagged sessions, and
 usage. The server writes this response before yielding; the Swift client places it in its
 event stream as a bootstrap barrier. Events before the barrier are discarded. A disconnected

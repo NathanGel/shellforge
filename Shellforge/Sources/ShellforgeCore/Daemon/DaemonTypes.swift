@@ -187,7 +187,7 @@ public struct DaemonError: Error, Equatable, LocalizedError, CustomStringConvert
     public var isNotFound: Bool { code == .notFound }
     /// Either code a stale or mismatched helper answers with, as opposed to the helper being
     /// unreachable — `DaemonConnection` reports these as `.helperMismatch`, not a retryable outage.
-    public var isMismatch: Bool { code == .incompatible || code == .unknownMethod }
+    public var isMismatch: Bool { code == .incompatible || code == .unknownMethod || code == .unauthorized }
 }
 
 public struct DaemonSnapshot: Decodable, Equatable, Sendable {

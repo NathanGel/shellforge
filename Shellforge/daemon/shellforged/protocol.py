@@ -35,7 +35,9 @@ ITERM_UNAVAILABLE = "iterm_unavailable"
 PROTOCOL = "protocol"
 INTERNAL = "internal"
 UNKNOWN_METHOD = "unknown_method"
-ERROR_CODES = (BAD_PARAMS, NOT_FOUND, ITERM_UNAVAILABLE, PROTOCOL, INTERNAL, UNKNOWN_METHOD)
+# A method only the app may call, from a process that is not the app that started the helper.
+UNAUTHORIZED = "unauthorized"
+ERROR_CODES = (BAD_PARAMS, NOT_FOUND, ITERM_UNAVAILABLE, PROTOCOL, INTERNAL, UNKNOWN_METHOD, UNAUTHORIZED)
 
 
 class ProtocolError(ValueError):
