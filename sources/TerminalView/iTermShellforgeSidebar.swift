@@ -302,8 +302,13 @@ final class iTermShellforgeHost: TerminalHost {
         self?.joinPanes()
         self?.onChange?()
     }
-    /// One for the app: every window's host signals it, and one list is read and sent.
-    private static let reports = ChangeCoalescer { iTermShellforgeSidebar.link.reportsMayHaveChanged() }
+    /// One for the app: every window's host signals it, and one list is read and sent. At most four
+    /// a second: Claude's spinner retitles its tab several times a second, every retitle changes
+    /// the list, and each list sent makes the helper run a tick. A tab opened or closed waits a
+    /// quarter of a second at most, well inside the two seconds a hook waits for the next list.
+    private static let reports = ChangeCoalescer(schedule: ChangeCoalescer.after(0.25)) {
+        iTermShellforgeSidebar.link.reportsMayHaveChanged()
+    }
 
     deinit {
         observers.forEach(NotificationCenter.default.removeObserver)

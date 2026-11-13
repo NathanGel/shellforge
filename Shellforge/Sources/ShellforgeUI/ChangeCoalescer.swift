@@ -21,6 +21,12 @@ public final class ChangeCoalescer {
         DispatchQueue.main.async { MainActor.assumeIsolated { work() } }
     }
 
+    /// `seconds` after the first signal: every signal until then is the same change. What a burst
+    /// spread over several turns uses, at most one fire per `seconds`.
+    public static func after(_ seconds: TimeInterval) -> (@escaping Work) -> Void {
+        { work in DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { MainActor.assumeIsolated { work() } } }
+    }
+
     public func signal() {
         guard !pending else { return }
         pending = true

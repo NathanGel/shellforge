@@ -20,4 +20,19 @@ import Testing
         scheduled.removeFirst()()
         #expect(fired == 2)
     }
+
+    /// The session report's: signals spread over a quarter of a second are one fire, at its end.
+    @Test func aDelayedScheduleFiresOnceForSignalsBeforeIt() async {
+        var fired = 0
+        let coalescer = ChangeCoalescer(schedule: ChangeCoalescer.after(0.3), fire: { fired += 1 })
+        coalescer.signal()
+        await Task.yield()
+        coalescer.signal()
+        #expect(fired == 0, "nothing fires before the delay")
+        while fired == 0 { try? await Task.sleep(for: .milliseconds(10)) }
+        coalescer.signal()
+        #expect(fired == 1, "both signals before the delay were one fire")
+        while fired == 1 { try? await Task.sleep(for: .milliseconds(10)) }
+        #expect(fired == 2)
+    }
 }
