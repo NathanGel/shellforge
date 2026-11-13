@@ -57,4 +57,8 @@ git push --quiet origin "v$VERSION"
 # draft, and a run that stops here is finished by hand (Shellforge/docs/releasing.md).
 gh release create "v$VERSION" "$DMG" --repo "$REPO" --draft --verify-tag --title "Shellforge $VERSION" --notes-file "$NOTES"
 gh release edit "v$VERSION" --repo "$REPO" --draft=false >/dev/null
+# Older images live on their GitHub releases: keep only this one's in build/.
+for old in "$ROOT"/build/Shellforge-*.dmg(N); do
+    [[ "$old" == "$DMG" ]] || rm -f -- "$old"
+done
 print "released Shellforge $VERSION (build $BUILD): https://github.com/$REPO/releases/tag/v$VERSION"

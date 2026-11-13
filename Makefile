@@ -90,6 +90,7 @@ help:
 	@echo "  make paranoid-deps  Rebuild all native dependencies (sandboxed)"
 	@echo "  make DepsIfNeeded   Rebuild deps only if Xcode version changed"
 	@echo "  make clean        Remove build products"
+	@echo "  make prune        Remove builds and dev suites left by deleted worktrees (every dev build does this)"
 	@echo "  make cleandeps    Clean submodule build directories"
 	@echo ""
 	@echo "Release:"
@@ -322,6 +323,7 @@ install-hooks:
 intermediates = $(BUILD_DIR)/Intermediates-$(1).noindex
 
 Development:
+	-@tools/prune_dev_builds.sh
 	echo "Using PATH for build: $(PATH)"
 	cp plists/dev-iTerm2.plist plists/iTerm2.plist
 	xcodebuild -scheme iTerm2 -configuration Development -destination 'platform=macOS' -skipPackagePluginValidation $(SIGNING_FLAGS) $(ARCH_FLAGS) SYMROOT="$(BUILD_DIR)" && \
@@ -380,6 +382,10 @@ run-nobuild: force
 # AiChatRawWireLogging. The suite must not be running: cfprefsd would hand the
 # live instance's cached settings straight back on quit. Advanced-setting keys
 # are the setting names with the first letter capitalized.
+.PHONY: prune
+prune:
+	tools/prune_dev_builds.sh
+
 reset-suite: force
 	@if pgrep -f -- "-suite $(SUITE)( |$$)" >/dev/null; then \
 	  echo "reset-suite: an iTerm2 with -suite $(SUITE) is running; quit it first" >&2; \
