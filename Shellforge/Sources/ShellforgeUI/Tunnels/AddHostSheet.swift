@@ -22,6 +22,8 @@ final class AddHostModel: ObservableObject {
     @Published private(set) var adding = false
     /// One line for the sidebar after an add that made the config: nil when it was there already.
     private(set) var note: String?
+    /// What a `Host *` or `Match all` block in the config sets, as last read.
+    @Published private(set) var earlierDefaults: [SSHWildcardDefault] = []
     let sidebar: SidebarModel
 
     init(sidebar: SidebarModel) { self.sidebar = sidebar }
@@ -39,11 +41,14 @@ final class AddHostModel: ObservableObject {
         /// Add is offered once the host as typed can be added. A failure alone doesn't grey it: the
         /// person may fix its cause (a folder's permissions) and try again.
         var canAdd: Bool
+        /// A caution that doesn't stop Add: an earlier `Host *` block already sets what this host sets.
+        var warning: String?
     }
 
     var status: Status {
         let typed = typedProblem
-        return Status(problem: failure ?? typed, canAdd: typed == nil && !adding)
+        return Status(problem: failure ?? typed, canAdd: typed == nil && !adding,
+                      warning: SSHConfig.wildcardWarning(for: draft, earlier: earlierDefaults))
     }
 
     var problem: String? { status.problem }
@@ -60,7 +65,11 @@ final class AddHostModel: ObservableObject {
     }
 
     /// Reads the config again, off the main actor, so the problem line checks against it as it is.
-    func load() async { _ = await sidebar.loadSSHHosts() }
+    func load() async {
+        _ = await sidebar.loadSSHHosts()
+        let source = sidebar.sshConfig
+        earlierDefaults = await BackgroundWork.run { source.wildcardDefaults() }
+    }
 
     /// Appends the host off the main actor. On success it becomes the chosen project's SSH host —
     /// asked first when that project names another — the config is read again and watched (a
@@ -156,6 +165,7 @@ struct AddHostSheet: View {
                     .pickerStyle(.menu)
                 }
                 if let problem = status.problem { HelpText(problem, tone: .warning) }
+                if status.problem == nil, let warning = status.warning { HelpText(warning, tone: .warning) }
                 HelpText(Self.footnote)
             }
         } footer: {

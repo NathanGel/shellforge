@@ -24,6 +24,13 @@ public struct LocalForward: Equatable, Sendable {
     public var label: String { "\(localPort) → \(remoteHost):\(remotePort)" }
 }
 
+/// A User, Port or HostName set by a `Host *` or `Match all` block, and which block.
+public struct SSHWildcardDefault: Equatable, Sendable {
+    public var keyword: String
+    public var block: String
+    public init(keyword: String, block: String) { self.keyword = keyword; self.block = block }
+}
+
 /// Where the hosts are read from: `~/.ssh/config` in the app, a temporary file in the tests.
 public struct SSHConfigSource: Sendable {
     public let file: URL
@@ -42,6 +49,9 @@ public struct SSHConfigSource: Sendable {
 
     /// The hosts, read again only when a file the last read depended on changed (`SSHConfigCache`).
     public func read() -> [SSHHost] { SSHConfigCache.shared.hosts(in: file, home: home) }
+
+    /// What a `Host *` or `Match all` block sets among User, Port and HostName, read fresh.
+    public func wildcardDefaults() -> [SSHWildcardDefault] { SSHConfig.wildcardDefaults(in: file, home: home) }
 }
 
 /// The app's one copy of each config's hosts: every window's refresh asks, and the config and its
@@ -99,12 +109,39 @@ public enum SSHConfig {
         return (hosts, FileStamps(files: reader.stamped.map(\.0), stamps: reader.stamped.map(\.1)))
     }
 
+    /// What an earlier `Host *` or `Match all` block in the config sets among User, Port and
+    /// HostName. ssh takes the first value it finds for each, so a host appended below never gets to
+    /// use its own. `IdentityFile` is left out: ssh adds those up across blocks.
+    public static func wildcardDefaults(in file: URL, home: URL) -> [SSHWildcardDefault] {
+        var reader = Reader(home: home)
+        reader.read(file)
+        return reader.wildcard
+    }
+
+    /// The sheet's warning, if any: the keywords the new host sets that an earlier wildcard block
+    /// has already set. Nil when none clash.
+    public static func wildcardWarning(for host: NewSSHHost, earlier: [SSHWildcardDefault]) -> String? {
+        let typed = host.trimmed
+        let sets: [String: Bool] = ["User": !typed.user.isEmpty, "Port": !typed.port.isEmpty, "HostName": !typed.hostName.isEmpty]
+        let clashing = earlier.filter { sets[$0.keyword] == true }
+        guard !clashing.isEmpty else { return nil }
+        var keywords: [String] = []
+        for entry in clashing where !keywords.contains(entry.keyword) { keywords.append(entry.keyword) }
+        var blocks: [String] = []
+        for entry in clashing where !blocks.contains(entry.block) { blocks.append(entry.block) }
+        let list = keywords.count > 1 ? keywords.dropLast().joined(separator: ", ") + " and " + keywords[keywords.count - 1] : keywords[0]
+        let block = blocks.joined(separator: " or ")
+        return "An earlier \(block) block in your SSH config sets \(list), so it applies before this host’s own."
+    }
+
     private struct Reader {
         let home: URL
         var order: [String] = []
         var forwards: [String: [LocalForward]] = [:]
         var visited: Set<String> = []
         var stamped: [(String, FileStamps.Stamp?)] = []
+        /// User, Port and HostName set in a `Host *` or `Match all` block: keyword, then the block.
+        var wildcard: [SSHWildcardDefault] = []
 
         init(home: URL) { self.home = home }
 
@@ -120,21 +157,30 @@ public enum SSHConfig {
             guard visited.insert(path).inserted, visited.count <= 64,
                   let text = try? String(contentsOf: file, encoding: .utf8) else { return }
             var current: [String] = []
+            var wildcardBlock: String?
             for raw in text.split(whereSeparator: \.isNewline) {
                 let line = raw.trimmingCharacters(in: .whitespaces)
                 guard !line.isEmpty, !line.hasPrefix("#"), let (keyword, value) = Self.split(line) else { continue }
                 switch keyword {
                 case "host":
                     let patterns = Self.tokens(value)
+                    wildcardBlock = patterns.contains("*") ? "Host *" : nil
                     current = patterns.filter { !$0.contains("*") && !$0.contains("?") && !$0.hasPrefix("!") && SSHConfig.isTypable($0) }
                     for alias in current where forwards[alias] == nil { order.append(alias); forwards[alias] = [] }
                 case "match":
                     current = []
+                    wildcardBlock = Self.tokens(value).map { $0.lowercased() } == ["all"] ? "Match all" : nil
                 case "include":
                     for pattern in Self.tokens(value) { for url in expand(pattern) { read(url) } }
                 case "localforward":
                     guard let forward = Self.forward(value) else { continue }
                     for alias in current { forwards[alias, default: []].append(forward) }
+                case "user", "port", "hostname":
+                    guard let block = wildcardBlock else { continue }
+                    let canonical = ["user": "User", "port": "Port", "hostname": "HostName"][keyword] ?? keyword
+                    if !wildcard.contains(where: { $0.keyword == canonical && $0.block == block }) {
+                        wildcard.append(SSHWildcardDefault(keyword: canonical, block: block))
+                    }
                 default:
                     continue
                 }

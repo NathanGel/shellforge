@@ -44,6 +44,41 @@ private final class IdleSSHWatcher: FolderWatching, @unchecked Sendable {
 
     private func config() throws -> String { try String(contentsOf: configFile, encoding: .utf8) }
 
+    private func warning(for config: String, _ host: NewSSHHost) async throws -> (String?, Bool) {
+        let (sidebar, _) = try sidebar(config: config)
+        let model = AddHostModel(sidebar: sidebar)
+        await model.load()
+        model.draft = host
+        return (model.status.warning, model.canAdd)
+    }
+
+    @Test func anEarlierWildcardUserIsWarnedAbout() async throws {
+        let (warning, canAdd) = try await warning(for: "Host *\n  User ops\n\n" + Self.staging, Self.buildBox)
+        #expect(warning == "An earlier Host * block in your SSH config sets User, so it applies before this host’s own.")
+        #expect(canAdd, "a warning, not a refusal")
+    }
+
+    @Test func aWildcardPortAndHostNameAreNamedToo() async throws {
+        let (warning, _) = try await warning(for: "Match all\n  Port 2200\n  HostName gateway.example.com\n",
+                                             NewSSHHost(alias: "build-box", hostName: "b.example.com", port: "2222"))
+        #expect(warning == "An earlier Match all block in your SSH config sets Port and HostName, so it applies before this host’s own.")
+    }
+
+    @Test func aWildcardIdentityFileIsNotWarnedAbout() async throws {
+        let (warning, _) = try await warning(for: "Host *\n  IdentityFile ~/.ssh/id_shared\n", Self.buildBox)
+        #expect(warning == nil, "ssh adds IdentityFile up across blocks")
+    }
+
+    @Test func aWildcardUserTheHostDoesNotSetIsNotWarnedAbout() async throws {
+        let (warning, _) = try await warning(for: "Host *\n  User ops\n", NewSSHHost(alias: "build-box", hostName: "b.example.com"))
+        #expect(warning == nil)
+    }
+
+    @Test func aConcreteHostsUserIsNotWarnedAbout() async throws {
+        let (warning, _) = try await warning(for: Self.staging, Self.buildBox)
+        #expect(warning == nil)
+    }
+
     @Test func addIsDisabledUntilTheHostIsValid() async throws {
         let (sidebar, _) = try sidebar()
         let model = AddHostModel(sidebar: sidebar)

@@ -10,10 +10,10 @@ const ok = [
   { status: 201, json: { number: 42 } },
 ];
 
-function fakeKV({ value, throwOnPut = false } = {}) {
+function fakeKV({ value, sender, throwOnPut = false } = {}) {
   const kv = {
     puts: [],
-    get: async () => value ?? null,
+    get: async (k) => (k.startsWith("sender:") ? sender ?? null : value ?? null),
     put: async (k, v, o) => {
       if (throwOnPut) throw new Error("kv down");
       kv.puts.push([k, v, o]);
@@ -164,7 +164,26 @@ test("dailyCap", async () => {
   env = await setup({ FEEDBACK_KV: fakeKV({ value: "49" }) });
   r = await run(post(GOOD), env);
   assert.equal(r.res.status, 201);
-  assert.deepEqual(env.FEEDBACK_KV.puts, [["count:2026-11-06", "50", { expirationTtl: 172800 }]]);
+  assert.deepEqual(env.FEEDBACK_KV.puts, [
+    ["sender:2026-11-06:unknown", "1", { expirationTtl: 172800 }],
+    ["count:2026-11-06", "50", { expirationTtl: 172800 }],
+  ]);
+});
+
+test("aSenderOverItsDailyCapIsTurnedAwayBeforeTheGlobalSlot", async () => {
+  const env = await setup({ FEEDBACK_KV: fakeKV({ sender: "3" }) });
+  const r = await run(post(GOOD, { "CF-Connecting-IP": "203.0.113.9" }), env);
+  assert.equal(r.res.status, 429);
+  assert.deepEqual(r.json, { error: "daily" });
+  assert.equal(r.fetch.calls.length, 0);
+  assert.equal(env.FEEDBACK_KV.puts.length, 0);
+});
+
+test("aSenderUnderItsDailyCapStillPosts", async () => {
+  const env = await setup({ FEEDBACK_KV: fakeKV({ sender: "2" }) });
+  const r = await run(post(GOOD, { "CF-Connecting-IP": "203.0.113.9" }), env);
+  assert.equal(r.res.status, 201);
+  assert.equal(env.FEEDBACK_KV.puts[0][1], "3");
 });
 
 test("kvWriteFailureStillPosts", async () => {

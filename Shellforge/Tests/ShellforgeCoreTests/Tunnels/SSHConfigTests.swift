@@ -20,6 +20,13 @@ import Testing
         return url
     }
 
+    @Test func anIncludedWildcardBlockIsReadToo() throws {
+        _ = try write("Host *\n  User ops\n  IdentityFile ~/.ssh/id_shared\n  Port 2200\n", to: "shared.conf")
+        let config = try write("Include shared.conf\nHost staging\n  User deploy\n")
+        let found = SSHConfig.wildcardDefaults(in: config, home: home)
+        #expect(found == [SSHWildcardDefault(keyword: "User", block: "Host *"), SSHWildcardDefault(keyword: "Port", block: "Host *")])
+    }
+
     @Test func aliasesWithForwardsAndTheirPorts() throws {
         let config = try write("""
         # staging

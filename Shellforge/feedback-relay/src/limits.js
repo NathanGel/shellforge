@@ -1,4 +1,5 @@
 export const DAILY_CAP = 50;
+export const SENDER_DAILY_CAP = 3;
 const DAILY_TTL_SECONDS = 172800;
 
 // The per-sender key: the address itself for IPv4, the /64 prefix for IPv6.
@@ -48,6 +49,30 @@ export async function takeDailySlot(kv, nowMs) {
   if (count >= DAILY_CAP) return false;
   try {
     await kv.put(key, String(count + 1), { expirationTtl: DAILY_TTL_SECONDS });
+  } catch {
+    // Still post.
+  }
+  return true;
+}
+
+export function senderDayKey(nowMs, key) {
+  return `sender:${new Date(nowMs).toISOString().slice(0, 10)}:${key}`;
+}
+
+// One sender cannot use up the global day. Checked before the global slot; same
+// approximation as takeDailySlot: a failed read fails closed, a failed write still posts.
+export async function takeSenderSlot(kv, key, nowMs) {
+  const kvKey = senderDayKey(nowMs, key);
+  let count;
+  try {
+    count = Number.parseInt((await kv.get(kvKey)) ?? "0", 10);
+  } catch {
+    return false;
+  }
+  if (!Number.isInteger(count)) count = 0;
+  if (count >= SENDER_DAILY_CAP) return false;
+  try {
+    await kv.put(kvKey, String(count + 1), { expirationTtl: DAILY_TTL_SECONDS });
   } catch {
     // Still post.
   }

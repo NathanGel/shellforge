@@ -1,7 +1,7 @@
 import { isJSONContentType, readBody, validate, LIMITS } from "./validate.js";
 import { renderTitle, renderBody } from "./render.js";
 import { postIssue } from "./github.js";
-import { senderKey, underMinuteLimits, takeDailySlot } from "./limits.js";
+import { senderKey, underMinuteLimits, takeDailySlot, takeSenderSlot } from "./limits.js";
 
 const json = (status, body, extra = {}) =>
   new Response(JSON.stringify(body), {
@@ -11,7 +11,7 @@ const json = (status, body, extra = {}) =>
 const error = (status, code) => json(status, { error: code });
 
 // Never logs. Order: method and path, kill switch, KV, content type, body,
-// validation, per-minute limits, daily cap, GitHub.
+// validation, per-minute limits, per-sender daily cap, daily cap, GitHub.
 export async function handle(request, env, deps) {
   try {
     return await route(request, env, deps);
@@ -41,9 +41,9 @@ async function route(request, env, { fetch, now }) {
   const checked = validate(value);
   if (!checked.ok) return error(400, checked.error);
 
-  if (!(await underMinuteLimits(env, senderKey(request.headers.get("CF-Connecting-IP"))))) {
-    return error(429, "rate");
-  }
+  const sender = senderKey(request.headers.get("CF-Connecting-IP"));
+  if (!(await underMinuteLimits(env, sender))) return error(429, "rate");
+  if (!(await takeSenderSlot(env.FEEDBACK_KV, sender, now()))) return error(429, "daily");
   if (!(await takeDailySlot(env.FEEDBACK_KV, now()))) return error(429, "daily");
 
   const result = await postIssue({
