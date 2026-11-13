@@ -13,8 +13,9 @@ public final class AgentListModel: ObservableObject {
         public var origin: AgentRegistry.Origin
         /// A saved file replaces this built-in or ready-made agent: Restore Default removes it.
         public var overridden: Bool
-        /// Its command is on the login shell's `PATH`.
-        public var installed: Bool
+        /// Its command is on the login shell's `PATH`; nil while the shell's first read is still
+        /// running, so the row shows neither until it is known.
+        public var installed: Bool?
         public var detection: Detection
         public var id: String { agent.id }
     }
@@ -72,19 +73,18 @@ public final class AgentListModel: ObservableObject {
     }
 
     /// Reads the agents again. Whether each is installed comes from the environment as read so far:
-    /// before the login shell's first read is done, a row keeps what it showed (not installed when
-    /// new), the read finishes off the main actor, and the list is read again then.
+    /// before the login shell's first read is done it is unknown (nil), the read finishes off the
+    /// main actor, and the list is read again then.
     public func reload() {
         var waiting = false
         do {
             let loaded = try registry.load()
-            let before = Dictionary(rows.map { ($0.id, $0.installed) }) { first, _ in first }
             rows = loaded.agents.map { agent in
                 let origin = loaded.origins[agent.id] ?? .own
                 let installed = launcher.isInstalledIfKnown(agent.command)
                 if installed == nil { waiting = true }
                 return Row(agent: agent, origin: origin, overridden: loaded.overridden.contains(agent.id),
-                           installed: installed ?? before[agent.id] ?? false, detection: Self.detection(agent, origin: origin))
+                           installed: installed, detection: Self.detection(agent, origin: origin))
             }
             failure = AgentFiles.problemSentence(files: loaded.problems.map(\.file))
         } catch {

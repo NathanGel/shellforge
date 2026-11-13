@@ -40,9 +40,11 @@ private struct AgentRowCard: View {
     let remove: () -> Void
     let restore: () -> Void
 
+    /// No installed badge while that is not known yet: the login shell's first read is still running.
     private var status: SettingsStatus {
-        SettingsStatus(row.installed ? .ready : .attention,
-                       "\(row.installed ? "Installed" : "Not installed") · \(row.detection.label)")
+        guard let installed = row.installed else { return SettingsStatus(.idle, row.detection.label) }
+        return SettingsStatus(installed ? .ready : .attention,
+                              "\(installed ? "Installed" : "Not installed") · \(row.detection.label)")
     }
 
     var body: some View {

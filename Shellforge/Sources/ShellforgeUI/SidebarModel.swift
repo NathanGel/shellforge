@@ -235,7 +235,7 @@ public final class SidebarModel: ObservableObject {
                 catalogue: @escaping @Sendable (AgentDefinition) throws -> [AgentModel] = { _ in [] },
                 jiraSettings: @escaping @Sendable () -> JiraConfig? = { nil },
                 gitLabSettings: @escaping @Sendable () -> GitLabConfig? = { nil },
-                gitHubSettings: @escaping @Sendable () -> GitHubConfig? = { GitHubSettings.load() },
+                gitHubSettings: @escaping @Sendable () -> GitHubConfig? = { nil },
                 modelDefaults: @escaping @Sendable ([String]) -> [String: ModelPreference] = { _ in [:] },
                 sshConfig: SSHConfigSource = .none, readyMade: Set<String> = [], secrets: any SecretStore & Sendable = MemorySecretStore(),
                 tools: AgentTools = .none, home: URL = FileManager.default.homeDirectoryForCurrentUser) {

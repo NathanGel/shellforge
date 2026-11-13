@@ -389,7 +389,8 @@ reset-suite: force
 	-defaults delete "$(SUITE).private" 2>/dev/null
 	defaults write "$(SUITE)" SetIT2AppPath -bool YES
 	defaults write "$(SUITE)" AiChatRawWireLogging -bool YES
-	@echo "reset-suite: $(SUITE) erased; SetIT2AppPath and AiChatRawWireLogging are on"
+	defaults write "$(SUITE)" NoSyncShellforgeSettingsMovedToSuite -bool YES
+	@echo "reset-suite: $(SUITE) erased; SetIT2AppPath and AiChatRawWireLogging are on; old settings stay out"
 
 # Regenerate sources/Localizable.xcstrings from the current sources. Swift strings come
 # from the per-file .stringsdata the build emits (SWIFT_EMIT_LOC_STRINGS=YES); Objective-C

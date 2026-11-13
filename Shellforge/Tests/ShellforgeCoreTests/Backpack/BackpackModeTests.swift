@@ -209,6 +209,11 @@ import Foundation
         #expect(failing.lid.calls == [false])
         #expect(old.bool(forKey: "backpack.engaged"), "kept until sleep is back")
         #expect(failing.settings.engaged, "carried in the suite's marker, for the tick")
+        failing.lid.succeeds = true
+        #expect(mode(failing).tick(agentsWorking: false) == .changed, "the tick puts sleep back")
+        #expect(old.object(forKey: "backpack.engaged") == nil, "and clears the earlier version's marker with its own")
+        #expect(!failing.settings.engaged)
+        old.set(true, forKey: "backpack.engaged")
 
         let recovered = FakeBackpack(settings: BackpackSettings(defaults: MemoryDefaults.make(), legacy: old))
         mode(recovered).recoverAtLaunch()

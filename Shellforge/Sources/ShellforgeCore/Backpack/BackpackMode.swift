@@ -83,6 +83,8 @@ public final class BackpackMode: Sendable {
         current.withLock { $0 = .off }
         guard ports.lidSleep.setDisabled(false) else { return false }
         settings.engaged = false
+        // An earlier version's marker, carried in by a launch whose recovery failed: sleep is back now.
+        settings.clearLegacyEngaged()
         return true
     }
 

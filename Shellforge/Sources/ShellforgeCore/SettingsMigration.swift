@@ -9,6 +9,11 @@ import Foundation
 ///
 /// Backpack's crash marker is not copied: launch recovery reads it where it was
 /// (`BackpackSettings.legacyEngaged`).
+///
+/// The host runs it after a custom settings folder has been loaded into the suite, which replaces
+/// every syncable key; the copy is an ordinary write, so the folder's own save takes it there.
+/// `make reset-suite` sets `doneKey` itself: a suite erased on purpose starts clean, rather than
+/// taking the old domain's values back.
 public enum SettingsMigration {
     /// Set once the copy ran: this Mac's bookkeeping, not a setting.
     public static let doneKey = "NoSyncShellforgeSettingsMovedToSuite"

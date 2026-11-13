@@ -174,8 +174,9 @@ final class iTermShellforgeSidebar: NSObject {
         let loaded = loadAgents()
         let model = SidebarModel(host: host, document: document, launcher: launcher, feed: link,
                                  agents: loaded.agents, catalogue: { try catalogue.models(for: $0) },
-                                 jiraSettings: { JiraSettings.load(defaults: iTermUserDefaults.userDefaults()) },
-                                 gitLabSettings: { GitLabSettings.load(defaults: iTermUserDefaults.userDefaults()) },
+                                 jiraSettings: { JiraSettings.load(store: Keychain.shared, defaults: iTermUserDefaults.userDefaults()) },
+                                 gitLabSettings: { GitLabSettings.load(store: Keychain.shared, defaults: iTermUserDefaults.userDefaults()) },
+                                 gitHubSettings: { GitHubSettings.load(store: Keychain.shared) },
                                  modelDefaults: { ModelSettings.loadAll(for: $0, defaults: iTermUserDefaults.userDefaults()) },
                                  sshConfig: .user,
                                  readyMade: loaded.readyMade, secrets: Keychain.shared, tools: agentTools)

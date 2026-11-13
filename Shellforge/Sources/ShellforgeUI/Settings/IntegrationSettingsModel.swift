@@ -174,7 +174,7 @@ final class IntegrationSettingsModel {
 
     /// `store` and `defaults` are where Save writes; the testers are the real clients unless a test
     /// stands in for them.
-    init(jira: JiraConfig?, gitLab: GitLabConfig?, gitHub: GitHubConfig? = nil, store: SecretStore = Keychain.shared, defaults: UserDefaults,
+    init(jira: JiraConfig?, gitLab: GitLabConfig?, gitHub: GitHubConfig? = nil, store: SecretStore, defaults: UserDefaults,
          record: ServiceTestRecord = ServiceTestRecord(), retestDelay: Duration = .seconds(1),
          testJira: @escaping @Sendable (JiraConfig) async throws -> String = { try await JiraClient(config: $0).testConnection() },
          testGitLab: @escaping @Sendable (GitLabConfig) async throws -> String = { try await GitLabClient(config: $0).testConnection() },

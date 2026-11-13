@@ -1502,10 +1502,6 @@ void TurnOnDebugLoggingAutomatically(void) {
     // Shellforge: no tab inherits the markers of an agent session that started the app.
     [iTermShellforgeSidebar scrubInheritedEnvironment];
     DLog(@"Begin");
-    // Shellforge: settings an earlier version kept outside the app's suite move in, once, before anything reads them.
-    if (![NSApp isRunningUnitTests]) {
-        [iTermShellforgeSidebar moveSettingsIntoSuite];
-    }
     // Parallel test runs start several test hosts with the same suite on purpose. The modal warning
     // about another instance would stall each one after the first.
     if (![NSApp isRunningUnitTests]) {
@@ -1575,6 +1571,13 @@ void TurnOnDebugLoggingAutomatically(void) {
     [iTermPreferences initializeUserDefaults];
     DLog(@"performMigrations");
     [iTermUserDefaults performMigrations];
+    // Shellforge: settings an earlier version kept outside the app's suite move in, once, before
+    // anything reads them (no window and no Backpack exist yet). After the custom settings folder
+    // is loaded, which replaces every syncable key: copied earlier, they would be wiped at once.
+    // A plain write, not +migrateKeys:, so the folder's own save carries them into the folder.
+    if (![NSApp isRunningUnitTests]) {
+        [iTermShellforgeSidebar moveSettingsIntoSuite];
+    }
     // Must run before the user can change the AI safety check setting, or a
     // fresh choice would be mistaken for a 3.6 setting and undone.
     DLog(@"migrateAISafetyCheckProviderIfNeeded");

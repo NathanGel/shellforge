@@ -109,6 +109,15 @@ it and refuses to release a version that has none.
 - **A working agent’s spinner no longer redraws the sidebar.** A tab whose title no row shows,
   such as a task’s only tab, can retitle itself several times a second without the sidebar
   drawing again, and the `+n −m` line counts are read at a lower priority than your own work.
+- **Jira, GitLab, Backpack and default-model settings are kept in Shellforge's own settings.**
+  The Jira site and email, the GitLab host, Backpack Mode's network and Settings › Agents' default
+  models used to be stored apart from the rest. They are copied over once, at the first launch of
+  this version, and are now included when you reset Shellforge's settings or keep them in a custom
+  folder. A development build no longer shares them with the installed app.
+- **Settings no longer waits for your login shell, and nothing freezes on a Keychain prompt.**
+  Settings opens without waiting for the installed agents, which fill in when they are found.
+  Settings and New Task read their saved connections in the background, so the app keeps
+  responding while a Keychain prompt is up.
 
 ## 0.10.0 — 2026-11-10
 

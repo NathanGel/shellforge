@@ -45,16 +45,55 @@ import Testing
         let offenders = try files.filter { try String(contentsOf: $0, encoding: .utf8).contains(standard) }
         #expect(offenders.isEmpty, "Take the app's suite from the host: \(offenders.map(\.lastPathComponent))")
 
-        let host = sources.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("sources/TerminalView")
-        let hostFiles = try FileManager.default.contentsOfDirectory(at: host, includingPropertiesForKeys: nil)
-            .filter { $0.lastPathComponent.hasPrefix("iTermShellforge") && $0.pathExtension == "swift" }
-        #expect(!hostFiles.isEmpty)
+        // Every Shellforge file of the host, in any folder: Swift that names Shellforge, and the
+        // Objective-C files named for it.
+        let host = sources.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("sources")
+        let hostFiles = try #require(FileManager.default.enumerator(at: host, includingPropertiesForKeys: nil))
+            .compactMap { $0 as? URL }.filter { file in
+                switch file.pathExtension {
+                case "swift": (try? String(contentsOf: file, encoding: .utf8))?.contains("Shellforge") == true
+                case "m", "h": file.lastPathComponent.contains("Shellforge")
+                default: false
+                }
+            }
+        #expect(hostFiles.contains { $0.lastPathComponent == "iTermShellforgeSidebar.swift" })
         let hostLines = try hostFiles.flatMap { try String(contentsOf: $0, encoding: .utf8).split(separator: "\n").map(String.init) }
+        // The two the host may name: Backpack's old crash marker and the migration's source.
+        let allowed = ["legacy: UserDefaults.standard", "SettingsMigration.run(from: UserDefaults.standard"]
         let stray = try hostLines.filter { line in
-            try line.contains(Regex(#"\.standard\b"#)) && line.contains("efaults")
-                && !line.contains("legacy: UserDefaults.standard") && !line.contains("from: UserDefaults.standard")
+            (try line.contains(Regex(#"\.standard\b"#)) && line.contains("efaults") || line.contains("standardUserDefaults"))
+                && !allowed.contains { line.contains($0) }
         }
         #expect(stray.isEmpty, "Pass iTermUserDefaults.userDefaults(): \(stray)")
+    }
+
+    /// With a custom settings folder, loading it replaces every syncable key in the suite, so the
+    /// settings copied in from the old domain must come after it, or they are wiped the moment
+    /// they arrive and the once-only copy never runs again.
+    @Test func theSettingsMoveInAfterTheSettingsFolderIsLoaded() throws {
+        let delegate = sources.deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("sources/AppKit/iTermApplicationDelegate.m")
+        let text = try String(contentsOf: delegate, encoding: .utf8)
+        let load = try #require(text.range(of: "[iTermPreferences initializeUserDefaults]"))
+        let migrations = try #require(text.range(of: "[iTermUserDefaults performMigrations]"))
+        let move = try #require(text.range(of: "[iTermShellforgeSidebar moveSettingsIntoSuite]"))
+        #expect(load.upperBound < move.lowerBound && migrations.upperBound < move.lowerBound)
+        #expect(text.components(separatedBy: "moveSettingsIntoSuite").count == 2, "called once")
+        #expect(!text.contains("migrateKeys:@[@\"jira"), "a plain write, so the folder's save carries it")
+    }
+
+    /// No package default reaches the person's Keychain: the host hands in `Keychain.shared`, and a
+    /// test that forgets a store gets a compile error, not a prompt or a real secret.
+    @Test func noDefaultReachesTheRealKeychain() throws {
+        let files = try #require(FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil))
+            .compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" }
+        let offenders = try files.filter { try String(contentsOf: $0, encoding: .utf8).contains(Regex(#"=\s*(Keychain\.shared|\{\s*\w+Settings\.load\(\))"#)) }
+        #expect(offenders.isEmpty, "Take the store from the caller: \(offenders.map(\.lastPathComponent))")
+        let tests = sources.deletingLastPathComponent().appendingPathComponent("Tests")
+        let testFiles = try #require(FileManager.default.enumerator(at: tests, includingPropertiesForKeys: nil))
+            .compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" && $0.lastPathComponent != "SourceRulesTests.swift" }
+        let reaching = try testFiles.filter { try String(contentsOf: $0, encoding: .utf8).contains("Keychain.shared") }
+        #expect(reaching.isEmpty, "Use MemorySecretStore: \(reaching.map(\.lastPathComponent))")
     }
 
     /// No test reaches the network, loopback included: a refused port behaves differently behind a

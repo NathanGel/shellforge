@@ -51,9 +51,11 @@ struct SettingsPanel: View {
             opened = Drafts(theme: theme.choice, match: terminalMatch.isOn, feedback: feedback.isEnabled)
             matchDraft = opened.match; themeDraft = opened.theme; feedbackDraft = opened.feedback; editorDraft = terminalEditor?.saved ?? ""
         }
-        // An agent added, changed or removed here shows in the defaults list at once.
+        // An agent added, changed or removed here shows in the defaults list at once; a list whose
+        // installed agents are not known yet waits for the one that knows.
         .onReceive(agents.$rows.dropFirst()) { rows in
-            agentDefaults.update(agents: rows.filter(\.installed).map(\.agent))
+            guard !rows.contains(where: { $0.installed == nil }) else { return }
+            agentDefaults.update(agents: rows.filter { $0.installed == true }.map(\.agent))
             Task { await agentDefaults.load(onlyUnloaded: true) }
         }
     }

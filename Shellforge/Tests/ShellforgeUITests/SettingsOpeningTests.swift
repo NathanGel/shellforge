@@ -33,6 +33,7 @@ import Testing
         #expect(!readOnMain.withLock { $0 }, "the main actor waited for the login shell")
         #expect(agentDefaults.finding && agentDefaults.rows.isEmpty)
         #expect(list.rows.contains { $0.id == "claude" })
+        #expect(list.rows.allSatisfy { $0.installed == nil }, "unknown, not “not installed”, until the shell answers")
         gate.leave()
         await agentDefaults.load()
         #expect(!agentDefaults.finding)
