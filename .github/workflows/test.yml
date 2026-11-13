@@ -47,6 +47,47 @@ jobs:
         run: node --test
         working-directory: Shellforge/feedback-relay
 
+  # Shellforge's helper. macOS: it reads ttys and peer pids the macOS way, and some tests run only
+  # there. Its README's dev install: the package with its `dev` extras.
+  shellforge-daemon-tests:
+    runs-on: macos-26
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install the helper with its dev extras
+        run: pip install -e 'Shellforge/daemon[dev]'
+
+      - name: Run the helper's tests
+        working-directory: Shellforge/daemon
+        run: python -m pytest -q
+
+  # The Swift package suite: Core, Design and UI. `swift.sh` insists on the Swift that
+  # `Shellforge/.swift-version` pins, from swiftly, as a release build does.
+  shellforge-package-tests:
+    runs-on: macos-26
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install swiftly and the pinned Swift
+        run: |
+          curl -fsSLO https://download.swift.org/swiftly/darwin/swiftly.pkg
+          installer -pkg swiftly.pkg -target CurrentUserHomeDirectory
+          ~/.swiftly/bin/swiftly init --quiet-shell-followup --assume-yes --skip-install
+          ~/.swiftly/bin/swiftly install --use "$(cat Shellforge/.swift-version)"
+
+      - name: Run the package tests
+        working-directory: Shellforge
+        run: scripts/swift.sh test
+
   xcode-tests:
     runs-on: xcode-27
     # Disabled 2026-09-17: the committed prebuilt binary deps were built with

@@ -205,12 +205,19 @@ import Testing
         let held = HeldGit(real: LauncherGit(launcher: repo.launcher), holding: "diff")
         let s = DiffStats(git: held)
         let first = Task.detached { s.diff(for: worktree, base: "main") }
-        while held.waiting == 0 { try await Task.sleep(for: .milliseconds(5)) }
-        let second = Task.detached { s.diff(for: worktree, base: "main") }
-        try await Task.sleep(for: .milliseconds(300))
+        try #require(await eventually(describing: "the first ask's diff under way") { held.waiting == 1 })
+        // The second ask answers at once from what is known: one that ran a diff of its own would
+        // be held at the gate instead, and never answer while the first is.
+        let answered = Locked(false)
+        let second = Task.detached { () -> DiffStat? in
+            defer { answered.withLock { $0 = true } }
+            return s.diff(for: worktree, base: "main")
+        }
+        let answeredAtOnce = await eventually(describing: "the second ask's answer") { answered.withLock { $0 } }
         let ran = held.count(of: "diff")
         // Let any held call go, so a failing run ends rather than hangs.
         held.release(); held.release()
+        #expect(answeredAtOnce)
         #expect(ran == 1, "the second ask ran no diff of its own")
         #expect(await second.value == nil, "it has no answer yet")
         #expect(await first.value == DiffStat(added: 0, removed: 0))

@@ -10,6 +10,8 @@ import Testing
 /// - Where `~/aiterm` has the commit the port was taken from, every ported file but `FormField` (the
 ///   one deliberate change, without `FrontToBackStack`) equals AiTerm's there, names swapped. The
 ///   commit is pinned, so AiTerm's own work in progress never turns this red; moving it is a re-port.
+///   Opt-in, with `SHELLFORGE_AITERM_PARITY=1`: it reads a checkout in the home folder and runs git
+///   there, so a plain run neither depends on this Mac's home folder nor touches it.
 @Suite struct TokenParityTests {
     static let pinned = "c1f851e574d0c8dd45a95957449c8798d60b65f4"
     static let ported = ["Palette", "Metrics", "Surface", "InterfaceScale", "Logos", "IconSource", "Badge", "Hairline",
@@ -74,9 +76,11 @@ import Testing
         return git.terminationStatus == 0 ? String(data: data, encoding: .utf8) : nil
     }
 
-    static let aitermAvailable = aiterm("Palette") != nil
+    /// Asked for, and a checkout there to compare with. Nothing in the home folder is read unasked.
+    static let aitermParity = ProcessInfo.processInfo.environment["SHELLFORGE_AITERM_PARITY"] == "1" && aiterm("Palette") != nil
 
-    @Test(.enabled(if: TokenParityTests.aitermAvailable), arguments: ported.filter { !changed.contains($0) })
+    @Test(.enabled(if: TokenParityTests.aitermParity, "SHELLFORGE_AITERM_PARITY=1 and a ~/aiterm checkout"),
+          arguments: ported.filter { !changed.contains($0) })
     func everyPortedFileIsAiTermsAtThePinnedCommit(file: String) throws {
         let theirs = try #require(Self.aiterm(file))
         #expect(Self.normalised(try Self.ours(file)) == Self.normalised(theirs), "\(file).swift is not AiTerm's at \(Self.pinned)")

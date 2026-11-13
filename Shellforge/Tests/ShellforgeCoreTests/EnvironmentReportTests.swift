@@ -204,10 +204,10 @@ import Testing
         })
         let slow = Thread { launcher.reload() }
         slow.start()
-        while calls.withLock({ $0 }) < 1 { try await Task.sleep(for: .milliseconds(5)) }
+        try #require(await eventually(describing: "the first reload under way") { calls.withLock { $0 } >= 1 })
         launcher.reload()               // the second, started later, finishes first
         first.signal()
-        while !slow.isFinished { try await Task.sleep(for: .milliseconds(5)) }
+        try #require(await eventually(describing: "the first reload's end") { slow.isFinished })
         #expect(launcher.environment.variables["PATH"] == "/read-2")
     }
 }

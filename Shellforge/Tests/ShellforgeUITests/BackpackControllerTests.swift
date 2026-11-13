@@ -174,9 +174,7 @@ import Testing
         #expect(fake.settings.engaged)
         lid.onSet = { _ in }
         lid.succeeds = true
-        let deadline = Date().addingTimeInterval(2)
-        while fake.settings.engaged, Date() < deadline { try? await Task.sleep(for: .milliseconds(5)) }
-        #expect(!fake.settings.engaged, "the checks put sleep back")
+        #expect(await eventually(describing: "the checks to put sleep back") { !fake.settings.engaged })
         backpack.shutdown()
     }
 
@@ -341,16 +339,21 @@ import Testing
         let yields = Locked(0)
         let stream = backpack.lidCloses(every: .milliseconds(5))
         let watch = Task { for await _ in stream { yields.withLock { $0 += 1 } } }
-        try? await Task.sleep(for: .milliseconds(40))
+        // Each step waits for the watcher to have read the lid a few more times — not for a while:
+        // what a poll would yield, it has had the polls to yield.
+        func polls(_ count: Int) async {
+            let from = fake.lidSensor.reads
+            await eventually(describing: "\(count) more reads of the lid") { fake.lidSensor.reads >= from + count }
+        }
+        await polls(3)
         #expect(yields.withLock { $0 } == 0, "closed from the start is not a close")
         fake.lidSensor.closed = false
-        try? await Task.sleep(for: .milliseconds(40))
+        await polls(3)
         #expect(yields.withLock { $0 } == 0, "an opening is not a close")
         fake.lidSensor.closed = true
-        let deadline = Date().addingTimeInterval(2)
-        while yields.withLock({ $0 }) == 0, Date() < deadline { try? await Task.sleep(for: .milliseconds(5)) }
-        // Long enough for a second, wrong yield to show while the lid stays closed.
-        try? await Task.sleep(for: .milliseconds(40))
+        #expect(await eventually(describing: "the close") { yields.withLock { $0 } >= 1 })
+        // Polls enough for a second, wrong yield while the lid stays closed.
+        await polls(3)
         #expect(yields.withLock { $0 } == 1, "open → closed yields, once")
         watch.cancel()
         await watch.value
@@ -361,7 +364,8 @@ import Testing
         fake.lidSensor.closed = nil
         let backpack = controller(fake)
         let watch = Task { () -> Bool in for await _ in backpack.lidCloses(every: .milliseconds(5)) { return true }; return false }
-        try? await Task.sleep(for: .milliseconds(40))
+        // A few polls of a Mac with no lid, none a close.
+        await eventually(describing: "three reads of the lid") { fake.lidSensor.reads >= 3 }
         watch.cancel()
         #expect(await watch.value == false)
     }

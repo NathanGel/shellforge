@@ -39,6 +39,8 @@ if [[ -n "$latest" ]]; then
     [[ "$newest" == "$VERSION" && "$latest" != "$VERSION" ]] || die "$VERSION is not newer than $latest"
 fi
 security find-identity -p codesigning | grep -q "\"$IDENTITY\"" || die "no \"$IDENTITY\" code-signing certificate in the keychain (see Shellforge/docs/releasing.md)"
+# Nothing is built from a tree whose tests fail: the helper's, the package's and the relay's.
+"$ROOT/Shellforge/scripts/test-all.sh" || die "the tests failed (Shellforge/scripts/test-all.sh says which); nothing was built or tagged"
 
 # One more than Shellforge's releases so far: every install sees the number grow.
 BUILD=$(( $(print -r -- "$released" | grep -c . || true) + 1 ))

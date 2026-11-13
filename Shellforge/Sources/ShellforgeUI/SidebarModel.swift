@@ -122,6 +122,8 @@ public final class SidebarModel: ObservableObject {
     /// `noticeLifetime` (SidebarModel+PullDefault.swift).
     @Published public internal(set) var notice: String?
     var noticeLifetime: Duration = .seconds(6)
+    /// How a notice waits out its lifetime: the clock, unless a test holds the timers itself.
+    var noticeWait: @MainActor (Duration) async -> Void = { try? await Task.sleep(for: $0) }
     /// Which notice is up: a notice's timer clears only its own, not the same words said again.
     var noticeGeneration = 0
     /// The pull failure last said, and whose: that project's next good pull clears it while it is

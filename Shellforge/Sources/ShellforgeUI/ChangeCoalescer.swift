@@ -22,9 +22,16 @@ public final class ChangeCoalescer {
     }
 
     /// `seconds` after the first signal: every signal until then is the same change. What a burst
-    /// spread over several turns uses, at most one fire per `seconds`.
-    public static func after(_ seconds: TimeInterval) -> (@escaping Work) -> Void {
-        { work in DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { MainActor.assumeIsolated { work() } } }
+    /// spread over several turns uses, at most one fire per `seconds`. `later` runs work that many
+    /// seconds from now on the main actor: the main queue's clock, unless a test holds it.
+    public static func after(_ seconds: TimeInterval,
+                             later: @escaping (TimeInterval, @escaping Work) -> Void = ChangeCoalescer.mainQueueAfter)
+        -> (@escaping Work) -> Void {
+        { work in later(seconds, work) }
+    }
+
+    public static let mainQueueAfter: (TimeInterval, @escaping Work) -> Void = { seconds, work in
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { MainActor.assumeIsolated { work() } }
     }
 
     public func signal() {

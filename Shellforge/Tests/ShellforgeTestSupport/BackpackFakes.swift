@@ -69,7 +69,13 @@ final class FakeInstaller: SleepRuleInstaller, @unchecked Sendable {
 
 final class FakeLidSensor: LidSensor, @unchecked Sendable {
     var closed: Bool? = false
-    func isClosed() -> Bool? { closed }
+    private let readings = Locked(0)
+    /// How many times the lid has been read: a watcher that read it and said nothing has polled.
+    var reads: Int { readings.withLock { $0 } }
+    func isClosed() -> Bool? {
+        readings.withLock { $0 += 1 }
+        return closed
+    }
 }
 
 /// All six fakes, set up and in range of "Phone" on AC, with their ports and settings.

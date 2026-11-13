@@ -6,6 +6,12 @@ import ShellforgeTestSupport
 
 /// A Settings section's box is filled as macOS's own grouped form fills one: off its ground in the
 /// same direction, and by about as much — darker in light, lighter in dark.
+///
+/// What macOS draws natively depends on the SDK the *test host* was linked against, not on other
+/// tests: `scripts/swift.sh test` runs swiftly's `swiftpm-testing-helper` (linked against the
+/// macOS 14 SDK, so AppKit draws its compatibility look), while a plain `swift test` from Xcode runs
+/// Xcode's `xctest` (macOS 27 SDK, the new look), where this suite fails every time. Run it through
+/// `scripts/swift.sh`, as CI and `test-all.sh` do.
 @MainActor @Suite struct GroupFillTests {
     private func red(_ view: some View, _ appearance: NSAppearance.Name, x: Int, y: Int, size: NSSize) throws -> CGFloat {
         let host = NSHostingView(rootView: view)

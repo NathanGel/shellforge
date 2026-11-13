@@ -36,8 +36,7 @@ import Testing
             exited.withLock { $0 = status }
         }
         #expect(child.pid > 0)
-        let deadline = Date().addingTimeInterval(2)
-        while exited.withLock({ $0 }) == nil, Date() < deadline { try await Task.sleep(nanoseconds: 10_000_000) }
+        await eventually(describing: "the child's exit") { exited.withLock { $0 } != nil }
         #expect(exited.withLock { $0 } == 7)
         #expect(!child.isRunning)
     }
@@ -50,8 +49,7 @@ import Testing
         _ = try ChildProcess.launch("/bin/sh", ["-c", "echo hi; echo oops >&2"], environment: env, directory: nil, output: handle) { _, _ in
             done.withLock { $0 = true }
         }
-        let deadline = Date().addingTimeInterval(2)
-        while !done.withLock({ $0 }), Date() < deadline { try await Task.sleep(nanoseconds: 10_000_000) }
+        await eventually(describing: "the child's exit") { done.withLock { $0 } }
         try handle.close()
         #expect(try String(contentsOf: file, encoding: .utf8) == "hi\noops\n")
     }
@@ -63,9 +61,7 @@ import Testing
         }
         #expect(child.isRunning)
         child.terminate()
-        let deadline = Date().addingTimeInterval(2)
-        while !exited.withLock({ $0 }), Date() < deadline { try await Task.sleep(nanoseconds: 10_000_000) }
-        #expect(exited.withLock { $0 })
+        #expect(await eventually(describing: "the terminated child's exit") { exited.withLock { $0 } })
     }
 
     /// A child that ignores SIGTERM — a CLI's graceful shutdown, a `trap '' TERM` — is killed a moment

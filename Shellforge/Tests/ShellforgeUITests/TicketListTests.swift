@@ -24,8 +24,9 @@ import Testing
                      home: TestScratch.root.appendingPathComponent("tickets-home-\(UUID().uuidString)"))
     }
 
-    /// Waits by sleeping, not by running the run loop: a test holding the main actor in
-    /// `RunLoop.run` starves the sheet's own `.task`s, and the first search would never land.
+    /// Waits with `eventually`, not by running the run loop: a test holding the main actor in
+    /// `RunLoop.run` starves the sheet's own `.task`s, and the first search would never land. Done
+    /// once the search has landed and the ticket field is drawn.
     private func host(_ model: NewTaskModel) async throws -> (NSWindow, NSHostingView<NewTaskSheet>) {
         let host = NSHostingView(rootView: NewTaskSheet(model: model, dismiss: {}))
         host.frame = NSRect(x: 0, y: 0, width: Sheet.width, height: Sheet.height)
@@ -34,7 +35,11 @@ import Testing
         window.contentView = host
         window.orderFront(nil)
         host.layoutSubtreeIfNeeded()
-        try await Task.sleep(for: .milliseconds(300))
+        await eventually(describing: "the first search and the ticket field") {
+            host.layoutSubtreeIfNeeded()
+            return model.results.count == Self.blankTickets.count
+                && self.descendant(of: NSTextField.self, in: host, where: { $0.placeholderString == model.ticketPlaceholder }) != nil
+        }
         host.layoutSubtreeIfNeeded()
         return (window, host)
     }
@@ -59,8 +64,7 @@ import Testing
                                                         windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
             window.sendEvent(event)
         }
-        try await Task.sleep(for: .milliseconds(100))
-        #expect(!m.ticketsOpen)
+        #expect(await eventually(describing: "the ticket list closed") { !m.ticketsOpen })
     }
 
     /// The help text under the field is the field's next line: it used to draw after the list, so

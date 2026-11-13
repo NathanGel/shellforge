@@ -201,7 +201,8 @@ import ShellforgeDesign
         let created: Created
     }
 
-    /// Hosted and waited on by sleeping, so the sheet's own search and branch loads land.
+    /// Hosted, and waited on until the sheet's own search and branch loads land and its fields are
+    /// in the view: a key pressed before then would reach a sheet that is not there yet.
     private func harness(step: Int = 1, title: String = "", branch: String = "",
                          mrOpen: Bool = true, branchOpen: Bool = false) async throws -> Harness {
         let created = Created()
@@ -221,13 +222,14 @@ import ShellforgeDesign
         let window = NSWindow(contentRect: host.frame, styleMask: [], backing: .buffered, defer: false)
         window.contentView = host
         window.makeKeyAndOrderFront(nil)
-        // The sheet's own search, landed: the first hosted sheet of a run can take a while to.
-        await eventually { model.results.count == 2 }
-        try await pause()
+        // The sheet's own search and branch load, landed: the first hosted sheet of a run can take a
+        // while to. Then the step drawn: step 1 has its name field, the others do not.
+        await eventually(describing: "the sheet's search and branches") { model.results.count == 2 && model.branches.count == 3 }
+        await eventually(describing: "step \(step) drawn") {
+            !self.descendants(of: NSButton.self, in: host).isEmpty && (self.field("Describe the review", in: host) != nil) == (step == 1)
+        }
         return Harness(model: model, host: host, window: window, created: created)
     }
-
-    private func pause() async throws { try await Task.sleep(for: .milliseconds(200)) }
 
     private func field(_ placeholder: String, in host: NSView) -> NSTextField? {
         descendants(of: NSTextField.self, in: host).first { $0.placeholderString == placeholder }
@@ -237,17 +239,14 @@ import ShellforgeDesign
         field.delegate?.control?(field, textView: NSTextView(), doCommandBy: selector) ?? false
     }
 
-    private func listIsOpen(_ placeholder: String, in host: NSView) -> Bool {
-        guard let field = field(placeholder, in: host) else { return false }
-        return send(#selector(NSResponder.moveDown(_:)), to: field)
-    }
-
-    private func press(_ characters: String, keyCode: UInt16, command: Bool = false, _ h: Harness) async throws {
+    /// Presses a key in the sheet's window. What it does is waited for by the caller, on the model
+    /// or the view: SwiftUI applies the change on a later turn.
+    @discardableResult
+    private func press(_ characters: String, keyCode: UInt16, command: Bool = false, _ h: Harness) -> Bool {
         let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: command ? [.command] : [], timestamp: 0,
                                      windowNumber: h.window.windowNumber, context: nil, characters: characters,
                                      charactersIgnoringModifiers: characters, isARepeat: false, keyCode: keyCode)!
-        _ = h.window.performKeyEquivalent(with: event)
-        try await pause()
+        return h.window.performKeyEquivalent(with: event)
     }
 
     private func descendants<T: NSView>(of type: T.Type, in view: NSView) -> [T] {
@@ -265,25 +264,25 @@ import ShellforgeDesign
         #expect(self.field(Self.branchPlaceholder, in: h.host) != nil, "no branch picked yet")
         #expect(send(#selector(NSResponder.moveDown(_:)), to: field))
         #expect(send(#selector(NSResponder.insertNewline(_:)), to: field))
-        try await pause()
         #expect(h.model.draft.mr == Self.second)
         #expect(h.model.draft.title == "Drop the legacy importer")
         #expect(h.model.draft.branch == "chore-drop-importer")
-        #expect(self.field(Self.mrPlaceholder, in: h.host) == nil)
-        #expect(self.field(Self.branchPlaceholder, in: h.host) == nil)
+        await eventually(describing: "both pickers replaced by what was picked") {
+            self.field(Self.mrPlaceholder, in: h.host) == nil && self.field(Self.branchPlaceholder, in: h.host) == nil
+        }
     }
 
     /// ⎋ closes the merge-request list first, then the branch list, and only then reaches the sheet.
     @Test func escapeClosesTheMergeRequestListBeforeTheBranchList() async throws {
         let h = try await harness(mrOpen: true, branchOpen: true)
         defer { h.window.orderOut(nil) }
-        #expect(listIsOpen(Self.mrPlaceholder, in: h.host))
-        #expect(listIsOpen(Self.branchPlaceholder, in: h.host))
-        try await press("\u{1b}", keyCode: 53, h)
-        #expect(!listIsOpen(Self.mrPlaceholder, in: h.host), "the merge-request list goes first")
-        #expect(listIsOpen(Self.branchPlaceholder, in: h.host), "the branch list is still open")
-        try await press("\u{1b}", keyCode: 53, h)
-        #expect(!listIsOpen(Self.branchPlaceholder, in: h.host))
+        #expect(h.model.listOpen && h.model.branchListOpen)
+        // The model, not the view, says what is open: asking a field (↓) would move its list.
+        #expect(press("\u{1b}", keyCode: 53, h))
+        await eventually(describing: "the merge-request list closed first") { !h.model.listOpen }
+        #expect(h.model.branchListOpen, "the branch list is still open")
+        #expect(press("\u{1b}", keyCode: 53, h))
+        await eventually(describing: "the branch list closed") { !h.model.branchListOpen }
         #expect(self.field("Describe the review", in: h.host) != nil, "step 1 is still up")
         #expect(h.created.drafts.isEmpty)
     }
@@ -293,26 +292,31 @@ import ShellforgeDesign
         let h = try await harness(step: 2, title: "Review it", branch: "main", mrOpen: false)
         defer { h.window.orderOut(nil) }
         #expect(self.field("Describe the review", in: h.host) == nil, "step 2 is the agent step")
-        try await press("\u{1b}", keyCode: 53, h)
-        #expect(self.field("Describe the review", in: h.host) != nil, "⎋ went back to step 1")
+        #expect(press("\u{1b}", keyCode: 53, h))
+        await eventually(describing: "⎋ went back to step 1") { self.field("Describe the review", in: h.host) != nil }
     }
 
     /// Advancing closes a list left open, so one ⎋ on step 2 steps back.
     @Test func advancingClosesTheListsSoEscapeStepsBack() async throws {
         let h = try await harness(title: "Review it", branch: "main", mrOpen: true)
         defer { h.window.orderOut(nil) }
-        try await press("\r", keyCode: 36, command: true, h)
-        #expect(self.field("Describe the review", in: h.host) == nil, "⌘↩ went on to step 2")
-        try await press("\u{1b}", keyCode: 53, h)
-        #expect(self.field("Describe the review", in: h.host) != nil, "one ⎋ went back to step 1")
+        #expect(press("\r", keyCode: 36, command: true, h))
+        await eventually(describing: "⌘↩ went on to step 2") { self.field("Describe the review", in: h.host) == nil }
         #expect(!h.model.listOpen, "advancing closed the list")
+        #expect(press("\u{1b}", keyCode: 53, h))
+        await eventually(describing: "one ⎋ went back to step 1") { self.field("Describe the review", in: h.host) != nil }
     }
 
     /// A plain ↩ leaves step 1 up: the primary button answers ⌘↩ only.
     @Test func plainReturnDoesNotPressThePrimaryButton() async throws {
         let h = try await harness(title: "Review it", branch: "main", mrOpen: false)
         defer { h.window.orderOut(nil) }
-        try await press("\r", keyCode: 36, h)
+        press("\r", keyCode: 36, h)
+        // Absence: a primary button that took ↩ would have left step 1 in this window. ⌘↩, pressed
+        // after it, shows the sheet was listening all along.
+        try await Task.sleep(for: .milliseconds(200))
         #expect(self.field("Describe the review", in: h.host) != nil, "still step 1")
+        #expect(press("\r", keyCode: 36, command: true, h))
+        await eventually(describing: "⌘↩ went on to step 2") { self.field("Describe the review", in: h.host) == nil }
     }
 }

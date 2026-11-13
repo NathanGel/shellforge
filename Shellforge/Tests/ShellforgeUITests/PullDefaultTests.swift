@@ -85,13 +85,18 @@ import Testing
     /// A notice's timer clears only its own: the same words said again stay their full time.
     @Test func aRepeatedNoticeStaysItsFullTime() async throws {
         let (model, _, _) = try await setup(originAhead: 0)
-        model.noticeLifetime = .seconds(1)
+        let timers = NoticeTimers()
+        model.noticeWait = timers.wait
         model.show(notice: "main is already up to date.")
-        try await Task.sleep(for: .milliseconds(600))
+        await eventually(describing: "the first notice's timer") { timers.waiting == 1 }
         model.show(notice: "main is already up to date.")
-        try await Task.sleep(for: .milliseconds(600))
+        await eventually(describing: "the second notice's timer") { timers.waiting == 2 }
+        timers.fire(0)
+        await eventually(describing: "the first timer's end") { timers.ended == 1 }
         #expect(model.notice == "main is already up to date.", "the first timer has fired, and left the second")
-        #expect(await eventually { model.notice == nil })
+        timers.fire(1)
+        await eventually(describing: "the second timer's end") { timers.ended == 2 }
+        #expect(model.notice == nil)
     }
 
     @Test func aPullKeepsAnUnrelatedError() async throws {
@@ -148,5 +153,24 @@ import Testing
         #expect(SidebarModel.pullTitle(branch: "develop") == "Pull develop")
         #expect(SidebarModel.offersPull(.gitlab) && SidebarModel.offersPull(.github))
         #expect(!SidebarModel.offersPull(.git) && !SidebarModel.offersPull(.none))
+    }
+}
+
+/// The notices' timers, held by the test: each waits until the test fires it. `ended` counts the
+/// timers whose wait is over, and so whose notice has been cleared or left — the rest of a timer's
+/// task runs on the main actor in the same turn as its wait's end.
+@MainActor private final class NoticeTimers {
+    private var held: [CheckedContinuation<Void, Never>?] = []
+    private(set) var ended = 0
+    var waiting: Int { held.count }
+
+    func wait(_ lifetime: Duration) async {
+        await withCheckedContinuation { held.append($0) }
+        ended += 1
+    }
+
+    func fire(_ index: Int) {
+        held[index]?.resume()
+        held[index] = nil
     }
 }

@@ -7,6 +7,12 @@ import ShellforgeDesign
 
 /// The row pill is the rectangle macOS itself selects and rings: a right-click draws its blue ring
 /// around that rectangle, so a pill of any other shape had the ring falling outside it.
+///
+/// What macOS draws natively depends on the SDK the *test host* was linked against, not on other
+/// tests: `scripts/swift.sh test` runs swiftly's `swiftpm-testing-helper` (linked against the
+/// macOS 14 SDK, so AppKit draws its compatibility look), while a plain `swift test` from Xcode runs
+/// Xcode's `xctest` (macOS 27 SDK, the new look), where this suite fails every time. Run it through
+/// `scripts/swift.sh`, as CI and `test-all.sh` do.
 @MainActor @Suite struct RowPillFitTests {
     @Test func aSelectedRowsPillIsTheNativeSelectionRectangle() throws {
         let list = List {

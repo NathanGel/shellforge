@@ -32,9 +32,10 @@ import Testing
         let submissions: Submissions
     }
 
-    /// Hosted in a window, waited on by sleeping: a test spinning the run loop while it holds the
-    /// main actor starves the sheet's `.task`, so the load would never run. `seedProjects` writes
-    /// the same `State` that load writes, for the cases about the picker rather than the load.
+    /// Hosted in a window, waited on with `eventually` until its field is drawn: a test spinning the
+    /// run loop while it holds the main actor starves the sheet's `.task`, so the load would never
+    /// run. `seedProjects` writes the same `State` that load writes, for the cases about the picker
+    /// rather than the load.
     private func harness(linked: [JiraProjectRef] = [], listOpen: Bool = false, seedProjects: Bool = false,
                          projects: [JiraProjectRef] = projects,
                          load: @escaping () async throws -> [JiraProjectRef] = { projects }) async throws -> Harness {
@@ -49,10 +50,13 @@ import Testing
         window.appearance = NSAppearance(named: .darkAqua)
         window.contentView = host
         window.makeKeyAndOrderFront(nil)
-        try await pause()
+        await eventually(describing: "the sheet's project field") { self.field(in: host) != nil }
         return Harness(host: host, window: window, submissions: submissions)
     }
 
+    /// A turn for SwiftUI to apply what the field's delegate just changed. The picker's query and
+    /// highlight are the sheet's own `@State`, which nothing outside the view can read, so there is
+    /// no state to wait on: this one stays a short fixed wait.
     private func pause() async throws {
         try await Task.sleep(for: .milliseconds(150))
     }
@@ -74,8 +78,8 @@ import Testing
         let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.command], timestamp: 0,
                                      windowNumber: h.window.windowNumber, context: nil, characters: "\r",
                                      charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36)!
-        _ = h.window.performKeyEquivalent(with: event)
-        try await pause()
+        #expect(h.window.performKeyEquivalent(with: event), "⌘↩ reached the sheet")
+        await eventually(describing: "the sheet's answer") { !h.submissions.calls.isEmpty }
     }
 
     @Test func typingNarrowsTheListSoReturnAddsTheMatchingProject() async throws {
@@ -141,10 +145,9 @@ import Testing
         let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
                                       windowNumber: h.window.windowNumber, context: nil, characters: "\u{1b}",
                                       charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53)!
-        _ = h.window.performKeyEquivalent(with: escape)
-        try await pause()
-
-        #expect(!listIsOpen(in: h.host))
+        #expect(h.window.performKeyEquivalent(with: escape))
+        // An open list takes ↓ and only moves its highlight; a closed one hands it back.
+        await eventually(describing: "the list closed") { !listIsOpen(in: h.host) }
         #expect(self.field(in: h.host) != nil, "the sheet is still up")
         try await pressCommandReturn(h)
         #expect(h.submissions.calls == [[Self.projects[0], Self.projects[1]]])

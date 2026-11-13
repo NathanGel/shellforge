@@ -19,6 +19,8 @@ public final class MachineMonitor: ObservableObject {
     /// The battery, as Backpack Mode reads it: one port for both.
     private let power: any PowerSource
     private let interval: Duration
+    /// How the loop waits between samples: the clock, unless a test holds it.
+    private let wait: @Sendable (Duration) async -> Void
     private var previous: MachineSample?
     private var sampling: Task<Void, Never>?
     /// Between `start()` and `stop()`.
@@ -28,10 +30,12 @@ public final class MachineMonitor: ObservableObject {
     /// Whether a sampling loop runs now, for tests.
     var isSampling: Bool { sampling != nil }
 
-    public init(sensor: any MachineSensor, power: any PowerSource, interval: Duration = .seconds(5)) {
+    public init(sensor: any MachineSensor, power: any PowerSource, interval: Duration = .seconds(5),
+                wait: @escaping @Sendable (Duration) async -> Void = { try? await Task.sleep(for: $0) }) {
         self.sensor = sensor
         self.power = power
         self.interval = interval
+        self.wait = wait
     }
 
     /// Samples until `stop()`, except while paused. Once started, a second call does nothing.
@@ -61,9 +65,12 @@ public final class MachineMonitor: ObservableObject {
     private func resume() {
         guard started, !paused, sampling == nil else { return }
         // Weak: the loop must not keep the monitor alive, and it ends when the monitor goes.
+        let wait = self.wait
+        // Cancelled while it waits, the loop ends there: a wait cut short by a pause is no cue
+        // for one more sample, which read the sensor while no footer showed.
         sampling = Task { [weak self] in
-            while let pause = await self?.sample(), !Task.isCancelled {
-                try? await Task.sleep(for: pause)
+            while !Task.isCancelled, let pause = await self?.sample(), !Task.isCancelled {
+                await wait(pause)
             }
         }
     }

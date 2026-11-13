@@ -2,6 +2,7 @@
 import Foundation
 import Testing
 @testable import ShellforgeCore
+@testable import ShellforgeTestSupport
 
 @Suite struct MachineReadingsTests {
     private let gigabyte: UInt64 = 1 << 30
@@ -84,14 +85,14 @@ import Testing
 
     /// The live sensor reads this Mac without a subprocess: two samples apart give a share and a
     /// memory figure inside their ranges. The CPU's tick counters can sit still for a fifth of a
-    /// second on an idle Mac, so the second sample is taken once they have moved, within two.
+    /// second on an idle Mac, so the second sample is taken once they have moved.
     @Test func theLiveSensorReadsThisMac() throws {
         let sensor = LiveMachineSensor()
         let earlier = try #require(sensor.sample().cpu)
-        var second = sensor.sample(), waited = 0.0
-        while second.cpu?.busyPercent(since: earlier) == nil, waited < 2 {
-            Thread.sleep(forTimeInterval: 0.1); waited += 0.1
+        var second = sensor.sample()
+        blockUntil(describing: "the CPU's tick counters to move") {
             second = sensor.sample()
+            return second.cpu?.busyPercent(since: earlier) != nil
         }
         let busy = try #require(second.cpu?.busyPercent(since: earlier))
         #expect((0...100).contains(busy))

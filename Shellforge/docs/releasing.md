@@ -44,9 +44,12 @@ Then, from a clean `master` that matches `origin/master`:
 It:
 1. checks the branch, the working tree and the helper's folder, `origin`, the tag, that the version
    is newer than the last release, its dated `CHANGELOG.md` section, `gh` and the certificate;
-2. builds with `make-app.sh` (iTerm2's Deployment configuration, Apple silicon), stamps the version and build number, and signs with the certificate;
-3. wraps the app in `build/Shellforge-<version>.dmg` with `make-dmg.sh`, and checks it;
-4. pushes the tag and publishes the GitHub release with the DMG attached and the changelog section as its notes, as a draft first, so updaters never see a release without its image.
+2. runs `Shellforge/scripts/test-all.sh`: the helper's pytest suite, the Swift package suite and the
+   feedback relay's `node --test`, and stops before building if any fails. The helper's tests use
+   `Shellforge/daemon/.venv` (see its README) and leave no `__pycache__/` behind;
+3. builds with `make-app.sh` (iTerm2's Deployment configuration, Apple silicon), stamps the version and build number, and signs with the certificate;
+4. wraps the app in `build/Shellforge-<version>.dmg` with `make-dmg.sh`, and checks it;
+5. pushes the tag and publishes the GitHub release with the DMG attached and the changelog section as its notes, as a draft first, so updaters never see a release without its image.
 
 After a release, start the next version's section at the top of `CHANGELOG.md` as
 `## <next version> — unreleased`.

@@ -23,17 +23,29 @@ import Testing
     }
 
     /// The session report's: signals spread over a quarter of a second are one fire, at its end.
-    @Test func aDelayedScheduleFiresOnceForSignalsBeforeIt() async {
+    /// The delay's clock is the test's: what is due runs when the test says the time has come.
+    @Test func aDelayedScheduleFiresOnceForSignalsBeforeIt() {
+        var due: [(seconds: TimeInterval, work: @MainActor () -> Void)] = []
         var fired = 0
-        let coalescer = ChangeCoalescer(schedule: ChangeCoalescer.after(0.3), fire: { fired += 1 })
+        let coalescer = ChangeCoalescer(schedule: ChangeCoalescer.after(0.3, later: { due.append(($0, $1)) }), fire: { fired += 1 })
         coalescer.signal()
-        await Task.yield()
         coalescer.signal()
+        #expect(due.map(\.seconds) == [0.3], "one fire, the delay out")
         #expect(fired == 0, "nothing fires before the delay")
-        #expect(await eventually { fired >= 1 })
-        coalescer.signal()
+        due.removeFirst().work()
         #expect(fired == 1, "both signals before the delay were one fire")
-        #expect(await eventually { fired >= 2 })
+        coalescer.signal()
+        #expect(due.map(\.seconds) == [0.3], "a signal after the fire waits the delay again")
+        #expect(fired == 1)
+        due.removeFirst().work()
         #expect(fired == 2)
+    }
+
+    /// The live delay runs on the main queue, `seconds` out.
+    @Test func theLiveDelayRunsLater() async {
+        var fired = false
+        ChangeCoalescer.mainQueueAfter(0.01) { fired = true }
+        #expect(!fired, "not at once")
+        #expect(await eventually { fired })
     }
 }

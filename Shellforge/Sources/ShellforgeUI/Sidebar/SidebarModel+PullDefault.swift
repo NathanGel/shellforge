@@ -66,9 +66,9 @@ extension SidebarModel {
     func show(notice text: String) {
         notice = text
         noticeGeneration += 1
-        let (lifetime, generation) = (noticeLifetime, noticeGeneration)
+        let (lifetime, generation, wait) = (noticeLifetime, noticeGeneration, noticeWait)
         Task { [weak self] in
-            try? await Task.sleep(for: lifetime)
+            await wait(lifetime)
             guard let self, self.noticeGeneration == generation else { return }
             self.notice = nil
         }

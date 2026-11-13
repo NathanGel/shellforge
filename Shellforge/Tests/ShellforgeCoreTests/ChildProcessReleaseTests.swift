@@ -23,9 +23,9 @@ import Testing
         let mark = TestScratch.root.appendingPathComponent("late-\(UUID().uuidString)").path
         let script = "(sleep 3; echo late; echo late >&2; touch '\(mark)') & exit 0"
         _ = try ChildProcess.run("/bin/sh", ["-c", script], environment: ["PATH": "/usr/bin:/bin"], timeout: 10)
-        let deadline = Date().addingTimeInterval(8)
-        while !FileManager.default.fileExists(atPath: mark), Date() < deadline { try await Task.sleep(for: .milliseconds(50)) }
-        #expect(FileManager.default.fileExists(atPath: mark), "the background job died writing to a closed pipe")
+        #expect(await eventually(describing: "the background job's mark: it died writing to a closed pipe") {
+            FileManager.default.fileExists(atPath: mark)
+        })
     }
 
     /// Once the background jobs end, their pipes close: nothing waits on them for good.
@@ -39,9 +39,7 @@ import Testing
             }
         }
         // Other suites start commands too: wait for the count to come back, rather than read it once.
-        let deadline = Date().addingTimeInterval(10)
-        while Self.pipes() > before, Date() < deadline { try await Task.sleep(for: .milliseconds(100)) }
-        #expect(Self.pipes() <= before, "pipes outlived their background jobs")
+        #expect(await eventually(describing: "the pipes to close: they outlived their background jobs") { Self.pipes() <= before })
     }
 
     @Test func aFinishedChildIsReleased() async throws {
@@ -53,10 +51,7 @@ import Testing
             }
             released = child
         }
-        let deadline = Date().addingTimeInterval(5)
-        while !exited.withLock({ $0 }), Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
-        #expect(exited.withLock { $0 })
-        while released != nil, Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
-        #expect(released == nil, "the ended child is still held")
+        #expect(await eventually(describing: "the child's exit") { exited.withLock { $0 } })
+        #expect(await eventually(describing: "the ended child let go") { released == nil })
     }
 }

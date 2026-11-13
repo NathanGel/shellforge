@@ -71,20 +71,27 @@ struct MachineMonitorTests {
     }
 
     /// With no sidebar to be seen nothing is sampled; the first to show again samples at once.
+    ///
+    /// The loop's waits end only when it is cancelled, so each loop takes exactly one sample and
+    /// the count steps 0, 1, 2 in order. It used to pass by luck: the loop paused in its wait took
+    /// one more sample on the way out, so the count went 1, 2, 3 and the wait for 2 held only when
+    /// it looked between the paused loop's sample and the resumed one's. And with the clock's waits
+    /// a loop's second sample comes a second after its first (`min(interval, 1 s)`), which a main
+    /// actor kept busy that long by the parallel runner could see before it saw the 1.
     @Test func pausedWhileNoFooterShows() async {
         let sensor = CountingSensor(sample(user: 0, idle: 0))
-        let monitor = MachineMonitor(sensor: sensor, power: FakePower(), interval: .seconds(60))
+        let monitor = MachineMonitor(sensor: sensor, power: FakePower(), interval: .seconds(60), wait: { _ in await waitUntilCancelled() })
         monitor.setShown(false)
         monitor.start()
         #expect(!monitor.isSampling, "started while hidden, it waits")
         monitor.setShown(true)
         #expect(monitor.isSampling)
-        await eventually { sensor.count == 1 }
+        await eventually(describing: "the first sample (taken: \(sensor.count))") { sensor.count == 1 }
         monitor.setShown(false)
         #expect(!monitor.isSampling)
         #expect(monitor.paused)
         monitor.setShown(true)
-        await eventually { sensor.count == 2 }
+        await eventually(describing: "the resumed loop's sample, and no other (taken: \(sensor.count))") { sensor.count == 2 }
         monitor.stop()
         monitor.setShown(true)
         #expect(!monitor.isSampling, "stopped stays stopped")
@@ -101,4 +108,10 @@ private final class CountingSensor: MachineSensor, @unchecked Sendable {
         taken.withLock { $0 += 1 }
         return value
     }
+}
+
+/// Suspends until the task is cancelled: a loop's wait that only `stop()` or a pause ends. (A year
+/// is never, for a test; cancellation ends the sleep at once.)
+private func waitUntilCancelled() async {
+    try? await Task.sleep(for: .seconds(365 * 86_400))
 }
