@@ -44,7 +44,7 @@ import Testing
 
     /// New Task's and Settings' saved connections are Keychain reads: each runs off the main actor.
     @Test func sheetsReadSecretsOffTheMainActor() async throws {
-        let repo = try GitRepoForUI()
+        let repo = try await GitRepoForUI()
         let reads = Locked<[Bool]>([])
         let model = SidebarModel(host: FakeTerminalHost(), document: document(in: URL(fileURLWithPath: repo.path).deletingLastPathComponent()),
                                  launcher: repo.launcher,

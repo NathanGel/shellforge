@@ -32,18 +32,18 @@ private struct Scratch {
     }
 
     /// A repository with one commit on `main`, as a project.
-    func project(_ name: String) throws -> Project {
+    func project(_ name: String) async throws -> Project {
         let path = "\(root)/\(name)"
         try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
-        try git(["init", "-q", "-b", "main"], in: path)
-        try git(["commit", "-q", "--allow-empty", "-m", "first"], in: path)
+        try await git(["init", "-q", "-b", "main"], in: path)
+        try await git(["commit", "-q", "--allow-empty", "-m", "first"], in: path)
         return Project(name: name, path: path)
     }
 
     /// A task's worktree of `project`, at `.worktrees/<slug>` on a new branch.
-    func task(_ title: String, slug: String, branch: String, of project: Project) throws -> TaskItem {
+    func task(_ title: String, slug: String, branch: String, of project: Project) async throws -> TaskItem {
         let path = "\(project.path)/.worktrees/\(slug)"
-        try git(["worktree", "add", "-q", "-b", branch, path], in: project.path)
+        try await git(["worktree", "add", "-q", "-b", branch, path], in: project.path)
         return TaskItem(projectId: project.id, title: title, branch: branch, worktreePath: path, baseBranch: "main")
     }
 
@@ -54,10 +54,8 @@ private struct Scratch {
     }
 
     @discardableResult
-    func git(_ args: [String], in directory: String) throws -> String {
-        let out = try launcher.run("git", ["-C", directory] + args)
-        guard out.status == 0 else { throw GitFailure(command: "git " + args.joined(separator: " "), message: out.stderr) }
-        return out.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    func git(_ args: [String], in directory: String) async throws -> String {
+        try await launcher.fixtureGit(args, in: directory)
     }
 }
 
@@ -136,7 +134,7 @@ final class GitModelTests: XCTestCase {
 
     func testAChangeRefreshesThatRepositoryOnly() async throws {
         let scratch = try Scratch()
-        let demo = try scratch.project("demo"), acme = try scratch.project("acme-web")
+        let demo = try await scratch.project("demo"), acme = try await scratch.project("acme-web")
         let reader = Reader()
         var made: [String: FakeWatcher] = [:]
         let git = model(scratch, [demo, acme], reader: reader, watchers: { made[$0.path] = $0 })
@@ -154,8 +152,8 @@ final class GitModelTests: XCTestCase {
 
     func testATaskWithChangesIsListedUnderItsProject() async throws {
         let scratch = try Scratch()
-        let demo = try scratch.project("demo"), acme = try scratch.project("acme-web")
-        let task = try scratch.task("Login page", slug: "feature-login-page", branch: "feature/login-page", of: demo)
+        let demo = try await scratch.project("demo"), acme = try await scratch.project("acme-web")
+        let task = try await scratch.task("Login page", slug: "feature-login-page", branch: "feature/login-page", of: demo)
         try scratch.write("src/app.ts", in: task.worktreePath)
         let reader = Reader()
         var made: [String: FakeWatcher] = [:]
@@ -169,7 +167,7 @@ final class GitModelTests: XCTestCase {
         XCTAssertEqual(status(git.sections[0])?.hasChanges, false, "the task's files are not the project's")
 
         // Staging in the task changes its index in the project's .git: the project's watcher sees it.
-        try scratch.git(["add", "src/app.ts"], in: task.worktreePath)
+        try await scratch.git(["add", "src/app.ts"], in: task.worktreePath)
         let projectReads = reader.count(demo.path)
         made[demo.path]!.fire([".git/worktrees/feature-login-page/index"])
         await git.settled()
@@ -179,12 +177,12 @@ final class GitModelTests: XCTestCase {
 
     func testAMovedUpstreamRefreshesTheTasksAheadAndBehind() async throws {
         let scratch = try Scratch()
-        let demo = try scratch.project("demo")
+        let demo = try await scratch.project("demo")
         let origin = "\(scratch.root)/origin.git"
-        try scratch.git(["init", "-q", "--bare", "-b", "main", origin], in: scratch.root)
-        try scratch.git(["remote", "add", "origin", origin], in: demo.path)
-        let task = try scratch.task("Login page", slug: "feature-login-page", branch: "feature/login-page", of: demo)
-        try scratch.git(["push", "-q", "-u", "origin", "feature/login-page"], in: task.worktreePath)
+        try await scratch.git(["init", "-q", "--bare", "-b", "main", origin], in: scratch.root)
+        try await scratch.git(["remote", "add", "origin", origin], in: demo.path)
+        let task = try await scratch.task("Login page", slug: "feature-login-page", branch: "feature/login-page", of: demo)
+        try await scratch.git(["push", "-q", "-u", "origin", "feature/login-page"], in: task.worktreePath)
         try scratch.write("src/app.ts", in: task.worktreePath)
         var made: [String: FakeWatcher] = [:]
         let git = model(scratch, [demo], tasks: [task], watchers: { made[$0.path] = $0 })
@@ -192,8 +190,8 @@ final class GitModelTests: XCTestCase {
         XCTAssertEqual(status(git.sections[0].tasks.first)?.behind, 0)
 
         // A fetch moves the upstream: one more commit on it, as the project's refs record it.
-        let tip = try scratch.git(["commit-tree", "feature/login-page^{tree}", "-p", "feature/login-page", "-m", "remote"], in: demo.path)
-        try scratch.git(["update-ref", "refs/remotes/origin/feature/login-page", tip], in: demo.path)
+        let tip = try await scratch.git(["commit-tree", "feature/login-page^{tree}", "-p", "feature/login-page", "-m", "remote"], in: demo.path)
+        try await scratch.git(["update-ref", "refs/remotes/origin/feature/login-page", tip], in: demo.path)
         made[demo.path]!.fire([".git/refs/remotes/origin/feature/login-page"])
         await git.settled()
         XCTAssertEqual(status(git.sections[0].tasks.first)?.behind, 1)
@@ -201,17 +199,17 @@ final class GitModelTests: XCTestCase {
 
     func testATaskWhoseWorktreeNameClashesIsFoundByItsGitFile() async throws {
         let scratch = try Scratch()
-        let demo = try scratch.project("demo")
+        let demo = try await scratch.project("demo")
         // Another worktree with the same folder name takes `feature-login-page` in .git/worktrees/.
-        try scratch.git(["worktree", "add", "-q", "-b", "feature/other", "\(scratch.root)/elsewhere/feature-login-page"], in: demo.path)
-        let task = try scratch.task("Login page", slug: "feature-login-page", branch: "feature/login-page", of: demo)
+        try await scratch.git(["worktree", "add", "-q", "-b", "feature/other", "\(scratch.root)/elsewhere/feature-login-page"], in: demo.path)
+        let task = try await scratch.task("Login page", slug: "feature-login-page", branch: "feature/login-page", of: demo)
         XCTAssertTrue(FileManager.default.fileExists(atPath: "\(demo.path)/.git/worktrees/feature-login-page1"))
         try scratch.write("src/app.ts", in: task.worktreePath)
         var made: [String: FakeWatcher] = [:]
         let git = model(scratch, [demo], tasks: [task], watchers: { made[$0.path] = $0 })
         await git.settled()
         XCTAssertEqual(status(git.sections[0].tasks.first)?.staged, [])
-        try scratch.git(["add", "src/app.ts"], in: task.worktreePath)
+        try await scratch.git(["add", "src/app.ts"], in: task.worktreePath)
         made[demo.path]!.fire([".git/worktrees/feature-login-page1/index"])
         await git.settled()
         XCTAssertEqual(status(git.sections[0].tasks.first)?.staged.map(\.path), ["src/app.ts"])
@@ -219,8 +217,8 @@ final class GitModelTests: XCTestCase {
 
     func testATaskWithoutChangesIsNot() async throws {
         let scratch = try Scratch()
-        let demo = try scratch.project("demo")
-        let clean = try scratch.task("Login page", slug: "feature-login-page", branch: "feature/login-page", of: demo)
+        let demo = try await scratch.project("demo")
+        let clean = try await scratch.task("Login page", slug: "feature-login-page", branch: "feature/login-page", of: demo)
         let gone = TaskItem(projectId: demo.id, title: "Checkout", branch: "feature/checkout",
                             worktreePath: "\(demo.path)/.worktrees/feature-checkout", baseBranch: "main")
         let git = model(scratch, [demo], tasks: [clean, gone])
@@ -232,16 +230,16 @@ final class GitModelTests: XCTestCase {
     /// A clean task whose branch is ahead of its upstream is listed: it has commits to push.
     func testATaskAheadOfItsUpstreamIsListed() async throws {
         let scratch = try Scratch()
-        let demo = try scratch.project("demo")
+        let demo = try await scratch.project("demo")
         let origin = "\(scratch.root)/origin.git"
-        try scratch.git(["init", "-q", "--bare", "-b", "main", origin], in: scratch.root)
-        try scratch.git(["remote", "add", "origin", origin], in: demo.path)
-        let task = try scratch.task("Login page", slug: "feature-login-page", branch: "feature/login-page", of: demo)
-        try scratch.git(["push", "-q", "-u", "origin", "feature/login-page"], in: task.worktreePath)
+        try await scratch.git(["init", "-q", "--bare", "-b", "main", origin], in: scratch.root)
+        try await scratch.git(["remote", "add", "origin", origin], in: demo.path)
+        let task = try await scratch.task("Login page", slug: "feature-login-page", branch: "feature/login-page", of: demo)
+        try await scratch.git(["push", "-q", "-u", "origin", "feature/login-page"], in: task.worktreePath)
         let git = model(scratch, [demo], tasks: [task])
         await git.settled()
         XCTAssertTrue(git.sections[0].tasks.isEmpty, "pushed and clean")
-        try scratch.git(["commit", "-q", "--allow-empty", "-m", "login"], in: task.worktreePath)
+        try await scratch.git(["commit", "-q", "--allow-empty", "-m", "login"], in: task.worktreePath)
         await git.refresh(.task(task.id))
         XCTAssertEqual(git.sections[0].tasks.map(\.title), ["Login page"])
     }
@@ -249,9 +247,9 @@ final class GitModelTests: XCTestCase {
     /// A clean task with no upstream is listed while it has commits its base branch lacks.
     func testATaskWithUnpublishedCommitsIsListed() async throws {
         let scratch = try Scratch()
-        let demo = try scratch.project("demo")
-        let task = try scratch.task("Login page", slug: "feature-login-page", branch: "feature/login-page", of: demo)
-        try scratch.git(["commit", "-q", "--allow-empty", "-m", "login"], in: task.worktreePath)
+        let demo = try await scratch.project("demo")
+        let task = try await scratch.task("Login page", slug: "feature-login-page", branch: "feature/login-page", of: demo)
+        try await scratch.git(["commit", "-q", "--allow-empty", "-m", "login"], in: task.worktreePath)
         let git = model(scratch, [demo], tasks: [task])
         await git.settled()
         XCTAssertEqual(git.sections[0].tasks.map(\.title), ["Login page"])
@@ -262,14 +260,14 @@ final class GitModelTests: XCTestCase {
     /// it stays listed rather than hide work that isn't published.
     func testATaskWithoutABaseBranchShowsAfterACommit() async throws {
         let scratch = try Scratch()
-        let demo = try scratch.project("demo")
-        var task = try scratch.task("Login page", slug: "feature-login-page", branch: "feature/login-page", of: demo)
+        let demo = try await scratch.project("demo")
+        var task = try await scratch.task("Login page", slug: "feature-login-page", branch: "feature/login-page", of: demo)
         task.baseBranch = ""
         try scratch.write("src/app.ts", in: task.worktreePath)
-        try scratch.git(["add", "src/app.ts"], in: task.worktreePath)
+        try await scratch.git(["add", "src/app.ts"], in: task.worktreePath)
         let git = model(scratch, [demo], tasks: [task])
         await git.settled()
-        try scratch.git(["commit", "-q", "-m", "login"], in: task.worktreePath)
+        try await scratch.git(["commit", "-q", "-m", "login"], in: task.worktreePath)
         await git.refresh(.task(task.id))
         XCTAssertEqual(git.sections[0].tasks.map(\.title), ["Login page"])
         XCTAssertEqual(status(git.sections[0].tasks.first)?.hasChanges, false)
@@ -278,7 +276,7 @@ final class GitModelTests: XCTestCase {
     /// A Project folder task works in its project's folder: no second section, watcher or queue.
     func testAProjectFolderTaskIsNotASecondSection() async throws {
         let scratch = try Scratch()
-        let demo = try scratch.project("demo")
+        let demo = try await scratch.project("demo")
         let task = TaskItem(projectId: demo.id, title: "Login page", branch: "main", worktreePath: demo.path, baseBranch: "main")
         try scratch.write("src/app.ts", in: demo.path)
         var watched: [String] = []
@@ -294,16 +292,17 @@ final class GitModelTests: XCTestCase {
     /// committed, rather than every change.
     func testACommitOfStagedFilesCommitsNothingOnceNoneAreStaged() async throws {
         let scratch = try Scratch()
-        let demo = try scratch.project("demo")
+        let demo = try await scratch.project("demo")
         try scratch.write("src/app.ts", in: demo.path)
         let git = model(scratch, [demo])
         await git.settled()
         let id = GitRepoID.project(demo.id)
-        let head = try scratch.git(["rev-parse", "HEAD"], in: demo.path)
+        let head = try await scratch.git(["rev-parse", "HEAD"], in: demo.path)
         git.setCommitMessage("Add the login page", for: id)
         await git.perform(.commit(expectsStaged: true), in: id)
         XCTAssertEqual(git.sections.first?.problem, "The staged files changed. Check them and commit again.")
-        XCTAssertEqual(try scratch.git(["rev-parse", "HEAD"], in: demo.path), head)
+        let after = try await scratch.git(["rev-parse", "HEAD"], in: demo.path)
+        XCTAssertEqual(after, head)
         XCTAssertEqual(git.commitMessage(id), "Add the login page", "the message is kept")
         XCTAssertEqual(status(git.sections.first)?.unstaged.map(\.path), ["src/app.ts"])
     }
@@ -313,18 +312,19 @@ final class GitModelTests: XCTestCase {
     /// committed, and the person is asked to look again.
     func testCommitAllRefusesWhenSomethingWasStagedMeanwhile() async throws {
         let scratch = try Scratch()
-        let demo = try scratch.project("demo")
+        let demo = try await scratch.project("demo")
         try scratch.write("src/app.ts", in: demo.path)
         try scratch.write("src/login.ts", in: demo.path)
         let git = model(scratch, [demo])
         await git.settled()
         let id = GitRepoID.project(demo.id)
-        let head = try scratch.git(["rev-parse", "HEAD"], in: demo.path)
-        try scratch.git(["add", "src/login.ts"], in: demo.path)
+        let head = try await scratch.git(["rev-parse", "HEAD"], in: demo.path)
+        try await scratch.git(["add", "src/login.ts"], in: demo.path)
         git.setCommitMessage("Add the login page", for: id)
         await git.perform(.commit(expectsStaged: false), in: id)
         XCTAssertEqual(git.sections.first?.problem, "The staged files changed. Check them and commit again.")
-        XCTAssertEqual(try scratch.git(["rev-parse", "HEAD"], in: demo.path), head)
+        let after = try await scratch.git(["rev-parse", "HEAD"], in: demo.path)
+        XCTAssertEqual(after, head)
         XCTAssertEqual(git.commitMessage(id), "Add the login page", "the message is kept")
         XCTAssertEqual(status(git.sections.first)?.staged.map(\.path), ["src/login.ts"])
     }
@@ -332,8 +332,8 @@ final class GitModelTests: XCTestCase {
     /// A clean task whose action failed stays listed, so its problem is seen.
     func testATaskWithAProblemIsListed() async throws {
         let scratch = try Scratch()
-        let demo = try scratch.project("demo")
-        let task = try scratch.task("Login page", slug: "feature-login-page", branch: "feature/login-page", of: demo)
+        let demo = try await scratch.project("demo")
+        let task = try await scratch.task("Login page", slug: "feature-login-page", branch: "feature/login-page", of: demo)
         let git = model(scratch, [demo], tasks: [task])
         await git.settled()
         XCTAssertTrue(git.sections[0].tasks.isEmpty)
@@ -345,7 +345,7 @@ final class GitModelTests: XCTestCase {
     /// Typing a message changes its draft, not the model's sections.
     func testTypingAMessageDoesNotRepublishTheSections() async throws {
         let scratch = try Scratch()
-        let demo = try scratch.project("demo")
+        let demo = try await scratch.project("demo")
         let git = model(scratch, [demo])
         await git.settled()
         let id = GitRepoID.project(demo.id)
@@ -363,7 +363,7 @@ final class GitModelTests: XCTestCase {
     /// The workspace's projects and tasks reach the model as the host wires it: `follow`.
     func testTheModelFollowsTheWorkspace() async throws {
         let scratch = try Scratch()
-        let demo = try scratch.project("demo")
+        let demo = try await scratch.project("demo")
         let document = WorkspaceDocument(store: WorkspaceStore(folder: URL(fileURLWithPath: "\(scratch.root)/data")))
         let git = model(scratch, [])
         git.follow(document.$workspace)
@@ -377,7 +377,7 @@ final class GitModelTests: XCTestCase {
 
     func testActionsOnOneRepositoryRunOneAtATime() async throws {
         let scratch = try Scratch()
-        let demo = try scratch.project("demo")
+        let demo = try await scratch.project("demo")
         let gate = Gate()
         let git = model(scratch, [demo], act: { action, _, _, _ in gate.act(action) })
         await git.settled()
@@ -404,7 +404,7 @@ final class GitModelTests: XCTestCase {
     /// opening a diff later does not clear that.
     func testAReportDuringAnActionDoesNotLaterClearTheActionsProblem() async throws {
         let scratch = try Scratch()
-        let demo = try scratch.project("demo")
+        let demo = try await scratch.project("demo")
         let gate = Gate()
         let git = model(scratch, [demo], act: { action, _, _, _ in
             gate.act(action)
@@ -423,7 +423,7 @@ final class GitModelTests: XCTestCase {
 
     func testEventsDuringAnActionMakeOneRefreshAfterIt() async throws {
         let scratch = try Scratch()
-        let demo = try scratch.project("demo")
+        let demo = try await scratch.project("demo")
         let gate = Gate(), reader = Reader()
         var made: [String: FakeWatcher] = [:]
         let git = model(scratch, [demo], reader: reader, act: { action, _, _, _ in gate.act(action) }, watchers: { made[$0.path] = $0 })
@@ -441,7 +441,7 @@ final class GitModelTests: XCTestCase {
 
     func testCommitClearsTheMessage() async throws {
         let scratch = try Scratch()
-        let demo = try scratch.project("demo")
+        let demo = try await scratch.project("demo")
         try scratch.write("src/app.ts", in: demo.path)
         let git = model(scratch, [demo])
         await git.settled()
@@ -452,12 +452,13 @@ final class GitModelTests: XCTestCase {
         XCTAssertEqual(git.commitMessage(id), "")
         XCTAssertNil(git.sections.first?.problem)
         XCTAssertEqual(status(git.sections.first)?.hasChanges, false)
-        XCTAssertEqual(try scratch.git(["log", "-1", "--format=%s"], in: demo.path), "Add the login page")
+        let subject = try await scratch.git(["log", "-1", "--format=%s"], in: demo.path)
+        XCTAssertEqual(subject, "Add the login page")
     }
 
     func testAFailedActionShowsItsProblem() async throws {
         let scratch = try Scratch()
-        let demo = try scratch.project("demo")
+        let demo = try await scratch.project("demo")
         let git = model(scratch, [demo])
         await git.settled()
         let id = GitRepoID.project(demo.id)
@@ -472,7 +473,7 @@ final class GitModelTests: XCTestCase {
 
     func testARemovedProjectDoesNotReappear() async throws {
         let scratch = try Scratch()
-        let demo = try scratch.project("demo"), acme = try scratch.project("acme-web")
+        let demo = try await scratch.project("demo"), acme = try await scratch.project("acme-web")
         let reader = Reader()
         let gate = reader.holdNext(demo.path)
         var made: [String: FakeWatcher] = [:]
@@ -499,7 +500,7 @@ extension GitModelTests {
     /// the marked repository is read once, the others not at all.
     func testAHiddenPanelRunsNoGit() async throws {
         let scratch = try Scratch()
-        let demo = try scratch.project("demo"), acme = try scratch.project("acme-web")
+        let demo = try await scratch.project("demo"), acme = try await scratch.project("acme-web")
         let reader = Reader()
         var made: [String: FakeWatcher] = [:]
         let holder = GitHolder { self.model(scratch, [demo, acme], reader: reader, watchers: { made[$0.path] = $0 }) }
@@ -533,7 +534,7 @@ extension GitModelTests {
     /// Two windows show the panel: hiding it in one keeps it live for the other.
     func testThePanelStaysLiveWhileAnyWindowShowsIt() async throws {
         let scratch = try Scratch()
-        let demo = try scratch.project("demo")
+        let demo = try await scratch.project("demo")
         let reader = Reader()
         var made: [String: FakeWatcher] = [:]
         let holder = GitHolder { self.model(scratch, [demo], reader: reader, watchers: { made[$0.path] = $0 }) }
@@ -555,7 +556,7 @@ extension GitModelTests {
     /// and a changed `.gitignore` lists the ignored folders again.
     func testIgnoredBuildOutputTriggersNothing() async throws {
         let scratch = try Scratch()
-        let demo = try scratch.project("demo")
+        let demo = try await scratch.project("demo")
         try "build/\nnode_modules/\n".write(toFile: demo.path + "/.gitignore", atomically: true, encoding: .utf8)
         try scratch.write("build/out/app.o", in: demo.path)
         try scratch.write("node_modules/left-pad/index.js", in: demo.path)
@@ -587,7 +588,7 @@ extension GitModelTests {
     /// says no sidebar that can be seen has the panel selected, and nothing is read until one does.
     func testAHiddenSidebarRunsNoGit() async throws {
         let scratch = try Scratch()
-        let demo = try scratch.project("demo")
+        let demo = try await scratch.project("demo")
         let reader = Reader()
         var made: [String: FakeWatcher] = [:]
         let holder = GitHolder { self.model(scratch, [demo], reader: reader, watchers: { made[$0.path] = $0 }) }
@@ -624,7 +625,7 @@ extension GitModelTests {
     /// A refresh queued when the panel hides is not run: it waits for the panel.
     func testARefreshPendingWhenThePanelHidesWaits() async throws {
         let scratch = try Scratch()
-        let demo = try scratch.project("demo")
+        let demo = try await scratch.project("demo")
         let reader = Reader()
         var made: [String: FakeWatcher] = [:]
         let git = model(scratch, [demo], reader: reader, watchers: { made[$0.path] = $0 })
@@ -649,7 +650,7 @@ extension GitModelTests {
     /// the ignored paths again, and its later changes read nothing.
     func testANewIgnoredFolderIsLearnt() async throws {
         let scratch = try Scratch()
-        let demo = try scratch.project("demo")
+        let demo = try await scratch.project("demo")
         try "dist/\n".write(toFile: demo.path + "/.gitignore", atomically: true, encoding: .utf8)
         let reader = Reader()
         let clock = TestClock()

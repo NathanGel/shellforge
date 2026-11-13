@@ -13,7 +13,7 @@ import Testing
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let config = folder.appendingPathComponent("ssh_config")
         try "Host box\n  HostName box.example\nHost db\n  LocalForward 5432 db:5432\nHost *\n  User me\n".write(to: config, atomically: true, encoding: .utf8)
-        let repo = try GitRepoForUI(installed: ["claude"])
+        let repo = try await GitRepoForUI(installed: ["claude"])
         let document = WorkspaceDocument(store: WorkspaceStore(folder: folder))
         let model = SidebarModel(host: FakeTerminalHost(), document: document, launcher: repo.launcher, catalogue: { _ in [] },
                                  jiraSettings: { nil }, sshConfig: SSHConfigSource(file: config, home: folder))

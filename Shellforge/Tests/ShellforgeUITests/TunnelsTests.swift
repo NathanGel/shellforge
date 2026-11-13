@@ -30,7 +30,7 @@ import Testing
 
     private func model(tunnels: [TunnelDefinition] = [], feed: FakeFeed = FakeFeed(), config: String = TunnelsTests.config)
         async throws -> (SidebarModel, FakeTerminalHost, FakeFeed, WorkspaceDocument, UUID) {
-        let repo = try GitRepoForUI(installed: ["claude"])
+        let repo = try await GitRepoForUI(installed: ["claude"])
         let host = FakeTerminalHost()
         let document = WorkspaceDocument(store: WorkspaceStore(folder: folder))
         let model = SidebarModel(host: host, document: document, launcher: repo.launcher, feed: feed, catalogue: { _ in [] },

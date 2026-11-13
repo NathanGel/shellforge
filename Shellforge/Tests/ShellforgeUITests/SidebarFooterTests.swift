@@ -9,7 +9,7 @@ import Testing
 
     /// A sidebar with one project and two tasks, one tab each, and a tab of no task.
     private func sidebar() async throws -> (SidebarModel, FakeTerminalHost, FakeFeed, alpha: UUID, beta: UUID) {
-        let repo = try GitRepoForUI()
+        let repo = try await GitRepoForUI()
         let host = FakeTerminalHost(), feed = FakeFeed()
         let model = SidebarModel(host: host, document: WorkspaceDocument(store: WorkspaceStore(folder: folder)),
                                  launcher: repo.launcher, feed: feed, jiraSettings: { nil })
@@ -54,7 +54,7 @@ import Testing
     /// its tab is gone — `aClosedTasksContextStays` — so "nothing selected" is a sidebar with neither.)
     @Test func nothingSelectedShowsTheMacAlone() async throws {
         let model = SidebarModel(host: FakeTerminalHost(), document: WorkspaceDocument(store: WorkspaceStore(folder: folder)),
-                                 launcher: try GitRepoForUI().launcher, feed: FakeFeed(), jiraSettings: { nil })
+                                 launcher: try await GitRepoForUI().launcher, feed: FakeFeed(), jiraSettings: { nil })
         #expect(model.footerRow == nil)
     }
 
@@ -91,13 +91,13 @@ import Testing
         return home
     }
 
-    private func model(installed: [String], home: URL) throws -> SidebarModel {
+    private func model(installed: [String], home: URL) async throws -> SidebarModel {
         SidebarModel(host: FakeTerminalHost(), document: WorkspaceDocument(store: WorkspaceStore(folder: folder)),
-                     launcher: try GitRepoForUI(installed: installed).launcher, feed: FakeFeed(), jiraSettings: { nil }, home: home)
+                     launcher: try await GitRepoForUI(installed: installed).launcher, feed: FakeFeed(), jiraSettings: { nil }, home: home)
     }
 
     @Test func aMissingStatusLineSaysUsageIsDisconnected() async throws {
-        let model = try model(installed: ["claude", "codex"], home: try home(claude: false))
+        let model = try await model(installed: ["claude", "codex"], home: try home(claude: false))
         await model.refreshInstalledAgents()
         let rows = model.vendorRows(now: Date(), calendar: .current, claudeStatusLineInstalled: false)
         #expect(rows.map(\.vendor) == [.claude, .codex])
@@ -108,7 +108,7 @@ import Testing
     /// The footer leaves out a vendor you don’t use: the model finds which agents’ CLIs are on PATH,
     /// off the main actor, and only those wait for usage data.
     @Test func theModelFindsTheInstalledAgents() async throws {
-        let model = try model(installed: ["codex"], home: try home(claude: false))
+        let model = try await model(installed: ["codex"], home: try home(claude: false))
         await model.refreshInstalledAgents()
         #expect(model.installedAgents == [.codex])
         #expect(model.vendorRows(now: Date(), calendar: .current, claudeStatusLineInstalled: true).map(\.vendor) == [.codex])
@@ -117,12 +117,12 @@ import Testing
     /// Claude Code installed off `PATH` still has its `~/.claude`: it counts as in use, so a broken
     /// status line still says “Usage disconnected” rather than the row going missing.
     @Test func claudesHomeFolderCountsAsInUse() async throws {
-        let model = try model(installed: [], home: try home(claude: true))
+        let model = try await model(installed: [], home: try home(claude: true))
         await model.refreshInstalledAgents()
         #expect(model.installedAgents == [.claude])
         let rows = model.vendorRows(now: Date(), calendar: .current, claudeStatusLineInstalled: false)
         #expect(rows == [UsageVendorRow(vendor: .claude, lines: [], note: UsageRows.statusLineMissingNote, warning: true)])
-        let without = try self.model(installed: [], home: try home(claude: false))
+        let without = try await self.model(installed: [], home: try home(claude: false))
         await without.refreshInstalledAgents()
         #expect(without.vendorRows(now: Date(), calendar: .current, claudeStatusLineInstalled: false).isEmpty)
     }
@@ -130,7 +130,7 @@ import Testing
     /// Two looks overlap and the older finishes last: its answer is dropped, so the newer one stands.
     /// The older look is held open by a stream the test finishes once the newer one has published.
     @Test func anOlderLookFinishingLastIsDropped() async throws {
-        let model = try model(installed: [], home: try home(claude: false))
+        let model = try await model(installed: [], home: try home(claude: false))
         // The model's own first look, at init, is done before the two the test starts.
         await model.environmentRead?.value
         let (started, startedSignal) = AsyncStream<Void>.makeStream()

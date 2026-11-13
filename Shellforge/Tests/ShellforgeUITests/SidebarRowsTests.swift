@@ -8,8 +8,8 @@ import Testing
 @MainActor @Suite struct SidebarRowsTests {
     private let folder = TestScratch.root.appendingPathComponent("sf-rows-\(UUID().uuidString)")
 
-    private func model(feed: FakeFeed? = nil, host: FakeTerminalHost = FakeTerminalHost()) throws -> (SidebarModel, GitRepoForUI) {
-        let repo = try GitRepoForUI()
+    private func model(feed: FakeFeed? = nil, host: FakeTerminalHost = FakeTerminalHost()) async throws -> (SidebarModel, GitRepoForUI) {
+        let repo = try await GitRepoForUI()
         return (SidebarModel(host: host, document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher, feed: feed, jiraSettings: { nil }), repo)
     }
 
@@ -40,9 +40,9 @@ import Testing
 
     /// A custom agent's tab draws the generic mark, named for its agent; once the agent is removed,
     /// by its id.
-    @Test func customSessionShowsTheGenericMarkNamed() throws {
+    @Test func customSessionShowsTheGenericMarkNamed() async throws {
         let feed = FakeFeed()
-        let (model, _) = try model(feed: feed)
+        let (model, _) = try await model(feed: feed)
         model.reloadAgents(AgentPresets.all + [AgentDefinition(id: "gemini", name: "Gemini CLI", command: "gemini")], readyMade: [])
         let task = UUID()
         feed.sayAll([(.working, "s1", task, .custom("gemini"))])
@@ -55,13 +55,13 @@ import Testing
         #expect(model.agentName(.claude) == "Claude Code" && model.agentName(.shell) == "Shell")
     }
 
-    @Test func anEmptyWorkspaceShowsTheEmptyState() throws {
-        let (model, _) = try model()
+    @Test func anEmptyWorkspaceShowsTheEmptyState() async throws {
+        let (model, _) = try await model()
         #expect(titles(model.rows) == ["empty"])
     }
 
     @Test func aCollapsedProjectHidesItsTasks() async throws {
-        let (model, repo) = try model()
+        let (model, repo) = try await model()
         await model.addProject(folder: repo.path)
         await model.newTask(title: "Fix login", in: try #require(model.tree.projects.first).id)
         #expect(titles(model.rows) == ["project repo", "task Fix login"])
@@ -73,7 +73,7 @@ import Testing
     /// selected task, and the selection is the current tab's.
     @Test func theSelectedTasksTabsAreListedWhenItHasMoreThanOne() async throws {
         let host = FakeTerminalHost()
-        let (model, repo) = try model(host: host)
+        let (model, repo) = try await model(host: host)
         await model.addProject(folder: repo.path)
         let project = try #require(model.tree.projects.first).id
         await model.newTask(title: "Alpha", in: project)
@@ -87,7 +87,7 @@ import Testing
     /// One painter, one row: whatever is shown, exactly one row is selected.
     @Test func exactlyOneRowIsSelected() async throws {
         let host = FakeTerminalHost()
-        let (model, repo) = try model(host: host)
+        let (model, repo) = try await model(host: host)
         await model.addProject(folder: repo.path)
         let project = try #require(model.tree.projects.first).id
         await model.newTask(title: "Alpha", in: project)
@@ -109,7 +109,7 @@ import Testing
     }
 
     @Test func aNewTaskUnfoldsItsProject() async throws {
-        let (model, repo) = try model()
+        let (model, repo) = try await model()
         await model.addProject(folder: repo.path)
         let project = try #require(model.tree.projects.first).id
         model.toggleCollapsed(project)
@@ -135,7 +135,7 @@ import Testing
     @Test func tabsOfNoTaskComeUnderOtherTabs() async throws {
         let host = FakeTerminalHost()
         host.tabs = [TabSnapshot(id: "s9", tabId: 9, title: "zsh", taskId: nil, projectId: nil)]
-        let (model, repo) = try model(host: host)
+        let (model, repo) = try await model(host: host)
         await model.addProject(folder: repo.path)
         #expect(titles(model.rows) == ["project repo", "other tabs", "tab zsh"])
     }

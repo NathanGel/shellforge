@@ -10,7 +10,7 @@ import Testing
 /// keeps it, its host or its feed's subscriptions alive (PRD goal 7).
 @MainActor @Suite struct ReleaseTests {
     @Test func aUsedSidebarModelIsReleased() async throws {
-        let repo = try GitRepoForUI()
+        let repo = try await GitRepoForUI()
         let document = WorkspaceDocument(store: WorkspaceStore(folder: TestScratch.root.appendingPathComponent("release-\(UUID().uuidString)")))
         let feed = FakeFeed()
         weak var released: SidebarModel?
@@ -57,7 +57,7 @@ import Testing
     /// entry stays. ⌘B on that window then opens nothing.
     @Test func aSidebarIsFreedWhileItsWindowObjectLives() async throws {
         let document = WorkspaceDocument(store: WorkspaceStore(folder: TestScratch.root.appendingPathComponent("kept-\(UUID().uuidString)")))
-        let launcher = try GitRepoForUI().launcher
+        let launcher = try await GitRepoForUI().launcher
         let home = TestScratch.root.appendingPathComponent("kept-home-\(UUID().uuidString)")
         let hooks = AgentHooksModel(integrations: HookIntegrations(home: home, resources: .bundled(resourceURL: nil)), names: [:])
         let machine = MachineMonitor(sensor: InertMachineSensor(), power: InertPower())
@@ -90,7 +90,7 @@ import Testing
     /// window, registered for ⌘B — leave no sidebar behind (M6c's churn).
     @Test func aChurnOfWindowsLeavesNoSidebars() async throws {
         let document = WorkspaceDocument(store: WorkspaceStore(folder: TestScratch.root.appendingPathComponent("churn-\(UUID().uuidString)")))
-        let launcher = try GitRepoForUI().launcher
+        let launcher = try await GitRepoForUI().launcher
         let home = TestScratch.root.appendingPathComponent("churn-home-\(UUID().uuidString)")
         let hooks = AgentHooksModel(integrations: HookIntegrations(home: home, resources: .bundled(resourceURL: nil)), names: [:])
         let machine = MachineMonitor(sensor: InertMachineSensor(), power: InertPower())

@@ -33,24 +33,22 @@ import Testing
     @MainActor private struct Setup {
         let sidebar: SidebarModel, host: FakeTerminalHost, prompter: ScriptedPrompter
         let repo: GitRepoForUI, document: WorkspaceDocument, task: TaskItem
-        func git(_ args: String..., in dir: String? = nil) throws -> String {
-            let out = try repo.launcher.run("git", ["-C", dir ?? repo.path] + args)
-            guard out.status == 0 else { throw GitFailure(command: "git", message: out.stderr) }
-            return out.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        func git(_ args: String..., in dir: String? = nil) async throws -> String {
+            try await repo.launcher.fixtureGit(args, in: dir ?? repo.path)
         }
-        func branchExists() throws -> Bool { !(try git("for-each-ref", "--format=%(refname)", "refs/heads/" + task.branch)).isEmpty }
+        func branchExists() async throws -> Bool { !(try await git("for-each-ref", "--format=%(refname)", "refs/heads/" + task.branch)).isEmpty }
         var row: TaskItem? { document.workspace.tasks.first { $0.id == task.id } }
     }
 
     private func setup(_ answers: [AlertAnswer]) async throws -> Setup {
-        let repo = try GitRepoForUI()
+        let repo = try await GitRepoForUI()
         let document = WorkspaceDocument(store: WorkspaceStore(folder: folder))
         let host = FakeTerminalHost(), prompter = ScriptedPrompter(answers)
         let sidebar = SidebarModel(host: host, document: document, launcher: repo.launcher, jiraSettings: { nil })
         sidebar.prompter = prompter
         await sidebar.addProject(folder: repo.path)
         let project = try #require(document.workspace.projects.first)
-        let task = try TaskWorktrees.create(title: "Fix login", in: project, base: "main", launcher: repo.launcher)
+        let task = try await BackgroundWork.run { try TaskWorktrees.create(title: "Fix login", in: project, base: "main", launcher: repo.launcher) }
         try document.update { $0.tasks.append(task) }
         host.openTab(in: task.worktreePath, taskId: task.id, projectId: project.id, title: "claude", command: nil, environment: [:])
         return Setup(sidebar: sidebar, host: host, prompter: prompter, repo: repo, document: document, task: task)
@@ -90,7 +88,7 @@ import Testing
         #expect(asked.subCheckbox == "Also delete branch \(s.task.branch)")
         #expect(s.host.closed == [tab])
         #expect(FileManager.default.fileExists(atPath: s.task.worktreePath))
-        #expect(try s.branchExists())
+        #expect(try await s.branchExists())
         #expect(s.row != nil && s.sidebar.removals[s.task.id] == nil)
     }
 
@@ -110,7 +108,7 @@ import Testing
         #expect(await s.sidebar.confirmCloseLastTab(taskId: s.task.id, tab: tab))
         #expect(s.host.closed == [tab])
         #expect(!FileManager.default.fileExists(atPath: s.task.worktreePath))
-        #expect(try s.branchExists())
+        #expect(try await s.branchExists())
         #expect(s.row == nil)
     }
 
@@ -118,7 +116,7 @@ import Testing
         let s = try await setup([Self.closeAndBoth])
         let tab = try #require(s.host.tabs.first).id
         #expect(await s.sidebar.confirmCloseLastTab(taskId: s.task.id, tab: tab))
-        #expect(try !s.branchExists())
+        #expect(try await !s.branchExists())
         #expect(s.row == nil)
     }
 
@@ -155,15 +153,16 @@ import Testing
         #expect(s.host.closedTasks == [s.task.id])
         #expect(s.host.tabs.isEmpty)
         #expect(!FileManager.default.fileExists(atPath: s.task.worktreePath))
-        #expect(try s.branchExists(), "the branch stays unless asked for")
+        #expect(try await s.branchExists(), "the branch stays unless asked for")
         #expect(s.row == nil)
         #expect(s.sidebar.removals[s.task.id] == nil)
     }
 
     /// A task in the project's own folder: the folder is the checkout, never Shellforge's to delete.
-    private func projectFolderTask(in s: Setup) throws -> TaskItem {
+    private func projectFolderTask(in s: Setup) async throws -> TaskItem {
         let project = try #require(s.document.workspace.projects.first)
-        let branch = try ProjectFolderTasks.checkedOutBranch(of: project, launcher: s.repo.launcher)
+        let repo = s.repo
+        let branch = try await BackgroundWork.run { try ProjectFolderTasks.checkedOutBranch(of: project, launcher: repo.launcher) }
         let task = TaskItem(projectId: project.id, title: "In place", branch: branch, worktreePath: project.path,
                             baseBranch: "main", agent: "claude", model: "opus")
         try s.document.update { $0.tasks.append(task) }
@@ -173,19 +172,19 @@ import Testing
 
     @Test func removeProjectFolderTaskOnlyForgets() async throws {
         let s = try await setup([Self.remove])
-        let task = try projectFolderTask(in: s)
+        let task = try await projectFolderTask(in: s)
         #expect(await s.sidebar.confirmRemove(taskId: task.id))
         let asked = try #require(s.prompter.asked.last)
         #expect(asked.detail == "Removes the task from Shellforge and closes its tabs. The project folder stays as it is:\n\n\(task.worktreePath)")
         #expect(asked.checkbox == nil)
         #expect(FileManager.default.fileExists(atPath: task.worktreePath))
-        #expect(try !s.git("for-each-ref", "--format=%(refname)", "refs/heads/" + task.branch).isEmpty)
+        #expect(try await !s.git("for-each-ref", "--format=%(refname)", "refs/heads/" + task.branch).isEmpty)
         #expect(!s.document.workspace.tasks.contains { $0.id == task.id })
     }
 
     @Test func lastTabOfProjectFolderTaskOffersRemoveNotDelete() async throws {
         let s = try await setup([Self.cancel])
-        let task = try projectFolderTask(in: s)
+        let task = try await projectFolderTask(in: s)
         #expect(await s.sidebar.confirmCloseLastTab(taskId: task.id, tab: "p1") == false)
         let asked = try #require(s.prompter.asked.last)
         #expect(asked.checkbox == "Also remove the task from Shellforge")
@@ -196,7 +195,7 @@ import Testing
     @Test func alsoDeletingTheBranchDeletesAMergedOne() async throws {
         let s = try await setup([Self.removeAndBranch])
         #expect(await s.sidebar.confirmRemove(taskId: s.task.id))
-        #expect(try !s.branchExists())
+        #expect(try await !s.branchExists())
     }
 
     @Test func cancelChangesNothing() async throws {
@@ -227,7 +226,7 @@ import Testing
 
     @Test func anUnmergedBranchAsksBeforeItsCommitsGo() async throws {
         let s = try await setup([Self.removeAndBranch, AlertAnswer(button: 0)])
-        _ = try s.git("commit", "-q", "--allow-empty", "-m", "work", in: s.task.worktreePath)
+        _ = try await s.git("commit", "-q", "--allow-empty", "-m", "work", in: s.task.worktreePath)
 
         #expect(await s.sidebar.confirmRemove(taskId: s.task.id))
         let asked = try #require(s.prompter.asked.last)
@@ -237,16 +236,17 @@ import Testing
         // default, on ↩ and ⎋ both, and deleting the plain grey button beside it.
         #expect(asked.buttons == ["Keep Branch", "Delete Branch"] && !asked.defaultDeletes && asked.escapeButton == 0)
         #expect(s.row == nil, "Keep Branch still removes the task")
-        #expect(try s.branchExists())
+        #expect(try await s.branchExists())
 
         // A second task, its branch's commits given up.
         let project = try #require(s.document.workspace.projects.first)
-        let second = try TaskWorktrees.create(title: "Fix logout", in: project, base: "main", launcher: s.repo.launcher)
+        let repo = s.repo
+        let second = try await BackgroundWork.run { try TaskWorktrees.create(title: "Fix logout", in: project, base: "main", launcher: repo.launcher) }
         try s.document.update { $0.tasks.append(second) }
-        _ = try s.git("commit", "-q", "--allow-empty", "-m", "work", in: second.worktreePath)
+        _ = try await s.git("commit", "-q", "--allow-empty", "-m", "work", in: second.worktreePath)
         s.prompter.answers = [Self.removeAndBranch, AlertAnswer(button: 1)]
         #expect(await s.sidebar.confirmRemove(taskId: second.id))
-        #expect(try s.git("for-each-ref", "--format=%(refname)", "refs/heads/" + second.branch).isEmpty)
+        #expect(try await s.git("for-each-ref", "--format=%(refname)", "refs/heads/" + second.branch).isEmpty)
     }
 
     @Test func aSecondRemoveWhileOneRunsDoesNothing() async throws {
@@ -375,13 +375,13 @@ import Testing
 
     /// A merge request's branch checked out as a review in the setup's repository, its origin a
     /// bare repository holding the branch.
-    private func review(in s: Setup) throws -> TaskItem {
+    private func review(in s: Setup) async throws -> TaskItem {
         let remote = (s.repo.path as NSString).deletingLastPathComponent + "/remote.git"
-        _ = try s.git("init", "-q", "--bare", remote)
-        _ = try s.git("remote", "add", "origin", remote)
-        _ = try s.git("branch", "feat/mr-branch")
-        _ = try s.git("push", "-q", "origin", "main", "feat/mr-branch")
-        _ = try s.git("branch", "-q", "-D", "feat/mr-branch")
+        _ = try await s.git("init", "-q", "--bare", remote)
+        _ = try await s.git("remote", "add", "origin", remote)
+        _ = try await s.git("branch", "feat/mr-branch")
+        _ = try await s.git("push", "-q", "origin", "main", "feat/mr-branch")
+        _ = try await s.git("branch", "-q", "-D", "feat/mr-branch")
         let project = try #require(s.document.workspace.projects.first)
         var draft = ReviewDraft(mr: nil, agentId: "claude", model: "opus", reasoning: nil)
         draft.setTitle("Gift card"); draft.setBranch("feat/mr-branch")
@@ -393,7 +393,7 @@ import Testing
     /// A review's branch is the merge request's: its Remove never offers to delete it, and says so.
     @Test func aReviewIsNeverOfferedItsBranch() async throws {
         let s = try await setup([Self.cancel])
-        let review = try review(in: s)
+        let review = try await review(in: s)
         #expect(await s.sidebar.confirmRemove(taskId: review.id) == false)
         let asked = try #require(s.prompter.asked.last)
         #expect(asked.message == "Remove review “Gift card”?")
@@ -404,7 +404,7 @@ import Testing
     /// Closing a review's last tab offers its worktree, never its branch.
     @Test func closingAReviewsLastTabNeverOffersItsBranch() async throws {
         let s = try await setup([Self.cancel])
-        let review = try review(in: s)
+        let review = try await review(in: s)
         #expect(await s.sidebar.confirmCloseLastTab(taskId: review.id, tab: "r1") == false)
         let asked = try #require(s.prompter.asked.last)
         #expect(asked.message == "Close the last tab of review “Gift card”?")
@@ -414,20 +414,20 @@ import Testing
     /// Unpushed fixes keep the review's branch; the review still goes, and the banner says why.
     @Test func removingAReviewKeepsAnUnpushedBranchAndSaysWhy() async throws {
         let s = try await setup([Self.remove])
-        let review = try review(in: s)
-        _ = try s.git("commit", "-q", "--allow-empty", "-m", "fix", in: review.worktreePath)
+        let review = try await review(in: s)
+        _ = try await s.git("commit", "-q", "--allow-empty", "-m", "fix", in: review.worktreePath)
         #expect(await s.sidebar.confirmRemove(taskId: review.id))
         #expect(s.document.workspace.tasks.contains { $0.id == review.id } == false)
-        #expect(!(try s.git("for-each-ref", "--format=%(refname)", "refs/heads/feat/mr-branch")).isEmpty)
+        #expect(!(try await s.git("for-each-ref", "--format=%(refname)", "refs/heads/feat/mr-branch")).isEmpty)
         #expect(s.sidebar.lastError == "Branch feat/mr-branch kept: 1 commit not on origin.")
     }
 
     /// A pushed review's local branch goes with it, quietly.
     @Test func removingAPushedReviewReleasesItsBranch() async throws {
         let s = try await setup([Self.remove])
-        let review = try review(in: s)
+        let review = try await review(in: s)
         #expect(await s.sidebar.confirmRemove(taskId: review.id))
-        #expect(try s.git("for-each-ref", "--format=%(refname)", "refs/heads/feat/mr-branch").isEmpty)
+        #expect(try await s.git("for-each-ref", "--format=%(refname)", "refs/heads/feat/mr-branch").isEmpty)
         #expect(s.sidebar.lastError == nil)
     }
 }

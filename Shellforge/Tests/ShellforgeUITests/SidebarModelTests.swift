@@ -183,7 +183,7 @@ import Testing
 
     /// AiTerm's setJiraProjects: a project is linked once, in order; an empty list unlinks; it is saved.
     @Test func linkingKeepsEachJiraProjectOnceAndAnEmptyListUnlinks() async throws {
-        let repo = try GitRepoForUI()
+        let repo = try await GitRepoForUI()
         let document = WorkspaceDocument(store: WorkspaceStore(folder: folder))
         let sidebar = SidebarModel(host: FakeTerminalHost(), document: document, launcher: repo.launcher, jiraSettings: { nil })
         await sidebar.addProject(folder: repo.path)
@@ -202,7 +202,7 @@ import Testing
     }
 
     @Test func withoutJiraTheProjectListSaysHow() async throws {
-        let repo = try GitRepoForUI()
+        let repo = try await GitRepoForUI()
         let sidebar = SidebarModel(host: FakeTerminalHost(), document: WorkspaceDocument(store: WorkspaceStore(folder: folder)),
                                    launcher: repo.launcher, jiraSettings: { nil })
         await #expect { _ = try await sidebar.loadJiraProjects() } throws: {
@@ -212,8 +212,8 @@ import Testing
 
     /// A launch the helper couldn't be armed for is the sidebar's error; the next one armed clears
     /// it, and only it: an error said since by something else stays.
-    @Test func aLaunchThatCouldNotBeArmedIsTheSidebarsError() throws {
-        let repo = try GitRepoForUI()
+    @Test func aLaunchThatCouldNotBeArmedIsTheSidebarsError() async throws {
+        let repo = try await GitRepoForUI()
         let feed = FakeFeed()
         let sidebar = SidebarModel(host: FakeTerminalHost(), document: WorkspaceDocument(store: WorkspaceStore(folder: folder)),
                                    launcher: repo.launcher, feed: feed, jiraSettings: { nil })
@@ -229,8 +229,8 @@ import Testing
 
     /// With the app's own link and no helper: the arm's failure is said in a sentence that holds no
     /// secret.
-    @Test func anArmFailureIsSaidWithoutTheSecret() throws {
-        let repo = try GitRepoForUI()
+    @Test func anArmFailureIsSaidWithoutTheSecret() async throws {
+        let repo = try await GitRepoForUI()
         let link = DaemonLink(daemonDir: nil, findPython: { nil }, reports: { [] })
         let sidebar = SidebarModel(host: FakeTerminalHost(), document: WorkspaceDocument(store: WorkspaceStore(folder: folder)),
                                    launcher: repo.launcher, feed: link, jiraSettings: { nil })
@@ -244,8 +244,8 @@ import Testing
     }
 
     /// A typed-in prompt that never went because its agent ended first is said, briefly.
-    @Test func aTypedPromptAbandonedByItsAgentIsSaid() throws {
-        let repo = try GitRepoForUI()
+    @Test func aTypedPromptAbandonedByItsAgentIsSaid() async throws {
+        let repo = try await GitRepoForUI()
         let sidebar = SidebarModel(host: FakeTerminalHost(), document: WorkspaceDocument(store: WorkspaceStore(folder: folder)),
                                    launcher: repo.launcher, agents: AgentPresets.all + [AgentDefinition(id: "aider", name: "Aider", command: "aider")],
                                    jiraSettings: { nil })
@@ -258,7 +258,7 @@ import Testing
     }
 
     @Test func addingAProjectListsItAndSavesIt() async throws {
-        let repo = try GitRepoForUI()
+        let repo = try await GitRepoForUI()
         let host = FakeTerminalHost()
         let sidebar = model(host, repo: repo)
         await sidebar.addProject(folder: repo.path)
@@ -267,7 +267,7 @@ import Testing
     }
 
     @Test func aNewTaskGetsAWorktreeAndATabTaggedWithIt() async throws {
-        let repo = try GitRepoForUI()
+        let repo = try await GitRepoForUI()
         let host = FakeTerminalHost()
         let sidebar = model(host, repo: repo)
         await sidebar.addProject(folder: repo.path)
@@ -306,7 +306,7 @@ import Testing
     }
 
     @Test func aFailureIsShownNotThrown() async throws {
-        let repo = try GitRepoForUI()
+        let repo = try await GitRepoForUI()
         let sidebar = model(FakeTerminalHost(), repo: repo)
         await sidebar.addProject(folder: "/")
         #expect(sidebar.lastError?.contains("not a git repository") == true)
@@ -316,7 +316,7 @@ import Testing
     /// Every window's sidebar shares one workspace: what one window adds, the other shows, and
     /// neither save drops the other's change.
     @Test func twoWindowsShareOneWorkspace() async throws {
-        let (repoA, repoB) = (try GitRepoForUI(), try GitRepoForUI())
+        let (repoA, repoB) = (try await GitRepoForUI(), try await GitRepoForUI())
         let document = WorkspaceDocument(store: WorkspaceStore(folder: folder))
         let windowA = model(FakeTerminalHost(), repo: repoA, document: document)
         let windowB = model(FakeTerminalHost(), repo: repoB, document: document)
@@ -331,7 +331,7 @@ import Testing
     /// The first read, init's, has no git on PATH: `addProject`'s git misses, and its re-read is the
     /// second read recorded, not one init made for it.
     @Test func gitRunsOffTheMainThread() async throws {
-        let repo = try GitRepoForUI()
+        let repo = try await GitRepoForUI()
         let calls = MainThreadRecorder()
         let launcher = CommandLauncher {
             calls.record(Thread.isMainThread)
@@ -352,7 +352,7 @@ import Testing
         try "{ damaged".write(to: file, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: folder.path)
         defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: folder.path) }
-        let repo = try GitRepoForUI()
+        let repo = try await GitRepoForUI()
         let sidebar = model(FakeTerminalHost(), repo: repo)
         #expect(sidebar.lastError != nil)
         await sidebar.addProject(folder: repo.path)
@@ -361,7 +361,7 @@ import Testing
     }
 
     private func twoTasks() async throws -> (SidebarModel, FakeTerminalHost, UUID, UUID) {
-        let repo = try GitRepoForUI()
+        let repo = try await GitRepoForUI()
         let host = FakeTerminalHost()
         let sidebar = model(host, repo: repo)
         await sidebar.addProject(folder: repo.path)
@@ -373,7 +373,7 @@ import Testing
     }
 
     @Test func aTaskShowsItsMostUrgentTabAndATabItsOwn() async throws {
-        let repo = try GitRepoForUI()
+        let repo = try await GitRepoForUI()
         let host = FakeTerminalHost(), feed = FakeFeed()
         let sidebar = SidebarModel(host: host, document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher, feed: feed, jiraSettings: { nil })
         await sidebar.addProject(folder: repo.path)
@@ -385,7 +385,7 @@ import Testing
     }
 
     @Test func openingADoneTaskMarksItSeenAndOpeningAnotherDoesNot() async throws {
-        let repo = try GitRepoForUI()
+        let repo = try await GitRepoForUI()
         let host = FakeTerminalHost(), feed = FakeFeed()
         let sidebar = SidebarModel(host: host, document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher, feed: feed, jiraSettings: { nil })
         await sidebar.addProject(folder: repo.path)
@@ -404,7 +404,7 @@ import Testing
 
     /// A task with one tab done and another still working: shown, its done tab is seen.
     @Test func aShownTaskMarksItsDoneTabsSeenWhileAnotherWorks() async throws {
-        let repo = try GitRepoForUI()
+        let repo = try await GitRepoForUI()
         let host = FakeTerminalHost(), feed = FakeFeed()
         let sidebar = SidebarModel(host: host, document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher, feed: feed, jiraSettings: { nil })
         await sidebar.addProject(folder: repo.path)
@@ -418,7 +418,7 @@ import Testing
     }
 
     @Test func switchingToADoneTasksTabInITerm2MarksItSeen() async throws {
-        let repo = try GitRepoForUI()
+        let repo = try await GitRepoForUI()
         let host = FakeTerminalHost(), feed = FakeFeed()
         let sidebar = SidebarModel(host: host, document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher, feed: feed, jiraSettings: { nil })
         await sidebar.addProject(folder: repo.path)
@@ -432,7 +432,7 @@ import Testing
     }
 
     @Test func openingTheDoneTabOfTheShownTaskMarksItSeen() async throws {
-        let repo = try GitRepoForUI()
+        let repo = try await GitRepoForUI()
         let host = FakeTerminalHost(), feed = FakeFeed()
         let sidebar = SidebarModel(host: host, document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher, feed: feed, jiraSettings: { nil })
         await sidebar.addProject(folder: repo.path)
@@ -449,7 +449,7 @@ import Testing
     }
 
     @Test func theHelpersProblemIsShownAndClearedWhenItConnects() async throws {
-        let repo = try GitRepoForUI()
+        let repo = try await GitRepoForUI()
         let feed = FakeFeed()
         let sidebar = SidebarModel(host: FakeTerminalHost(), document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher, feed: feed, jiraSettings: { nil })
         feed.status = .pythonMissing
@@ -459,7 +459,7 @@ import Testing
     }
 
     @Test func avatarsShowEveryTabsAgentInTabOrder() async throws {
-        let repo = try GitRepoForUI()
+        let repo = try await GitRepoForUI()
         let host = FakeTerminalHost(), feed = FakeFeed()
         let sidebar = SidebarModel(host: host, document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher, feed: feed, jiraSettings: { nil })
         await sidebar.addProject(folder: repo.path)
@@ -471,7 +471,7 @@ import Testing
     }
 
     @Test func avatarsCountEveryAgentTab() async throws {
-        let repo = try GitRepoForUI()
+        let repo = try await GitRepoForUI()
         let host = FakeTerminalHost(), feed = FakeFeed()
         let sidebar = SidebarModel(host: host, document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher, feed: feed, jiraSettings: { nil })
         await sidebar.addProject(folder: repo.path)
@@ -482,7 +482,7 @@ import Testing
     }
 
     @Test func aProjectRemembersItIsCollapsed() async throws {
-        let repo = try GitRepoForUI()
+        let repo = try await GitRepoForUI()
         let sidebar = SidebarModel(host: FakeTerminalHost(), document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher, jiraSettings: { nil })
         await sidebar.addProject(folder: repo.path)
         let id = try #require(sidebar.tree.projects.first).id
@@ -493,8 +493,8 @@ import Testing
     }
 
     @Test func aGitHubProjectShowsGitHubsMark() async throws {
-        let repo = try GitRepoForUI()
-        _ = try repo.launcher.run("/usr/bin/git", ["-C", repo.path, "remote", "add", "origin", "git@github.com:a/b.git"])
+        let repo = try await GitRepoForUI()
+        _ = try await repo.launcher.runOffMain("/usr/bin/git", ["-C", repo.path, "remote", "add", "origin", "git@github.com:a/b.git"])
         let sidebar = SidebarModel(host: FakeTerminalHost(), document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher, jiraSettings: { nil })
         await sidebar.addProject(folder: repo.path)
         let id = try #require(sidebar.tree.projects.first).id
@@ -504,7 +504,7 @@ import Testing
     /// iTerm2 restoring its windows refreshes the sidebar many times before git answers: one lookup per
     /// project, not one per refresh.
     @Test func aProjectsProviderIsLookedUpOnceHoweverOftenTheSidebarRefreshes() async throws {
-        let repo = try GitRepoForUI()
+        let repo = try await GitRepoForUI()
         let host = FakeTerminalHost()
         let sidebar = SidebarModel(host: host, document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: repo.launcher, jiraSettings: { nil })
         await sidebar.addProject(folder: repo.path)
@@ -517,8 +517,8 @@ import Testing
     /// A window opened later reads no git for a project another window has read: the answer is
     /// the app's, and stands until the repository's config changes.
     @Test func aSecondWindowReusesTheFirstWindowsProvider() async throws {
-        let repo = try GitRepoForUI()
-        _ = try repo.launcher.run("/usr/bin/git", ["-C", repo.path, "remote", "add", "origin", "git@github.com:a/b.git"])
+        let repo = try await GitRepoForUI()
+        _ = try await repo.launcher.runOffMain("/usr/bin/git", ["-C", repo.path, "remote", "add", "origin", "git@github.com:a/b.git"])
         let document = WorkspaceDocument(store: WorkspaceStore(folder: folder))
         let first = SidebarModel(host: FakeTerminalHost(), document: document, launcher: repo.launcher, jiraSettings: { nil })
         await first.addProject(folder: repo.path)
@@ -530,7 +530,7 @@ import Testing
         #expect(second.repositoryFacts === facts)
         #expect(facts.readCount == reads, "the second window ran no git")
         // A changed remote is read again.
-        _ = try repo.launcher.run("/usr/bin/git", ["-C", repo.path, "remote", "set-url", "origin", "git@gitlab.com:a/b.git"])
+        _ = try await repo.launcher.runOffMain("/usr/bin/git", ["-C", repo.path, "remote", "set-url", "origin", "git@gitlab.com:a/b.git"])
         #expect(facts.facts(of: repo.path).provider == .gitlab)
     }
 }
@@ -550,7 +550,8 @@ struct GitRepoForUI {
 
     /// `installed` are agent CLIs the launcher finds: `exit 0` scripts in a bin of the repository's
     /// own, ahead of git's folder, so what this Mac has installed never decides a test.
-    init(installed: [String] = ["claude"]) throws {
+    /// Its git runs off the main actor, where most of the suites that make one run.
+    init(installed: [String] = ["claude"]) async throws {
         let root = TestScratch.root.appendingPathComponent("shellforge-uirepo-\(UUID().uuidString)").path
         path = "\(root)/repo"
         try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
@@ -563,8 +564,7 @@ struct GitRepoForUI {
                    "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"]
         launcher = CommandLauncher { ResolvedEnvironment(variables: env, source: .loginShell("/bin/sh")) }
         for args in [["init", "-q", "-b", "main"], ["commit", "-q", "--allow-empty", "-m", "first"]] {
-            let out = try launcher.run("git", ["-C", path] + args)
-            guard out.status == 0 else { throw GitFailure(command: "git", message: out.stderr) }
+            try await launcher.fixtureGit(args, in: path)
         }
     }
 }
@@ -585,7 +585,7 @@ extension SidebarModel {
     private func modelWithProject(installed: [String] = ["claude"], agents: [AgentDefinition] = AgentPresets.all,
                                   secrets: any SecretStore & Sendable = MemorySecretStore(),
                                   tools: AgentTools = .none) async throws -> (SidebarModel, FakeTerminalHost, WorkspaceDocument, UUID) {
-        let repo = try GitRepoForUI(installed: installed)
+        let repo = try await GitRepoForUI(installed: installed)
         let host = FakeTerminalHost()
         let document = WorkspaceDocument(store: WorkspaceStore(folder: folder))
         let model = SidebarModel(host: host, document: document, launcher: repo.launcher, agents: agents, catalogue: { _ in [] },
@@ -650,7 +650,7 @@ extension SidebarModel {
     @Test func aReviewCancelledAfterItsWorktreeSavesNothing() async throws {
         let (model, host, document, project) = try await modelWithProject()
         let repo = try #require(document.workspace.projects.first).path
-        _ = try model.launcher.run("git", ["-C", repo, "branch", "feature"])
+        _ = try await model.launcher.runOffMain("git", ["-C", repo, "branch", "feature"])
         // A git that holds at the command's one call — the prompt written beside it — until let go.
         let root = (repo as NSString).deletingLastPathComponent
         try """
@@ -690,16 +690,14 @@ extension SidebarModel {
         #expect(task.worktreePath == folder && task.branch == "main")
         #expect(host.opened.last?.directory == folder && host.opened.last?.command == "claude --model opus")
         #expect(!FileManager.default.fileExists(atPath: folder + "/.worktrees"))
-        #expect(try model.launcher.run("git", ["-C", folder, "worktree", "list"]).stdout.split(separator: "\n").count == 1)
+        #expect(try await model.launcher.runOffMain("git", ["-C", folder, "worktree", "list"]).stdout.split(separator: "\n").count == 1)
     }
 
     // -- Project folder on another branch -------------------------------------------------
 
     @discardableResult
-    private func git(_ model: SidebarModel, _ folder: String, _ args: String...) throws -> String {
-        let out = try model.launcher.run("git", ["-C", folder] + args)
-        guard out.status == 0 else { throw GitFailure(command: "git " + args.joined(separator: " "), message: out.stderr) }
-        return out.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    private func git(_ model: SidebarModel, _ folder: String, _ args: String...) async throws -> String {
+        try await model.launcher.fixtureGit(args, in: folder)
     }
 
     private func projectFolderDraft(_ title: String, branch: String) -> TaskDraft {
@@ -711,12 +709,12 @@ extension SidebarModel {
     @Test func projectFolderSwitchesToAnExistingBranchWithoutAsking() async throws {
         let (model, _, document, project) = try await modelWithProject()
         let folder = try #require(document.workspace.projects.first).path
-        try git(model, folder, "branch", "feat/a")
+        try await git(model, folder, "branch", "feat/a")
         let prompter = ScriptedPrompter([])
         model.prompter = prompter
         try await model.newTask(draft: projectFolderDraft("Home", branch: "feat/a"), in: project)
         #expect(try #require(document.workspace.tasks.first).branch == "feat/a")
-        #expect(try git(model, folder, "symbolic-ref", "--short", "HEAD") == "feat/a")
+        #expect(try await git(model, folder, "symbolic-ref", "--short", "HEAD") == "feat/a")
         #expect(prompter.asked.isEmpty)
     }
 
@@ -729,7 +727,7 @@ extension SidebarModel {
         #expect(prompter.asked.first?.message == "“feat/new” doesn’t exist yet.")
         #expect(prompter.asked.first?.buttons == ["Create Branch", "Cancel"])
         #expect(try #require(document.workspace.tasks.first).branch == "feat/new")
-        #expect(try git(model, folder, "symbolic-ref", "--short", "HEAD") == "feat/new")
+        #expect(try await git(model, folder, "symbolic-ref", "--short", "HEAD") == "feat/new")
     }
 
     @Test func cancellingTheCreateLeavesTheFolderAlone() async throws {
@@ -740,24 +738,24 @@ extension SidebarModel {
             try await model.newTask(draft: projectFolderDraft("Home", branch: "feat/new"), in: project)
         }
         #expect(document.workspace.tasks.isEmpty && host.opened.isEmpty)
-        #expect(try git(model, folder, "symbolic-ref", "--short", "HEAD") == "main")
+        #expect(try await git(model, folder, "symbolic-ref", "--short", "HEAD") == "main")
     }
 
     @Test func clashingChangesOfferAStash() async throws {
         let (model, _, document, project) = try await modelWithProject()
         let folder = try #require(document.workspace.projects.first).path
-        try git(model, folder, "switch", "-q", "-c", "feat/a")
+        try await git(model, folder, "switch", "-q", "-c", "feat/a")
         try "theirs".write(toFile: folder + "/file.txt", atomically: true, encoding: .utf8)
-        try git(model, folder, "add", "file.txt")
-        try git(model, folder, "commit", "-q", "-m", "theirs")
-        try git(model, folder, "switch", "-q", "main")
+        try await git(model, folder, "add", "file.txt")
+        try await git(model, folder, "commit", "-q", "-m", "theirs")
+        try await git(model, folder, "switch", "-q", "main")
         try "mine".write(toFile: folder + "/file.txt", atomically: true, encoding: .utf8)
         let prompter = ScriptedPrompter([AlertAnswer(button: 0)])
         model.prompter = prompter
         try await model.newTask(draft: projectFolderDraft("Fix", branch: "feat/a"), in: project)
         #expect(prompter.asked.first?.buttons == ["Stash and Switch", "Cancel"])
-        #expect(try git(model, folder, "symbolic-ref", "--short", "HEAD") == "feat/a")
-        #expect(try git(model, folder, "stash", "list").contains("Shellforge: before “Fix”"))
+        #expect(try await git(model, folder, "symbolic-ref", "--short", "HEAD") == "feat/a")
+        #expect(try await git(model, folder, "stash", "list").contains("Shellforge: before “Fix”"))
         #expect(document.workspace.tasks.count == 1)
     }
 
@@ -765,7 +763,7 @@ extension SidebarModel {
         let (model, host, document, project) = try await modelWithProject()
         let folder = try #require(document.workspace.projects.first).path
         let other = folder + "-other"
-        try git(model, folder, "worktree", "add", "-q", "-b", "feat/b", other)
+        try await git(model, folder, "worktree", "add", "-q", "-b", "feat/b", other)
         let prompter = ScriptedPrompter([AlertAnswer(button: 0)])
         model.prompter = prompter
         try await model.newTask(draft: projectFolderDraft("Home", branch: "feat/b"), in: project)
@@ -773,13 +771,13 @@ extension SidebarModel {
         let task = try #require(document.workspace.tasks.first)
         #expect(ExistingWorktrees.resolved(task.worktreePath) == ExistingWorktrees.resolved(other) && task.branch == "feat/b")
         #expect(host.opened.last.map { ExistingWorktrees.resolved($0.directory) } == ExistingWorktrees.resolved(other))
-        #expect(try git(model, folder, "symbolic-ref", "--short", "HEAD") == "main")
+        #expect(try await git(model, folder, "symbolic-ref", "--short", "HEAD") == "main")
     }
 
     @Test func switchingUnderAnotherRunningTaskAsksFirst() async throws {
         let (model, host, document, project) = try await modelWithProject()
         let folder = try #require(document.workspace.projects.first).path
-        try git(model, folder, "branch", "feat/a")
+        try await git(model, folder, "branch", "feat/a")
         try await model.newTask(draft: projectFolderDraft("Running"), in: project)
         let running = try #require(document.workspace.tasks.first)
         host.tabs.append(TabSnapshot(id: "t1", tabId: 1, title: "Running", taskId: running.id, projectId: project))
@@ -790,7 +788,7 @@ extension SidebarModel {
             try await model.newTask(draft: projectFolderDraft("Second", branch: "feat/a"), in: project)
         }
         #expect(prompter.asked.first?.message == "“Running” is also working in this folder.")
-        #expect(try git(model, folder, "symbolic-ref", "--short", "HEAD") == "main")
+        #expect(try await git(model, folder, "symbolic-ref", "--short", "HEAD") == "main")
     }
 
     /// Cancelled after the task was made, nothing is saved and the project's own folder and its
@@ -807,7 +805,7 @@ extension SidebarModel {
         }
         #expect(document.workspace.tasks.isEmpty && host.opened.isEmpty)
         #expect(FileManager.default.fileExists(atPath: folder + "/file.txt") && FileManager.default.fileExists(atPath: folder + "/.git"))
-        #expect(try model.launcher.run("git", ["-C", folder, "rev-parse", "--verify", "--quiet", "refs/heads/main"]).status == 0,
+        #expect(try await model.launcher.runOffMain("git", ["-C", folder, "rev-parse", "--verify", "--quiet", "refs/heads/main"]).status == 0,
                 "the checked-out branch is still there")
     }
 

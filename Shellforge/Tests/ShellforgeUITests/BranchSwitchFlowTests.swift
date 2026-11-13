@@ -48,7 +48,7 @@ private final class FakeTrash: @unchecked Sendable {
     }
 
     private func setup() async throws -> Setup {
-        let repo = try GitRepoForUI()
+        let repo = try await GitRepoForUI()
         let project = Project(name: "demo", path: repo.path)
         let trash = FakeTrash()
         let model = GitModel(projects: [project], tasks: [], launcher: repo.launcher,
@@ -58,10 +58,8 @@ private final class FakeTrash: @unchecked Sendable {
     }
 
     @discardableResult
-    private func git(_ repo: GitRepoForUI, _ args: String...) throws -> String {
-        let out = try repo.launcher.run("git", ["-C", repo.path] + args)
-        guard out.status == 0 else { throw GitFailure(command: "git " + args.joined(separator: " "), message: out.stderr) }
-        return out.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    private func git(_ repo: GitRepoForUI, _ args: String...) async throws -> String {
+        try await repo.launcher.fixtureGit(args, in: repo.path)
     }
 
     private func write(_ text: String, to name: String, in repo: GitRepoForUI) throws {
@@ -78,7 +76,7 @@ private final class FakeTrash: @unchecked Sendable {
     @Test func theGitPanelReportsABranchInAnotherWorktree() async throws {
         let s = try await setup()
         let other = s.repo.path + "-other"
-        try git(s.repo, "worktree", "add", "-q", "-b", "feature/login-page", other)
+        try await git(s.repo, "worktree", "add", "-q", "-b", "feature/login-page", other)
         let prompter = ScriptedPrompter([])
         let flow = BranchSwitchFlow(prompter: prompter, launcher: s.repo.launcher)
         await #expect(throws: CreationDeclined.self) {
@@ -92,58 +90,58 @@ private final class FakeTrash: @unchecked Sendable {
         #expect(detail.hasPrefix(prefix))
         #expect(ExistingWorktrees.resolved(String(detail.dropFirst(prefix.count))) == ExistingWorktrees.resolved(other))
         #expect(prompter.asked.first?.buttons == ["OK"])
-        #expect(try git(s.repo, "symbolic-ref", "--short", "HEAD") == "main")
+        #expect(try await git(s.repo, "symbolic-ref", "--short", "HEAD") == "main")
     }
 
     @Test func clashingChangesOfferStashAndSwitch() async throws {
         let s = try await setup()
-        try git(s.repo, "switch", "-q", "-c", "feature/login-page")
+        try await git(s.repo, "switch", "-q", "-c", "feature/login-page")
         try write("theirs\n", to: "src/app.ts", in: s.repo)
-        try git(s.repo, "add", "src/app.ts")
-        try git(s.repo, "commit", "-q", "-m", "theirs")
-        try git(s.repo, "switch", "-q", "main")
+        try await git(s.repo, "add", "src/app.ts")
+        try await git(s.repo, "commit", "-q", "-m", "theirs")
+        try await git(s.repo, "switch", "-q", "main")
         try write("mine\n", to: "src/app.ts", in: s.repo)
         let prompter = ScriptedPrompter([AlertAnswer(button: 0)])
         let flow = BranchSwitchFlow(prompter: prompter, launcher: s.repo.launcher)
         await s.model.switchBranch(.project(s.project.id), to: "feature/login-page", flow: flow, busyTask: { nil })
         #expect(prompter.asked.map(\.buttons) == [["Stash and Switch", "Cancel"]])
         #expect(prompter.asked.first?.message == "Uncommitted changes in demo clash with “feature/login-page”.")
-        #expect(try git(s.repo, "symbolic-ref", "--short", "HEAD") == "feature/login-page")
-        #expect(try git(s.repo, "stash", "list").contains("Shellforge: before switching to “feature/login-page”"))
+        #expect(try await git(s.repo, "symbolic-ref", "--short", "HEAD") == "feature/login-page")
+        #expect(try await git(s.repo, "stash", "list").contains("Shellforge: before switching to “feature/login-page”"))
         let section = try #require(s.model.sections.first)
         #expect(!section.busy && section.problem == nil)
         #expect(status(s.model)?.head == .branch("feature/login-page"))
     }
 
     /// `feature/login-page` on origin and on upstream, none here, and a file not yet in git.
-    private func onTwoRemotes(_ s: Setup) throws {
+    private func onTwoRemotes(_ s: Setup) async throws {
         let root = (s.repo.path as NSString).deletingLastPathComponent
         for remote in ["origin", "upstream"] {
-            try git(s.repo, "init", "-q", "--bare", "-b", "main", "\(root)/\(remote).git")
-            try git(s.repo, "remote", "add", remote, "\(root)/\(remote).git")
+            try await git(s.repo, "init", "-q", "--bare", "-b", "main", "\(root)/\(remote).git")
+            try await git(s.repo, "remote", "add", remote, "\(root)/\(remote).git")
         }
-        try git(s.repo, "switch", "-q", "-c", "feature/login-page")
+        try await git(s.repo, "switch", "-q", "-c", "feature/login-page")
         try write("login\n", to: "src/login.ts", in: s.repo)
-        try git(s.repo, "add", "src/login.ts")
-        try git(s.repo, "commit", "-q", "-m", "login")
-        try git(s.repo, "push", "-q", "origin", "feature/login-page")
-        try git(s.repo, "push", "-q", "upstream", "feature/login-page")
-        try git(s.repo, "switch", "-q", "main")
-        try git(s.repo, "branch", "-q", "-D", "feature/login-page")
+        try await git(s.repo, "add", "src/login.ts")
+        try await git(s.repo, "commit", "-q", "-m", "login")
+        try await git(s.repo, "push", "-q", "origin", "feature/login-page")
+        try await git(s.repo, "push", "-q", "upstream", "feature/login-page")
+        try await git(s.repo, "switch", "-q", "main")
+        try await git(s.repo, "branch", "-q", "-D", "feature/login-page")
         try write("notes\n", to: "notes.md", in: s.repo)
     }
 
     @Test func aBranchOnTwoRemotesSwitchesToTheOnePicked() async throws {
         let s = try await setup()
-        try onTwoRemotes(s)
+        try await onTwoRemotes(s)
         let prompter = ScriptedPrompter([])
         let flow = BranchSwitchFlow(prompter: prompter, launcher: s.repo.launcher)
         await s.model.switchBranch(.project(s.project.id), to: "feature/login-page", track: "upstream/feature/login-page",
                                    flow: flow, busyTask: { nil })
         #expect(prompter.asked.isEmpty, "no stash was asked for")
-        #expect(try git(s.repo, "symbolic-ref", "--short", "HEAD") == "feature/login-page")
-        #expect(try git(s.repo, "rev-parse", "--abbrev-ref", "feature/login-page@{upstream}") == "upstream/feature/login-page")
-        #expect(try git(s.repo, "stash", "list").isEmpty)
+        #expect(try await git(s.repo, "symbolic-ref", "--short", "HEAD") == "feature/login-page")
+        #expect(try await git(s.repo, "rev-parse", "--abbrev-ref", "feature/login-page@{upstream}") == "upstream/feature/login-page")
+        #expect(try await git(s.repo, "stash", "list").isEmpty)
         #expect(FileManager.default.fileExists(atPath: s.repo.path + "/notes.md"))
         #expect(s.model.sections.first?.problem == nil)
     }
@@ -152,7 +150,7 @@ private final class FakeTrash: @unchecked Sendable {
     /// since stashing would not get past it.
     @Test func aBranchOnTwoRemotesWithNonePickedIsNotOfferedAStash() async throws {
         let s = try await setup()
-        try onTwoRemotes(s)
+        try await onTwoRemotes(s)
         let prompter = ScriptedPrompter([AlertAnswer(button: 0)])
         let flow = BranchSwitchFlow(prompter: prompter, launcher: s.repo.launcher)
         await #expect(throws: GitFailure.self) {
@@ -160,19 +158,19 @@ private final class FakeTrash: @unchecked Sendable {
                                          stashLabel: "“Login page”", offerOtherWorktree: true)
         }
         #expect(prompter.asked.isEmpty)
-        #expect(try git(s.repo, "symbolic-ref", "--short", "HEAD") == "main")
-        #expect(try git(s.repo, "stash", "list").isEmpty)
+        #expect(try await git(s.repo, "symbolic-ref", "--short", "HEAD") == "main")
+        #expect(try await git(s.repo, "stash", "list").isEmpty)
     }
 
     @Test func anotherTaskWorkingThereAsksFirst() async throws {
         let s = try await setup()
-        try git(s.repo, "branch", "feature/login-page")
+        try await git(s.repo, "branch", "feature/login-page")
         let prompter = ScriptedPrompter([AlertAnswer(button: 1)])
         let flow = BranchSwitchFlow(prompter: prompter, launcher: s.repo.launcher)
         await s.model.switchBranch(.project(s.project.id), to: "feature/login-page", flow: flow, busyTask: { "Login page" })
         #expect(prompter.asked.first?.message == "“Login page” is also working in this folder.")
         #expect(prompter.asked.first?.buttons == ["Switch Anyway", "Cancel"])
-        #expect(try git(s.repo, "symbolic-ref", "--short", "HEAD") == "main")
+        #expect(try await git(s.repo, "symbolic-ref", "--short", "HEAD") == "main")
         let section = try #require(s.model.sections.first)
         #expect(!section.busy && section.problem == nil, "a Cancel is no problem")
     }
@@ -180,8 +178,8 @@ private final class FakeTrash: @unchecked Sendable {
     @Test func cancelledDiscardChangesNothing() async throws {
         let s = try await setup()
         try write("first\n", to: "src/app.ts", in: s.repo)
-        try git(s.repo, "add", "src/app.ts")
-        try git(s.repo, "commit", "-q", "-m", "app")
+        try await git(s.repo, "add", "src/app.ts")
+        try await git(s.repo, "commit", "-q", "-m", "app")
         try write("second\n", to: "src/app.ts", in: s.repo)
         await s.model.refresh(.project(s.project.id))
         let change = try #require(status(s.model)?.unstaged.first)
@@ -223,16 +221,16 @@ private final class FakeTrash: @unchecked Sendable {
         await s.model.switchBranch(.project(s.project.id), to: "feature/login-page", flow: flow, busyTask: { busy })
         #expect(prompter.asked.map(\.message) == ["“feature/login-page” doesn’t exist yet.",
                                                    "“Login page” is also working in this folder."])
-        #expect(try git(s.repo, "symbolic-ref", "--short", "HEAD") == "main")
+        #expect(try await git(s.repo, "symbolic-ref", "--short", "HEAD") == "main")
         #expect(s.model.sections.first?.problem == nil)
     }
 
     @Test func aTaskWorktreeIsNotSwitched() async throws {
-        let repo = try GitRepoForUI()
+        let repo = try await GitRepoForUI()
         let project = Project(name: "demo", path: repo.path)
         let path = repo.path + "/.worktrees/feature-login-page"
-        try git(repo, "worktree", "add", "-q", "-b", "feature/login-page", path)
-        try git(repo, "branch", "feature/other")
+        try await git(repo, "worktree", "add", "-q", "-b", "feature/login-page", path)
+        try await git(repo, "branch", "feature/other")
         let task = TaskItem(projectId: project.id, title: "Login page", branch: "feature/login-page", worktreePath: path, baseBranch: "main")
         let model = GitModel(projects: [project], tasks: [task], launcher: repo.launcher, watcher: { _ in QuietWatcher() })
         await model.settled()
@@ -241,14 +239,14 @@ private final class FakeTrash: @unchecked Sendable {
         let flow = BranchSwitchFlow(prompter: prompter, launcher: repo.launcher)
         await model.switchBranch(.task(task.id), to: "feature/other", flow: flow, busyTask: { asked = true; return nil })
         #expect(prompter.asked.isEmpty && !asked)
-        let head = try repo.launcher.run("git", ["-C", path, "symbolic-ref", "--short", "HEAD"]).stdout
+        let head = try await repo.launcher.runOffMain("git", ["-C", path, "symbolic-ref", "--short", "HEAD"]).stdout
         #expect(head.trimmingCharacters(in: .whitespacesAndNewlines) == "feature/login-page")
     }
 
     @Test func anIntentToAddFileIsMovedToTheTrashToo() async throws {
         let s = try await setup()
         try write("x\n", to: "src/app.ts", in: s.repo)
-        try git(s.repo, "add", "-N", "src/app.ts")
+        try await git(s.repo, "add", "-N", "src/app.ts")
         await s.model.refresh(.project(s.project.id))
         let change = try #require(status(s.model)?.unstaged.first)
         #expect(change.letter == .added)
@@ -263,14 +261,14 @@ private final class FakeTrash: @unchecked Sendable {
     @Test func aChangeThatTurnedIntoAnotherKindIsNotDiscarded() async throws {
         let s = try await setup()
         try write("first\n", to: "src/app.ts", in: s.repo)
-        try git(s.repo, "add", "src/app.ts")
-        try git(s.repo, "commit", "-q", "-m", "app")
+        try await git(s.repo, "add", "src/app.ts")
+        try await git(s.repo, "commit", "-q", "-m", "app")
         try write("second\n", to: "src/app.ts", in: s.repo)
         await s.model.refresh(.project(s.project.id))
         let change = try #require(status(s.model)?.unstaged.first)
         #expect(await s.model.confirmDiscard(change, prompter: ScriptedPrompter([AlertAnswer(button: 0)])))
         // Before the discard runs, the file leaves the index: it would now go to the Trash.
-        try git(s.repo, "rm", "-q", "--cached", "src/app.ts")
+        try await git(s.repo, "rm", "-q", "--cached", "src/app.ts")
         await s.model.perform(.discard(change), in: .project(s.project.id))
         #expect(try String(contentsOfFile: s.repo.path + "/src/app.ts", encoding: .utf8) == "second\n")
         #expect(s.trash.items.isEmpty)

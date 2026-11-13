@@ -7,15 +7,14 @@ import Testing
 
 /// New Task continued in a worktree that already exists, and Add Project's offer to import them.
 @MainActor @Suite struct ExistingWorktreeTests {
-    private func git(_ repo: GitRepoForUI, _ args: String...) throws {
-        let out = try repo.launcher.run("git", ["-C", repo.path] + args)
-        guard out.status == 0 else { throw GitFailure(command: "git", message: out.stderr) }
+    private func git(_ repo: GitRepoForUI, _ args: String...) async throws {
+        try await repo.launcher.fixtureGit(args, in: repo.path)
     }
 
     /// A repository with a worktree on `feat/resume`, not yet a task.
-    private func repo() throws -> GitRepoForUI {
-        let repo = try GitRepoForUI()
-        try git(repo, "worktree", "add", "-q", "-b", "feat/resume", repo.path + "/.worktrees/resume")
+    private func repo() async throws -> GitRepoForUI {
+        let repo = try await GitRepoForUI()
+        try await git(repo, "worktree", "add", "-q", "-b", "feat/resume", repo.path + "/.worktrees/resume")
         return repo
     }
 
@@ -28,7 +27,7 @@ import Testing
     }
 
     @Test func anExistingWorktreeBecomesATaskWithItsAgent() async throws {
-        let repo = try repo()
+        let repo = try await repo()
         let (model, host, document, _) = model(repo, answers: [AlertAnswer(button: 1)])  // skip the import
         await model.addProject(folder: repo.path)
         let project = try #require(document.workspace.projects.first).id
@@ -58,8 +57,8 @@ import Testing
     }
 
     @Test func addingAProjectOffersItsWorktrees() async throws {
-        let repo = try repo()
-        try git(repo, "worktree", "add", "-q", "-b", "feat/second", repo.path + "/.worktrees/second")
+        let repo = try await repo()
+        try await git(repo, "worktree", "add", "-q", "-b", "feat/second", repo.path + "/.worktrees/second")
         let (model, host, document, prompter) = model(repo, answers: [AlertAnswer(button: 0)])
         await model.addProject(folder: repo.path)
         let asked = try #require(prompter.asked.first)
@@ -71,7 +70,7 @@ import Testing
     }
 
     @Test func skippingImportsNothing() async throws {
-        let repo = try repo()
+        let repo = try await repo()
         let (model, _, document, prompter) = model(repo, answers: [AlertAnswer(button: 1)])
         await model.addProject(folder: repo.path)
         #expect(prompter.asked.first?.message == "Import 1 worktree?")
@@ -79,7 +78,7 @@ import Testing
     }
 
     @Test func noWorktreesAsksNothing() async throws {
-        let repo = try GitRepoForUI()
+        let repo = try await GitRepoForUI()
         let (model, _, document, prompter) = model(repo)
         await model.addProject(folder: repo.path)
         #expect(prompter.asked.isEmpty && document.workspace.projects.count == 1)
@@ -88,7 +87,7 @@ import Testing
     /// Switching to Existing worktree picks the newest, and step 1 can go on; back to New worktree,
     /// the branch fields count again.
     @Test func choosingExistingPicksTheNewest() async throws {
-        let repo = try repo()
+        let repo = try await repo()
         let (model, _, document, _) = model(repo, answers: [AlertAnswer(button: 1)])
         await model.addProject(folder: repo.path)
         let project = try #require(document.workspace.projects.first).id
@@ -108,8 +107,8 @@ import Testing
     }
 
     /// A task in the project's own folder does not hide, or add, a worktree: the main checkout is never listed.
-    @Test func projectFolderTaskDoesNotListMainCheckout() throws {
-        let repo = try repo()
+    @Test func projectFolderTaskDoesNotListMainCheckout() async throws {
+        let repo = try await repo()
         let project = Project(name: "demo", path: repo.path)
         let before = try ExistingWorktrees.list(project: project, taken: [], launcher: repo.launcher)
         let home = TaskItem(projectId: project.id, title: "Home", branch: "main", worktreePath: repo.path, baseBranch: "main")
@@ -119,9 +118,9 @@ import Testing
 
     /// Remove on a task continued outside `.worktrees/` asks only to forget it: no delete, no branch box.
     @Test func removingAnOutsideWorktreesTaskOnlyForgetsIt() async throws {
-        let repo = try GitRepoForUI()
+        let repo = try await GitRepoForUI()
         let outside = (repo.path as NSString).deletingLastPathComponent + "/hand-made"
-        try git(repo, "worktree", "add", "-q", "-b", "feat/hand", outside)
+        try await git(repo, "worktree", "add", "-q", "-b", "feat/hand", outside)
         let (model, _, document, prompter) = model(repo, answers: [AlertAnswer(button: 1), AlertAnswer(button: 0)])
         await model.addProject(folder: repo.path)  // skips the import
         let project = try #require(document.workspace.projects.first)
@@ -136,7 +135,7 @@ import Testing
 
     /// The same worktree spelled two ways — /var and /private/var — is one, at save and at import.
     @Test func aWorktreeTakenUnderAnotherSpellingIsNotTakenTwice() async throws {
-        let repo = try repo()
+        let repo = try await repo()
         let (model, _, document, _) = model(repo, answers: [AlertAnswer(button: 1)])
         await model.addProject(folder: repo.path)
         let project = try #require(document.workspace.projects.first)
@@ -157,13 +156,13 @@ import Testing
 
     /// The import reads the worktrees again once answered: one deleted meanwhile is not imported.
     @Test func theImportReadsTheWorktreesAgainOnceAnswered() async throws {
-        let repo = try repo()
-        try git(repo, "worktree", "add", "-q", "-b", "feat/second", repo.path + "/.worktrees/second")
+        let repo = try await repo()
+        try await git(repo, "worktree", "add", "-q", "-b", "feat/second", repo.path + "/.worktrees/second")
         let (model, _, document, prompter) = model(repo, answers: [AlertAnswer(button: 0)])
         prompter.hold = true
         let adding = Task { await model.addProject(folder: repo.path) }
         await eventually { prompter.asked.count == 1 }
-        try git(repo, "worktree", "remove", "--force", repo.path + "/.worktrees/second")
+        try await git(repo, "worktree", "remove", "--force", repo.path + "/.worktrees/second")
         prompter.hold = false
         prompter.release()
         await adding.value
@@ -172,7 +171,7 @@ import Testing
 
     /// A worktree another window is adopting right now is refused here, before anything is written.
     @Test func aWorktreeBeingAdoptedElsewhereIsRefused() async throws {
-        let repo = try repo()
+        let repo = try await repo()
         let (model, host, document, _) = model(repo, answers: [AlertAnswer(button: 1)])
         await model.addProject(folder: repo.path)
         let project = try #require(document.workspace.projects.first)

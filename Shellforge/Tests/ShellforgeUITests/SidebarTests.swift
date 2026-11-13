@@ -6,9 +6,9 @@ import ShellforgeDesign
 @testable import ShellforgeUI
 
 @MainActor @Suite struct SidebarTests {
-    private func sidebarModel() throws -> SidebarModel {
+    private func sidebarModel() async throws -> SidebarModel {
         let folder = TestScratch.root.appendingPathComponent("shellforge-view-\(UUID().uuidString)")
-        return SidebarModel(host: FakeTerminalHost(), document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: try GitRepoForUI().launcher, jiraSettings: { nil })
+        return SidebarModel(host: FakeTerminalHost(), document: WorkspaceDocument(store: WorkspaceStore(folder: folder)), launcher: try await GitRepoForUI().launcher, jiraSettings: { nil })
     }
 
     /// An Agent hooks sheet on a scratch home: building the view reads no file.
@@ -17,12 +17,12 @@ import ShellforgeDesign
         return AgentHooksModel(integrations: HookIntegrations(home: home, resources: .bundled(resourceURL: nil)), names: [:])
     }
 
-    @Test func theHostViewIsAsWideAsTheSidebar() throws {
-        #expect(ShellforgeSidebar.makeView(model: try sidebarModel(), chooseFolder: { nil }, hooks: hooks(), machine: MachineMonitor(sensor: InertMachineSensor(), power: InertPower()), backpack: BackpackController(ports: .inert, settings: BackpackSettings(defaults: nil), toast: { _ in }), zoom: SidebarZoom(settings: SidebarLayoutSettings(defaults: ScratchDefaults.make())), terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()), theme: ThemeSettings(defaults: ScratchDefaults.make()), appDefaults: ScratchDefaults.make(), feedback: FeedbackPrompt(defaults: ScratchDefaults.make(), channel: .dev)).frame.width == ShellforgeSidebar.width)
+    @Test func theHostViewIsAsWideAsTheSidebar() async throws {
+        #expect(ShellforgeSidebar.makeView(model: try await sidebarModel(), chooseFolder: { nil }, hooks: hooks(), machine: MachineMonitor(sensor: InertMachineSensor(), power: InertPower()), backpack: BackpackController(ports: .inert, settings: BackpackSettings(defaults: nil), toast: { _ in }), zoom: SidebarZoom(settings: SidebarLayoutSettings(defaults: ScratchDefaults.make())), terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()), theme: ThemeSettings(defaults: ScratchDefaults.make()), appDefaults: ScratchDefaults.make(), feedback: FeedbackPrompt(defaults: ScratchDefaults.make(), channel: .dev)).frame.width == ShellforgeSidebar.width)
     }
 
-    @Test func theSidebarStretchesWithTheWindowsHeightOnly() throws {
-        #expect(ShellforgeSidebar.makeView(model: try sidebarModel(), chooseFolder: { nil }, hooks: hooks(), machine: MachineMonitor(sensor: InertMachineSensor(), power: InertPower()), backpack: BackpackController(ports: .inert, settings: BackpackSettings(defaults: nil), toast: { _ in }), zoom: SidebarZoom(settings: SidebarLayoutSettings(defaults: ScratchDefaults.make())), terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()), theme: ThemeSettings(defaults: ScratchDefaults.make()), appDefaults: ScratchDefaults.make(), feedback: FeedbackPrompt(defaults: ScratchDefaults.make(), channel: .dev)).autoresizingMask == [.height, .minYMargin, .maxYMargin])
+    @Test func theSidebarStretchesWithTheWindowsHeightOnly() async throws {
+        #expect(ShellforgeSidebar.makeView(model: try await sidebarModel(), chooseFolder: { nil }, hooks: hooks(), machine: MachineMonitor(sensor: InertMachineSensor(), power: InertPower()), backpack: BackpackController(ports: .inert, settings: BackpackSettings(defaults: nil), toast: { _ in }), zoom: SidebarZoom(settings: SidebarLayoutSettings(defaults: ScratchDefaults.make())), terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()), theme: ThemeSettings(defaults: ScratchDefaults.make()), appDefaults: ScratchDefaults.make(), feedback: FeedbackPrompt(defaults: ScratchDefaults.make(), channel: .dev)).autoresizingMask == [.height, .minYMargin, .maxYMargin])
     }
 
     @Test func theSidebarIsAiTermsWidth() throws {
@@ -31,8 +31,8 @@ import ShellforgeDesign
 
     /// Inside a light window the sidebar draws a light ground: its host takes the window's
     /// appearance.
-    @Test func theSidebarDrawsLightInALightWindow() throws {
-        let host = ShellforgeSidebar.makeView(model: try sidebarModel(), chooseFolder: { nil }, hooks: hooks(), machine: MachineMonitor(sensor: InertMachineSensor(), power: InertPower()), backpack: BackpackController(ports: .inert, settings: BackpackSettings(defaults: nil), toast: { _ in }), zoom: SidebarZoom(settings: SidebarLayoutSettings(defaults: ScratchDefaults.make())), terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()), theme: ThemeSettings(defaults: ScratchDefaults.make()), appDefaults: ScratchDefaults.make(), feedback: FeedbackPrompt(defaults: ScratchDefaults.make(), channel: .dev))
+    @Test func theSidebarDrawsLightInALightWindow() async throws {
+        let host = ShellforgeSidebar.makeView(model: try await sidebarModel(), chooseFolder: { nil }, hooks: hooks(), machine: MachineMonitor(sensor: InertMachineSensor(), power: InertPower()), backpack: BackpackController(ports: .inert, settings: BackpackSettings(defaults: nil), toast: { _ in }), zoom: SidebarZoom(settings: SidebarLayoutSettings(defaults: ScratchDefaults.make())), terminalMatch: TerminalMatchSettings(defaults: ScratchDefaults.make()), theme: ThemeSettings(defaults: ScratchDefaults.make()), appDefaults: ScratchDefaults.make(), feedback: FeedbackPrompt(defaults: ScratchDefaults.make(), channel: .dev))
         host.frame.size.height = 400
         let window = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
         window.appearance = NSAppearance(named: .aqua)

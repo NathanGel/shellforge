@@ -10,13 +10,13 @@ import Testing
 /// the main actor and published only when they change.
 @MainActor @Suite struct DiffBadgeTests {
     private func model() async throws -> (SidebarModel, TaskItem) {
-        let repo = try GitRepoForUI()
+        let repo = try await GitRepoForUI()
         let document = WorkspaceDocument(store: WorkspaceStore(folder: TestScratch.root.appendingPathComponent("diff-\(UUID().uuidString)")))
         let model = SidebarModel(host: FakeTerminalHost(), document: document, launcher: repo.launcher, jiraSettings: { nil })
         model.diffStats = DiffStats(git: LauncherGit(launcher: repo.launcher), ttl: 0)
         await model.addProject(folder: repo.path)
         let project = try #require(document.workspace.projects.first)
-        let task = try TaskWorktrees.create(title: "Fix login", in: project, base: "main", launcher: repo.launcher)
+        let task = try await BackgroundWork.run { try TaskWorktrees.create(title: "Fix login", in: project, base: "main", launcher: repo.launcher) }
         try document.update { $0.tasks.append(task) }
         return (model, task)
     }

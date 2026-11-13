@@ -13,7 +13,7 @@ import Testing
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let config = folder.appendingPathComponent("ssh_config")
         try "Host box\n  HostName box.example\nHost a$b\n  HostName odd.example\n".write(to: config, atomically: true, encoding: .utf8)
-        let repo = try GitRepoForUI(installed: ["claude"])
+        let repo = try await GitRepoForUI(installed: ["claude"])
         let host = FakeTerminalHost()
         let document = WorkspaceDocument(store: WorkspaceStore(folder: folder))
         let model = SidebarModel(host: host, document: document, launcher: repo.launcher, catalogue: { _ in [] },
@@ -112,7 +112,7 @@ import Testing
     /// check must not run a login shell on the main thread.
     @Test func newTaskReadsTheEnvironmentOffTheMainThread() async throws {
         let onMain = Locked<[Bool]>([])
-        let repo = try GitRepoForUI(installed: ["claude"])
+        let repo = try await GitRepoForUI(installed: ["claude"])
         let launcher = CommandLauncher(resolve: {
             onMain.withLock { $0.append(Thread.isMainThread) }
             return repo.launcher.environment
