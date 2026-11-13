@@ -7,7 +7,7 @@ a patch fixes, a minor adds features, a major changes a saved setup.
 Each version's section is also its GitHub release notes: `Shellforge/scripts/release.sh` publishes
 it and refuses to release a version that has none.
 
-## 1.0.0 — unreleased
+## 1.0.0 — 2026-11-13
 
 ### Added
 
@@ -145,6 +145,12 @@ it and refuses to release a version that has none.
   start a helper that couldn't be launched (its Python gone, say) kept a file open for good, so
   after enough retries Shellforge could no longer run git or start anything else until you
   quit it.
+
+### Installing
+
+- Shellforge is signed but not notarized by Apple, so macOS refuses to open it the first time.
+- Right-click Shellforge in Applications, choose Open, then Open again.
+- Or run `xattr -dr com.apple.quarantine /Applications/Shellforge.app` once.
 
 ## 0.10.0 — 2026-11-10
 
