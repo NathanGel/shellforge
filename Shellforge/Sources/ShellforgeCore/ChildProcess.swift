@@ -18,6 +18,15 @@ enum ChildProcess {
     static func run(_ executable: String, _ arguments: [String], environment: [String: String],
                     directory: String? = nil, input: Data? = nil, timeout: TimeInterval,
                     cancellation: CreationCancellation? = nil) throws -> ChildOutput {
+        try withDrainedPool {
+            try runInPool(executable, arguments, environment: environment, directory: directory, input: input,
+                          timeout: timeout, cancellation: cancellation)
+        }
+    }
+
+    private static func runInPool(_ executable: String, _ arguments: [String], environment: [String: String],
+                                  directory: String?, input: Data?, timeout: TimeInterval,
+                                  cancellation: CreationCancellation?) throws -> ChildOutput {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
@@ -83,6 +92,15 @@ enum ChildProcess {
 }
 
 extension ChildProcess {
+    /// Runs `body` in an autorelease pool of its own. Foundation hands back some of a launch's
+    /// objects autoreleased, the pipes' and the output's `FileHandle`s among them, and each keeps
+    /// a descriptor open until the pool it went into drains. The caller's pool is its thread's —
+    /// a dispatch queue's, or Swift's cooperative pool's — which drains only once that thread runs
+    /// out of work: a busy one held every child's descriptors for as long as it stayed busy.
+    static func withDrainedPool<T>(_ body: () throws -> T) rethrows -> T {
+        try autoreleasepool { try body() }
+    }
+
     /// Sets `FD_CLOEXEC` on `fd`. `Process` maps a pipe's child end onto 0, 1 or 2 itself; the
     /// flag only keeps the parent's descriptors out of every other child.
     static func closeOnExec(_ fd: Int32) {
@@ -185,6 +203,13 @@ extension ChildProcess {
     /// `onExit` is called with it and its exit status when it ends.
     static func launch(_ executable: String, _ arguments: [String], environment: [String: String], directory: String?,
                        output: FileHandle?, onExit: @escaping @Sendable (RunningChild, Int32) -> Void) throws -> RunningChild {
+        try withDrainedPool {
+            try launchInPool(executable, arguments, environment: environment, directory: directory, output: output, onExit: onExit)
+        }
+    }
+
+    private static func launchInPool(_ executable: String, _ arguments: [String], environment: [String: String], directory: String?,
+                                     output: FileHandle?, onExit: @escaping @Sendable (RunningChild, Int32) -> Void) throws -> RunningChild {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
@@ -198,7 +223,15 @@ extension ChildProcess {
             child.exited()
             onExit(child, $0.terminationStatus)
         }
-        try process.run()
+        do {
+            try process.run()
+        } catch {
+            // The handler holds the child, which holds the process, which holds the handler: one
+            // that never ran is let go of here, or the process — and the output it was handed,
+            // a descriptor — would be kept for good.
+            process.terminationHandler = nil
+            throw error
+        }
         return child
     }
 
@@ -206,6 +239,10 @@ extension ChildProcess {
     /// when it closes — handed back, or this process gone however it went — the child reads end of
     /// file. Not waited for: it outlives us on purpose. Backpack Mode's sleep watchdog.
     static func holding(_ executable: String, _ arguments: [String], environment: [String: String]) throws -> FileHandle {
+        try withDrainedPool { try holdingInPool(executable, arguments, environment: environment) }
+    }
+
+    private static func holdingInPool(_ executable: String, _ arguments: [String], environment: [String: String]) throws -> FileHandle {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments

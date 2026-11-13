@@ -139,6 +139,10 @@ it and refuses to release a version that has none.
 - **The helper answers only the Shellforge that started it.** Another program of your account
   can no longer send it a tab list or arm an agent's launch; when Shellforge finds a helper
   from an earlier version still running after an update, it replaces it with its own.
+- **A helper that can't start no longer runs Shellforge out of open files.** Each attempt to
+  start a helper that couldn't be launched (its Python gone, say) kept a file open for good, so
+  after enough retries Shellforge could no longer run git or start anything else until you
+  quit it.
 
 ## 0.10.0 — 2026-11-10
 

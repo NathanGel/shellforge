@@ -42,6 +42,31 @@ import Testing
         #expect(await eventually(describing: "the pipes to close: they outlived their background jobs") { Self.pipes() <= before })
     }
 
+    /// A launch that fails lets go of its output when it returns, not when the calling thread's
+    /// autorelease pool drains — which a busy dispatch queue's does only once its thread runs dry.
+    /// A helper that could not be started was retried with a log handle of its own each time, and
+    /// every one of them stayed open until the process ran out of descriptors.
+    @Test func aFailedLaunchLetsGoOfItsOutput() throws {
+        let released = Locked<Bool?>(nil)
+        let done = DispatchSemaphore(value: 0)
+        // A thread of its own, whose pool drains only as it ends: the check runs before that.
+        Thread {
+            weak var handle: FileHandle?
+            do {
+                // Made with `init`, so this test's own pool does not hold it.
+                let output = FileHandle(fileDescriptor: open("/dev/null", O_WRONLY | O_CLOEXEC), closeOnDealloc: true)
+                handle = output
+                _ = try? ChildProcess.launch("/nonexistent/shellforge-helper", [], environment: [:], directory: nil,
+                                             output: output) { _, _ in }
+            }
+            released.withLock { $0 = handle == nil }
+            done.signal()
+        }.start()
+        // A bound for a hang only: the thread returns at once.
+        try #require(done.wait(timeout: .now() + 60) == .success)
+        #expect(released.withLock { $0 } == true, "the failed launch's output is still held")
+    }
+
     @Test func aFinishedChildIsReleased() async throws {
         let exited = Locked(false)
         weak var released: RunningChild?
