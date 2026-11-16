@@ -28,11 +28,10 @@ struct TerminalRowView: View {
     var body: some View {
         SelectableRow(selected: selected, activate: activate) {
             HStack(spacing: scale(Space.inset)) {
-                AvatarGroupView(group: Self.marks(agents), name: agentName)
+                LeadingStatus(status: status, guessed: guessed)
                 RowTitle(node.terminal.name)
                 Spacer(minLength: scale(Space.tight))
-                StatusMark(status: status, size: SidebarRowLayout.trailingGlyph(scale), guessed: guessed)
-                    .frame(width: SidebarRowLayout.trailingSlot(scale))
+                AvatarGroupView(group: Self.marks(agents), name: agentName)
             }
         }
         .accessibilityLabel(node.terminal.name)

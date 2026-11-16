@@ -694,7 +694,8 @@ struct SidebarView: View {
                         remove: { Task { await model.confirmRemove(taskId: node.id) } },
                         rename: { showRename(.task, name: node.task.title) { model.renameTask(node.id, to: $0) } },
                         closeTab: { model.closeCurrentTab(ofTask: node.id) }, closeTitle: model.closeTitle(ofTask: node.id),
-                        diff: model.diffs[node.id], canRearrange: canRearrange, rearrange: model.beginRearrange)
+                        diff: model.diffs[node.id], canRearrange: canRearrange, rearrange: model.beginRearrange,
+                        lastReport: model.lastReport(ofTask: node.id))
                 .listRowSeparator(.hidden)
         case .tab(let tab, let selected):
             TabRowView(tab: tab, selected: selected, agents: model.avatars(forTab: tab.id),

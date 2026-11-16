@@ -230,24 +230,33 @@ struct TaskRowView: View {
     /// Rearrange mode, greyed while another window is in it.
     var canRearrange = true
     var rearrange: () -> Void = {}
+    /// When its agents last reported, for the age at the end of the title line; nil draws none.
+    var lastReport: Date? = nil
     @Environment(\.interfaceScale) private var scale
 
     var body: some View {
         SelectableRow(selected: selected, activate: activate) {
-            HStack(spacing: scale(Space.inset)) {
-                AvatarGroupView(group: Self.marks(agents), name: agentName)
+            // The status leads, so nothing on the row can push it out of view.
+            HStack(alignment: .top, spacing: scale(Space.inset)) {
+                LeadingStatus(status: status, guessed: guessed, lineHeight: scale(Size.chip))
                 VStack(alignment: .leading, spacing: scale(Space.tight)) {
-                    RowTitle(node.task.title)
-                    // A removal says so in the badge line's place and at its height, so the row keeps its own.
-                    if let caption = Self.caption(removal) {
-                        RowCaption(caption.text, warns: caption.warns).frame(height: scale(Size.chip))
-                    } else {
-                        badgeLine
+                    HStack(spacing: scale(Space.base)) {
+                        RowTitle(node.task.title)
+                        Spacer(minLength: scale(Space.tight))
+                        ActivityAgeLabel(since: lastReport)
+                    }
+                    .frame(height: scale(Size.chip))
+                    HStack(spacing: scale(Space.base)) {
+                        // A removal says so in the badge line's place and at its height, so the row keeps its own.
+                        if let caption = Self.caption(removal) {
+                            RowCaption(caption.text, warns: caption.warns).frame(height: scale(Size.chip))
+                        } else {
+                            badgeLine
+                        }
+                        Spacer(minLength: 0)
+                        AvatarGroupView(group: Self.marks(agents), name: agentName)
                     }
                 }
-                Spacer(minLength: scale(Space.tight))
-                StatusMark(status: status, size: SidebarRowLayout.trailingGlyph(scale), guessed: guessed)
-                    .frame(width: SidebarRowLayout.trailingSlot(scale))
             }
         }
         .accessibilityLabel(node.task.title)
@@ -345,11 +354,10 @@ struct TabRowView: View {
     var body: some View {
         SelectableRow(selected: selected, activate: activate) {
             HStack(spacing: scale(Space.inset)) {
-                AvatarGroupView(group: Self.marks(agents), name: agentName)
+                LeadingStatus(status: status, guessed: guessed)
                 RowTitle(tab.title)
                 Spacer(minLength: scale(Space.tight))
-                StatusMark(status: status, size: SidebarRowLayout.trailingGlyph(scale), guessed: guessed)
-                    .frame(width: SidebarRowLayout.trailingSlot(scale))
+                AvatarGroupView(group: Self.marks(agents), name: agentName)
             }
         }
         .padding(.leading, scale(Space.section))
@@ -593,5 +601,19 @@ struct BadgeLineParts: Equatable {
             if !seen.contains(drawn) { seen.append(drawn) }
         }
         return seen
+    }
+}
+
+/// A row's status in its leading column, as wide as an agent's mark so every title starts at the
+/// same x; with a `lineHeight`, centred on the first line of a two-line row.
+struct LeadingStatus: View {
+    let status: SessionState
+    var guessed = false
+    var lineHeight: CGFloat? = nil
+    @Environment(\.interfaceScale) private var scale
+
+    var body: some View {
+        StatusMark(status: status, size: SidebarRowLayout.trailingGlyph(scale), guessed: guessed)
+            .frame(width: scale(Size.avatar), height: lineHeight)
     }
 }

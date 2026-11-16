@@ -50,7 +50,7 @@ import Testing
     }
 
     /// A title and branch far too long for the column: they truncate, and the status mark keeps its
-    /// place at the row's trailing edge.
+    /// place leading the row.
     @Test func aLongTitleAndBranchLeaveTheStatusMarkInPlace() throws {
         let long = String(repeating: "a-very-long-name-", count: 12)
         let task = TaskItem(projectId: UUID(), title: long, branch: long, worktreePath: "/w", baseBranch: "main")
@@ -72,8 +72,10 @@ import Testing
             }
         }
         let scale = CGFloat(bitmap.pixelsWide) / host.bounds.width
-        let trailing = try #require(xs.max(), "no status mark drawn")
-        #expect(CGFloat(trailing) / scale > panelWidth - Space.section - Size.slot, "the mark moved off the trailing edge")
+        let leading = try #require(xs.min(), "no status mark drawn")
+        let trailing = try #require(xs.max())
+        #expect(CGFloat(leading) / scale < Space.section + Space.base + Size.avatar, "the mark moved off the row's leading column")
+        #expect(CGFloat(trailing - leading + 1) / scale >= Size.statusMark - 1, "the mark is cut")
     }
 
     /// A row whose badges alone are wider than the column — a ticket, a five-digit diff, a long
@@ -106,6 +108,8 @@ import Testing
         let leading = try #require(xs.min(), "no status mark drawn")
         let trailing = try #require(xs.max())
         let drawn = CGFloat(trailing - leading + 1) / pixels
+        // It leads the row: in the column the agents' marks had, before the title.
+        #expect(CGFloat(leading) / pixels < interfaceScale(Space.section + Space.base + Size.avatar), "the mark doesn't lead the row")
         // Whole: as wide as the mark is drawn, not cut off by the row's edge.
         #expect(drawn >= interfaceScale(Size.statusMark) - 1, "the mark is cut: \(drawn) pt drawn")
         #expect(CGFloat(trailing) / pixels <= width - interfaceScale(Space.base) + 1, "the mark runs past the row's padding")

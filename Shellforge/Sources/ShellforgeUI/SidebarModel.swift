@@ -862,6 +862,8 @@ public final class SidebarModel: ObservableObject {
     /// Whether the task's or tab's dot is guessed from the terminal, for its tooltip.
     public func statusIsGuessed(ofTask id: UUID) -> Bool { TaskStatus.isGuessed(sessions.sessions(ofTask: id)) }
     public func statusIsGuessed(ofTab id: String) -> Bool { TaskStatus.isGuessed(sessions.sessions(ofTab: id)) }
+    /// When the task's agents last reported exactly, for the age at the end of its row; nil while none has.
+    public func lastReport(ofTask id: UUID) -> Date? { ActivityAge.lastReport(sessions.sessions(ofTask: id)) }
 
     /// Every terminal row's tabs in this window.
     var terminalTabs: [TabSnapshot] { tree.projects.flatMap(\.terminals).flatMap(\.tabs) }
