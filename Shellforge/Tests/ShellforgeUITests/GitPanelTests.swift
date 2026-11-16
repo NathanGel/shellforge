@@ -228,10 +228,19 @@ private final class InertGitWatcher: FolderWatching, @unchecked Sendable {
         #expect(ids.contains(GitPanel.changeID(section.id, .staged, staged)) && ids.contains(GitPanel.changeID(section.id, .changes, staged)))
     }
 
-    @Test func theCommitPlaceholderSaysWhatItCommits() {
+    /// The placeholder is short; the line under Commit says what it takes, with the count.
+    @Test func theHintSaysWhatACommitTakes() {
         let change = GitChange(path: "README.md", letter: .modified)
-        #expect(GitPanel.commitPlaceholder(status(.branch("main"), unstaged: [change])) == "Message (commits all changes when none are staged)")
-        #expect(GitPanel.commitPlaceholder(status(.branch("main"), staged: [change])) == "Message")
+        let other = GitChange(path: "Package.swift", letter: .untracked)
+        #expect(GitPanel.commitPlaceholder == "Message")
+        #expect(GitPanel.commitHint(status(.branch("main"), unstaged: [change, other])) == "Nothing staged — commits all 2 changes.")
+        #expect(GitPanel.commitHint(status(.branch("main"), unstaged: [change])) == "Nothing staged — commits the 1 change.")
+        #expect(GitPanel.commitHint(status(.branch("main"), staged: [change], unstaged: [other])) == "Commits 1 staged change.")
+        #expect(GitPanel.commitHint(status(.branch("main"), staged: [change, other])) == "Commits 2 staged changes.")
+        #expect(GitPanel.commitHint(status(.branch("main"))) == nil, "nothing to commit")
+        var conflicted = status(.branch("main"), unstaged: [change])
+        conflicted.conflicted = [GitChange(path: "a.txt", letter: .conflicted)]
+        #expect(GitPanel.commitHint(conflicted) == nil, "conflicts: nothing is committed")
         #expect(!GitPanel.canCommit(message: "  ", busy: false))
         #expect(!GitPanel.canCommit(message: "Add the login page", busy: true))
         #expect(GitPanel.canCommit(message: "Add the login page", busy: false))

@@ -286,9 +286,36 @@ struct GitPanel: View {
         return status.upstream == nil ? [.publish] : [.pull, .push]
     }
 
-    /// While files are conflicted nothing is committed, so the smart commit isn't offered.
-    static func commitPlaceholder(_ status: GitStatus) -> String {
-        status.staged.isEmpty && status.conflicted.isEmpty ? "Message (commits all changes when none are staged)" : "Message"
+    static let commitPlaceholder = "Message"
+
+    /// The line under Commit: what it takes. With nothing staged, every change (`git add -A`); else
+    /// the staged ones. Nothing while files are conflicted, or when there is nothing to commit.
+    static func commitHint(_ status: GitStatus) -> String? {
+        guard status.conflicted.isEmpty else { return nil }
+        let staged = status.staged.count, all = status.unstaged.count
+        if staged > 0 { return "Commits \(staged) staged \(staged == 1 ? "change" : "changes")." }
+        if all == 1 { return "Nothing staged — commits the 1 change." }
+        if all > 1 { return "Nothing staged — commits all \(all) changes." }
+        return nil
+    }
+
+    /// The branch pill's name: the branch, or what the head is when it isn't one.
+    static func branchTitle(_ status: GitStatus) -> String {
+        switch status.head {
+        case .unborn: "No commits yet"
+        case .detached(let sha): "Detached at \(sha)"
+        case .branch(let name): name
+        }
+    }
+
+    /// A remote button's label in the pill: Pull and Push as VS Code's sync counts, `↓2` `↑1`
+    /// (the bare arrow when there's nothing to count); Publish Branch as “Publish”.
+    static func remoteLabel(_ remote: RemoteAction, _ status: GitStatus) -> String {
+        switch remote {
+        case .pull: status.behind > 0 ? "↓\(status.behind)" : "↓"
+        case .push: status.ahead > 0 ? "↑\(status.ahead)" : "↑"
+        case .publish: "Publish"
+        }
     }
 
     static func canCommit(message: String, busy: Bool) -> Bool {
@@ -350,7 +377,9 @@ struct GitPanel: View {
             }
         case .branch(let status):
             GitIndented(depth: depth) {
-                GitBranchLine(section: section, status: status, actions: actions, model: model)
+                GitBranchLine(section: section, status: status, actions: actions, model: model, perform: { action in
+                    Task { await model.perform(action, in: section.id) }
+                })
             }
         case .commit(let status):
             GitIndented(depth: depth) {
@@ -457,44 +486,72 @@ private struct GitTitleRow: View {
     }
 }
 
-/// The branch line: the branch and how far it is from its upstream, a spinner while the section is
-/// busy, and Switch Branch… on a project.
+/// The branch pill: the branch, filling the line — a click on it opens Switch Branch… on a project —
+/// a spinner while the section is busy, then Pull and Push as `↓n` `↑n`, or Publish.
 private struct GitBranchLine: View {
     let section: GitSection
     let status: GitStatus
     let actions: GitPanelActions
     @ObservedObject var model: GitModel
+    let perform: (GitAction) -> Void
     @State private var choosing = false
     @Environment(\.interfaceScale) private var scale
     @Environment(\.surface) private var surface
 
     static let switchTitle = "Switch Branch…"
     static let branchSymbol: SFSymbolName = .arrowTriangleBranch
+    static let chooseSymbol: SFSymbolName = .chevronDown
+
+    private var switches: Bool { GitPanel.offersSwitchBranch(section) }
 
     var body: some View {
-        HStack(spacing: scale(Space.snug)) {
-            Icon(.symbol(Self.branchSymbol), size: scale(Size.trailingGlyph), tint: surface.secondaryInk)
-            Text(GitPanel.branchLine(status)).font(Typography.monoCode).foregroundStyle(surface.ink)
-                .lineLimit(1).truncationMode(.middle)
-                .accessibilityLabel("Branch: \(GitPanel.branchLine(status))")
+        HStack(spacing: scale(Space.tight)) {
+            Button { choosing = true } label: {
+                HStack(spacing: scale(Space.snug)) {
+                    Icon(.symbol(Self.branchSymbol), size: scale(Size.trailingGlyph), tint: surface.secondaryInk)
+                    Text(GitPanel.branchTitle(status)).font(Typography.monoCode).foregroundStyle(surface.ink)
+                        .lineLimit(1).truncationMode(.middle)
+                    if switches {
+                        Image(symbol: Self.chooseSymbol).font(Typography.micro).foregroundStyle(surface.secondaryInk)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(!switches || section.busy)
+            .help(switches ? Self.switchTitle : GitPanel.branchLine(status))
+            .accessibilityLabel("Branch: \(GitPanel.branchLine(status))")
+            .accessibilityHint(switches ? Self.switchTitle : "")
+            .popover(isPresented: $choosing, arrowEdge: .bottom) {
+                GitBranchList(repo: section.path, current: Self.current(status), launcher: actions.launcher) { branch in
+                    choosing = false
+                    Task { await actions.switchBranch(section, to: branch, model: model) }
+                }
+                // A popover is a root of its own, so it follows a theme change itself.
+                .themed()
+            }
             if section.busy {
                 ProgressView().controlSize(.mini).accessibilityLabel("Working")
             }
-            Spacer(minLength: scale(Space.tight))
-            if GitPanel.offersSwitchBranch(section) {
-                Button(Self.switchTitle) { choosing = true }
-                    .controlSize(.small)
-                    .disabled(section.busy)
-                    .popover(isPresented: $choosing, arrowEdge: .bottom) {
-                        GitBranchList(repo: section.path, current: Self.current(status), launcher: actions.launcher) { branch in
-                            choosing = false
-                            Task { await actions.switchBranch(section, to: branch, model: model) }
-                        }
-                        // A popover is a root of its own, so it follows a theme change itself.
-                        .themed()
-                    }
+            ForEach(GitPanel.remoteActions(status), id: \.title) { remote in
+                Button { perform(remote.action) } label: {
+                    Text(GitPanel.remoteLabel(remote, status)).font(Typography.monoCode).foregroundStyle(surface.secondaryInk)
+                        .padding(.horizontal, scale(Space.snug))
+                        .frame(minWidth: scale(Size.slot), minHeight: scale(Size.slot))
+                        .background(RoundedRectangle(cornerRadius: scale(Radius.chip), style: .continuous).fill(surface.badgeWash))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(section.busy)
+                .help(remote.title)
+                .accessibilityLabel(remote.title)
             }
         }
+        .padding(.leading, scale(Space.base)).padding(.trailing, scale(Space.tight))
+        .frame(height: scale(Size.control))
+        .background(RoundedRectangle(cornerRadius: scale(Radius.control), style: .continuous).fill(surface.badgeWash))
+        .padding(.vertical, scale(Space.tight))
     }
 
     static func current(_ status: GitStatus) -> String? {
@@ -585,8 +642,8 @@ private struct GitBranchList: View {
     }
 }
 
-/// The commit message and the section's buttons: Commit (⌘↩ in the field), then Pull and Push, or
-/// Publish Branch. It observes its repository's draft alone, so typing redraws only this box.
+/// The commit message, a full-width Commit (⌘↩ in the field), and a line saying what it takes. It
+/// observes its repository's draft alone, so typing redraws only this box.
 private struct GitCommitBox: View {
     let section: GitSection
     let status: GitStatus
@@ -594,8 +651,10 @@ private struct GitCommitBox: View {
     let perform: (GitAction) -> Void
     @State private var focused = false
     @Environment(\.interfaceScale) private var scale
+    @Environment(\.surface) private var surface
 
     static let commitTitle = "Commit"
+    static let commitKey = "⌘↩"
 
     private var canCommit: Bool { GitPanel.canCommit(message: draft.text, busy: section.busy) }
     /// What the panel shows goes with the commit: staged files shown are the only ones it takes.
@@ -603,22 +662,26 @@ private struct GitCommitBox: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: scale(Space.snug)) {
-            CommitMessageField(placeholder: GitPanel.commitPlaceholder(status), text: $draft.text, focused: $focused,
+            CommitMessageField(placeholder: GitPanel.commitPlaceholder, text: $draft.text, focused: $focused,
                                font: Typography.body.scaled(by: scale).nsFont,
                                // While Commit is off, ⌘↩ is still the field's: it does nothing.
                                commit: { if canCommit { perform(commit) } })
                 .overlay(alignment: .topLeading) { placeholder }
                 .fieldBox(focused: focused)
-            HStack(spacing: scale(Space.snug)) {
-                Button(Self.commitTitle) { perform(commit) }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!canCommit)
-                Spacer(minLength: scale(Space.tight))
-                ForEach(GitPanel.remoteActions(status), id: \.title) { remote in
-                    Button(remote.title) { perform(remote.action) }.disabled(section.busy)
+            Button { perform(commit) } label: {
+                HStack(spacing: scale(Space.snug)) {
+                    Text(Self.commitTitle)
+                    Text(Self.commitKey).opacity(0.7)
                 }
+                .frame(maxWidth: .infinity)
             }
-            .controlSize(.small)
+            .buttonStyle(.borderedProminent)
+            .controlSize(.regular)
+            .disabled(!canCommit)
+            .accessibilityLabel(Self.commitTitle)
+            if let hint = GitPanel.commitHint(status) {
+                Text(hint).font(Typography.help).foregroundStyle(surface.secondaryInk)
+            }
         }
         .padding(.vertical, scale(Space.tight))
     }
@@ -627,7 +690,7 @@ private struct GitCommitBox: View {
     /// first line starts (its inset and its container's padding of 5).
     @ViewBuilder private var placeholder: some View {
         if draft.text.isEmpty {
-            Text(GitPanel.commitPlaceholder(status)).font(Typography.body.scaled(by: scale))
+            Text(GitPanel.commitPlaceholder).font(Typography.body.scaled(by: scale))
                 .foregroundStyle(Color(nsColor: .placeholderTextColor))
                 .lineLimit(1)
                 // Not scaled: the text view's inset and padding aren't either.

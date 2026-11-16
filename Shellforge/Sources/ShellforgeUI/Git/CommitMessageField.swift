@@ -35,6 +35,9 @@ struct CommitMessageField: NSViewRepresentable {
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
+        // No Writing Tools: its round affordance hung over the field's leading edge, and a commit
+        // message isn't prose to rewrite.
+        if #available(macOS 15.0, *) { textView.writingToolsBehavior = .none }
         textView.font = font
         textView.textColor = NSColor(Palette.text)
         textView.insertionPointColor = NSColor(Palette.text)
