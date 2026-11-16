@@ -1095,9 +1095,11 @@ extension iTermShellforgeSidebar {
         ShellforgeSidebar.setWindowControls(nil, on: sidebar)
     }
 
-    /// `stacked` in full screen, where the toggle has a row of its own above the header.
-    @objc static func updateWindowControls(in sidebar: NSView, toggleFrame: NSRect, stacked: Bool) {
-        ShellforgeSidebar.setWindowControls(windowControls(in: sidebar, toggleFrame: toggleFrame, stacked: stacked), on: sidebar)
+    /// `stacked` in full screen, where the toggle has a row of its own above the header while it is
+    /// shown (`toggleShown`: the sidebar is hidden, or slid in over the terminal); none otherwise.
+    @objc static func updateWindowControls(in sidebar: NSView, toggleFrame: NSRect, stacked: Bool, toggleShown: Bool) {
+        ShellforgeSidebar.setWindowControls(windowControls(in: sidebar, toggleFrame: toggleFrame, stacked: stacked,
+                                                           toggleShown: toggleShown), on: sidebar)
     }
 
     // MARK: The sidebar's toggle
@@ -1165,12 +1167,12 @@ extension iTermShellforgeSidebar {
 
     /// Where the toggle — and the window buttons before it — sit in the sidebar, so the header starts
     /// after it on its row; nil where the toggle is not over the sidebar.
-    private static func windowControls(in sidebar: NSView, toggleFrame: NSRect, stacked: Bool) -> SidebarWindowControls? {
+    private static func windowControls(in sidebar: NSView, toggleFrame: NSRect, stacked: Bool, toggleShown: Bool) -> SidebarWindowControls? {
         guard floats, !sidebar.isHidden, let root = sidebar.superview else { return nil }
         let frame = root.convert(toggleFrame, to: sidebar)
         let midY = sidebar.isFlipped ? frame.midY : sidebar.bounds.height - frame.midY
         guard frame.minX >= 0, midY > 0, frame.maxX < sidebar.bounds.width else { return nil }
-        return SidebarWindowControls(buttonsMaxX: frame.maxX, buttonsMidY: midY, stacked: stacked)
+        return SidebarWindowControls(buttonsMaxX: frame.maxX, buttonsMidY: midY, stacked: stacked, toggleShown: toggleShown)
     }
 
     /// The drag handle's frame for a sidebar of `frame`.

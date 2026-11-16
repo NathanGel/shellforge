@@ -11,15 +11,19 @@ public struct SidebarWindowControls: Equatable, Sendable {
 
     /// Full screen: no window buttons, so the toggle has the band to itself.
     public var stacked: Bool
+    /// The Show Sidebar toggle is drawn: only while the sidebar is hidden (slid in from the edge).
+    public var toggleShown: Bool
 
-    public init(buttonsMaxX: CGFloat, buttonsMidY: CGFloat, stacked: Bool = false) {
+    public init(buttonsMaxX: CGFloat, buttonsMidY: CGFloat, stacked: Bool = false, toggleShown: Bool = true) {
         self.buttonsMaxX = buttonsMaxX
         self.buttonsMidY = buttonsMidY
         self.stacked = stacked
+        self.toggleShown = toggleShown
     }
 
-    /// The band's height: from the sidebar's top, centred on the buttons.
-    var bandHeight: CGFloat { 2 * buttonsMidY }
+    /// The band's height: from the sidebar's top, centred on the buttons. None in full screen while
+    /// the toggle isn't drawn, where the band would be an empty row.
+    var bandHeight: CGFloat { stacked && !toggleShown ? 0 : 2 * buttonsMidY }
 }
 
 /// The sidebar's share of its window's chrome, which the host updates as the window lays out: nil

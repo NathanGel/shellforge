@@ -24,6 +24,16 @@ import ShellforgeDesign
         #expect(Self.controls.bandHeight == 36, "centred on the buttons, 18 pt down")
     }
 
+    /// Full screen: the band is the Show Sidebar toggle's alone, and the toggle shows only while the
+    /// sidebar is hidden (slid in from the edge). While the sidebar shows, the band would be empty,
+    /// so there is none and the panel starts at the top.
+    @Test func fullScreenKeepsNoEmptyBand() {
+        #expect(SidebarWindowControls(buttonsMaxX: 40, buttonsMidY: 20, stacked: true, toggleShown: true).bandHeight == 40)
+        #expect(SidebarWindowControls(buttonsMaxX: 40, buttonsMidY: 20, stacked: true, toggleShown: false).bandHeight == 0)
+        // The window's own buttons are always there.
+        #expect(SidebarWindowControls(buttonsMaxX: 40, buttonsMidY: 20, stacked: false, toggleShown: false).bandHeight == 40)
+    }
+
     /// The header is its own row, the same with the buttons or the full-screen toggle in the band:
     /// one `menuRow` inside its padding, not the band's height.
     @Test(arguments: [controls, SidebarWindowControls(buttonsMaxX: 40, buttonsMidY: 20, stacked: true)])

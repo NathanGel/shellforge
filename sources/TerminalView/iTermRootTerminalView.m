@@ -2634,7 +2634,8 @@ static NSColor *iTermWindowBorderColorFromSetting(NSString *setting) {
     } else if (_shellforgeSidebar) {
         [iTermShellforgeSidebar updateWindowControlsIn:_shellforgeSidebar
                                            toggleFrame:self.shellforgeToggleFrame
-                                               stacked:![self shellforgeWindowShowsButtons]];
+                                               stacked:![self shellforgeWindowShowsButtons]
+                                           toggleShown:_shellforgeSidebarHidden];
     }
     const CGFloat notchHeight = [self notchInset];
     _notchMask.hidden = (notchHeight == 0);
