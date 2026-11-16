@@ -109,6 +109,12 @@ struct ProjectHeaderRow: View {
     var setBranchFormat: (BranchFormat) -> Void = { _ in }
     @Environment(\.interfaceScale) private var scale
     @Environment(\.isRearranging) private var isRearranging
+    @State private var hovered = false
+
+    /// The chevron: only for a project that folds, and then while folded or under the pointer.
+    static func showsChevron(collapses: Bool, collapsed: Bool, hovered: Bool) -> Bool {
+        collapses && (collapsed || hovered)
+    }
 
     /// An empty project has nothing to fold; its terminals are something.
     private var collapses: Bool { Self.collapses(node) }
@@ -121,27 +127,26 @@ struct ProjectHeaderRow: View {
         HStack(spacing: scale(Space.base)) {
             // Only the label folds the section; the "+" keeps its own click.
             HStack(spacing: scale(Space.base)) {
+                // A quiet heading: the chevron shows only under the pointer, or while folded to say so.
                 HeaderChevron(collapsed: collapsed).frame(width: SidebarRowLayout.chevronWidth(scale))
-                    .opacity(collapses ? 1 : 0)
+                    .opacity(Self.showsChevron(collapses: collapses, collapsed: collapsed, hovered: hovered) ? 1 : 0)
                 ProviderIcon(provider: provider)
-                // The name, then its Jira badge and any `+n`, `Space.gap` apart as a task row's quiet
-                // badges and branch are. They keep their width; the name is what truncates.
-                HStack(spacing: scale(Space.gap)) {
-                    if let alias = node.project.sshHost {
-                        HeaderTitle(text: node.project.name).help("SSH host: \(alias)")
-                    } else {
-                        HeaderTitle(text: node.project.name)
-                    }
-                    if let badge = ProjectJiraBadge.badge(for: node.project) {
-                        ProjectJiraBadgeView(badge: badge, canChangeWorkspace: true, editProjects: editJiraProjects)
-                            // In Rearrange mode only the fold stays live.
-                            .allowsHitTesting(!isRearranging)
-                    }
+                if let alias = node.project.sshHost {
+                    HeaderTitle(text: node.project.name).help("SSH host: \(alias)")
+                } else {
+                    HeaderTitle(text: node.project.name)
                 }
                 Spacer(minLength: scale(Space.tight))
                 // Only when folded: unfolded, the task rows say all of this and more.
                 if collapsed { StatusCountChips(counts: StatusCount.of(statuses)) }
+                // Trailing, beside the "+": it keeps its width; the name is what truncates.
+                if let badge = ProjectJiraBadge.badge(for: node.project) {
+                    ProjectJiraBadgeView(badge: badge, canChangeWorkspace: true, editProjects: editJiraProjects)
+                        // In Rearrange mode only the fold stays live.
+                        .allowsHitTesting(!isRearranging)
+                }
             }
+            .onHover { hovered = $0 }
             .contentShape(Rectangle())
             .gesture(TapGesture().onEnded(toggle), including: collapses ? .all : .subviews)
             .accessibilityElement(children: .combine)

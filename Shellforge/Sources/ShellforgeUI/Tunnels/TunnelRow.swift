@@ -16,6 +16,9 @@ struct TunnelRowView: View {
     var rearrange: () -> Void = {}
     /// False where the row cannot be rearranged at all (the SSH panel): no menu, no Rearrange action.
     var offersRearrange = true
+    /// Sessions' one-line tunnel, indented under its project: the uptime and traffic in its tooltip
+    /// instead of a line of their own. A failure still says why under it.
+    var compact = false
     @Environment(\.interfaceScale) private var scale
     @Environment(\.surface) private var surface
 
@@ -90,7 +93,7 @@ struct TunnelRowView: View {
     static let keepsRunningText = "Keeps running after quit"
 
     var body: some View {
-        TunnelRowContent(alias: row.alias, row: row, dimmed: row.missing, caption: look.caption) {
+        TunnelRowContent(alias: row.alias, row: row, dimmed: row.missing, caption: look.caption, compact: compact) {
             if look.answersInTab {
                 Button(action: answerInTab) {
                     Image(symbol: Self.answerInTabSymbol).font(Typography.micro).foregroundStyle(surface.secondaryInk)
@@ -150,6 +153,8 @@ struct TunnelRowContent<Trailing: View>: View {
     let caption: String?
     /// A tunnel's caption is a warning; a plain host's “not in the config” is not.
     var captionWarns = true
+    /// The detail line goes to the tooltip, and the row is indented under its project.
+    var compact = false
     @ViewBuilder let trailing: () -> Trailing
     @Environment(\.interfaceScale) private var scale
     @Environment(\.surface) private var surface
@@ -181,7 +186,7 @@ struct TunnelRowContent<Trailing: View>: View {
             if let caption {
                 RowCaption(caption, warns: captionWarns).lineLimit(captionWarns ? 2 : 1).padding(.leading, captionInset)
             }
-            if let row {
+            if let row, !compact {
                 // Re-drawn each minute, for the uptime.
                 TimelineView(.everyMinute) { context in
                     if let detail = TunnelRowView.detail(row, now: context.date) {
@@ -191,6 +196,17 @@ struct TunnelRowContent<Trailing: View>: View {
             }
         }
         .frame(minHeight: scale(Size.menuRow))
-        .padding(.leading, scale(Space.base)).padding(.trailing, SidebarRowLayout.trailingInset(scale))
+        .padding(.leading, scale(Space.base) + (compact ? scale(Space.section) : 0))
+        .padding(.trailing, SidebarRowLayout.trailingInset(scale))
+        .modifier(DetailHelp(row: compact ? row : nil))
+    }
+}
+
+/// A compact tunnel's uptime and traffic, as its tooltip, read when the pointer rests on it.
+private struct DetailHelp: ViewModifier {
+    let row: TunnelRowItem?
+
+    func body(content: Content) -> some View {
+        if let row, let detail = TunnelRowView.detail(row, now: Date()) { content.help(detail) } else { content }
     }
 }

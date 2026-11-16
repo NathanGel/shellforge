@@ -19,13 +19,13 @@ struct DividerRow: View {
     private var name: String { row.divider.name }
 
     var body: some View {
+        // The name leads, its rule runs to the trailing edge.
         HStack(spacing: scale(Space.base)) {
-            Hairline()
             if !name.isEmpty {
                 SidebarHeading(name)
                     .lineLimit(1).truncationMode(.tail).fixedSize(horizontal: true, vertical: false)
-                Hairline()
             }
+            Hairline()
         }
         .frame(height: scale(Size.menuRow))
         .padding(.leading, scale(Space.base)).padding(.trailing, SidebarRowLayout.trailingInset(scale))
