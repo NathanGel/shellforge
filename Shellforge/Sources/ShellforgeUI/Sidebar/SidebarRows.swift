@@ -259,7 +259,7 @@ struct TaskRowView: View {
                             badgeLine
                         }
                         Spacer(minLength: 0)
-                        AvatarGroupView(group: Self.marks(agents), name: agentName)
+                        AvatarGroupView(group: Self.marks(agents), name: agentName, alignment: .trailing)
                     }
                 }
             }
@@ -362,7 +362,7 @@ struct TabRowView: View {
                 LeadingStatus(status: status, guessed: guessed)
                 RowTitle(tab.title)
                 Spacer(minLength: scale(Space.tight))
-                AvatarGroupView(group: Self.marks(agents), name: agentName)
+                AvatarGroupView(group: Self.marks(agents), name: agentName, alignment: .trailing)
             }
         }
         .padding(.leading, scale(Space.section))

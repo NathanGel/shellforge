@@ -20,6 +20,9 @@ struct AvatarGroupView: View {
     let group: AvatarGroup
     /// What each mark's tooltip calls its agent (`SidebarModel.agentName`).
     var name: @MainActor (SessionAgent) -> String = { $0.rawValue }
+    /// Where the marks sit in the group's fixed width: `.trailing` at the end of a row, so a single
+    /// mark lines up with the row's trailing edge.
+    var alignment: Alignment = .leading
     /// Replaces the `ring: Color` this view used to take. The ring is painted *over* the avatar
     /// behind it, so it needs `Surface.occludingBackground` — an opaque colour — rather than a
     /// wash, which would let the stacked mark show through.
@@ -35,6 +38,6 @@ struct AvatarGroupView: View {
                     .frame(width: size, height: size).overlay(Circle().stroke(surface.occludingBackground, lineWidth: Self.ringWidth))
             }
         }
-        .frame(width: columnWidth, alignment: .leading)
+        .frame(width: columnWidth, alignment: alignment)
     }
 }

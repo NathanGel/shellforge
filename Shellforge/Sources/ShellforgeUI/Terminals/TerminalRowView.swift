@@ -31,7 +31,7 @@ struct TerminalRowView: View {
                 LeadingStatus(status: status, guessed: guessed)
                 RowTitle(node.terminal.name)
                 Spacer(minLength: scale(Space.tight))
-                AvatarGroupView(group: Self.marks(agents), name: agentName)
+                AvatarGroupView(group: Self.marks(agents), name: agentName, alignment: .trailing)
             }
         }
         .accessibilityLabel(node.terminal.name)
