@@ -26,6 +26,9 @@ it and refuses to release a version that has none.
 
 ### Fixed
 
+- **No empty row above the sidebar in full screen.** While the sidebar shows, Projects and the
+  activity bar now start at the top of the panel; the row is kept only while the sidebar is hidden
+  and slid in, where Show Sidebar sits in it.
 - **A task’s status stays in view on a narrow sidebar.** When a task’s ticket, line counts and
   branch didn’t fit, they pushed its status ring past the sidebar’s edge, or out of sight at the
   larger text sizes. Now they give way in turn — the branch, then the counts, then the VS Code mark,
