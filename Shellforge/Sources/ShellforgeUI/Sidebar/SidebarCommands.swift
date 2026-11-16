@@ -39,7 +39,11 @@ extension SidebarModel {
     var steppableTasks: [UUID] {
         // A task being removed has had its tabs closed: stepping onto it would only open a shell in
         // a worktree on its way out.
-        tree.projects.filter { !$0.project.collapsed }.flatMap(Self.taskIds).filter { removals[$0] == nil }
+        // While filtering, the tasks shown.
+        let ids = rowFilter.isActive
+            ? rows.compactMap { if case .task(let node, _) = $0 { node.id } else { nil } }
+            : tree.projects.filter { !$0.project.collapsed }.flatMap(Self.taskIds)
+        return ids.filter { removals[$0] == nil }
     }
 
     /// A project's tasks in the order its rows are drawn, arranged or not.

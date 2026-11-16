@@ -109,6 +109,8 @@ public final class SidebarModel: ObservableObject {
     /// The order being rearranged, held until Done (SidebarModel+Rearrange.swift); nil outside the mode.
     @Published public internal(set) var rearrange: RearrangeDraft?
     @Published public internal(set) var selectedTaskId: UUID?
+    /// The Sessions panel's filter, this window's alone; off by default and never saved.
+    @Published public var rowFilter = RowFilter()
     /// The terminal row shown, when the selected tab is a terminal's (Terminals/).
     @Published public internal(set) var selectedTerminalId: UUID?
     /// The last action's failure, in words the user can act on; cleared by the next success. Each
@@ -719,6 +721,8 @@ public final class SidebarModel: ObservableObject {
         var rows: [SidebarRow] = tree.projects.isEmpty ? [.empty] : []
         // With no project the empty state stands alone; a rule under it would divide nothing.
         let entries = draft?.entries ?? (tree.projects.isEmpty ? [] : SidebarLayout.entries(projects: tree.projects.map(\.project), dividers: document.workspace.dividers))
+        // While rearranging, everything shows: the filter is for finding, not for moving.
+        if draft == nil && rowFilter.isActive { return filteredRows() }
         rows += entryRows(entries, draft: draft)
         guard draft == nil else { return rows }
         if !tree.otherTabs.isEmpty {
@@ -728,6 +732,41 @@ public final class SidebarModel: ObservableObject {
         }
         return rows
     }
+
+    /// The rows while the filter is on: each project it keeps, unfolded, with only the tasks and
+    /// terminals it keeps — no tunnels, no dividers — then the other tabs whose title matches.
+    private func filteredRows() -> [SidebarRow] {
+        let filter = rowFilter
+        var rows: [SidebarRow] = []
+        for node in tree.projects {
+            guard let kept = filter.children(of: node, status: { [self] child in
+                switch child {
+                case .task(let id): status(ofTask: id)
+                case .terminal(let id): status(ofTerminal: id)
+                }
+            }) else { continue }
+            rows.append(.project(node, collapsed: false))
+            rows += childRows(of: node, order: kept, listsTabs: true)
+        }
+        let current = host.selectedTabId
+        let others = tree.otherTabs.filter { filter.matches($0.title) && filter.matches(status: status(ofTab: $0.id)) }
+        if !others.isEmpty {
+            rows.append(.otherTabsHeading)
+            rows += others.map { .tab($0, selected: selectedTaskId == nil && $0.id == current) }
+        }
+        return rows
+    }
+
+    /// How many tasks and terminals are in `state`, for the filter's chips.
+    public func count(of state: SessionState) -> Int {
+        tree.projects.reduce(0) { total, node in
+            total + node.tasks.filter { status(ofTask: $0.id) == state }.count
+                + node.terminals.filter { status(ofTerminal: $0.id) == state }.count
+        }
+    }
+
+    /// Every task and terminal, for the filter's All chip.
+    public var childCount: Int { tree.projects.reduce(0) { $0 + $1.tasks.count + $1.terminals.count } }
 
     /// The rows of the projects and dividers in `entries`, in that order: the one builder both the
     /// normal sidebar and rearrange mode draw with. A draft supplies each project's SSH and child

@@ -596,9 +596,13 @@ struct SidebarView: View {
         VStack(spacing: 0) {
             List {
                 if chrome.windowControls == nil && !model.isRearranging { header(nil) }
+                // The filter is for finding, not moving: out of the way while rearranging.
+                if !model.isRearranging && !model.tree.projects.isEmpty { SidebarFilterBar(model: model) }
                 // In Rearrange mode only, the List's own move drags the rows (moveRows).
-                ForEach(model.rows) { row in rowView(row) }
+                let rows = model.rows
+                ForEach(rows) { row in rowView(row) }
                     .onMove(perform: model.isRearranging ? { [model] source, destination in model.moveRows(from: source, to: destination) } : nil)
+                if model.rowFilter.isActive && !model.isRearranging && rows.isEmpty { FilterEmptyLine() }
             }
             .listStyle(.sidebar)
             .scrollContentBackground(.hidden)
