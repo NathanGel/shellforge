@@ -9,6 +9,13 @@ it and refuses to release a version that has none.
 
 ## 1.0.3 — unreleased
 
+### Fixed
+
+- **A task’s status stays in view on a narrow sidebar.** When a task’s ticket, line counts and
+  branch didn’t fit, they pushed its status ring past the sidebar’s edge, or out of sight at the
+  larger text sizes. Now they give way in turn — the branch, then the counts, then the VS Code mark,
+  then the review — and the ring keeps its place.
+
 ## 1.0.2 — 2026-11-13
 
 ### Fixed

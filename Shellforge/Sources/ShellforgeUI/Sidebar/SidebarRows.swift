@@ -242,21 +242,7 @@ struct TaskRowView: View {
                     if let caption = Self.caption(removal) {
                         RowCaption(caption.text, warns: caption.warns).frame(height: scale(Size.chip))
                     } else {
-                        // The ticket, then the branch — the branch last because it is the one thing that
-                        // truncates. Quiet badges carry no box, so `Space.gap` is what keeps them apart.
-                        HStack(spacing: scale(Space.gap)) {
-                            if let ticket = TaskTicketBadge(jira: node.task.jira) {
-                                Badge(ticket.label, icon: .brand(Palette.jira), help: ticket.help, style: .quiet,
-                                      action: ticket.url.map { url in { ExternalLink.open(url) } })
-                            }
-                            if let request = TaskRequestBadge(mr: node.task.mr) {
-                                Badge(request.label, icon: .brand(request.host.brand), help: request.help, style: .quiet,
-                                      action: { ExternalLink.open(request.url) })
-                            }
-                            VSCodeBadge(folder: node.task.worktreePath, diff: diff, base: node.task.baseBranch)
-                            BranchLabelView(label: BranchLabel(name: node.task.branch, extra: 0, drifted: false, detail: ""))
-                                .layoutPriority(1)
-                        }
+                        badgeLine
                     }
                 }
                 Spacer(minLength: scale(Space.tight))
@@ -278,6 +264,47 @@ struct TaskRowView: View {
             if !node.tabs.isEmpty { Button(closeTitle, action: closeTab).disabled(removal == .removing) }
             Button("Remove \(node.task.kindName)…", role: .destructive, action: remove).disabled(removal == .removing)
         }
+    }
+
+    /// The ticket, the request, VS Code and its diff, then the branch — the branch last because it is
+    /// the one thing that truncates. Quiet badges carry no box, so `Space.gap` is what keeps them
+    /// apart. The badges keep their width, so on a narrow row they give way in turn — the branch,
+    /// the diff's counts, VS Code, the request — rather than push the status mark off the row; the
+    /// ticket goes last, and with it the line, whose height stays.
+    private var badgeLine: some View {
+        let ticket = TaskTicketBadge(jira: node.task.jira)
+        let request = TaskRequestBadge(mr: node.task.mr)
+        let shown = BadgeLineParts.steps(hasTicket: ticket != nil, hasRequest: request != nil)
+        return ViewThatFits(in: .horizontal) {
+            ForEach(Array(shown.enumerated()), id: \.offset) { _, parts in
+                badges(parts, ticket: ticket, request: request)
+            }
+            Color.clear.frame(width: 0)
+        }
+        .frame(height: scale(Size.chip))
+    }
+
+    private func badges(_ parts: BadgeLineParts, ticket: TaskTicketBadge?, request: TaskRequestBadge?) -> some View {
+        HStack(spacing: scale(Space.gap)) {
+            if parts.ticket, let ticket {
+                Badge(ticket.label, icon: .brand(Palette.jira), help: ticket.help, style: .quiet,
+                      action: ticket.url.map { url in { ExternalLink.open(url) } })
+            }
+            if parts.request, let request {
+                Badge(request.label, icon: .brand(request.host.brand), help: request.help, style: .quiet,
+                      action: { ExternalLink.open(request.url) })
+            }
+            if parts.vsCode {
+                VSCodeBadge(folder: node.task.worktreePath, diff: diff, base: node.task.baseBranch, showsCounts: parts.counts)
+            }
+            if parts.branch {
+                // Asks for little room when tried, so a long name doesn't rule this line out; given
+                // the room, it takes what is left and truncates in the middle.
+                BranchLabelView(label: BranchLabel(name: node.task.branch, extra: 0, drifted: false, detail: ""))
+                    .frame(minWidth: 0, idealWidth: scale(BadgeLineParts.branchMinimum), maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     /// The context menu's items, in order, apart from Open in's.
@@ -538,5 +565,33 @@ private struct BranchFormatAccessibilityActions: ViewModifier {
 
     private func action(_ format: BranchFormat) -> NamedAccessibilityAction {
         NamedAccessibilityAction(name: ProjectHeaderRow.voiceOverBranchAction(format, current: current), enabled: enabled, action: { set(format) })
+    }
+}
+
+/// What a task row's badge line draws, at one step of giving way to a narrow row.
+struct BadgeLineParts: Equatable {
+    var ticket: Bool, request: Bool, vsCode: Bool, counts: Bool, branch: Bool
+
+    /// The least a branch asks for when a line is tried: enough for a few characters either side
+    /// of the ellipsis.
+    static let branchMinimum: CGFloat = 48
+
+    /// Each step drops one more thing, in this order: the branch, the diff's counts, VS Code, the
+    /// request, the ticket. Steps that would drop something the row doesn't have are left out.
+    static func steps(hasTicket: Bool, hasRequest: Bool) -> [BadgeLineParts] {
+        let all = [
+            BadgeLineParts(ticket: true, request: true, vsCode: true, counts: true, branch: true),
+            BadgeLineParts(ticket: true, request: true, vsCode: true, counts: true, branch: false),
+            BadgeLineParts(ticket: true, request: true, vsCode: true, counts: false, branch: false),
+            BadgeLineParts(ticket: true, request: true, vsCode: false, counts: false, branch: false),
+            BadgeLineParts(ticket: true, request: false, vsCode: false, counts: false, branch: false),
+        ]
+        var seen: [BadgeLineParts] = []
+        for step in all {
+            let drawn = BadgeLineParts(ticket: step.ticket && hasTicket, request: step.request && hasRequest,
+                                       vsCode: step.vsCode, counts: step.counts, branch: step.branch)
+            if !seen.contains(drawn) { seen.append(drawn) }
+        }
+        return seen
     }
 }

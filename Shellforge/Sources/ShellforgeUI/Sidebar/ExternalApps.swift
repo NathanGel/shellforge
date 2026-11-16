@@ -78,11 +78,13 @@ struct VSCodeBadge: View {
     let folder: String
     var diff: DiffStat? = nil
     var base = ""
+    /// False on a row too narrow for the counts: the mark alone, its tooltip still saying them.
+    var showsCounts = true
 
     var body: some View {
         if OpenIn.vsCodeInstalled {
             Badge(nil, icon: .brand(Palette.vscode), help: Self.help(diff: diff, base: base),
-                  diff: Self.shown(diff, base: base).map { Badge.Diff(added: $0.added, removed: $0.removed) }, style: .quiet,
+                  diff: Self.shown(showsCounts ? diff : nil, base: base).map { Badge.Diff(added: $0.added, removed: $0.removed) }, style: .quiet,
                   action: { OpenIn.open(OpenIn.Item(title: "Open in VS Code", app: .vsCode, folder: folder)) })
         }
     }
