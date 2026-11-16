@@ -127,6 +127,10 @@ public enum Palette {
     /// The house focus ring (`focusRing`): the accent at 35 % — a hint around a field, not a second
     /// border competing with a segmented track's own.
     public static let focusRing = accent.opacity(0.35)
+    /// A selected sidebar row in the key window: the accent as a soft wash, so the row's text keeps
+    /// its own ink, and a thin outline of it at more strength to say which row it is.
+    public static let selectionWash = accent.opacity(0.14)
+    public static let selectionOutline = accent.opacity(0.45)
     /// The active Settings tab and the primary sheet action are one accent family.
     public static let tabActive = accent
     /// A clickable link's text colour, e.g. a URL or cross-reference inside body copy.

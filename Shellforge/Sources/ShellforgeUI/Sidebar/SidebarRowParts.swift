@@ -104,45 +104,53 @@ struct SelectableRow<Content: View>: View {
 }
 
 /// The pill a selectable sidebar row is drawn in — a task's, a terminal's, a project header's: the
-/// selection fill, else the hover wash, behind the row's own padding. It declares the ground
-/// everything inside reads.
+/// selection — a soft accent wash with an accent outline while the window is key, macOS's
+/// unemphasized grey while it isn't — else the hover wash, behind the row's own padding. It declares
+/// the ground everything inside reads: the text keeps its own ink on the selection.
 struct RowPill: ViewModifier {
     let selected: Bool
     var hovered = false
     @Environment(\.interfaceScale) private var scale
     @Environment(\.controlActiveState) private var controlActiveState
 
-    /// The ground a row is on: the accent while selected in an active window, macOS's unemphasized
-    /// grey while selected in an inactive one, the hover wash, or the sidebar. `.hover`, not
-    /// `.sidebar`, while merely hovered: `AvatarGroupView`'s ring reads `occludingBackground`.
+    /// The key window's selection: the accent, washed, and its outline.
+    static let selectionWash = Palette.selectionWash
+    static let selectionOutline = Palette.selectionOutline
+
+    /// The ground a row's contents read: the hover wash's while selected in the key window (the
+    /// selection is a wash too, so the ink stays the row's own), macOS's unemphasized grey while
+    /// selected in another, the hover wash, or the sidebar. `.hover`, not `.sidebar`, while merely
+    /// hovered: `AvatarGroupView`'s ring reads `occludingBackground`.
     static func surface(selected: Bool, hovered: Bool, windowActive: Bool) -> Surface {
-        if selected { return windowActive ? .accent : .inactiveSelection }
+        if selected { return windowActive ? .hover : .inactiveSelection }
         return hovered ? .hover : .sidebar
     }
 
-    /// Whether a window in `state` shows the emphasized (accent) selection: only the key window, as
-    /// AppKit's own tables — a window that is main while another panel is key shows grey.
+    /// Whether a window in `state` shows the emphasized selection: only the key window, as AppKit's
+    /// own tables — a window that is main while another panel is key shows grey.
     static func windowActive(_ state: ControlActiveState) -> Bool { state == .key }
 
-    /// The pill's fill on `surface`.
-    static func fill(for surface: Surface) -> Color {
-        switch surface {
-        case .accent: Palette.selection
-        case .inactiveSelection: Palette.controlActive
-        case .hover: Palette.rowHover
-        case .sidebar, .sheet: .clear
-        }
+    /// The pill's fill.
+    static func fill(selected: Bool, hovered: Bool, windowActive: Bool) -> Color {
+        if selected { return windowActive ? selectionWash : Palette.controlActive }
+        return hovered ? Palette.rowHover : .clear
+    }
+
+    /// The pill's outline: the key window's selection's alone.
+    static func outline(selected: Bool, windowActive: Bool) -> Color? {
+        selected && windowActive ? selectionOutline : nil
     }
 
     func body(content: Content) -> some View {
         let windowActive = Self.windowActive(controlActiveState)
-        let surface = Self.surface(selected: selected, hovered: hovered, windowActive: windowActive)
+        let shape = RoundedRectangle(cornerRadius: scale(Radius.group), style: .continuous)
         content
-            .surface(surface)
+            .surface(Self.surface(selected: selected, hovered: hovered, windowActive: windowActive))
             // macOS 26's sidebar selection, as the row's own background: the full row, inset from its
             // sides as macOS insets its selection — the rectangle a right-click's ring is drawn around.
-            .listRowBackground(RoundedRectangle(cornerRadius: scale(Radius.group), style: .continuous)
-                .fill(Self.fill(for: surface))
+            .listRowBackground(shape
+                .fill(Self.fill(selected: selected, hovered: hovered, windowActive: windowActive))
+                .overlay(shape.strokeBorder(Self.outline(selected: selected, windowActive: windowActive) ?? .clear, lineWidth: 1))
                 .padding(.horizontal, SidebarRowLayout.highlightInset))
     }
 }

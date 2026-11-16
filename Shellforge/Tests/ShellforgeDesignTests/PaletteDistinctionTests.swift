@@ -27,6 +27,8 @@ struct PaletteDistinctionTests {
         ("muted", Palette.muted),
         ("accent", Palette.accent),
         ("focusRing", Palette.focusRing),
+        ("selectionWash", Palette.selectionWash),
+        ("selectionOutline", Palette.selectionOutline),
         ("tabActive", Palette.tabActive),
         ("link", Palette.link),
         ("green", Palette.green),
