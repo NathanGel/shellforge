@@ -52,11 +52,16 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 - **Terminal space.** The terminal always keeps at least 320 pt, about 40 columns, with iTerm2's toolbelt counted.
   - While the sidebar shows, the window can't be dragged narrower than both minimums together: 724 pt, plus the toolbelt's width when it is open. The sidebar shrinks to its minimum, then the window stops, rather than the sidebar jumping away.
   - A window sized some other way, such as tiling or a smaller screen, can still end up too narrow. There the sidebar steps aside.
-- **Selection.** The selected row uses the system's selection: the accent while the window is active, grey while it is not. Under a theme other than Shellforge, the theme's accent and selection colours.
+- **Selection.** The selected row is a soft wash of the accent with a thin accent outline while the window is active, its text in its usual colour; grey while it is not. Under a theme other than Shellforge, the theme's accent.
 - **Header.** Projects, then its buttons, left to right:
   - Agent hooks (the bolt);
   - New Tab in Home Folder (the terminal icon), which opens a shell in `~` that belongs to no project;
   - "+", with Add Project… and Add Divider….
+- **Filter.** Under the header, a field and three chips:
+  - type to show only the tasks and terminals whose title, Jira key or branch matches, or every one in a project whose name matches; matches show even in folded projects;
+  - All, needs input (amber) and working, each with its count; click one to show only that status, click it again (or All) to show everything. Text and status combine;
+  - while filtering, tunnels and dividers step aside, Next Task and Previous Task move only through what is shown, and “Nothing matches.” says when nothing does;
+  - Esc in the field clears both. The filter is per window and isn't saved; Rearrange shows everything.
 - **Empty state.** With no projects, the sidebar shows "Add a git repository to start." and an Add Project… button.
 - **Banners** are inline notices with an icon, at the top of the sidebar above whichever panel shows:
   - a fallback PATH;
@@ -101,7 +106,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
   - Each save first keeps `workspace.json.backup`.
   - A file that won't load is set aside as `.damaged-<uuid>`, and the backup is used instead.
 - **Provider mark.** GitLab, GitHub, plain git, or none, read from the `origin` remote.
-- **Fold and unfold.** Click the chevron or the name. The fold is saved. A folded project shows how many of its tasks are in each status.
+- **Fold and unfold.** Click the name (or the chevron, which shows under the pointer and on a folded project). The fold is saved. A folded project shows how many of its tasks are in each status. The project's Jira badge sits at the end of its row, beside "+".
 - **The project's "+" and right-click menu:**
   - New Task…, New Review… and New Terminal…;
   - Open in Finder and Open in VS Code (when VS Code is installed);
@@ -130,7 +135,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
 
 ## Dividers
 
-- **Add Divider.** Use ⌃⌘G, or the header's "+" › Add Divider…. The divider is added at the end of the list. A name is optional: without one it draws a plain line.
+- **Add Divider.** Use ⌃⌘G, or the header's "+" › Add Divider…. The divider is added at the end of the list. A name is optional: with one, the name leads and a line runs after it; without one it draws a plain line.
 - **Right-click a divider** for Rename…, Rearrange and Remove Divider. Removing it asks nothing, because a divider holds nothing.
 
 ## Rearranging the sidebar
@@ -197,9 +202,11 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
   - working: a spinning arc, or a still one under Reduce Motion;
   - needs input: amber;
   - done: green, until you look at the task.
-- **The task row** shows the agents, the title, the Jira and MR/PR badges, VS Code and the branch.
+- **The task row** leads with its status dot, then the title and, at the end of that line, how long ago its agent last reported (“now”, “4m”, “3h”, “2d”; nothing while the status is only guessed). Under the title: the Jira and MR/PR badges, VS Code and the branch, and the agents at the end.
+  - On a narrow sidebar, or at a large text size, those badges give way in turn: the branch, then the line counts, then the VS Code mark, then the MR/PR badge, then the Jira key. The status dot is never pushed out.
+  - A tab or terminal row is one line: its status dot, its title, its agents.
 - **Lines changed.** A task's VS Code badge shows how far its worktree has moved from its base branch, such as `+12 −3`.
-  - It counts commits, uncommitted edits and new untracked files, but not ignored or binary files.
+  - It counts commits, uncommitted edits and new untracked files, but not ignored or binary files. From 10,000 lines up a count reads in thousands, such as `+17.4k`.
   - Hover it to see the base: "Open in VS Code — 12 added, 3 removed against main".
   - A task with nothing changed shows the plain badge. The counts update within about 5 seconds.
 - **Moving between tasks.**
@@ -293,7 +300,7 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
 ## Git
 
 - **Sections.** The Git panel has one section per project, in the order Sessions shows them, and under each project a section for each of its tasks with something to do: changes, commits ahead of its upstream, commits its base branch lacks on a branch not yet published (or, with no base branch to count against, any branch not yet published), or a problem. A Project folder task works in its project's own folder, so it shares its project's section. Click a section's row to fold or unfold it; folding is kept per window until the app quits.
-  - The branch line shows the branch and how far it is ahead of and behind its upstream, such as `main ↑2 ↓1`; or “No commits yet”, “Detached at abc1234”, “Not a git repository” or “Folder not found”. A spinner shows while git works, and a problem is shown under the line, in red, until the next action.
+  - The branch pill shows the branch (or “No commits yet”, “Detached at abc1234”; a section that isn't one reads “Not a git repository” or “Folder not found”), then Pull and Push as `↓1` `↑2`, how far the branch is behind and ahead of its upstream, or Publish. A spinner shows while git works, and a problem is shown under the pill, in red, until the next action.
   - Changes fall in three lists: Merge Changes (conflicts, marked `!`), Staged Changes and Changes (untracked files included, marked `U`). Each row shows the status letter, the file's name and its folder. Task worktrees, under `.worktrees/`, are never listed.
 - **Diffs in a tab.** Click a file, or its View Diff button, to open its diff in a new tab in the repository, titled “Diff: app.ts”, running `git diff -- ':(literal)src/app.ts'` (`--staged` for a staged file, with both paths for a staged rename). The tab stays at the shell after the pager.
 - **Its open diff tabs.** Each window lists its diff tabs in the panel, one line each, indented under the file's row (the first one, for a file in two lists). Once the file has no changes left, or its section is folded, the line moves under the repository's row; a task's diff under its project's row while the task's section isn't shown. Click a line to bring its tab forward; its × (or right-click, Close Tab) closes it, asking first only when ⌘W would. A file opened in the terminal editor from here is listed the same way, under its file.
@@ -305,9 +312,9 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
   - A deleted file has no Open in Terminal Editor.
   - Stage All and Unstage All are on the Changes and Staged Changes headers. Stage All stages every change in the repository (task worktrees left out), conflicts left in Merge Changes; Unstage All unstages everything and keeps the conflicts.
 - **Discard asks first.** A tracked file goes back to its last staged or committed state. An untracked file, or one only marked to be added, is moved to the Trash, and the question says so.
-- **Smart commit.** Type a message and click Commit or press ⌘↩ in the field. The message can run to several lines (↩ adds one; the field grows to five, then scrolls); the first line is the subject. ⌘↩ belongs to the field while you type in it, so it never does anything else there, even while Commit is off. With something staged, only that is committed; with nothing staged, every change is, new files included (the field says so). If the staged files were unstaged elsewhere before Commit ran, nothing is committed and the panel says to check them. Refused while there are conflicts: resolve them in Merge Changes first. Commit is off while the message is blank or git is working.
-- **Push, Pull and Publish Branch.** Push and Pull for a branch with an upstream; Publish Branch for one without, which pushes it to `origin` and sets its upstream. Pull only fast-forwards: when the branch and its upstream have both moved, nothing changes and the panel says to pull in a terminal to merge or rebase. None of the three is offered on a branch with no commits or a detached head. Git never asks for a password here: a remote that needs one says it couldn't be reached.
-- **Switch Branch…** On a project's branch line, a searchable list of its local branches, then those only on a remote, shown as `origin/feature/login-page`, with the current branch marked. Picking a remote one switches to a local `feature/login-page` that tracks it, whatever the remote is called. Picking one asks what New Task asks for a Project folder task: a branch that doesn't exist yet, another task with open tabs in the folder (Switch Anyway), clashing changes (Stash and Switch). A branch checked out in another worktree is reported. A task's worktree keeps its branch, so its section has no Switch Branch.
+- **Smart commit.** Type a message and click Commit or press ⌘↩ in the field. The message can run to several lines (↩ adds one; the field grows to five, then scrolls); the first line is the subject. ⌘↩ belongs to the field while you type in it, so it never does anything else there, even while Commit is off. With something staged, only that is committed; with nothing staged, every change is, new files included. The line under Commit says which: “Commits 3 staged changes.” or “Nothing staged — commits all 17 changes.” If the staged files were unstaged elsewhere before Commit ran, nothing is committed and the panel says to check them. Refused while there are conflicts: resolve them in Merge Changes first. Commit is off while the message is blank or git is working.
+- **Push, Pull and Publish Branch.** In the branch pill: Pull (`↓`) and Push (`↑`) for a branch with an upstream; Publish for one without, which pushes it to `origin` and sets its upstream. Pull only fast-forwards: when the branch and its upstream have both moved, nothing changes and the panel says to pull in a terminal to merge or rebase. None of the three is offered on a branch with no commits or a detached head. Git never asks for a password here: a remote that needs one says it couldn't be reached.
+- **Switch Branch…** Click a project's branch pill for a searchable list of its local branches, then those only on a remote, shown as `origin/feature/login-page`, with the current branch marked. Picking a remote one switches to a local `feature/login-page` that tracks it, whatever the remote is called. Picking one asks what New Task asks for a Project folder task: a branch that doesn't exist yet, another task with open tabs in the folder (Switch Anyway), clashing changes (Stash and Switch). A branch checked out in another worktree is reported. A task's worktree keeps its branch, so its section has no Switch Branch.
 - **Up to date.** Each repository is watched, so a save, a commit or a fetch elsewhere shows up without a refresh. Git runs one action at a time per repository. Nothing is read or watched until the panel is first shown in any window; every window then shows the same repositories.
 - **Reads run nothing the repository names.** The panel's own reads switch off a repository's fsmonitor, hooks and the content filters its own config defines (git-lfs's are kept), so a file under such a filter (git-crypt, nbstripout) can show as modified after only its timestamp changed; Stage, Commit, Discard and the other actions use the filters as usual.
 - **From the keyboard.** View › Show Git. It has no key: ⌃⌘G is Add Divider, ⌃⌘I Show Files and ⌃⌘T New Terminal.
@@ -347,7 +354,7 @@ Any coding agent that runs in a terminal can start a task, not only the four bui
 - **Rows under the project:**
   - the state: stopped, connecting (amber), up (green), or failed (red, with ssh's last line);
   - the ports, the keep-running mark, and Start / Stop;
-  - when up, its uptime and traffic.
+  - when up, its uptime and traffic: on a line of its own in the SSH panel, in the row's tooltip in Sessions, where each tunnel is one line.
 - **How it runs.**
   - `ssh -N <alias>` in batch mode.
   - A drop after it was up restarts, waiting longer after each failure.

@@ -9,6 +9,21 @@ it and refuses to release a version that has none.
 
 ## 1.0.3 — unreleased
 
+### Changed
+
+- **A new look for Sessions.** Each task, tab and terminal now leads with its status dot, with the
+  agents at the end of the row and, after the title, how long ago its agent last reported. The
+  selected row is a soft accent wash with a thin outline instead of a solid fill. Projects read as
+  quiet headings: the chevron shows under the pointer or when folded, the Jira badge sits beside
+  “+”. A tunnel is one line, its uptime in its tooltip, and a divider’s name leads its line.
+- **Filter Sessions.** A field at the top filters tasks and terminals by title, Jira key, branch or
+  project, and chips show only what needs you or what’s working, with counts. Esc clears it.
+- **Line counts from 10,000 up read in thousands**, `+17.4k`, with the exact number in the tooltip.
+- **The Git panel’s commit area, tidied.** The branch is a pill: click it to switch branch, with
+  Pull and Push inside it as `↓2` `↑1` (or Publish). The message field just says “Message”, Commit
+  spans the box with its ⌘↩, and a line under it says what will be committed. Writing Tools is off
+  for the message field.
+
 ### Fixed
 
 - **A task’s status stays in view on a narrow sidebar.** When a task’s ticket, line counts and
