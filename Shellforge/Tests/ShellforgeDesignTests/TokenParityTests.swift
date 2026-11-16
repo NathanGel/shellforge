@@ -22,7 +22,7 @@ import Testing
                                "Logos", "SymbolMark"]
     /// SHA-256 of each ported file, normalised, as reviewed.
     static let baseline: [String: String] = [
-        "Badge": "8d82c1df4269c88794a80451715afc2a1dd54b5c8f5fa5fec6036c0c0075ff78",
+        "Badge": "6dcbfa1473736b6eed7a0c8d431ecf63240535298b9b14c0e2e46d17bf22e208",
         "FormField": "d2450a5864c2a2acb674de92b35abcf2e6d081ff5cb2c8daf67dc2872fbbf46f",
         "Hairline": "ab5976604f277a70104f15faa8d6d8effaa90519135e36862a2d24d48231e4f0",
         "Input": "b853c294ffeabc682fe7c1f58bb3a19820c4ad82e0cd4af69598bc989fc0af55",

@@ -48,6 +48,9 @@ struct BadgeTests {
         #expect(Badge.Diff(added: 12, removed: 3).segments.map(\.text) == ["+12", "\u{2212}3"])
         #expect(Badge.Diff(added: 7, removed: 0).segments.map(\.text) == ["+7"])
         #expect(Badge.Diff(added: 0, removed: 4).segments.map(\.text) == ["\u{2212}4"])
+        // From 10,000 up, in thousands, so a large diff doesn't take the row's room.
+        #expect(Badge.Diff(added: 9_999, removed: 17_387).segments.map(\.text) == ["+9999", "\u{2212}17.3k"])
+        #expect(Badge.Diff(added: 174_900, removed: 10_000).segments.map(\.text) == ["+174k", "\u{2212}10.0k"])
         #expect(Badge.Diff(added: 0, removed: 0).isEmpty)
         #expect(!Badge.Diff(added: 1, removed: 0).isEmpty)
     }

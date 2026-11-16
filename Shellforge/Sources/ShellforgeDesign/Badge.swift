@@ -61,8 +61,16 @@ public struct Badge: View {
         /// What is drawn, in order. A side with nothing to count is left out rather than drawn as
         /// `+0`; the removal sign is a true minus (U+2212), which sets at the width of the plus.
         var segments: [Segment] {
-            (added > 0 ? [Segment(side: .added, text: "+\(added)")] : [])
-                + (removed > 0 ? [Segment(side: .removed, text: "\u{2212}\(removed)")] : [])
+            (added > 0 ? [Segment(side: .added, text: "+" + Self.count(added))] : [])
+                + (removed > 0 ? [Segment(side: .removed, text: "\u{2212}" + Self.count(removed))] : [])
+        }
+
+        /// A count as drawn: whole below 10,000, then in thousands rounded down — `17.3k`, `174k` —
+        /// so a large diff doesn't take the row's room. The badge's tooltip carries exact numbers.
+        static func count(_ n: Int) -> String {
+            guard n >= 10_000 else { return "\(n)" }
+            if n >= 100_000 { return "\(n / 1000)k" }
+            return "\(n / 1000).\(n % 1000 / 100)k"
         }
     }
 
