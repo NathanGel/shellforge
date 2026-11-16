@@ -242,6 +242,9 @@ private struct DemoWorkspace {
     }
 
     /// The window's tabs, “Add login page” selected, and what the daemon says of each.
+    /// How long before the demo's clock each tab last reported, for the rows' ages: now, 4m, 12m, 3h, 1d.
+    static let reportAges: [TimeInterval] = [10, 4 * 60, 12 * 60, 3 * 3600, 26 * 3600, 0]
+
     func open(in host: FakeTerminalHost, feed: FakeFeed) {
         let tabs: [(task: TaskItem?, agent: SessionAgent, state: SessionState, context: Int?)] = [
             (login, .claude, .working, 38), (flaky, .codex, .needsInput, 64), (review, .claude, .done, 21),
@@ -260,7 +263,7 @@ private struct DemoWorkspace {
                                         cwd: tab.task?.worktreePath ?? api.path, active: index == 0, contextPercent: tab.context,
                                         tokens: tab.task == nil ? nil : TokenTally(input: 182_400 / (index + 1), cached: 120_000 / (index + 1),
                                                                                    output: 14_600 / (index + 1)),
-                                        reportedAt: DemoClock.now.timeIntervalSince1970))
+                                        reportedAt: DemoClock.now.timeIntervalSince1970 - Self.reportAges[index]))
         }
         host.tabs = snapshots
         host.selectedTabId = snapshots[0].id

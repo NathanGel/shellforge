@@ -26,11 +26,13 @@ enum ActivityAge {
 /// The age, redrawn each minute; nothing when there is no report.
 struct ActivityAgeLabel: View {
     let since: Date?
+    /// A test's pinned clock (the README's renders), else the wall clock.
+    @Environment(\.footerClock) private var clock
 
     var body: some View {
         if let since {
             TimelineView(.periodic(from: since, by: 60)) { context in
-                AgeText(text: ActivityAge.text(since: since, now: context.date))
+                AgeText(text: ActivityAge.text(since: since, now: clock?.now ?? context.date))
             }
             .help(Self.help(since))
         }
