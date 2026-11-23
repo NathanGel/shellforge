@@ -7,7 +7,8 @@
 This repository is Shellforge, a fork of iTerm2. The rest of this guide is iTerm2's own.
 
 - Shellforge's code is the Swift package in `Shellforge/` ([Shellforge/README.md](Shellforge/README.md));
-  test it with `Shellforge/scripts/swift.sh test --package-path Shellforge`. Its glue in iTerm2's
+  test it with `Shellforge/scripts/swift.sh test --package-path Shellforge`. The windows tests show
+  stay invisible and click-through; `SHELLFORGE_TESTS_VISIBLE=1` shows them. Its glue in iTerm2's
   sources is `sources/TerminalView/iTermShellforge*.swift`.
 - Keep changes to iTerm2's own files few, and list each one in
   [Shellforge/docs/upstream-hook-points.md](Shellforge/docs/upstream-hook-points.md).

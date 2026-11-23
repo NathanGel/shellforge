@@ -17,7 +17,10 @@ let package = Package(
         .target(name: "ShellforgeDesign", path: "Sources/ShellforgeDesign", exclude: ["README.md"]),
         .target(name: "ShellforgeUI", dependencies: ["ShellforgeCore", "ShellforgeDesign"], path: "Sources/ShellforgeUI"),
         // Fakes and helpers the test targets share; test targets cannot share a source file.
-        .target(name: "ShellforgeTestSupport", dependencies: ["ShellforgeCore"], path: "Tests/ShellforgeTestSupport"),
+        // Keeps every window a test run shows off the screen (SHELLFORGE_TESTS_VISIBLE=1 shows them).
+        .target(name: "ShellforgeTestHeadless", path: "Tests/ShellforgeTestHeadless",
+                linkerSettings: [.linkedFramework("AppKit")]),
+        .target(name: "ShellforgeTestSupport", dependencies: ["ShellforgeCore", "ShellforgeTestHeadless"], path: "Tests/ShellforgeTestSupport"),
         .testTarget(name: "ShellforgeCoreTests", dependencies: ["ShellforgeCore", "ShellforgeTestSupport"], path: "Tests/ShellforgeCoreTests"),
         .testTarget(name: "ShellforgeDesignTests", dependencies: ["ShellforgeDesign", "ShellforgeTestSupport"], path: "Tests/ShellforgeDesignTests"),
         .testTarget(name: "ShellforgeUITests", dependencies: ["ShellforgeUI", "ShellforgeCore", "ShellforgeDesign", "ShellforgeTestSupport"], path: "Tests/ShellforgeUITests"),
