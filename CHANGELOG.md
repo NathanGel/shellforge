@@ -9,6 +9,14 @@ it and refuses to release a version that has none.
 
 ## 1.1.1 — unreleased
 
+### Fixed
+
+- **Claude usage no longer jumps around.** Every open Claude session reports your limits as of its
+  own last request, and an idle one keeps repeating old numbers, so with several sessions open the
+  footer swung between them (54% and 46%, or a week at 65% and then 11%) and the 5-hour figure
+  could vanish for a moment. Shellforge now keeps the newest window and, within it, the highest
+  number, so an idle session can no longer pull it back.
+
 ## 1.1.0 — 2026-11-16
 
 ### Changed

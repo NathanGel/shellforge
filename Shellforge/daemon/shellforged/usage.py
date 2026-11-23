@@ -21,8 +21,9 @@ class UsageStore:
         self._announced: dict[str, Usage] = {}
 
     def set(self, vendor: str, usage: Usage) -> bool:
-        """Stores `usage` and says whether clients should hear about it: new content, or the same
-        content a heartbeat older than the last announcement."""
+        """Stores `usage`, merged into what is stored, and says whether clients should hear about
+        it: new content, or the same content a heartbeat older than the last announcement."""
+        usage = merged(self._usage.get(vendor), usage)
         told = self._announced.get(vendor)
         changed = (told is None or replace(told, updated_at=usage.updated_at) != usage
                    or usage.updated_at - told.updated_at >= HEARTBEAT_SECONDS)
@@ -33,6 +34,37 @@ class UsageStore:
 
     def snapshot(self) -> dict[str, Any]:
         return {v: (u.to_json() if u else None) for v, u in self._usage.items()}
+
+
+def merged(stored: Usage | None, reported: Usage) -> Usage:
+    """`reported` merged window by window into `stored`. Every open Claude session reports the
+    account's limits as of its own last API call, and an idle one keeps repeating them, so the
+    latest report is not the latest news."""
+    if stored is None:
+        return reported
+    now = reported.updated_at
+    return replace(reported,
+                   five_hour=_newer_window(stored.five_hour, reported.five_hour, now),
+                   seven_day=_newer_window(stored.seven_day, reported.seven_day, now),
+                   spend=_newer_window(stored.spend, reported.spend, now),
+                   plan=reported.plan if reported.plan is not None else stored.plan)
+
+
+def _newer_window(stored: UsageWindow | None, reported: UsageWindow | None, now: int) -> UsageWindow | None:
+    """The later window wins; on the same window, the higher number, as usage only grows within
+    one. A report without the window keeps the stored one until it resets. Without a reset time
+    there is nothing to tell age by, and the report stands."""
+    if reported is None:
+        if stored is None or stored.resets_at is None or stored.resets_at <= now:
+            return None
+        return stored
+    if stored is None or stored.resets_at is None or reported.resets_at is None:
+        return reported
+    if stored.resets_at <= now or reported.resets_at > stored.resets_at:
+        return reported
+    if reported.resets_at < stored.resets_at:
+        return stored
+    return reported if reported.used_percent >= stored.used_percent else stored
 
 
 def finite_number(value: Any) -> float | None:
