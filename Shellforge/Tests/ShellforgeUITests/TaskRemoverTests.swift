@@ -249,6 +249,82 @@ import Testing
         #expect(try await s.git("for-each-ref", "--format=%(refname)", "refs/heads/" + second.branch).isEmpty)
     }
 
+    // -- a worktree its agent switched to another branch ------------------------------------
+
+    /// A repository whose convention is the bare ticket key: its agent switched to `ABC-1`. Remove
+    /// names the branch the work is on, not only the task's.
+    @Test func removeNamesTheBranchItsAgentSwitchedTo() async throws {
+        let s = try await setup([Self.cancel])
+        _ = try await s.git("switch", "-q", "-c", "ABC-1", in: s.task.worktreePath)
+        #expect(await s.sidebar.confirmRemove(taskId: s.task.id) == false)
+        #expect(s.prompter.asked.first?.checkbox == "Also delete branches \(s.task.branch) and ABC-1")
+    }
+
+    @Test func closingTheLastTabNamesTheBranchItsAgentSwitchedTo() async throws {
+        let s = try await setup([Self.cancel])
+        _ = try await s.git("switch", "-q", "-c", "ABC-1", in: s.task.worktreePath)
+        let tab = try #require(s.host.tabs.first).id
+        #expect(await s.sidebar.confirmCloseLastTab(taskId: s.task.id, tab: tab) == false)
+        #expect(s.prompter.asked.first?.subCheckbox == "Also delete branches \(s.task.branch) and ABC-1")
+    }
+
+    /// Ticked, a merged switched branch goes with the task's, and nothing is said: it went as asked.
+    @Test func tickedAMergedSwitchedBranchGoesSilently() async throws {
+        let s = try await setup([Self.removeAndBranch])
+        _ = try await s.git("switch", "-q", "-c", "ABC-1", in: s.task.worktreePath)
+        _ = try await s.git("commit", "-q", "--allow-empty", "-m", "agent's work", in: s.task.worktreePath)
+        _ = try await s.git("merge", "-q", "--ff-only", "ABC-1")
+        let log = ErrorLog(folder: TestScratch.root.appendingPathComponent("switched-\(UUID().uuidString)"), version: "1")
+
+        let removed = await ErrorLogging.$testLog.withValue(log) { await s.sidebar.confirmRemove(taskId: s.task.id) }
+
+        #expect(removed)
+        #expect(try await s.git("for-each-ref", "--format=%(refname)", "refs/heads/ABC-1").isEmpty)
+        #expect(try await !s.branchExists())
+        #expect(s.sidebar.lastError == nil, "\(s.sidebar.lastError ?? "")")
+        #expect(((try? String(contentsOf: log.fileURL, encoding: .utf8)) ?? "").isEmpty)
+    }
+
+    /// Both branches hold commits main lacks: each is asked about, the task's first, keeping the default.
+    @Test func twoUnmergedBranchesAreEachAskedAbout() async throws {
+        let s = try await setup([Self.removeAndBranch, AlertAnswer(button: 0), AlertAnswer(button: 1)])
+        _ = try await s.git("commit", "-q", "--allow-empty", "-m", "work", in: s.task.worktreePath)
+        _ = try await s.git("switch", "-q", "-c", "ABC-1", in: s.task.worktreePath)
+        _ = try await s.git("commit", "-q", "--allow-empty", "-m", "agent's work", in: s.task.worktreePath)
+
+        #expect(await s.sidebar.confirmRemove(taskId: s.task.id))
+        #expect(s.prompter.asked.dropFirst().map(\.message) == ["Delete branch \(s.task.branch)?", "Delete branch ABC-1?"])
+        #expect(s.prompter.asked.dropFirst().allSatisfy { $0.escapeButton == 0 })
+        #expect(try await s.branchExists(), "Keep Branch")
+        #expect(try await s.git("for-each-ref", "--format=%(refname)", "refs/heads/ABC-1").isEmpty, "Delete Branch")
+    }
+
+    /// The agent switched again while the prompt was open: the branch found is not the one agreed
+    /// to, so it stays, and the person is told.
+    @Test func aBranchSwitchedToAfterThePromptStaysAndIsReported() async throws {
+        let s = try await setup([Self.removeAndBranch])
+        _ = try await s.git("switch", "-q", "-c", "ABC-1", in: s.task.worktreePath)
+        s.prompter.hold = true
+        let removal = Task { await s.sidebar.confirmRemove(taskId: s.task.id) }
+        while s.prompter.asked.isEmpty { await Task.yield() }
+        _ = try await s.git("switch", "-q", "-c", "ABC-2", in: s.task.worktreePath)
+        s.prompter.release()
+
+        #expect(await removal.value)
+        #expect(try await !s.git("for-each-ref", "--format=%(refname)", "refs/heads/ABC-1").isEmpty)
+        #expect(try await !s.git("for-each-ref", "--format=%(refname)", "refs/heads/ABC-2").isEmpty)
+        #expect(s.sidebar.lastError == "Branch ABC-2 kept: the worktree had it checked out instead of \(s.task.branch).")
+    }
+
+    /// Unticked, keeping both branches is what was asked: nothing to say.
+    @Test func untickedASwitchedBranchStaysSilently() async throws {
+        let s = try await setup([Self.remove])
+        _ = try await s.git("switch", "-q", "-c", "ABC-1", in: s.task.worktreePath)
+        #expect(await s.sidebar.confirmRemove(taskId: s.task.id))
+        #expect(try await !s.git("for-each-ref", "--format=%(refname)", "refs/heads/ABC-1").isEmpty)
+        #expect(s.sidebar.lastError == nil, "\(s.sidebar.lastError ?? "")")
+    }
+
     @Test func aSecondRemoveWhileOneRunsDoesNothing() async throws {
         let s = try await setup([Self.cancel])
         s.prompter.hold = true
@@ -399,6 +475,19 @@ import Testing
         #expect(asked.message == "Remove review “Gift card”?")
         #expect(asked.detail == "Deletes the worktree and closes its tabs. Its local branch goes too, unless it has commits origin lacks:\n\n\(review.worktreePath)")
         #expect(asked.checkbox == nil)
+    }
+
+    /// A review is never asked about branches, so one its agent switched to is always said to stay.
+    @Test func aReviewSaysItKeptTheBranchItsAgentSwitchedTo() async throws {
+        let s = try await setup([Self.remove])
+        let review = try await review(in: s)
+        _ = try await s.git("switch", "-q", "-c", "review-fixes", in: review.worktreePath)
+        let log = ErrorLog(folder: TestScratch.root.appendingPathComponent("review-switched-\(UUID().uuidString)"), version: "1")
+
+        #expect(await ErrorLogging.$testLog.withValue(log) { await s.sidebar.confirmRemove(taskId: review.id) })
+
+        let lines = ((try? String(contentsOf: log.fileURL, encoding: .utf8)) ?? "").split(separator: "\n")
+        #expect(lines.contains { $0.hasSuffix("Branch review-fixes kept: the worktree had it checked out instead of feat/mr-branch.") }, "\(lines)")
     }
 
     /// Closing a review's last tab offers its worktree, never its branch.

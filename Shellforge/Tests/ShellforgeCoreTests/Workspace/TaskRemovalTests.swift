@@ -80,6 +80,27 @@ import Testing
         #expect(try !branchExists(repo, task.branch))
     }
 
+    /// The same, when its agent had switched: the first try had already told git to forget the
+    /// checkout, so Try Again cannot see which branch it held. The branch agreed to still goes.
+    @Test func aSwitchedBranchAgreedToStillGoesWhenARetryFindsTheCheckoutForgotten() throws {
+        let repo = try GitRepoFixture()
+        let task = try task(repo)
+        try repo.git(["switch", "-q", "-c", "ABC-1"], in: task.worktreePath)
+        try repo.git(["commit", "-q", "--allow-empty", "-m", "agent's work"], in: task.worktreePath)
+        try repo.git("merge", "-q", "--ff-only", "ABC-1")
+        let dotGit = try String(contentsOfFile: task.worktreePath + "/.git", encoding: .utf8)
+        try repo.git("worktree", "remove", task.worktreePath)
+        try FileManager.default.createDirectory(atPath: task.worktreePath + "/app/node_modules/.cache", withIntermediateDirectories: true)
+        try dotGit.write(toFile: task.worktreePath + "/.git", atomically: true, encoding: .utf8)
+
+        let result = try TaskRemoval.remove(task: task, project: repo.project, deleteBranch: true, deleteSwitched: "ABC-1", force: false,
+                                            sharedWithAnotherTask: false, launcher: repo.launcher)
+
+        #expect(result.switchedBranch == "ABC-1" && result.switchedRefusal == nil)
+        #expect(try !branchExists(repo, "ABC-1"))
+        #expect(try !branchExists(repo, task.branch))
+    }
+
     /// The folder deleted by hand, git's record of it left: the record is pruned and the task goes.
     @Test func aMissingWorktreeIsPrunedAndTheTaskStillGoes() throws {
         let repo = try GitRepoFixture()
@@ -352,6 +373,112 @@ import Testing
         #expect(!(try repo.git("worktree", "list", "--porcelain")).contains(".worktrees/"))
         #expect(try branchExists(repo, "claude/feature-x"))
         #expect(try !branchExists(repo, task.branch))
+    }
+
+    /// A repository whose convention is the bare ticket key: its agent switched the worktree from
+    /// the task's branch to `ABC-1`. Named in the prompt and ticked, it goes by the task branch's
+    /// rule — merged into the base, deleted — and nothing is written to the error log.
+    @Test func aSwitchedBranchShownAndMergedIsDeletedWithTheTasks() throws {
+        let repo = try GitRepoFixture()
+        let task = try task(repo)
+        try repo.git(["switch", "-q", "-c", "ABC-1"], in: task.worktreePath)
+        try repo.git(["commit", "-q", "--allow-empty", "-m", "agent's work"], in: task.worktreePath)
+        try repo.git("merge", "-q", "--ff-only", "ABC-1")
+        let log = scratchLog("switched-merged")
+
+        let result = try ErrorLogging.$testLog.withValue(log) {
+            try TaskRemoval.remove(task: task, project: repo.project, deleteBranch: true, deleteSwitched: "ABC-1", force: false,
+                                   sharedWithAnotherTask: false, launcher: repo.launcher)
+        }
+
+        #expect(result.switchedBranch == "ABC-1")
+        #expect(result.branchRefusal == nil)
+        #expect(result.switchedRefusal == nil)
+        #expect(try !branchExists(repo, "ABC-1"))
+        #expect(try !branchExists(repo, task.branch))
+        #expect(logLines(log).isEmpty, "\(logLines(log))")
+    }
+
+    /// The switched branch holds commits its base lacks: kept, and asked about, as the task's would be.
+    @Test func aSwitchedBranchShownButNotMergedIsRefusedAsNotMerged() throws {
+        let repo = try GitRepoFixture()
+        let task = try task(repo)
+        try repo.git(["switch", "-q", "-c", "ABC-1"], in: task.worktreePath)
+        try repo.git(["commit", "-q", "--allow-empty", "-m", "agent's work"], in: task.worktreePath)
+
+        let result = try TaskRemoval.remove(task: task, project: repo.project, deleteBranch: true, deleteSwitched: "ABC-1", force: false,
+                                            sharedWithAnotherTask: false, launcher: repo.launcher)
+
+        #expect(result.branchRefusal == nil)
+        #expect(result.switchedRefusal == .notMerged(base: "main"))
+        #expect(try branchExists(repo, "ABC-1"))
+        #expect(try !branchExists(repo, task.branch))
+
+        try TaskRemoval.deleteUnmergedBranch("ABC-1", of: task, in: repo.project, launcher: repo.launcher)
+        #expect(try !branchExists(repo, "ABC-1"))
+    }
+
+    /// Unticked, both branches stay, and keeping what was asked to be kept is no error.
+    @Test func branchesKeptOnRequestWriteNothingToTheErrorLog() throws {
+        let repo = try GitRepoFixture()
+        let task = try task(repo)
+        try repo.git(["switch", "-q", "-c", "ABC-1"], in: task.worktreePath)
+        let log = scratchLog("switched-unticked")
+
+        let result = try ErrorLogging.$testLog.withValue(log) {
+            try TaskRemoval.remove(task: task, project: repo.project, deleteBranch: false, force: false,
+                                   sharedWithAnotherTask: false, launcher: repo.launcher)
+        }
+
+        #expect(result.switchedBranch == "ABC-1")
+        #expect(result.switchedRefusal == nil)
+        #expect(try branchExists(repo, "ABC-1"))
+        #expect(try branchExists(repo, task.branch))
+        #expect(logLines(log).isEmpty, "\(logLines(log))")
+    }
+
+    /// The prompt named one switched branch; by the time removal ran the agent had moved to
+    /// another. Only what was shown may go: the one found stays.
+    @Test func aSwitchedBranchNotShownInThePromptIsNeverDeleted() throws {
+        let repo = try GitRepoFixture()
+        let task = try task(repo)
+        try repo.git(["switch", "-q", "-c", "ABC-1"], in: task.worktreePath)
+        try repo.git(["switch", "-q", "-c", "ABC-2"], in: task.worktreePath)
+
+        let result = try TaskRemoval.remove(task: task, project: repo.project, deleteBranch: true, deleteSwitched: "ABC-1", force: false,
+                                            sharedWithAnotherTask: false, launcher: repo.launcher)
+
+        #expect(result.switchedBranch == "ABC-2")
+        #expect(result.switchedRefusal == nil)
+        #expect(try branchExists(repo, "ABC-1"))
+        #expect(try branchExists(repo, "ABC-2"))
+    }
+
+    /// An agent that checked out the base itself in the worktree: the base is never deleted.
+    @Test func aWorktreeSwitchedToTheBaseNeverDeletesTheBase() throws {
+        let repo = try GitRepoFixture()
+        let task = try task(repo)
+        try repo.git(["checkout", "-q", "--ignore-other-worktrees", "main"], in: task.worktreePath)
+
+        let result = try TaskRemoval.remove(task: task, project: repo.project, deleteBranch: true, deleteSwitched: "main", force: false,
+                                            sharedWithAnotherTask: false, launcher: repo.launcher)
+
+        #expect(result.switchedRefusal != nil)
+        #expect(try branchExists(repo, "main"))
+    }
+
+    /// What the Remove prompt names: the branch the worktree has checked out, when it is not the
+    /// task's; nil when it is, or when there is no worktree to ask.
+    @Test func theCheckedOutBranchIsReadOnlyWhenItDiffers() throws {
+        let repo = try GitRepoFixture()
+        let task = try task(repo)
+        #expect(TaskRemoval.switchedBranch(of: task, in: repo.project, launcher: repo.launcher) == nil)
+        try repo.git(["switch", "-q", "-c", "ABC-1"], in: task.worktreePath)
+        #expect(TaskRemoval.switchedBranch(of: task, in: repo.project, launcher: repo.launcher) == "ABC-1")
+        try repo.git(["switch", "-q", "--detach"], in: task.worktreePath)
+        #expect(TaskRemoval.switchedBranch(of: task, in: repo.project, launcher: repo.launcher) == nil)
+        try repo.git("worktree", "remove", "--force", task.worktreePath)
+        #expect(TaskRemoval.switchedBranch(of: task, in: repo.project, launcher: repo.launcher) == nil)
     }
 
     /// A damaged row naming its own base, or an option, as its branch never deletes it.

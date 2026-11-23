@@ -31,6 +31,7 @@ extension SidebarModel {
         let shownProject = document.workspace.projects.first(where: { $0.id == shown.projectId })
         let owned = shownProject.map { TaskRemoval.ownsWorktree(of: shown, in: $0) } ?? true
         let inProjectFolder = shownProject.map { ProjectFolderTasks.isProjectFolder(shown, in: $0) } ?? false
+        let switched = isReview ? nil : await switchedBranch(of: shown, in: shownProject)
         // A review's branch is the merge request's: its Remove never offers to delete it — the
         // removal releases it only when nothing would be lost.
         let answer = await prompter.ask(owned ? AlertPrompt(
@@ -39,7 +40,7 @@ extension SidebarModel {
                 ? "Deletes the worktree and closes its tabs. Its local branch goes too, unless it has commits origin lacks:\n\n\(shown.worktreePath)"
                 : "Deletes the worktree and closes its tabs:\n\n\(shown.worktreePath)",
             buttons: ["Remove", "Cancel"],
-            checkbox: isReview ? nil : "Also delete branch \(shown.branch)",
+            checkbox: isReview ? nil : Self.deleteBranchTitle(shown.branch, switched: switched),
             defaultDeletes: true)
             : AlertPrompt(message: "Remove \(isReview ? "review" : "task") “\(shown.title)”?",
                           detail: inProjectFolder
@@ -47,7 +48,22 @@ extension SidebarModel {
                             : "Removes the task from Shellforge and closes its tabs. Its worktree stays where it is, on its branch:\n\n\(shown.worktreePath)",
                           buttons: ["Remove", "Cancel"]))
         guard answer.confirmed else { return false }
-        return await remove(taskId: id, deleteBranch: answer.checked)
+        return await remove(taskId: id, deleteBranch: answer.checked, shownSwitched: switched)
+    }
+
+    /// The checkbox that deletes the task's branch, naming the one its agent switched the worktree
+    /// to as well, when there is one: both go by the same rule.
+    static func deleteBranchTitle(_ branch: String, switched: String?) -> String {
+        guard let switched else { return "Also delete branch \(branch)" }
+        return "Also delete branches \(branch) and \(switched)"
+    }
+
+    /// The branch the task's worktree has checked out instead of its own, read before the prompt so
+    /// it can be named; nil when there is none, or no project to ask in.
+    private func switchedBranch(of task: TaskItem, in project: Project?) async -> String? {
+        guard let project else { return nil }
+        let launcher = self.launcher
+        return await BackgroundWork.run { TaskRemoval.switchedBranch(of: task, in: project, launcher: launcher) }
     }
 
     /// Close Tab on a task's last tab — or Close Pane on its last pane, in a tab another task's shares.
@@ -68,6 +84,7 @@ extension SidebarModel {
         let owned = shownProject.map { TaskRemoval.ownsWorktree(of: shown, in: $0) } ?? true
         let inProjectFolder = shownProject.map { ProjectFolderTasks.isProjectFolder(shown, in: $0) } ?? false
         let kind = isReview ? "review" : "task"
+        let switched = owned && !isReview ? await switchedBranch(of: shown, in: shownProject) : nil
         let answer = await prompter.ask(AlertPrompt(
             message: "Close the last \(paneOnly ? "pane" : "tab") of \(kind) “\(shown.title)”?",
             detail: inProjectFolder && !owned
@@ -76,18 +93,19 @@ extension SidebarModel {
             buttons: [paneOnly ? "Close Pane" : "Close Tab", "Cancel"],
             // A review's branch is the merge request's: never offered, as Remove never offers it.
             checkbox: owned ? "Also delete the worktree" : "Also remove the \(kind) from Shellforge",
-            subCheckbox: owned && !isReview ? "Also delete branch \(shown.branch)" : nil))
+            subCheckbox: owned && !isReview ? Self.deleteBranchTitle(shown.branch, switched: switched) : nil))
         guard answer.confirmed else { return false }
         guard answer.checked else {
             _ = paneOnly ? host.closePane(ofTab: tab) : host.close(tab: tab)
             return false
         }
-        return await remove(taskId: id, deleteBranch: answer.subChecked, closingFirst: tab, paneOnly: paneOnly)
+        return await remove(taskId: id, deleteBranch: answer.subChecked, shownSwitched: switched, closingFirst: tab, paneOnly: paneOnly)
     }
 
     /// The confirmed removal: uncommitted work asked about, `closingFirst` closed, the task's tabs,
-    /// its worktree, the branch when asked, and its row.
-    private func remove(taskId id: UUID, deleteBranch: Bool, closingFirst tab: String? = nil, paneOnly: Bool = false) async -> Bool {
+    /// its worktree, the branch when asked — with the switched branch the prompt named — and its row.
+    private func remove(taskId id: UUID, deleteBranch: Bool, shownSwitched: String?, closingFirst tab: String? = nil,
+                        paneOnly: Bool = false) async -> Bool {
         // Decided on the task as it is once answered: across the await it, or its project, can be gone.
         guard let task = document.workspace.tasks.first(where: { $0.id == id }),
               let project = document.workspace.projects.first(where: { $0.id == task.projectId }) else { return false }
@@ -118,12 +136,13 @@ extension SidebarModel {
             // the checkout there when it is on another branch; else the branch is the agent's switch.
             let path = ExistingWorktrees.resolved(task.worktreePath)
             let shared = document.workspace.tasks.contains { $0.id != id && ExistingWorktrees.resolved($0.worktreePath) == path }
+            let deleteSwitched = deleteBranch ? shownSwitched : nil
             let result: TaskRemoval.Removed
             while true {
                 do {
                     result = try await BackgroundWork.run {
-                        try TaskRemoval.remove(task: task, project: project, deleteBranch: deleteBranch, force: forced,
-                                               sharedWithAnotherTask: shared, launcher: launcher)
+                        try TaskRemoval.remove(task: task, project: project, deleteBranch: deleteBranch, deleteSwitched: deleteSwitched,
+                                               force: forced, sharedWithAnotherTask: shared, launcher: launcher)
                     }
                     break
                 } catch let TaskRemoval.Blocked.folderInUse(users) {
@@ -137,7 +156,7 @@ extension SidebarModel {
                     }
                 }
             }
-            await settleBranch(of: task, in: project, after: result)
+            await settleBranches(of: task, in: project, after: result, deleteBranch: deleteBranch, deleteSwitched: deleteSwitched)
             try document.update { $0.removeTask(id) }
             removalBoard.removals[id] = nil
             return true
@@ -149,20 +168,31 @@ extension SidebarModel {
         }
     }
 
-    /// The worktree is gone: a branch git kept is asked about now, or said why it stayed. The task
-    /// goes either way.
-    private func settleBranch(of task: TaskItem, in project: Project, after result: TaskRemoval.Removed) async {
-        // Its agent switched the worktree to a branch of its own: that one, with the work, stays.
-        if let switched = result.switchedBranch {
+    /// The worktree is gone: each branch git kept is asked about now, or said why it stayed — the
+    /// task's first, then the one its agent switched to. The task goes either way.
+    private func settleBranches(of task: TaskItem, in project: Project, after result: TaskRemoval.Removed,
+                                deleteBranch: Bool, deleteSwitched: String?) async {
+        // Its agent switched the worktree to a branch the person was not asked about: it stays, with
+        // the work. Unticked, keeping it was asked for, and there is nothing to say; a review is never
+        // asked, so it is always said.
+        if deleteBranch || task.kind == .review, let switched = result.switchedBranch, switched != deleteSwitched {
             report("Branch \(switched) kept: the worktree had it checked out instead of \(task.branch).")
         }
         if let kept = result.keptBranch { report(kept.note(branch: task.branch)) }
-        switch result.branchRefusal {
+        await settle(task.branch, of: task, in: project, refusal: result.branchRefusal)
+        if let switched = result.switchedBranch, switched == deleteSwitched {
+            await settle(switched, of: task, in: project, refusal: result.switchedRefusal)
+        }
+    }
+
+    /// One kept branch: commits its base lacks asked about, any other refusal said.
+    private func settle(_ branch: String, of task: TaskItem, in project: Project, refusal: TaskRemoval.BranchRefusal?) async {
+        switch refusal {
         case nil:
             return
         case .notMerged(let base)?:
             let answer = await prompter.ask(AlertPrompt(
-                message: "Delete branch \(task.branch)?",
+                message: "Delete branch \(branch)?",
                 detail: "It has commits that aren’t on \(base.isEmpty ? "its base" : base). Deleting the branch deletes them too.",
                 // Asked straight after Remove, so ↩ pressed twice must not lose commits: keeping is
                 // the default, on ↩ and ⎋ both, as Keep Task is.
@@ -170,12 +200,12 @@ extension SidebarModel {
             guard answer.button == 1 else { return }
             let launcher = self.launcher
             do {
-                try await BackgroundWork.run { try TaskRemoval.deleteUnmergedBranch(of: task, in: project, launcher: launcher) }
+                try await BackgroundWork.run { try TaskRemoval.deleteUnmergedBranch(branch, of: task, in: project, launcher: launcher) }
             } catch {
-                report("Branch \(task.branch) kept: " + Self.reason(of: error))
+                report("Branch \(branch) kept: " + Self.reason(of: error))
             }
         case .other(let reason)?:
-            report("Branch \(task.branch) kept: \(reason)")
+            report("Branch \(branch) kept: \(reason)")
         }
     }
 

@@ -16,6 +16,14 @@ it and refuses to release a version that has none.
   footer swung between them (54% and 46%, or a week at 65% and then 11%) and the 5-hour figure
   could vanish for a moment. Shellforge now keeps the newest window and, within it, the highest
   number, so an idle session can no longer pull it back.
+- **Removing a task also cleans up the branch its agent switched to.** In a repository whose
+  agents use their own branch names, such as the bare ticket key, the worktree often ends up on a
+  branch other than the task’s. Remove now names both branches in “Also delete branches”, and ticked,
+  deletes each one that’s merged and asks about each one that isn’t. Before, the switched branch was
+  always left behind. A branch the agent switched to after you answered is still kept, and you’re
+  told.
+- **One error-log line per problem.** A branch that Remove kept no longer shows up twice in the error
+  log, and a branch you chose to keep isn’t logged at all.
 
 ## 1.1.0 — 2026-11-16
 
