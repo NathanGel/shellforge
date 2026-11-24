@@ -490,6 +490,19 @@ import Testing
         #expect(lines.contains { $0.hasSuffix("Branch review-fixes kept: the worktree had it checked out instead of feat/mr-branch.") }, "\(lines)")
     }
 
+    /// A review whose branch stays for unpushed fixes says so once: one error-log line, not two.
+    @Test func aReviewKeepingItsBranchLogsItOnce() async throws {
+        let s = try await setup([Self.remove])
+        let review = try await review(in: s)
+        _ = try await s.git("commit", "-q", "--allow-empty", "-m", "fix", in: review.worktreePath)
+        let log = ErrorLog(folder: TestScratch.root.appendingPathComponent("review-kept-\(UUID().uuidString)"), version: "1")
+
+        #expect(await ErrorLogging.$testLog.withValue(log) { await s.sidebar.confirmRemove(taskId: review.id) })
+
+        let lines = ((try? String(contentsOf: log.fileURL, encoding: .utf8)) ?? "").split(separator: "\n")
+        #expect(lines.filter { $0.contains("Branch feat/mr-branch kept") }.count == 1, "\(lines)")
+    }
+
     /// Closing a review's last tab offers its worktree, never its branch.
     @Test func closingAReviewsLastTabNeverOffersItsBranch() async throws {
         let s = try await setup([Self.cancel])

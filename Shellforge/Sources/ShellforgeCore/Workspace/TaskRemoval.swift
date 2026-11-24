@@ -120,8 +120,8 @@ public enum TaskRemoval {
         if task.kind == .review {
             guard case .kept(let why) = GitRepository(project.path, launcher: launcher)
                 .releaseReviewBranch(task.branch, target: task.baseBranch) else { return Removed(branchRefusal: nil, switchedBranch: switchedBranch) }
+            // The caller says why, and that is the error-log line: recorded here too, it was two.
             removalLog.notice("review branch \(task.branch) kept: \(String(describing: why))")
-            ErrorLogging.record("removal", "Review removed. " + why.note(branch: task.branch))
             return Removed(branchRefusal: nil, keptBranch: why, switchedBranch: switchedBranch)
         }
         guard deleteBranch else { return Removed(branchRefusal: nil, switchedBranch: switchedBranch) }

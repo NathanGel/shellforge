@@ -637,6 +637,19 @@ import Testing
         #expect(kept.keptBranch == .unpushed(commits: 1))
     }
 
+    /// A review's kept branch is said by whoever removed it, which logs it: the removal itself adds
+    /// no second line.
+    @Test func aReviewsKeptBranchLeavesTheErrorLogToTheCaller() throws {
+        let (repo, review) = try review(withOrigin: true)
+        try repo.git(["commit", "-q", "--allow-empty", "-m", "fix"], in: review.worktreePath)
+        let log = scratchLog("review-kept-log")
+        let result = try ErrorLogging.$testLog.withValue(log) {
+            try TaskRemoval.remove(task: review, project: repo.project, deleteBranch: false, force: false, sharedWithAnotherTask: false, launcher: repo.launcher)
+        }
+        #expect(result.keptBranch == .unpushed(commits: 1))
+        #expect(logLines(log).isEmpty, "\(logLines(log))")
+    }
+
     /// A refused removal relocks a review as a review, not as something else.
     @Test func aRefusedRemovalRestoresAReviewsOwnLockReason() throws {
         let (repo, review) = try review(withOrigin: false)
