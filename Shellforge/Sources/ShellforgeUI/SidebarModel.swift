@@ -148,6 +148,9 @@ public final class SidebarModel: ObservableObject {
     @Published public private(set) var environmentWarning: String?
     /// Where each project's code lives, for its row's mark; read from git off the main thread.
     @Published public private(set) var providers: [UUID: Provider] = [:]
+    /// How each project's repository names its branches, when it says or shows it; read with the
+    /// provider (`BranchConventionDetector`).
+    @Published public private(set) var branchConventions: [UUID: BranchConvention] = [:]
     /// Each task row's removal: running, or why the last one stopped — in every window, from the
     /// board they share.
     public var removals: [UUID: RowRemoval] { removalBoard.removals }
@@ -438,6 +441,7 @@ public final class SidebarModel: ObservableObject {
             ?? agents.first { available.contains($0.id) }?.id ?? agents[0].id
         var draft = TaskDraft(baseBranch: Repository.fallbackDefaultBranch, agentId: agentId, model: "", reasoning: nil)
         draft.branchFormat = project.branchFormat
+        draft.branchPattern = project.branchPattern
         draft.paneHost = paneHost(of: project)
         draft.openSSH = draft.paneHost != nil && document.workspace.lastOpenSSHByProject[projectId] ?? true
         let path = project.path
@@ -822,6 +826,36 @@ public final class SidebarModel: ObservableObject {
         }
     }
 
+    /// Branch Names › Custom…, or a suggestion picked: New Task names this project's branches by
+    /// `pattern` from now on. A preset's pattern picks that preset.
+    public func setBranchPattern(_ pattern: String, of project: UUID) {
+        let format: BranchFormat = switch pattern {
+        case BranchPattern.typeAndName: .typeAndName
+        case BranchPattern.ticketKey: .ticketKey
+        default: .custom
+        }
+        attempt {
+            try document.update { workspace in
+                guard let i = workspace.projects.firstIndex(where: { $0.id == project }) else { return }
+                workspace.projects[i].branchFormat = format
+                workspace.projects[i].branchPattern = format == .custom ? pattern : nil
+            }
+        }
+    }
+
+    /// What Branch Names suggests for a project: its repository's convention, while that is not
+    /// already how New Task names its branches.
+    public func branchSuggestion(for id: UUID) -> BranchConvention? {
+        guard let convention = branchConventions[id], let project = project(id),
+              convention.pattern != project.effectiveBranchPattern else { return nil }
+        return convention
+    }
+
+    /// The suggestion's menu item: what it gives a sample task, and where it was read.
+    static func branchSuggestionTitle(_ convention: BranchConvention) -> String {
+        "Use \(BranchPattern.render(convention.pattern, type: .feat, key: "ABC-123", summary: "Add login page")) (from \(convention.source))"
+    }
+
     /// Folds or unfolds a project, as AiTerm's chevron does; kept with the workspace.
     public func toggleCollapsed(_ project: UUID) {
         attempt {
@@ -847,27 +881,29 @@ public final class SidebarModel: ObservableObject {
         // Weak: a window closed while git answers is not kept alive by the lookup.
         Task { [weak self] in
             let found = await BackgroundWork.run {
-                unknown.map { project -> (UUID, Provider, String?) in
+                unknown.map { project -> (UUID, Provider, String?, BranchConvention?) in
                     let read = facts.facts(of: project.path)
-                    return (project.id, read.provider, read.defaultBranch)
+                    return (project.id, read.provider, read.defaultBranch, read.branchConvention)
                 }
             }
             guard let self else { return }
             // One publication for the batch, not one redraw per project.
-            var next = providers, branches = defaultBranches
+            var next = providers, branches = defaultBranches, conventions = branchConventions
             // A project removed while git ran is not written back.
-            for (id, provider, branch) in found where project(id) != nil {
+            for (id, provider, branch, convention) in found where project(id) != nil {
                 next[id] = provider
                 if let branch { branches[id] = branch }
+                if let convention { conventions[id] = convention }
             }
             providers = next
             defaultBranches = branches
+            if conventions != branchConventions { branchConventions = conventions }
             detecting.subtract(found.map(\.0))
         }
     }
 
     /// A project's provider and, for one whose menu offers Pull, its default branch.
-    struct ProjectFacts: Equatable, Sendable { var provider: Provider; var defaultBranch: String? }
+    struct ProjectFacts: Equatable, Sendable { var provider: Provider; var defaultBranch: String?; var branchConvention: BranchConvention? }
 
     /// One for each launcher — the app has one — so a window opened later reads no git for a
     /// project another window has read.
@@ -881,7 +917,8 @@ public final class SidebarModel: ObservableObject {
                 let provider = ProviderDetector.provider(ofRepositoryAt: path, launcher: launcher)
                 // Only a menu that offers Pull names the branch.
                 return ProjectFacts(provider: provider,
-                                    defaultBranch: offersPull(provider) ? Repository.defaultBranch(of: path, launcher: launcher) : nil)
+                                    defaultBranch: offersPull(provider) ? Repository.defaultBranch(of: path, launcher: launcher) : nil,
+                                    branchConvention: BranchConventionDetector.detect(in: path, launcher: launcher))
             }
             all[ObjectIdentifier(launcher)] = made
             return made
@@ -892,6 +929,7 @@ public final class SidebarModel: ObservableObject {
     func forgetCaches(of id: UUID) {
         if providers[id] != nil { providers[id] = nil }
         if defaultBranches[id] != nil { defaultBranches[id] = nil }
+        if branchConventions[id] != nil { branchConventions[id] = nil }
         detecting.remove(id)
         if shownPullError?.project == id { shownPullError = nil }
     }

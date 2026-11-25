@@ -106,4 +106,65 @@ import Testing
         #expect(String(decoding: data, as: UTF8.self).contains("\"branchFormat\":\"ticketKey\""))
         #expect(try JSONDecoder().decode(Project.self, from: data).branchFormat == .ticketKey)
     }
+
+    @Test func aCustomPatternRoundTripsAndIsWrittenOnlyForCustom() throws {
+        var project = Project(name: "api", path: "/api")
+        project.branchFormat = .custom; project.branchPattern = "{KEY}-{slug}"
+        let data = try JSONEncoder().encode(project)
+        let back = try JSONDecoder().decode(Project.self, from: data)
+        #expect(back.branchFormat == .custom && back.branchPattern == "{KEY}-{slug}")
+        #expect(back.effectiveBranchPattern == "{KEY}-{slug}")
+        project.branchFormat = .ticketKey
+        #expect(!String(decoding: try JSONEncoder().encode(project), as: UTF8.self).contains("branchPattern"))
+    }
+
+    /// Custom with no pattern that names the work has nothing to give: it reads as the default.
+    @Test func aCustomFormatWithoutAUsablePatternReadsAsTheDefault() throws {
+        let json = #"{"id":"\#(UUID().uuidString)","name":"api","path":"/api","addedAt":0,"branchFormat":"custom","branchPattern":"{type}/wip"}"#
+        let project = try JSONDecoder().decode(Project.self, from: Data(json.utf8))
+        #expect(project.branchFormat == .typeAndName && project.branchPattern == nil)
+    }
+
+    private func custom(_ pattern: String) -> TaskDraft {
+        var d = draft(.custom); d.branchPattern = pattern; return d
+    }
+
+    @Test func aCustomPatternNamesTheWholeBranch() {
+        var d = custom("{KEY}-{slug}")
+        d.apply(ticket: ticket)
+        #expect(d.branch == "ABC-123-add-login-page")
+        #expect(d.branchFieldText == "ABC-123-add-login-page" && d.namesWholeBranch)
+        #expect(!d.showsTypeSelect, "no {type}: nothing to choose")
+        #expect(d.worktreeSlug == "abc-123-add-login-page")
+        // SwiftUI writing the shown branch back changes nothing.
+        d.setBranch(d.branchFieldText)
+        d.setTitle("Add login page v2")
+        #expect(d.branch == "ABC-123-add-login-page-v2", "still following the name")
+    }
+
+    @Test func aCustomPatternWithATypeShowsTheSelectAndFollowsIt() {
+        var d = custom("{type}/{KEY}")
+        d.apply(ticket: ticket)
+        #expect(d.branch == "fix/ABC-123" && d.showsTypeSelect)
+        d.setBranchType(.chore)
+        #expect(d.branch == "chore/ABC-123")
+    }
+
+    /// Nothing for the pattern to name: Type and Name, as Ticket Key Only falls back without a ticket.
+    @Test func aCustomPatternWithNothingToSayFallsBackToTypeAndName() {
+        var d = custom("{KEY}")
+        d.setTitle("Sidebar avatars")
+        #expect(d.branch == "feat/sidebar-avatars" && !d.namesWholeBranch && d.showsTypeSelect)
+    }
+
+    @Test func underCustomABranchTypedByHandWins() {
+        var d = custom("{KEY}")
+        d.apply(ticket: ticket)
+        d.setBranch("ABC-123-spike")
+        #expect(d.branch == "ABC-123-spike" && d.namesWholeBranch)
+        d.setTitle("Something else")
+        #expect(d.branch == "ABC-123-spike")
+        d.setBranch("fix/alarms")
+        #expect(d.branch == "fix/alarms" && !d.namesWholeBranch)
+    }
 }

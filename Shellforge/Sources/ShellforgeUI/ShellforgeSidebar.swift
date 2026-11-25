@@ -671,7 +671,10 @@ struct SidebarView: View {
                              pulling: model.isPulling(node.id),
                              pull: { Task { await model.pullDefault(project: node.id) } },
                              branchFormat: node.project.branchFormat,
-                             setBranchFormat: { model.setBranchFormat($0, of: node.id) })
+                             setBranchFormat: { model.setBranchFormat($0, of: node.id) },
+                             editBranchPattern: { showBranchPattern(for: node.id) },
+                             branchSuggestion: model.branchSuggestion(for: node.id).map(SidebarModel.branchSuggestionTitle),
+                             useBranchSuggestion: { if let s = model.branchSuggestion(for: node.id) { model.setBranchPattern(s.pattern, of: node.id) } })
                 .listRowSeparator(.hidden)
         case .terminal(let node, let selected):
             TerminalRowView(node: node, selected: selected, agents: model.avatars(forTerminal: node.id),
@@ -786,6 +789,16 @@ struct SidebarView: View {
         sheet.present(over: anchor.window) { dismiss in
             SSHHostSheet(projectName: project.name, current: project.sshHost, loadHosts: model.loadSSHHosts,
                          submit: { model.setSSHHost($0, on: id) }, dismiss: dismiss)
+        }
+    }
+
+    /// Branch Names › Custom…: prefilled with the project's pattern, else what its own preset gives.
+    private func showBranchPattern(for id: UUID) {
+        guard let project = model.project(id) else { return }
+        sheet.present(over: anchor.window) { dismiss in
+            BranchPatternSheet(projectName: project.name,
+                               initialPattern: project.branchPattern ?? model.branchSuggestion(for: id)?.pattern ?? project.effectiveBranchPattern,
+                               submit: { model.setBranchPattern($0, of: id) }, dismiss: dismiss)
         }
     }
 

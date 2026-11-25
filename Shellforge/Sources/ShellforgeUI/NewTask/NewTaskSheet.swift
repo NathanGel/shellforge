@@ -178,8 +178,9 @@ struct NewTaskSheet: View {
     private var branchFields: some View {
         VStack(alignment: .leading, spacing: Space.block) {
             HStack(alignment: .top, spacing: Space.gap) {
-                // The ticket’s key alone, or a branch typed whole in its place, has no type to choose.
-                if !model.draft.namesWholeBranch {
+                // The ticket’s key alone, a pattern without {type}, or a branch typed whole in its
+                // place, has no type to choose.
+                if model.draft.showsTypeSelect {
                     FormField("Type") {
                         Select(values: BranchType.allCases, selection: Binding(get: { model.draft.branchType }, set: { model.draft.setBranchType($0) }),
                                label: { $0.rawValue }, detail: { $0.summary }, monospaced: true)

@@ -34,6 +34,8 @@ public struct TaskDraft: Equatable, Sendable {
 
     /// How the project names its branches, set when the sheet opens for it.
     public var branchFormat = BranchFormat.typeAndName
+    /// The project's pattern, for a `.custom` format.
+    public var branchPattern: String?
 
     /// Whether the branch is the ticket's key alone: the project asks for it, a ticket is picked, and
     /// the branch was not typed by hand.
@@ -41,15 +43,32 @@ public struct TaskDraft: Equatable, Sendable {
 
     /// Whether the branch field holds the whole branch, with no type to choose beside it: the
     /// ticket's key, or a branch typed in its place.
-    public var namesWholeBranch: Bool { usesTicketKey || typedWhole }
+    public var namesWholeBranch: Bool { usesTicketKey || usesPattern || typedWhole }
+
+    /// Whether the branch is the project's Custom pattern filled in: it has one, the pattern has
+    /// something to say for this task, and the branch was not typed by hand.
+    public var usesPattern: Bool { branchFormat == .custom && !branchEdited && !patternBranch.isEmpty }
+
+    /// Whether New Task shows the Type select: beside a name half, or for a pattern with `{type}`.
+    public var showsTypeSelect: Bool { !namesWholeBranch || (usesPattern && BranchPattern.hasType(branchPattern ?? "")) }
 
     public var branch: String {
         if usesTicketKey { return ticket?.key ?? "" }
+        if usesPattern { return patternBranch }
         return typedWhole ? branchName : typeAndNameBranch
     }
 
-    /// What the branch field shows: the key while the branch is that, else the name half.
-    public var branchFieldText: String { usesTicketKey ? ticket?.key ?? "" : branchName }
+    /// What the branch field shows: the key or the pattern's branch while the branch is that, else
+    /// the name half.
+    public var branchFieldText: String {
+        if usesTicketKey { return ticket?.key ?? "" }
+        return usesPattern ? patternBranch : branchName
+    }
+
+    private var patternBranch: String {
+        guard branchFormat == .custom, let branchPattern else { return "" }
+        return BranchPattern.render(branchPattern, type: branchType, key: ticket?.key, summary: title)
+    }
 
     private var typeAndNameBranch: String { "\(branchType.rawValue)/\(branchName)" }
 
@@ -87,6 +106,7 @@ public struct TaskDraft: Equatable, Sendable {
     /// Key Only project's key), a branch with no known type prefix is the whole branch as typed.
     public mutating func setBranch(_ b: String) {
         if usesTicketKey && b == ticket?.key { return }
+        if usesPattern && b == patternBranch { return }
         let split = BranchType.split(b)
         if let split { branchType = split.type; typeEdited = true }
         let whole = split == nil && namesWholeBranch

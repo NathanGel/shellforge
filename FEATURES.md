@@ -111,7 +111,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
   - New Task…, New Review… and New Terminal…;
   - Open in Finder and Open in VS Code (when VS Code is installed);
   - Jira Projects…, Tunnels… and SSH Host…, then Open ssh <host> when the host is in `~/.ssh/config`;
-  - Branch Names, a submenu: Type and Name or Ticket Key Only (see Worktree and branch). VoiceOver offers each as an action, the one in use marked “(current)”;
+  - Branch Names, a submenu: Type and Name, Ticket Key Only or Custom… (see Worktree and branch). Custom… opens a sheet for a pattern of literal text and `{type}`, `{key}`, `{KEY}` and `{slug}`, showing what it gives with a ticket and without one. When the repository’s AGENTS.md or CLAUDE.md names an example branch, or at least five of its branches, most of them, share one shape, the submenu also offers that, such as “Use ABC-123 (from AGENTS.md)”, until it is the one in use. VoiceOver offers each as an action, the one in use marked “(current)”;
   - Pull <default branch>, for a GitLab or GitHub project;
   - Rearrange (see [Rearranging the sidebar](#rearranging-the-sidebar));
   - Remove Project….
@@ -173,7 +173,7 @@ Shellforge is iTerm2 with AiTerm's sidebar: projects, then tasks, then tabs, in 
   - Shellforge remembers the last agent per project and the last model per agent.
 - **Worktree and branch.** (A project-folder task has neither: it uses the project’s own folder and its checked-out branch.)
   - A task works in `<project>/.worktrees/<slug>`, with `.worktrees/` excluded from git.
-  - Its branch is `<type>/<key>-<slug>`. A project set to Branch Names › Ticket Key Only names it after the picked ticket alone instead (`ABC-123`); with no ticket it is `<type>/<slug>` as usual, and the Type select is hidden while the key is the branch. A branch you type still wins: typed in place of the key without a type, such as `ABC-123-v2`, it is the whole branch exactly as typed and the Type select stays hidden; typed with a type, such as `fix/alarms`, it picks that type. A project using Type and Name works as before. The worktree folder stays `<key>-<slug>`.
+  - Its branch is `<type>/<key>-<slug>`. A project set to Branch Names › Ticket Key Only names it after the picked ticket alone instead (`ABC-123`); with no ticket it is `<type>/<slug>` as usual, and the Type select is hidden while the key is the branch. A branch you type still wins: typed in place of the key without a type, such as `ABC-123-v2`, it is the whole branch exactly as typed and the Type select stays hidden; typed with a type, such as `fix/alarms`, it picks that type. A project using Type and Name works as before. A Custom pattern fills in the whole branch, editable, such as `ABC-123-add-login-page` for `{KEY}-{slug}`; the Type select shows only when the pattern holds `{type}`. A token with nothing to say drops with one separator beside it, and a pattern with nothing to say for the task, such as `{KEY}` without a ticket, falls back to `<type>/<slug>`. The worktree folder stays `<key>-<slug>`.
   - A long first prompt goes to `.shellforge/first-prompt.md` in the worktree.
   - If creating the worktree fails, nothing is saved and the sheet keeps what you typed.
   - While it creates, the sheet is locked and says what it is doing — fetching the base, making the worktree, or running the repository's own checkout hook (a pre-commit `uv sync` can take a while). Cancel, or ⎋, stops it: the command and everything it started end, the half-made worktree and branch are removed, and nothing is saved.

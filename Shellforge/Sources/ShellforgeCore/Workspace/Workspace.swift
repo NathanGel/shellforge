@@ -21,6 +21,17 @@ public struct Project: Codable, Equatable, Sendable, Identifiable {
     public var childOrder: [UUID]?
     /// How New Task names this project's branches; encoded only when it is not the default.
     public var branchFormat = BranchFormat.typeAndName
+    /// The pattern a `.custom` format names branches by (`BranchPattern`); encoded only then.
+    public var branchPattern: String?
+
+    /// The pattern New Task names branches by: a preset's, or the project's own.
+    public var effectiveBranchPattern: String {
+        switch branchFormat {
+        case .typeAndName: BranchPattern.typeAndName
+        case .ticketKey: BranchPattern.ticketKey
+        case .custom: branchPattern ?? BranchPattern.typeAndName
+        }
+    }
 
     public init(id: UUID = UUID(), name: String, path: String, addedAt: Date = Date(), collapsed: Bool = false,
                 jiraProjects: [JiraProjectRef] = []) {
@@ -32,7 +43,7 @@ public struct Project: Codable, Equatable, Sendable, Identifiable {
         self.jiraProjects = jiraProjects
     }
 
-    private enum CodingKeys: String, CodingKey { case id, name, path, addedAt, collapsed, jiraProjects, tunnels, sshHost, childOrder, branchFormat }
+    private enum CodingKeys: String, CodingKey { case id, name, path, addedAt, collapsed, jiraProjects, tunnels, sshHost, childOrder, branchFormat, branchPattern }
 
     /// A workspace saved before projects could fold loads them unfolded, and one saved before they
     /// could link Jira projects links none.
@@ -49,6 +60,11 @@ public struct Project: Codable, Equatable, Sendable, Identifiable {
         // A format a newer build knows reads as the default rather than setting the whole workspace
         // aside.
         branchFormat = (try? c.decodeIfPresent(BranchFormat.self, forKey: .branchFormat)) ?? .typeAndName
+        if branchFormat == .custom {
+            // Custom with nothing to name a branch by reads as the default.
+            branchPattern = (try? c.decodeIfPresent(String.self, forKey: .branchPattern)).flatMap { $0 }
+            if !(branchPattern.map(BranchPattern.namesTheWork) ?? false) { branchFormat = .typeAndName; branchPattern = nil }
+        }
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -63,6 +79,7 @@ public struct Project: Codable, Equatable, Sendable, Identifiable {
         try c.encodeIfPresent(sshHost, forKey: .sshHost)
         try c.encodeIfPresent(childOrder, forKey: .childOrder)
         if branchFormat != .typeAndName { try c.encode(branchFormat, forKey: .branchFormat) }
+        if branchFormat == .custom { try c.encodeIfPresent(branchPattern, forKey: .branchPattern) }
     }
 }
 

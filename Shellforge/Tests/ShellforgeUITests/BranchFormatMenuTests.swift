@@ -33,8 +33,9 @@ import Testing
         #expect(model.makeNewTaskModel(for: project.id, jira: nil)?.draft.branchFormat == .ticketKey)
     }
 
-    @Test func theMenuOffersBothFormatsAndMarksTheCurrent() {
-        #expect(BranchFormat.allCases.map(\.menuTitle) == ["Type and Name", "Ticket Key Only"])
+    @Test func theMenuOffersThePresetsAndCustom() {
+        #expect(BranchFormat.allCases.map(\.menuTitle) == ["Type and Name", "Ticket Key Only", "Custom…"])
+        #expect(BranchFormat.presets == [.typeAndName, .ticketKey])
         #expect(ProjectHeaderRow.menuTitles(provider: .git, sshHost: nil, canOpenSSHHost: false, pullTitle: nil).contains("Branch Names"))
     }
 
@@ -54,8 +55,46 @@ import Testing
     /// VoiceOver says which format is in use, as the menu’s checkmark does.
     @Test func voiceOverSaysWhichFormatIsCurrent() {
         #expect(BranchFormat.allCases.map { ProjectHeaderRow.voiceOverBranchAction($0, current: .typeAndName) }
-                    == ["Branch Names: Type and Name (current)", "Branch Names: Ticket Key Only"])
+                    == ["Branch Names: Type and Name (current)", "Branch Names: Ticket Key Only", "Branch Names: Custom…"])
         #expect(BranchFormat.allCases.map { ProjectHeaderRow.voiceOverBranchAction($0, current: .ticketKey) }
-                    == ["Branch Names: Type and Name", "Branch Names: Ticket Key Only (current)"])
+                    == ["Branch Names: Type and Name", "Branch Names: Ticket Key Only (current)", "Branch Names: Custom…"])
+        #expect(ProjectHeaderRow.voiceOverBranchAction(.custom, current: .custom) == "Branch Names: Custom… (current)")
+    }
+
+    /// A pattern saved is the project's, and New Task's; a preset's own pattern picks the preset.
+    @Test func aSavedPatternIsCustomUnlessItIsAPresets() throws {
+        let (model, document, project, _) = try setup()
+        model.setBranchPattern("{KEY}-{slug}", of: project.id)
+        #expect(document.workspace.projects[0].branchFormat == .custom)
+        #expect(document.workspace.projects[0].branchPattern == "{KEY}-{slug}")
+        let draft = try #require(model.makeNewTaskModel(for: project.id, jira: nil)?.draft)
+        #expect(draft.branchFormat == .custom && draft.branchPattern == "{KEY}-{slug}")
+        model.setBranchPattern(BranchPattern.ticketKey, of: project.id)
+        #expect(document.workspace.projects[0].branchFormat == .ticketKey && document.workspace.projects[0].branchPattern == nil)
+    }
+
+    /// The sheet shows what the pattern gives, with a ticket and without one.
+    @Test func theSheetShowsWhatThePatternGives() {
+        #expect(BranchPatternSheet.examples("{KEY}-{slug}") == ["With ticket ABC-123: ABC-123-add-login-page", "Without a ticket: add-login-page"])
+        #expect(BranchPatternSheet.examples("{KEY}") == ["With ticket ABC-123: ABC-123", "Without a ticket: feat/add-login-page (Type and Name)"])
+    }
+
+    /// The repository's AGENTS.md names its branches: Branch Names offers that, in one click, until
+    /// it is how the project names them.
+    @Test func theRepositorysConventionIsSuggestedUntilPicked() async throws {
+        let repo = try await GitRepoForUI()
+        try "Branches are named for the bare ticket key (`ABC-1234`).\n".write(toFile: repo.path + "/AGENTS.md", atomically: true, encoding: .utf8)
+        let document = WorkspaceDocument(store: WorkspaceStore(folder: TestScratch.root.appendingPathComponent("suggest-\(UUID().uuidString)")))
+        let model = SidebarModel(host: FakeTerminalHost(), document: document, launcher: repo.launcher, jiraSettings: { nil })
+        await model.addProject(folder: repo.path)
+        let project = try #require(document.workspace.projects.first)
+        await eventually { model.providers[project.id] != nil }
+
+        let suggestion = try #require(model.branchSuggestion(for: project.id))
+        #expect(suggestion == BranchConvention(pattern: "{KEY}", source: "AGENTS.md"))
+        #expect(SidebarModel.branchSuggestionTitle(suggestion) == "Use ABC-123 (from AGENTS.md)")
+        model.setBranchPattern(suggestion.pattern, of: project.id)
+        #expect(document.workspace.projects[0].branchFormat == .ticketKey)
+        #expect(model.branchSuggestion(for: project.id) == nil)
     }
 }

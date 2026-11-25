@@ -107,6 +107,11 @@ struct ProjectHeaderRow: View {
     /// Branch Names: the format New Task uses, and its change.
     var branchFormat = BranchFormat.typeAndName
     var setBranchFormat: (BranchFormat) -> Void = { _ in }
+    /// Branch Names › Custom…: the pattern sheet.
+    var editBranchPattern: () -> Void = {}
+    /// Branch Names' suggestion, such as “Use ABC-123 (from AGENTS.md)”; nil offers none.
+    var branchSuggestion: String?
+    var useBranchSuggestion: () -> Void = {}
     @Environment(\.interfaceScale) private var scale
     @Environment(\.isRearranging) private var isRearranging
     @State private var hovered = false
@@ -157,7 +162,10 @@ struct ProjectHeaderRow: View {
         .frame(height: scale(Size.projectRow)).padding(.leading, scale(Space.base)).padding(.trailing, SidebarRowLayout.trailingInset(scale))
         .modifier(RowPill(selected: false))
         .modifier(RearrangeAccessibilityAction(canRearrange: canRearrange, action: rearrange))
-        .modifier(BranchFormatAccessibilityActions(current: branchFormat, enabled: !isRearranging, set: setBranchFormat))
+        .modifier(BranchFormatAccessibilityActions(current: branchFormat, enabled: !isRearranging, set: setBranchFormat,
+                                                   editPattern: editBranchPattern))
+        .modifier(NamedAccessibilityAction(name: branchSuggestion.map { "\(Self.branchNamesTitle): \($0)" } ?? "",
+                                           enabled: branchSuggestion != nil && !isRearranging, action: useBranchSuggestion))
         // AiTerm's order: what the "+" offers, Open in, what the project links to, Rearrange, then Remove.
         .rowContextMenu {
             newItems
@@ -170,8 +178,14 @@ struct ProjectHeaderRow: View {
             // After the SSH host's own items, which stay together.
             if let alias = node.project.sshHost, canOpenSSHHost { Button(SidebarModel.openSSHHostTitle(alias), action: openSSHHost) }
             Menu(Self.branchNamesTitle) {
-                ForEach(BranchFormat.allCases, id: \.self) { format in
+                ForEach(BranchFormat.presets, id: \.self) { format in
                     Toggle(format.menuTitle, isOn: Binding(get: { branchFormat == format }, set: { _ in setBranchFormat(format) }))
+                }
+                // Opens its sheet rather than switching: a pattern is needed first.
+                Toggle(BranchFormat.custom.menuTitle, isOn: Binding(get: { branchFormat == .custom }, set: { _ in editBranchPattern() }))
+                if let branchSuggestion {
+                    Divider()
+                    Button(branchSuggestion, action: useBranchSuggestion)
                 }
             }
             if let pullTitle {
@@ -560,8 +574,12 @@ extension BranchFormat {
         switch self {
         case .typeAndName: "Type and Name"
         case .ticketKey: "Ticket Key Only"
+        case .custom: "Custom…"
         }
     }
+
+    /// The formats that need nothing more than picking.
+    static let presets: [BranchFormat] = [.typeAndName, .ticketKey]
 }
 
 /// The Branch Names choices as VoiceOver actions, left out in Rearrange mode like the menu.
@@ -569,15 +587,18 @@ private struct BranchFormatAccessibilityActions: ViewModifier {
     let current: BranchFormat
     let enabled: Bool
     let set: (BranchFormat) -> Void
+    let editPattern: () -> Void
 
     func body(content: Content) -> some View {
         content
             .modifier(action(.typeAndName))
             .modifier(action(.ticketKey))
+            .modifier(action(.custom))
     }
 
     private func action(_ format: BranchFormat) -> NamedAccessibilityAction {
-        NamedAccessibilityAction(name: ProjectHeaderRow.voiceOverBranchAction(format, current: current), enabled: enabled, action: { set(format) })
+        NamedAccessibilityAction(name: ProjectHeaderRow.voiceOverBranchAction(format, current: current), enabled: enabled,
+                                 action: { format == .custom ? editPattern() : set(format) })
     }
 }
 

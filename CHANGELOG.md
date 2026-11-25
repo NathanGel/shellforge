@@ -7,7 +7,15 @@ a patch fixes, a minor adds features, a major changes a saved setup.
 Each version's section is also its GitHub release notes: `Shellforge/scripts/release.sh` publishes
 it and refuses to release a version that has none.
 
-## 1.1.1 — unreleased
+## 1.2.0 — unreleased
+
+### Added
+
+- **Custom branch names.** Branch Names gains Custom…, a pattern such as `{KEY}-{slug}` or
+  `feature/{KEY}`, so a project can follow any repository’s naming. The sheet shows what the pattern
+  gives with a ticket and without one. Shellforge also reads how a repository names its branches,
+  from its AGENTS.md or CLAUDE.md or from most of its existing branches, and offers it in the menu,
+  such as “Use ABC-123 (from AGENTS.md)”; nothing changes until you pick it.
 
 ### Fixed
 
